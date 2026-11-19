@@ -15,7 +15,7 @@ requirements and milestones. Notes about the application this was derived from l
   `dtb_test...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its
   dialect, or `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs
   Microsoft's ODBC Driver 18. The SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live
-  OpenSearch test owns the index `dtb-test-docs`: each run deletes and recreates them.
+  OpenSearch test owns the index `dtb-test-docs`: each run drops them first.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and

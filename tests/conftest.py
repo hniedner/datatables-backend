@@ -79,7 +79,9 @@ people = Table(
     SQLColumn('age', SmallInteger, nullable=True),
     SQLColumn('born', Date, nullable=True),
     SQLColumn('seen', DateTime, nullable=True),
-    SQLColumn('seen_tz', DateTime(timezone=True), nullable=True),  # TIMESTAMPTZ, DATETIMEOFFSET; `seen` in UTC
+    SQLColumn(
+        'seen_tz', DateTime(timezone=True), nullable=True
+    ),  # TIMESTAMPTZ, DATETIMEOFFSET (DATETIME on MySQL and SQLite)
     SQLColumn('team', String(20)),
     SQLColumn('secret', String(50)),
 )
@@ -106,7 +108,7 @@ ROWS: list[dict[str, Any]] = [
     },
     {
         'id': 5, 'name': 'Dee', 'email_address': 'dee@example.org', 'age': 60, 'born': date(1966, 7, 1),
-        'seen': datetime(2026, 7, 14, 8, 0), 'seen_tz': datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+        'seen': datetime(2026, 7, 14, 20, 0), 'seen_tz': datetime(2026, 7, 14, 20, 0, tzinfo=UTC),
         'team': 'blue', 'secret': 's5',
     },
 ]  # fmt: skip

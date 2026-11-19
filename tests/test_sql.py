@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 import pytest
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -55,6 +56,10 @@ def refused(response: DTResponse) -> str:
 def test_the_suite_runs_on_the_database_it_was_given(session: Session):
     """A container job names its dialect, so a run that silently fell back to SQLite fails."""
     assert session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
+
+
+async def test_the_async_suite_runs_on_the_database_it_was_given(async_session: AsyncSession):
+    assert async_session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
 
 
 @pytest.mark.parametrize('name', ['people', 'staging', 'dtbx', None])
@@ -293,12 +298,26 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     session: Session, condition: str, values: list[str], expected: list[int]
 ):
     """The day bounds are UTC midnights. Only PostgreSQL in a non-UTC session (CI sets PGTZ to UTC+14) checks that:
-    there a naive bound would be read in the session zone. On SQL Server and MySQL the test only shows the column
-    works."""
+    there a naive bound would be read in the session zone. Elsewhere (SQLite, MySQL, SQL Server) the test only shows
+    the column works."""
+    if session.get_bind().dialect.name == 'postgresql':
+        zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
+        assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
         expected
     )
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
+    reason="draft 1: PostgreSQL's day text of a timestamptz is its day in the session zone; PRD v2 (PRD-F42) makes "
+    'it the UTC day',
+    strict=True,
+)
+def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-07-15'}), session)) == [1]
 
 
 @pytest.mark.parametrize(
@@ -371,6 +390,14 @@ def test_many_multi_select_values_on_a_number_column_still_run(session: Session)
     """Past SQL Server's 2,100-parameter limit the values travel as JSON and are cast to the column's number type."""
     params = request(*ALL)
     params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
+    assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
+    """31.5 on a SMALLINT column: SQL Server's JSON path casts with TRY_CAST, so it matches nothing, as a bound
+    parameter does on every other database (a plain conversion would fail the whole query)."""
+    params = request(*ALL)
+    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31', '31.5']
     assert ids(table.fetch_sync(params, session)) == [1, 4]
 
 
