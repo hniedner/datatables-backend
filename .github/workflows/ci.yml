@@ -50,36 +50,60 @@ jobs:
       - run: uv sync --locked
       - run: uv run --frozen pytest
 
-  # Installs the package as a user would, with one extra and no dev group, and checks that the core modules and that
-  # extra's module load no other extra (and no greenlet, which `sqlalchemy.ext.asyncio` needs).
+  # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
+  # extra's module must import. With every extra and greenlet installed, importing them must not load another extra's
+  # package (nor sqlalchemy.ext.asyncio on the sqlalchemy leg), which also catches an import guarded by try/except.
   install-isolation:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         extra: [core, sqlalchemy, opensearch, fastapi]
+    env:
+      EXTRA: ${{ matrix.extra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - run: uv venv -p 3.12 .venv-iso
-      - run: uv pip install -p .venv-iso -e "${{ matrix.extra == 'core' && '.' || format('.[{0}]', matrix.extra) }}"
-      - name: Import without loading other extras
-        env:
-          EXTRA: ${{ matrix.extra }}
+      - run: uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+      - name: Write the import check
+        working-directory: ${{ runner.temp }}
         run: |
-          .venv-iso/bin/python - <<'EOF'
+          cat > check.py <<'EOF'
           import importlib, os, sys
           extra = os.environ['EXTRA']
-          core = ['datatables_backend', *(f'datatables_backend.{m}' for m in ('protocol', 'columns', '_plan', 'rows', 'cache'))]
-          own = {'core': set(), 'sqlalchemy': {'sqlalchemy'}, 'opensearch': {'opensearchpy'}, 'fastapi': {'fastapi', 'starlette'}}[extra]
+          modules = ('protocol', 'columns', '_plan', 'rows', 'cache')
+          core = ['datatables_backend', *(f'datatables_backend.{m}' for m in modules)]
           for module in core if extra == 'core' else [*core, f'datatables_backend.{extra}']:
               importlib.import_module(module)
-          leaked = sorted({'sqlalchemy', 'opensearchpy', 'fastapi', 'starlette', 'greenlet'} - own & {m.partition('.')[0] for m in sys.modules})
-          print(f'{extra}: other extras loaded: {leaked or "none"}')
-          sys.exit(f'{extra} loaded {leaked}' if leaked else 0)
+          where = sys.modules['datatables_backend'].__file__
+          assert 'site-packages' in where, where  # the installed wheel, not the checkout
+          if os.environ.get('ALL_EXTRAS'):
+              own = {'sqlalchemy': {'sqlalchemy'}, 'opensearch': {'opensearchpy'}, 'fastapi': {'fastapi', 'starlette'}}
+              absent = {'sqlalchemy', 'opensearchpy', 'fastapi', 'starlette'} - own.get(extra, set())
+              if extra == 'sqlalchemy':
+                  absent.add('sqlalchemy.ext.asyncio')
+              loaded = sorted(absent & set(sys.modules))
+              print(f'{extra}, every extra installed: loaded {loaded or "nothing"} of {sorted(absent)}')
+              sys.exit(f'{extra} loaded {loaded}' if loaded else 0)
+          print(f'{extra}, only its own extra installed: imports')
           EOF
+      - name: Imports with only its own extra installed
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel=$(ls dist/*.whl)
+          uv venv -q -p 3.12 own
+          if [ "$EXTRA" = core ]; then spec=$wheel; else spec="${wheel}[${EXTRA}]"; fi
+          uv pip install -q -p own "$spec"
+          own/bin/python check.py
+      - name: Loads no other extra with every extra and greenlet installed
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel=$(ls dist/*.whl)
+          uv venv -q -p 3.12 all
+          uv pip install -q -p all "${wheel}[sqlalchemy,opensearch,fastapi]" greenlet
+          ALL_EXTRAS=1 all/bin/python check.py
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the
   # rest of the dev group resolved to match them. The 3.12 leg also forces starlette 0.40.0, the lowest that fastapi
