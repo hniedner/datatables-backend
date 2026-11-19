@@ -27,8 +27,9 @@ for p in ("sqlalchemy", "pydantic", "fastapi", "python-multipart", "opensearch-p
 <scratch>/venv-min/bin/python -m pytest
 ```
 
-Don't use `uv run --with ... pytest`: with `UV_PROJECT_ENVIRONMENT` set, the overlay can be silently ignored (seen with
-uv 0.13.7). The explicit environment above is checked with `uv pip check` and prints the versions that run the tests.
+Don't use `uv run --with ... pytest`: the project's `pytest` script runs the project interpreter, which does not see the
+`--with` overlay (seen with uv 0.13.7 in a fresh checkout). The explicit environment above is checked with
+`uv pip check` and prints the versions that run the tests.
 
 ## Rules
 
