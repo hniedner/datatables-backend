@@ -11,6 +11,7 @@ import pytest
 
 SCRIPT = Path(__file__).with_name('private_word_scan.py')
 WORD = 'Zebrafinch'  # planted; the scan must find it in any case and never print it
+SECOND = 'Otterbrook'  # the list's second word, on line 5
 
 
 def scan(*args: str, words: Path | None, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -25,7 +26,7 @@ def scan(*args: str, words: Path | None, cwd: Path | None = None) -> subprocess.
 @pytest.fixture
 def words(tmp_path: Path) -> Path:
     path = tmp_path / 'words.txt'
-    path.write_text('# private words\n\nzEBRAfINCH\n', encoding='utf-8')  # line 3, in another case than WORD
+    path.write_text('# private words\n\nzEBRAfINCH\n# another\nOtterbrook\n', encoding='utf-8')  # WORD on line 3
     return path
 
 
@@ -75,8 +76,10 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     assert 'could not check' in result.stderr
 
 
-def git(repo: Path, *args: str) -> None:
-    subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+def git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    return subprocess.run(
+        ['git', '-C', str(repo), *args], check=True, capture_output=True, text=True, env={**os.environ, **(env or {})}
+    ).stdout
 
 
 @pytest.fixture
@@ -132,14 +135,17 @@ def test_a_history_scan_outside_a_repository_cannot_check(tmp_path: Path, words:
     assert 'could not check' in result.stderr
 
 
-def commit(repo: Path, name: str, data: bytes, message: str = 'Add a file', author: str = 'Test') -> None:
+def commit(
+    repo: Path, name: str, data: bytes, message: str = 'Add a file', *, env: dict[str, str] | None = None
+) -> None:
     (repo / name).write_bytes(data)
     git(repo, 'add', '.')
-    git(repo, '-c', f'user.name={author}', 'commit', '-q', '-m', message)
+    git(repo, 'commit', '-q', '-m', message, env=env)
 
 
 @pytest.mark.parametrize(
-    'where', ['non-ascii path', 'path and contents', 'binary blob', 'ref name', 'tag message', 'author']
+    'where',
+    ['non-ascii path', 'path and contents', 'binary blob', 'ref name', 'tag message', 'author', 'committer'],
 )
 def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words: Path, where: str):
     if where == 'non-ascii path':
@@ -152,8 +158,10 @@ def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words
         git(repo, 'branch', f'topic-{WORD}')
     elif where == 'tag message':
         git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
+    elif where == 'author':  # the author alone: the committer stays clean
+        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'})
     else:
-        commit(repo, 'b.txt', b'clean\n', author=f'{WORD} Person')
+        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_NAME': f'{WORD} Person'})
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
@@ -244,3 +252,59 @@ def test_a_word_in_a_local_ref_fails_every_commit_and_is_never_printed(repo: Pat
 def test_the_ref_scan_reads_no_history(repo: Path, words: Path):
     commit(repo, 'b.txt', f'{WORD}\n'.encode(), message=f'Add {WORD}')
     assert scan('--refs', words=words, cwd=repo).returncode == 0
+
+
+def test_a_finding_names_the_line_of_the_word_in_the_list(tmp_path: Path, words: Path):
+    planted = write(tmp_path / 'notes.md', f'see {SECOND} here\n')
+    result = scan(str(planted), words=words)
+    assert result.returncode == 1
+    assert f'{planted}:1: private word #5' in result.stderr
+    assert SECOND.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+SLASHED = 'Acme/Widget'  # a list word holding the path separator
+
+
+@pytest.mark.parametrize('where', ['path', 'ref name', 'history path'])
+def test_a_word_holding_a_slash_is_never_printed(tmp_path: Path, repo: Path, where: str):
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    if where == 'path':
+        (tmp_path / 'Acme').mkdir()
+        result = scan(str(write(tmp_path / 'Acme' / 'Widget.txt', 'clean\n')), words=slashed_words)
+    elif where == 'ref name':
+        git(repo, 'branch', SLASHED)
+        result = scan('--refs', words=slashed_words, cwd=repo)
+    else:
+        (repo / 'Acme').mkdir()
+        commit(repo, 'Acme/Widget.txt', b'clean\n')
+        result = scan('--history', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert SLASHED.casefold() not in (result.stdout + result.stderr).casefold(), result.stderr
+
+
+def test_a_blob_reachable_only_through_a_tag_is_scanned(repo: Path, words: Path):
+    (repo / 'loose.txt').write_text(f'{WORD}\n', encoding='utf-8')
+    blob = git(repo, 'hash-object', '-w', 'loose.txt').strip()
+    (repo / 'loose.txt').unlink()
+    git(repo, 'tag', 'just-a-blob', blob)
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.skipif(os.name != 'posix' or os.geteuid() == 0, reason='root reads any file')
+def test_an_unreadable_file_cannot_check(tmp_path: Path, words: Path):
+    locked = write(tmp_path / 'locked.md', 'clean\n')
+    locked.chmod(0)
+    try:
+        result = scan(str(locked), words=words)
+    finally:
+        locked.chmod(0o600)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path):
+    planted = tmp_path / 'notes.txt'
+    planted.write_bytes(f'see {WORD} here\n'.encode('utf-32'))
+    assert scan(str(planted), words=words).returncode == 1

@@ -3,7 +3,8 @@
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
 word per line, matched case-insensitively as a substring; blank lines and lines starting with ``#`` are skipped. The
 list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
-path or ref name is printed with each ``/``-separated part that holds a word replaced by ``***``.
+path or ref name is printed with each ``/``-separated part that holds a word replaced by ``***``, or as ``***``
+whole when a word spans parts.
 
 The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, it
 cannot check, and says so with exit status 2, which blocks like a finding (exit status 1). That message names no
@@ -12,16 +13,17 @@ command and no path, since either could hold a word.
 Usage:
     private_word_scan.py FILE...         paths and contents of the given files (the pre-commit stage)
     private_word_scan.py --message FILE  a commit message (the commit-msg stage)
-    private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit stage, on
-                                         every commit: a push that only adds a ref brings no commit, so pre-commit
-                                         runs no pre-push hook for it)
+    private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit and
+                                         post-checkout stages: a push that only adds a ref brings no commit, so
+                                         pre-commit runs no pre-push hook for it)
     private_word_scan.py --history       everything a push publishes: every ref's name, every annotated tag, for
                                          every commit reachable from any ref its message, author, committer and
-                                         tree paths, and every reachable blob decoded once (binary and symlink
-                                         blobs included)
+                                         tree paths, and every reachable blob decoded once (binary, symlink and
+                                         tagged blobs included)
 
-Not covered: a push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) and
-bringing no new commit. No hook runs for it and no local ref shows the name.
+Not covered, since no hook runs between creating the ref and pushing it: ``git branch NAME`` or ``git tag`` followed
+directly by a push with no commit or checkout between, and a push naming a remote ref that no local ref holds
+(``git push origin HEAD:refs/heads/NAME``) with no new commit.
 """
 
 from __future__ import annotations
@@ -93,8 +95,10 @@ def redact(text: str, words: Words) -> str:
     """``text`` (a path or ref name) with every ``/``-separated part that holds a private word replaced by ``***``.
 
     The test is the same casefolded one as ``hits``, so whatever is found is also hidden; no position is mapped back.
+    A word that spans parts (one holding a ``/``) hides the whole text.
     """
-    return '/'.join('***' if hits(part, words) else part for part in text.split('/'))
+    shown = '/'.join('***' if hits(part, words) else part for part in text.split('/'))
+    return '***' if hits(shown, words) else shown
 
 
 def report(where: str, numbers: Iterable[int]) -> str:
@@ -134,12 +138,11 @@ def fields(output: bytes) -> list[str]:
 
 
 def reachable_blobs() -> Iterator[tuple[str, bytes]]:
-    """Every blob reachable from any ref, once, with one path it is reachable under."""
+    """Every blob reachable from any ref, once, with one path it is reachable under (``(tagged)`` for none)."""
     paths: dict[str, str] = {}
     for line in decode(git('rev-list', '--objects', '--all')).splitlines():
         sha, _, path = line.partition(' ')
-        if path:  # commits have no path; trees and blobs do
-            paths.setdefault(sha, path)
+        paths.setdefault(sha, path or '(tagged)')  # commits are listed too; cat-file names each object's kind
     request = ''.join(f'{sha}\n' for sha in paths).encode()
     result = subprocess.run(['git', 'cat-file', '--batch'], input=request, capture_output=True, check=False)
     if result.returncode:

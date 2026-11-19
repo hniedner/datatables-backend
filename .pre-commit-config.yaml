@@ -1,6 +1,6 @@
-# Install with `uv run pre-commit install` (installs the pre-commit, commit-msg and pre-push hooks below).
+# Install with `uv run pre-commit install` (installs the pre-commit, commit-msg, pre-push and post-checkout hooks).
 # Tools that are Python packages run through `uv run --frozen`, so uv.lock pins them.
-default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_install_hook_types: [pre-commit, commit-msg, pre-push, post-checkout]
 default_stages: [pre-commit]
 
 repos:
@@ -20,6 +20,7 @@ repos:
       - id: detect-private-key
       - id: check-added-large-files
         args: [--enforce-all] # otherwise it checks only files being added
+        exclude: ^uv\.lock$ # generated, and already near the 500 KB limit; it grows with every dependency
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
@@ -73,12 +74,16 @@ repos:
         entry: uv run --frozen python scripts/private_word_scan.py --message
         language: system
         stages: [commit-msg]
-      # On every commit, whatever is staged: a push that only adds a ref (a new branch at an existing commit)
-      # brings no commit, so pre-commit runs no pre-push hook for it; a word in a local ref name or tag fails here.
+      # A push that only adds a ref (a new branch or tag at an existing commit) brings no commit, so pre-commit runs
+      # no pre-push hook for it. A word in a local ref name or tag fails every commit, and every checkout:
+      # `git switch -c NAME` exits non-zero, so `git switch -c NAME && git push` stops before the push. Git cannot
+      # undo the checkout itself. Still unscanned: `git branch NAME` or `git tag` followed straight by a push, with
+      # no commit or checkout between, and a push to a remote ref no local ref holds (`git push origin HEAD:NAME`).
       - id: private-words-refs
         name: private-word scan (local ref names and tags)
         entry: uv run --frozen python scripts/private_word_scan.py --refs
         language: system
+        stages: [pre-commit, post-checkout]
         always_run: true
         pass_filenames: false
       # Before a push: everything the push publishes, including ref names, authors, and commits made by a rebase,

@@ -22,7 +22,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+      - id: review
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: low
           fail-on-scopes: runtime, development
@@ -35,3 +36,13 @@ jobs:
           # scripts/test_dependency_review_exemptions.py fails when the locked version changes, forcing a
           # licence re-check of the new one.
           allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf
+      # The action only lists a dependency whose licence it cannot detect; it fails on forbidden and unresolved
+      # licences alone. Its invalid-license-changes output (empty when no dependency changed) holds them under
+      # `unlicensed`, without the exempted packages above.
+      - name: Fail on a dependency with no detected licence
+        env:
+          CHANGES: ${{ steps.review.outputs.invalid-license-changes }}
+        run: |
+          if [ -z "$CHANGES" ]; then echo 'No dependency changes.'; exit 0; fi
+          jq -r '.unlicensed[] | "\(.name) \(.version): no licence detected"' <<< "$CHANGES"
+          test "$(jq '.unlicensed | length' <<< "$CHANGES")" -eq 0

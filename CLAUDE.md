@@ -10,16 +10,18 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest`
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
-- `uv run pre-commit install` once per clone (pre-commit and commit-msg hooks); `uv run pre-commit run --all-files`
-  runs every hook by hand.
+- `uv run pre-commit install` once per clone (pre-commit, commit-msg, pre-push and post-checkout hooks);
+  `uv run pre-commit run --all-files` runs every hook by hand.
 - `uv run pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
-  --compare-branch=origin/main --fail-under=95` checks the changed lines as CI does.
+  --compare-branch=origin/main --fail-under=95` checks the changed lines close to CI (CI compares with the PR base or
+  the push's previous commit).
 
 The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names (one
 word per line). Without it they fail closed ("could not check"), so set it before committing. CI skips them; it has
-no list. `uv run python scripts/private_word_scan.py --history` scans every commit on every ref. Every commit also
-fails while a local branch or tag name holds a word, since a push that only adds a ref runs no pre-push hook. Not
-covered: a push naming a remote ref that no local ref holds and bringing no new commit
+no list. `uv run python scripts/private_word_scan.py --history` scans every commit on every ref. Every commit and
+every checkout also fails while a local branch or tag name holds a word, since a push that only adds a ref runs no
+pre-push hook. Not covered: `git branch <name>` or `git tag` followed directly by a push with no commit or checkout
+between, and a push naming a remote ref that no local ref holds with no new commit
 (`git push origin HEAD:refs/heads/<name>`).
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
