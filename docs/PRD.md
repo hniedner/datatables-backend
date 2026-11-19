@@ -171,8 +171,9 @@ is a small backend:
 ### R9. Packaging and quality
 
 - The distribution is `datatables-backend` and the import is `datatables_backend`.
-- Extras are `[sqlalchemy]` (SQLAlchemy 2.0.30 or later), `[opensearch]` (opensearch-py 2.6 or later) and `[fastapi]`
-  (FastAPI 0.133 or later, python-multipart 0.0.9 or later). The core depends only on Pydantic 2.10 or later.
+- Extras are `[sqlalchemy]` (SQLAlchemy 2.0.31 or later), `[opensearch]` (opensearch-py 2.6 or later) and `[fastapi]`
+  (FastAPI 0.133 or later, python-multipart 0.0.9 or later). The core depends only on Pydantic 2.10 or later, 2.12 or
+  later on Python 3.14. Every floor is tested on each supported Python.
 - Python 3.12 or later. Python 3.10 reached end of life in 2026-10, and the code uses PEP 695 syntax.
 - Fully typed (`py.typed`), checked with basedpyright and ruff.
 - Tests:

@@ -11,14 +11,15 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
 
-The supported range is Python 3.12+, Pydantic 2.10+, SQLAlchemy 2.0.30+, opensearch-py 2.6+, FastAPI 0.133+ and
-python-multipart 0.0.9+. FastAPI 0.133 is the first release without a `starlette<1.0` cap; the tests need
-starlette 1.2+ for `httpx2`, which the dev group asks for. To check the minimum versions, build a
-resolver-consistent environment and run pytest with its own interpreter, as CI's `minimum-versions` job does:
+The supported range is Python 3.12+, Pydantic 2.10+ (2.12+ on Python 3.14, the first with a 3.14 wheel), SQLAlchemy
+2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and python-multipart 0.0.9+. FastAPI
+0.133 is the first release without a `starlette<1.0` cap; the tests need starlette 1.2+ for `httpx2`, which the dev
+group asks for. To check the minimum versions, build a resolver-consistent environment and run pytest with its own
+interpreter, as CI's `minimum-versions` job does for each Python (on 3.14, pin `pydantic==2.12.0`):
 
 ```sh
 uv venv -p 3.12 <scratch>/venv-min
-uv pip install -p <scratch>/venv-min -e . --group dev sqlalchemy==2.0.30 pydantic==2.10.0 fastapi==0.133.0 \
+uv pip install -p <scratch>/venv-min -e . --group dev sqlalchemy==2.0.31 pydantic==2.10.0 fastapi==0.133.0 \
   python-multipart==0.0.9 opensearch-py==2.6.0
 uv pip check -p <scratch>/venv-min
 <scratch>/venv-min/bin/python -c 'from importlib.metadata import version as v

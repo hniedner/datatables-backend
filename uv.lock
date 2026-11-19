@@ -1,6 +1,10 @@
 version = 1
 revision = 5
 requires-python = ">=3.12"
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version < '3.14'",
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -527,8 +531,9 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.133" },
     { name = "opensearch-py", marker = "extra == 'opensearch'", specifier = ">=2.6" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic", marker = "python_full_version >= '3.14'", specifier = ">=2.12" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.9" },
-    { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0.30" },
+    { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0.31" },
 ]
 provides-extras = ["fastapi", "opensearch", "sqlalchemy"]
 
@@ -544,7 +549,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "ruff", specifier = ">=0.8" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.30" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.31" },
     { name = "starlette", specifier = ">=1.2" },
 ]
 

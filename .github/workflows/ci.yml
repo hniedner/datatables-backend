@@ -81,19 +81,31 @@ jobs:
           sys.exit(f'{extra} loaded {leaked}' if leaked else 0)
           EOF
 
-  # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras, with the rest of the dev
-  # group resolved to match them. It does not use `uv run --with ... pytest`: with UV_PROJECT_ENVIRONMENT set, that overlay
-  # can be silently ignored. This job uses an explicit environment, checked with `uv pip check`, and asserts its versions.
+  # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the rest
+  # of the dev group resolved to match them. It does not use `uv run --with ... pytest`: with UV_PROJECT_ENVIRONMENT set, that
+  # overlay can be silently ignored. This job uses an explicit environment, checked with `uv pip check`, and asserts its
+  # versions.
   minimum-versions:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.12'
+            pins: sqlalchemy==2.0.31 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
+          - python: '3.13'
+            pins: sqlalchemy==2.0.31 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
+          - python: '3.14'
+            pins: sqlalchemy==2.0.31 pydantic==2.12.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
     env:
-      MIN_PINS: sqlalchemy==2.0.30 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
+      MIN_PINS: ${{ matrix.pins }}
+      MIN_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - run: uv venv -p 3.12 .venv-min
+      - run: uv venv -p "$MIN_PYTHON" .venv-min
       - run: |
           read -ra pins <<< "$MIN_PINS"
           uv pip install -p .venv-min -e . --group dev "${pins[@]}"
@@ -104,6 +116,7 @@ jobs:
           from importlib.metadata import version
           import os, sys
           print('python', sys.version.split()[0], 'starlette', version('starlette'))
+          assert sys.version.startswith(os.environ['MIN_PYTHON'] + '.'), sys.version
           for pin in os.environ['MIN_PINS'].split():
               name, wanted = pin.split('==')
               print(name, version(name))
