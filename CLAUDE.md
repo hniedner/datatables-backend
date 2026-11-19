@@ -12,7 +12,7 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run basedpyright`
 - `uv run pre-commit install` once per clone (pre-commit and commit-msg hooks); `uv run pre-commit run --all-files`
   runs every hook by hand.
-- `uv run pytest --cov=datatables_backend --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
+- `uv run pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
   --compare-branch=origin/main --fail-under=95` checks the changed lines as CI does.
 
 The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names (one

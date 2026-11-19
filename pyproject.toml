@@ -98,3 +98,7 @@ known-first-party = ["datatables_backend"]
 include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
+
+[tool.coverage.run]
+# The word-scan tests run the script as a subprocess, as its hooks do; this measures those runs too.
+patch = ["subprocess"]
