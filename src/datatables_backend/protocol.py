@@ -16,12 +16,14 @@ from typing import Any
 from typing import Literal
 from typing import cast
 
+from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Discriminator
 from pydantic import Field
 from pydantic import Tag
 from pydantic import ValidationError
+from pydantic import model_validator
 
 log = logging.getLogger('datatables_backend')
 
@@ -59,8 +61,44 @@ class Search(_Model):
 
     value: str = ''
     regex: bool = False
-    #: Not part of the DataTables protocol: a multi-select may send its values as a list here
+    #: Not part of the DataTables protocol: a column's multi-select may send its values as a list here; the global
+    #: search refuses one
     multi_values: list[str] | None = None
+    #: DataTables' fixed and grouped searches, which the library does not answer: refused unless empty, so a client
+    #: that uses them is told so instead of getting fewer filters than it asked for
+    fixed: list[Any] = Field(default=[], max_length=0)
+    groups: list[Any] = Field(default=[], max_length=0)
+    groupsFixed: list[Any] = Field(default=[], max_length=0)
+
+
+def _empty(value: Any) -> Any:
+    """An empty list or object, the idle form of a filter the library does not answer; anything else is refused."""
+    if not isinstance(value, (list, dict)) or value:
+        raise ValueError('a filter the library does not answer')
+    return cast(Any, value)
+
+
+class ColumnControlSearch(_Model):
+    """ColumnControl's column search, which the library does not answer: refused when active, as ColumnControl
+    itself counts it (a value, or the ``empty``/``notEmpty`` logic that needs none). It sends an idle one on every
+    request."""
+
+    value: str = ''
+    logic: str = ''
+
+    @model_validator(mode='after')
+    def _idle(self) -> ColumnControlSearch:
+        if self.value or self.logic in ('empty', 'notEmpty'):
+            raise ValueError('a ColumnControl search is not supported')
+        return self
+
+
+class ColumnControl(_Model):
+    """ColumnControl's per-column filters: refused unless idle, so a client is told instead of getting fewer filters
+    than it asked for."""
+
+    search: ColumnControlSearch = ColumnControlSearch()
+    list: Annotated[Any, AfterValidator(_empty)] = []
 
 
 class DTColumn(_Model):
@@ -71,6 +109,7 @@ class DTColumn(_Model):
     searchable: bool = True
     orderable: bool = True
     search: Search = Search()
+    columnControl: ColumnControl = ColumnControl()
 
     @property
     def key(self) -> str:
@@ -102,8 +141,13 @@ class SearchGroup(_Model):
     criteria: list[SearchNode] = []
 
 
-def _node_kind(value: Any) -> str:
-    fields = cast(Mapping[str, Any], value) if isinstance(value, Mapping) else vars(value)
+def _node_kind(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        fields: Mapping[str, Any] = cast(Mapping[str, Any], value)
+    elif isinstance(value, (SearchGroup, SearchCriterion)):
+        fields = vars(value)
+    else:  # neither: pydantic reports it, and the request is malformed
+        return None
     return 'group' if 'criteria' in fields or 'logic' in fields else 'criterion'
 
 
@@ -111,6 +155,12 @@ def _node_kind(value: Any) -> str:
 type SearchNode = Annotated[
     Annotated[SearchGroup, Tag('group')] | Annotated[SearchCriterion, Tag('criterion')], Discriminator(_node_kind)
 ]
+
+
+def _no_selection(panes: dict[str, Any]) -> dict[str, Any]:
+    for pane in panes.values():  # checked here, not by a typed dict, so a refusal never names a client's column
+        _empty(pane)
+    return panes
 
 
 class DTParams(_Model):
@@ -123,6 +173,11 @@ class DTParams(_Model):
     order: list[DTOrder] = []
     search: Search = Search()
     searchBuilder: SearchGroup | None = None
+    #: SearchPanes' selections, which the library does not answer: a pane holding a selection is refused. SearchPanes
+    #: sends an empty object per pane on every request, ``searchPanes_options`` on every request and
+    #: ``searchPanesLast`` with a selection; those are accepted or ignored.
+    searchPanes: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
+    searchPanes_null: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
 
 
 class DTResponse(_Model):
@@ -170,7 +225,9 @@ class SchemaError(RuntimeError):
 # A search, a filter or an order on a name the server did not declare, or an order it does not allow
 NO_USABLE_COLUMN = 'This table cannot be searched or sorted that way.'
 
-_BRACKETS = re.compile(r'\[([^\]]*)\]')
+_HEAD = re.compile(r'[^.\[\]]*')
+_KEY = re.compile(r'[^.\[\]]+(?:\[[^.\[\]]*\]|\.[^.\[\]]+)*')
+_PART = re.compile(r'\[([^.\[\]]*)\]|\.([^.\[\]]+)')
 
 
 def parse_request(
@@ -178,15 +235,35 @@ def parse_request(
 ) -> DTParams:
     """Read a DataTables request.
 
-    ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or the
-    flat parameters of DataTables' default encoding (``columns[0][search][value]``), as a mapping or as key-value
-    pairs (a query string or form with repeated ``key[]`` entries).
+    ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or flat
+    parameters, as a mapping, a multi-dict (anything with ``getlist``, whose every value is read) or key-value pairs
+    (a query string or form with repeated ``key[]`` entries). Flat keys
+    may be bracketed, as DataTables' default encoding sends them (``columns[0][search][value]``), dotted
+    (``columns[0].search.value``, as spring-data-jpa-datatables reads them, or ``columns.0.search.value``), or mixed.
+    A flat key is the request's own when its name before the first ``.``, ``[`` or ``]`` is a request parameter
+    (``draw``, ``start``, ``length``, ``columns``, ``order``, ``search``, ``searchBuilder``, ``searchPanes``,
+    ``searchPanes_null``). Any other key, such as DataTables' cache-buster ``_``, SearchPanes' ``searchPanes_options``
+    or an app's own ``ajax.data`` keys, is ignored, so an app key must not begin with one of those names followed by
+    ``.`` or ``[``. A request key must be ``[part]`` and ``.part`` segments, a bracket segment holding no ``.``; an
+    index is ``0`` or at most 9 ASCII digits without a leading zero, and ``[]`` appends a value, never a field.
+
+    Filters the library does not answer are refused unless empty or idle, so a client is told instead of getting fewer
+    filters than it asked for: DataTables' fixed and grouped searches (``search[fixed]``, ``search[groups]``,
+    ``search[groupsFixed]``, ``columns[i][search][fixed]``), SearchPanes' selections (a pane in ``searchPanes`` or
+    ``searchPanes_null`` that is not empty; SearchPanes sends an empty one per pane) and ColumnControl's
+    (``columns[i][columnControl][list]``, and a ``columns[i][columnControl][search]`` with a value or the
+    ``empty``/``notEmpty`` logic).
 
     Raises:
-        MalformedRequest: the structure, a paging number, or the page length is wrong. The message never quotes the
-            request's values.
+        MalformedRequest: the request holds no DataTables parameter (an empty one, or DataTables 1.9's form), or
+            the structure, a request key's shape, a paging number, or the page length is wrong, or a
+            filter the library does not answer is sent. The message names the parameter where it can, and never
+            quotes the request's keys or values.
     """
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
+    if not body.keys() & DTParams.model_fields.keys():  # empty, or another protocol (e.g. DataTables 1.9's sEcho)
+        log.warning('datatables_request_malformed', extra={'parameter': None})
+        raise MalformedRequest('The table request holds no DataTables parameter.')
     try:
         json.dumps(body, ensure_ascii=False).encode()
     except UnicodeEncodeError:  # a lone surrogate: no driver can encode it
@@ -206,20 +283,58 @@ def parse_request(
 
 
 def _is_flat(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> bool:
-    if not isinstance(data, Mapping):
+    if not isinstance(data, Mapping) or hasattr(data, 'getlist'):  # pairs, or a multi-dict of form fields
         return True
-    return any('[' in key for key in cast(Mapping[str, Any], data))
+    return any(
+        isinstance(key, str) and _head(key) in DTParams.model_fields and _head(key) != key
+        for key in cast(Mapping[str, Any], data)
+    )
+
+
+def _head(key: str) -> str:
+    return cast(re.Match[str], _HEAD.match(key)).group()
+
+
+def _path(key: str) -> list[str] | None:
+    """``columns[0][search][value]``, ``columns[0].search.value`` or ``columns.0.search.value`` as its parts.
+
+    None for a key that is not the request's own; a request key of any other shape is refused.
+    """
+    head = _head(key)
+    if head not in DTParams.model_fields:
+        return None
+    if not _KEY.fullmatch(key):
+        log.warning('datatables_request_malformed', extra={'parameter': head})
+        raise MalformedRequest(f'Invalid {head} parameter.')
+    return [head, *(dotted or bracketed for bracketed, dotted in _PART.findall(key, len(head)))]
 
 
 def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str, Any]:
-    """``{'columns[0][data]': 'a'}`` as ``{'columns': [{'data': 'a'}]}``; a ``key[]`` repeated is a list."""
-    items: Iterable[tuple[str, Any]] = cast(Mapping[str, Any], data).items() if isinstance(data, Mapping) else data
+    """``{'columns[0][data]': 'a'}`` or ``{'columns.0.data': 'a'}`` as ``{'columns': [{'data': 'a'}]}``.
+
+    A ``key[]`` repeated is a list. Keys that are not the request's own are left out.
+    """
+    items: Iterable[tuple[str, Any]]
+    if hasattr(data, 'getlist'):  # a multi-dict (Starlette, Werkzeug, Django): every value of a repeated key
+        multi = cast(Any, data)
+        items = [(key, value) for key in multi for value in multi.getlist(key)]
+    elif isinstance(data, Mapping):
+        items = cast(Mapping[str, Any], data).items()
+    else:
+        items = data
     root: dict[str, Any] = {}
     for key, raw in items:
-        head, _, rest = key.partition('[')
-        path = [head, *_BRACKETS.findall('[' + rest)] if rest else [head]
-        values = raw if isinstance(raw, list) else [raw]
-        for value in cast(list[Any], values):
+        if not isinstance(key, str):
+            raise MalformedRequest('The table request is malformed.')
+        path = _path(key)
+        if path is None:
+            continue
+        if isinstance(raw, list) and not raw and not key.endswith('[]'):  # no value for a single-value key
+            raise MalformedRequest(f'Invalid {path[0]} parameter.')
+        values = cast(list[Any], raw if isinstance(raw, list) else [raw])
+        if any(isinstance(value, dict) for value in values):  # an object among flat keys: JSON and form mixed
+            raise MalformedRequest(f'Invalid {path[0]} parameter.')
+        for value in values:
             _assign(root, path, value)
     return _lists(root)
 
@@ -233,6 +348,8 @@ def _assign(node: dict[str, Any], path: list[str], value: Any) -> None:
     last = path[-1]
     if last == '':  # key[]: append
         appended = node.setdefault('', [])
+        if not isinstance(appended, list):  # a field was put under this append first (key[][part])
+            raise MalformedRequest('The table request is malformed.')
         cast(list[Any], appended).append(value)
     elif last in node:
         raise MalformedRequest('The table request is malformed.')
@@ -240,15 +357,24 @@ def _assign(node: dict[str, Any], path: list[str], value: Any) -> None:
         node[last] = value
 
 
+def _index(key: str) -> bool:
+    """Whether ``key`` is a list index: ``0``, or at most 9 ASCII digits without a leading zero."""
+    return key == '0' or (key.isascii() and key.isdigit() and len(key) <= 9 and not key.startswith('0'))
+
+
 def _lists(node: Any) -> Any:
     """Dicts whose keys are 0..n-1 become lists; a ``key[]`` list replaces its holder."""
     if not isinstance(node, dict):
         return node
     mapping = cast(dict[str, Any], node)
+    if '' in mapping and len(mapping) > 1:  # key[] beside key[part]: an append and a field under one parent
+        raise MalformedRequest('The table request is malformed.')
     if set(mapping) == {''}:
-        return [_lists(value) for value in mapping['']]
+        if not isinstance(mapping[''], list):  # key[][part]: a field under an append, which nothing sends
+            raise MalformedRequest('The table request is malformed.')
+        return [_lists(value) for value in cast(list[Any], mapping[''])]
     converted = {key: _lists(value) for key, value in mapping.items()}
-    if converted and all(key.isdigit() for key in converted):
+    if converted and all(_index(key) for key in converted):
         indexes = sorted(int(key) for key in converted)
         if indexes != list(range(len(indexes))):
             raise MalformedRequest('The table request is malformed.')
