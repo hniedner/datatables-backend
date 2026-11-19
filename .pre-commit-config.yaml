@@ -86,8 +86,8 @@ repos:
         stages: [pre-commit, post-checkout]
         always_run: true
         pass_filenames: false
-      # Before a push: everything the push publishes, including ref names, authors, and commits made by a rebase,
-      # cherry-pick or merge, which skip the two hooks above.
+      # Before a push: everything the push publishes, including ref names, authors, commits made by a rebase or
+      # cherry-pick, which skip the commit-stage hooks, and merge results, whose files no commit-stage hook scans.
       - id: private-words-history
         name: private-word scan (everything a push publishes)
         entry: uv run --frozen python scripts/private_word_scan.py --history

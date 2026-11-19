@@ -64,7 +64,7 @@ def load_words() -> Words:
     if not path.is_file():
         raise CouldNotCheckError(f'{VARIABLE} names no readable file')
     try:
-        text = path.read_text(encoding='utf-8')
+        text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
     except UnicodeDecodeError:
         raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
     words = [
@@ -83,6 +83,24 @@ def decode(data: bytes) -> str:
         if data.startswith(bom):
             return data.decode(encoding, errors='ignore')
     return data.decode('utf-8', errors='ignore')
+
+
+def other_readings(data: bytes) -> list[str]:
+    """The same bytes read in the encodings ``decode`` does not try: without a byte order mark, UTF-16 at both
+    alignments (UTF-16LE from the second byte reads UTF-16BE text), and cp1252 when the bytes are not UTF-8."""
+    if any(data.startswith(bom) for bom, _ in _BOMS):
+        return []
+    readings = [data[start:].decode('utf-16-le', errors='ignore') for start in (0, 1)]
+    try:
+        data.decode('utf-8')
+    except UnicodeDecodeError:
+        readings.append(data.decode('cp1252', errors='ignore'))
+    return readings
+
+
+def content_hits(data: bytes, words: Words) -> list[int]:
+    """The list lines of the words the bytes hold in any reading but ``decode``'s."""
+    return sorted({number for reading in other_readings(data) for number in hits(reading, words)})
 
 
 def hits(text: str, words: Words) -> list[int]:
@@ -116,17 +134,21 @@ def scan_files(names: list[str], words: Words) -> list[str]:
             if found := hits(os.readlink(path), words):
                 findings.append(report(f'{shown} (link target)', found))
             continue
-        if not path.is_file():
-            continue
-        for number, line in enumerate(decode(path.read_bytes()).splitlines(), 1):
+        data = path.read_bytes()
+        for number, line in enumerate(decode(data).splitlines(), 1):
             if found := hits(line, words):
                 findings.append(report(f'{shown}:{number}', found))
+        if found := content_hits(data, words):
+            findings.append(report(f'{shown} (contents in another encoding)', found))
     return findings
 
 
 def git(*args: str, ok: tuple[int, ...] = (0,)) -> bytes:
-    """A git command's output; paths unquoted. Raises CalledProcessError on an unexpected exit status."""
-    result = subprocess.run(['git', '-c', 'core.quotePath=false', *args], capture_output=True, check=False)
+    """A git command's output. Raises CalledProcessError on an unexpected exit status.
+
+    No output read here quotes a path: ``ls-tree -z``, ``rev-list --objects`` and the ``log`` formats print it raw.
+    """
+    result = subprocess.run(['git', *args], capture_output=True, check=False)
     if result.returncode not in ok:
         raise subprocess.CalledProcessError(result.returncode, 'git')
     return result.stdout
@@ -184,7 +206,7 @@ def scan_history(words: Words) -> list[str]:
             if (found := hits(path, words))
         )
     for path, data in reachable_blobs():  # each blob once, decoded as file mode decodes it (symlink targets too)
-        if found := hits(decode(data), words):
+        if found := sorted({*hits(decode(data), words), *content_hits(data, words)}):
             findings.append(report(f'{redact(path, words)} (contents)', found))
     return findings
 

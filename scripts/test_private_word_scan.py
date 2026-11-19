@@ -148,8 +148,8 @@ def commit(
     ['non-ascii path', 'path and contents', 'binary blob', 'ref name', 'tag message', 'author', 'committer'],
 )
 def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words: Path, where: str):
-    if where == 'non-ascii path':
-        commit(repo, f'über-{WORD}.txt', f'{WORD}\n'.encode())
+    if where == 'non-ascii path':  # the word in the path only
+        commit(repo, f'über-{WORD}.txt', b'clean\n')
     elif where == 'path and contents':
         commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode())
     elif where == 'binary blob':
@@ -308,3 +308,46 @@ def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path
     planted = tmp_path / 'notes.txt'
     planted.write_bytes(f'see {WORD} here\n'.encode('utf-32'))
     assert scan(str(planted), words=words).returncode == 1
+
+
+def test_a_word_list_saved_with_a_byte_order_mark_keeps_its_first_word(tmp_path: Path):
+    listed = tmp_path / 'bom.txt'
+    listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 1, result.stdout
+
+
+@pytest.mark.parametrize('where', ['message', 'author'])
+def test_history_reads_commits_on_every_branch(repo: Path, words: Path, where: str):
+    """The word is only in the side branch's commit, not in any file, so only the commit scan can find it."""
+    git(repo, 'switch', '-q', '-c', 'side')
+    if where == 'message':
+        commit(repo, 'b.txt', b'clean\n', message=f'Add {WORD}')
+    else:
+        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'})
+    git(repo, 'switch', '-q', 'main')
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+
+
+@pytest.mark.parametrize(
+    ('word', 'data'),
+    [
+        ('Grünkohl', 'see grünkohl here\n'.encode('cp1252')),
+        (WORD, f'see {WORD} here\n'.encode('utf-16-le')),
+        (WORD, f'see {WORD} here\n'.encode('utf-16-be')),
+    ],
+    ids=['cp1252', 'utf-16-le without bom', 'utf-16-be without bom'],
+)
+def test_a_file_in_another_encoding_without_a_byte_order_mark_is_read(tmp_path: Path, word: str, data: bytes):
+    listed = write(tmp_path / 'list.txt', f'{word}\n')
+    planted = tmp_path / 'notes.txt'
+    planted.write_bytes(data)
+    result = scan(str(planted), words=listed)
+    assert result.returncode == 1, result.stdout
+    assert word.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_blob_in_another_encoding_without_a_byte_order_mark_is_read(repo: Path, words: Path):
+    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-16-le'))
+    assert scan('--history', words=words, cwd=repo).returncode == 1
