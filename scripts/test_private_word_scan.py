@@ -25,7 +25,7 @@ def scan(*args: str, words: Path | None, cwd: Path | None = None) -> subprocess.
 @pytest.fixture
 def words(tmp_path: Path) -> Path:
     path = tmp_path / 'words.txt'
-    path.write_text(f'# private words\n\n{WORD.lower()}\n', encoding='utf-8')  # the word is on line 3
+    path.write_text('# private words\n\nzEBRAfINCH\n', encoding='utf-8')  # line 3, in another case than WORD
     return path
 
 
@@ -46,8 +46,8 @@ def test_a_planted_word_in_a_path_fails_and_the_path_is_redacted(tmp_path: Path,
     planted = write(tmp_path / f'{WORD}.txt', f'{WORD}\n')
     result = scan(str(planted), words=words)
     assert result.returncode == 1
-    assert '***.txt (path): private word #3' in result.stderr
-    assert '***.txt:1: private word #3' in result.stderr
+    assert '/*** (path): private word #3' in result.stderr  # the whole path part holding the word
+    assert '/***:1: private word #3' in result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
@@ -157,3 +157,70 @@ def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+FOLDED = 'GÄRTNERSTRASSE'  # a list entry that casefolds to the same text as the planted spelling below
+PLANTED = 'Gärtnerstraße'  # casefold: 'gärtnerstrasse'; a case-insensitive regex of FOLDED does not match it
+
+
+@pytest.fixture
+def folded_words(tmp_path: Path) -> Path:
+    return write(tmp_path / 'folded.txt', f'{FOLDED}\n')
+
+
+def never_printed(result: subprocess.CompletedProcess[str]) -> bool:
+    return FOLDED.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_casefolded_word_in_a_path_is_found_and_redacted(tmp_path: Path, folded_words: Path):
+    planted = write(tmp_path / f'old-{PLANTED}.txt', 'clean\n')
+    result = scan(str(planted), words=folded_words)
+    assert result.returncode == 1
+    assert never_printed(result), result.stderr
+
+
+@pytest.mark.parametrize('where', ['path', 'ref name', 'contents'])
+def test_a_casefolded_word_in_history_is_found_and_redacted(repo: Path, folded_words: Path, where: str):
+    if where == 'path':
+        commit(repo, f'old-{PLANTED}.txt', b'clean\n')
+    elif where == 'ref name':
+        git(repo, 'branch', f'topic-{PLANTED}')
+    else:
+        commit(repo, 'notes.txt', f'see {PLANTED}\n'.encode())
+    result = scan('--history', words=folded_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert never_printed(result), result.stderr
+
+
+def test_a_utf16_blob_in_history_is_found(repo: Path, words: Path):
+    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-16'))
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
+def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
+    link = tmp_path / 'link'
+    link.symlink_to(f'../{WORD}/target')
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_symlink_target_in_history_is_scanned(repo: Path, words: Path):
+    (repo / 'link').symlink_to(f'../{WORD}/target')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'Add a link')
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
+def test_a_missing_message_file_cannot_check_and_is_not_printed(tmp_path: Path, words: Path):
+    result = scan('--message', str(tmp_path / f'missing-{WORD}.txt'), words=words)
+    assert result.returncode == 2
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path):
+    latin1 = tmp_path / 'latin1.txt'
+    latin1.write_bytes('Gärtner\n'.encode('latin-1'))
+    result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=latin1)
+    assert result.returncode == 2
+    assert 'not UTF-8' in result.stderr

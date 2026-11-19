@@ -3,7 +3,7 @@
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
 word per line, matched case-insensitively as a substring; blank lines and lines starting with ``#`` are skipped. The
 list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
-path holding a word is printed with the word replaced by ``***``.
+path or ref name is printed with each ``/``-separated part that holds a word replaced by ``***``.
 
 The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, it
 cannot check, and says so with exit status 2, which blocks like a finding (exit status 1). That message names no
@@ -12,21 +12,21 @@ command and no path, since either could hold a word.
 Usage:
     private_word_scan.py FILE...         paths and contents of the given files (the pre-commit stage)
     private_word_scan.py --message FILE  a commit message (the commit-msg stage)
-    private_word_scan.py --history       everything a push publishes: every ref's name, every annotated tag, and
-                                         for every commit reachable from any ref its message, author and
-                                         committer, and its tree's paths and contents (binary blobs included)
+    private_word_scan.py --history       everything a push publishes: every ref's name, every annotated tag, for
+                                         every commit reachable from any ref its message, author, committer and
+                                         tree paths, and every reachable blob decoded once (binary and symlink
+                                         blobs included)
 """
 
 from __future__ import annotations
 
 import codecs
 from collections.abc import Iterable
+from collections.abc import Iterator
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
-import tempfile
 
 VARIABLE = 'DTB_PRIVATE_WORDS'
 FOUND = 1
@@ -55,9 +55,13 @@ def load_words() -> Words:
     path = Path(location).expanduser()
     if not path.is_file():
         raise CouldNotCheckError(f'{VARIABLE} names no readable file')
+    try:
+        text = path.read_text(encoding='utf-8')
+    except UnicodeDecodeError:
+        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
     words = [
         (number, line.strip().casefold())
-        for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1)
+        for number, line in enumerate(text.splitlines(), 1)
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
@@ -80,10 +84,11 @@ def hits(text: str, words: Words) -> list[int]:
 
 
 def redact(text: str, words: Words) -> str:
-    """``text`` with every private word in it replaced by ``***``, so a finding never prints one."""
-    for _, word in words:
-        text = re.sub(re.escape(word), '***', text, flags=re.IGNORECASE)
-    return text
+    """``text`` (a path or ref name) with every ``/``-separated part that holds a private word replaced by ``***``.
+
+    The test is the same casefolded one as ``hits``, so whatever is found is also hidden; no position is mapped back.
+    """
+    return '/'.join('***' if hits(part, words) else part for part in text.split('/'))
 
 
 def report(where: str, numbers: Iterable[int]) -> str:
@@ -97,6 +102,10 @@ def scan_files(names: list[str], words: Words) -> list[str]:
         if found := hits(name, words):
             findings.append(report(f'{shown} (path)', found))
         path = Path(name)
+        if path.is_symlink():  # the link's own text: its target, which is what git stores and publishes
+            if found := hits(os.readlink(path), words):
+                findings.append(report(f'{shown} (link target)', found))
+            continue
         if not path.is_file():
             continue
         for number, line in enumerate(decode(path.read_bytes()).splitlines(), 1):
@@ -118,6 +127,27 @@ def fields(output: bytes) -> list[str]:
     return [decode(field) for field in output.split(b'\0') if field]
 
 
+def reachable_blobs() -> Iterator[tuple[str, bytes]]:
+    """Every blob reachable from any ref, once, with one path it is reachable under."""
+    paths: dict[str, str] = {}
+    for line in decode(git('rev-list', '--objects', '--all')).splitlines():
+        sha, _, path = line.partition(' ')
+        if path:  # commits have no path; trees and blobs do
+            paths.setdefault(sha, path)
+    request = ''.join(f'{sha}\n' for sha in paths).encode()
+    result = subprocess.run(['git', 'cat-file', '--batch'], input=request, capture_output=True, check=False)
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, 'git')
+    out, at = result.stdout, 0
+    for path in paths.values():  # cat-file answers in the order it was asked
+        end = out.index(b'\n', at)
+        _, kind, size = out[at:end].split()
+        start = end + 1
+        at = start + int(size) + 1
+        if kind == b'blob':
+            yield path, out[start : start + int(size)]
+
+
 def scan_history(words: Words) -> list[str]:
     findings: list[str] = []
     for ref in decode(git('for-each-ref', '--format=%(refname)')).splitlines():  # ref names hold no newline
@@ -128,27 +158,20 @@ def scan_history(words: Words) -> list[str]:
             continue
         if found := hits(decode(git('cat-file', '-p', ref)), words):
             findings.append(report(f'tag {shown} (tagger or message)', found))
-    with tempfile.NamedTemporaryFile('w', encoding='utf-8', suffix='.txt', delete=False) as pattern_file:
-        pattern_file.write('\n'.join(word for _, word in words) + '\n')
-    try:
-        for revision in decode(git('rev-list', '--all')).split():
-            short = revision[:12]
-            if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
-                findings.append(report(f'{short} (message)', found))
-            if found := hits(' '.join(fields(git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce', revision))), words):
-                findings.append(report(f'{short} (author or committer)', found))
-            findings.extend(
-                report(f'{short}:{redact(path, words)} (path)', found)
-                for path in fields(git('ls-tree', '-r', '-z', '--name-only', revision))
-                if (found := hits(path, words))
-            )
-            listed = git('grep', '-z', '-a', '-i', '-F', '-l', '-f', pattern_file.name, revision, ok=(0, 1))
-            for match in fields(listed):
-                path = match.split(':', 1)[1]
-                found = hits(decode(git('show', f'{revision}:{path}')), words)
-                findings.append(report(f'{short}:{redact(path, words)}', found))
-    finally:
-        Path(pattern_file.name).unlink()
+    for revision in decode(git('rev-list', '--all')).split():
+        short = revision[:12]
+        if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
+            findings.append(report(f'{short} (message)', found))
+        if found := hits(' '.join(fields(git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce', revision))), words):
+            findings.append(report(f'{short} (author or committer)', found))
+        findings.extend(
+            report(f'{short}:{redact(path, words)} (path)', found)
+            for path in fields(git('ls-tree', '-r', '-z', '--name-only', revision))
+            if (found := hits(path, words))
+        )
+    for path, data in reachable_blobs():  # each blob once, decoded as file mode decodes it (symlink targets too)
+        if found := hits(decode(data), words):
+            findings.append(report(f'{redact(path, words)} (contents)', found))
     return findings
 
 
