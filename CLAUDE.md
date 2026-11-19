@@ -17,7 +17,8 @@ python-multipart 0.0.9+. FastAPI 0.133 is the first release without a `starlette
 starlette 0.40.0, whose TestClient uses `httpx`; starlette 1.2+ uses `httpx2`, which the dev group asks for. To check
 the minimum versions, build a resolver-consistent environment and run pytest with its own interpreter, as CI's
 `minimum-versions` job does. Its 3.12 leg, as below, also forces the lowest starlette through an override and adds
-`httpx`; on 3.13 drop both, on 3.14 also pin `pydantic==2.12.0`, on 3.15 `pydantic==2.14.0`:
+`httpx`, as the 3.15 leg does. For another Python, change `-p 3.12` to it; on 3.13 and 3.14 drop the override and
+`httpx`; on 3.14 pin `pydantic==2.12.0`, on 3.15 `pydantic==2.14.0`:
 
 ```sh
 uv venv -p 3.12 <scratch>/venv-min

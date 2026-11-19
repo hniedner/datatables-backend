@@ -48,6 +48,16 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
+      - name: The environment runs the matrix Python
+        env:
+          PY: ${{ matrix.python }}
+        run: |
+          uv run --frozen python - <<'EOF'
+          import os, sys
+          version = sys.version.split()[0]
+          print('python', version)
+          assert version.startswith(os.environ['PY'] + '.'), version
+          EOF
       - run: uv run --frozen pytest
 
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
@@ -58,9 +68,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        python: ['3.12', '3.15']
         extra: [core, sqlalchemy, opensearch, fastapi]
     env:
       EXTRA: ${{ matrix.extra }}
+      PY: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,6 +89,7 @@ jobs:
           core = ['datatables_backend', *(f'datatables_backend.{m}' for m in modules)]
           for module in core if extra == 'core' else [*core, f'datatables_backend.{extra}']:
               importlib.import_module(module)
+          assert sys.version.startswith(os.environ['PY'] + '.'), sys.version
           where = sys.modules['datatables_backend'].__file__
           assert 'site-packages' in where, where  # the installed wheel, not the checkout
           if os.environ.get('ALL_EXTRAS'):
@@ -87,13 +100,13 @@ jobs:
               loaded = sorted(absent & set(sys.modules))
               print(f'{extra}, every extra installed: loaded {loaded or "nothing"} of {sorted(absent)}')
               sys.exit(f'{extra} loaded {loaded}' if loaded else 0)
-          print(f'{extra}, only its own extra installed: imports')
+          print(f'{extra} on {sys.version.split()[0]}, only its own extra installed: imports')
           EOF
       - name: Imports with only its own extra installed
         working-directory: ${{ runner.temp }}
         run: |
           wheel=$(ls dist/*.whl)
-          uv venv -q -p 3.12 own
+          uv venv -q -p "$PY" own
           if [ "$EXTRA" = core ]; then spec=$wheel; else spec="${wheel}[${EXTRA}]"; fi
           uv pip install -q -p own "$spec"
           own/bin/python check.py
@@ -101,14 +114,14 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           wheel=$(ls dist/*.whl)
-          uv venv -q -p 3.12 all
+          uv venv -q -p "$PY" all
           uv pip install -q -p all "${wheel}[sqlalchemy,opensearch,fastapi]" greenlet
           ALL_EXTRAS=1 all/bin/python check.py
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the
-  # rest of the dev group resolved to match them. The 3.12 leg also forces starlette 0.40.0, the lowest that fastapi
-  # 0.133 allows, as an override (the dev group's starlette>=1.2 is test tooling), plus httpx, which that TestClient
-  # needs.
+  # rest of the dev group resolved to match them. The 3.12 and 3.15 legs also force starlette 0.40.0, the lowest that
+  # fastapi 0.133 allows, as an override (the dev group's starlette>=1.2 is test tooling), plus httpx, which that
+  # TestClient needs.
   # It does not use `uv run --with ... pytest`: the project's `pytest` script runs the project interpreter, which does
   # not see the --with overlay (seen with uv 0.13.7 in a fresh checkout). This job uses an explicit environment, checked
   # with `uv pip check`, and asserts its versions.
@@ -128,6 +141,8 @@ jobs:
             pins: sqlalchemy==2.0.31 pydantic==2.12.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
           - python: '3.15'
             pins: sqlalchemy==2.0.31 pydantic==2.14.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
+            overrides: starlette==0.40.0
+            tools: httpx
     env:
       MIN_PINS: ${{ matrix.pins }}
       MIN_OVERRIDES: ${{ matrix.overrides }}
