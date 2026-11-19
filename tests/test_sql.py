@@ -185,6 +185,11 @@ def test_like_wildcards_in_a_search_are_literal(session: Session):
 
 def test_the_global_search_matches_a_date_by_its_day_text(session: Session):
     assert ids(table.fetch_sync(request(*ALL, search={'value': '2026-07-1'}), session)) == [1, 2, 5]
+    assert ids(table.fetch_sync(request(*ALL, search={'value': '1980-07'}), session)) == [2]  # a Date column
+
+
+def test_the_global_search_matches_a_number_by_its_text(session: Session):
+    assert ids(table.fetch_sync(request(*ALL, search={'value': '45'}), session)) == [2]
 
 
 def test_a_column_search_narrows_by_that_column(session: Session):
@@ -278,6 +283,34 @@ def test_searchbuilder_conditions(
     session: Session, column: str, condition: str, values: list[str], expected: list[int]
 ):
     assert ids(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [('=', ['2026-07-15'], [1]), ('>', ['2026-07-15'], [2]), ('<', ['2026-07-15'], [4, 5])],
+)
+def test_a_timezone_aware_column_compares_by_utc_day(
+    session: Session, condition: str, values: list[str], expected: list[int]
+):
+    """TIMESTAMPTZ on PostgreSQL, DATETIMEOFFSET on SQL Server: the day bounds are UTC midnights."""
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
+        expected
+    )
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('!=', ['1980-07-15'], [1, 4, 5]),
+        ('!between', ['1980-01-01', '1994-03-01'], [4, 5]),
+        ('!contains', ['1980'], [1, 4, 5]),
+    ],
+)
+def test_negated_date_conditions(session: Session, condition: str, values: list[str], expected: list[int]):
+    """Over rows that all have a date: what a negation does with NULL is PRD v2's to settle (PRD-F37)."""
+    dated = SQLTable(people, COLUMNS, base_filter=people.c.born.is_not(None))
+    assert ids(dated.fetch_sync(request(*ALL, **criterion('born', condition, *values)), session)) == expected
 
 
 def test_searchbuilder_groups_nest_and_empty_groups_add_nothing(session: Session):

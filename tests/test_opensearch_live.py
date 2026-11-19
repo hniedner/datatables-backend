@@ -28,7 +28,7 @@ from .conftest import request
 URL = os.environ.get('DTB_OPENSEARCH_URL', '')
 pytestmark = pytest.mark.skipif(not URL, reason='DTB_OPENSEARCH_URL is not set')
 
-INDEX = 'dtb-live-docs'
+INDEX = 'dtb-test-docs'  # owned by this module: deleted and recreated on every run
 KEYWORD_TEXT = {'type': 'text', 'fields': {'keyword': {'type': 'keyword'}}}  # what dynamic mapping gives a string
 MAPPING = {
     'properties': {

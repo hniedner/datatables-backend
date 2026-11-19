@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
+from datetime import UTC
 from datetime import date
 from datetime import datetime
 import os
@@ -75,6 +76,7 @@ people = Table(
     SQLColumn('age', SmallInteger, nullable=True),
     SQLColumn('born', Date, nullable=True),
     SQLColumn('seen', DateTime, nullable=True),
+    SQLColumn('seen_tz', DateTime(timezone=True), nullable=True),  # TIMESTAMPTZ, DATETIMEOFFSET; `seen` in UTC
     SQLColumn('team', String(20)),
     SQLColumn('secret', String(50)),
 )
@@ -82,30 +84,35 @@ people = Table(
 ROWS: list[dict[str, Any]] = [
     {
         'id': 1, 'name': 'Ann', 'email_address': 'ann@example.org', 'age': 31, 'born': date(1994, 3, 1),
-        'seen': datetime(2026, 7, 15, 23, 59), 'team': 'red', 'secret': 's1',
+        'seen': datetime(2026, 7, 15, 23, 59), 'seen_tz': datetime(2026, 7, 15, 23, 59, tzinfo=UTC),
+        'team': 'red', 'secret': 's1',
     },
     {
         'id': 2, 'name': 'Bob', 'email_address': None, 'age': 45, 'born': date(1980, 7, 15),
-        'seen': datetime(2026, 7, 16, 0, 0), 'team': 'blue', 'secret': 's2',
+        'seen': datetime(2026, 7, 16, 0, 0), 'seen_tz': datetime(2026, 7, 16, 0, 0, tzinfo=UTC),
+        'team': 'blue', 'secret': 's2',
     },
     {
         'id': 3, 'name': 'anna_100%', 'email_address': '', 'age': None, 'born': None,
-        'seen': None, 'team': 'red', 'secret': 's3',
+        'seen': None, 'seen_tz': None, 'team': 'red', 'secret': 's3',
     },
     {
         'id': 4, 'name': 'Cy', 'email_address': 'cy@example.org', 'age': 31, 'born': date(2001, 12, 31),
-        'seen': datetime(2025, 1, 1, 12, 0), 'team': 'green', 'secret': 's4',
+        'seen': datetime(2025, 1, 1, 12, 0), 'seen_tz': datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+        'team': 'green', 'secret': 's4',
     },
     {
         'id': 5, 'name': 'Dee', 'email_address': 'dee@example.org', 'age': 60, 'born': date(1966, 7, 1),
-        'seen': datetime(2026, 7, 14, 8, 0), 'team': 'blue', 'secret': 's5',
+        'seen': datetime(2026, 7, 14, 8, 0), 'seen_tz': datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+        'team': 'blue', 'secret': 's5',
     },
 ]  # fmt: skip
 
 
 @pytest.fixture
 def database(tmp_path: Path) -> tuple[str, str]:
-    """The sync and async URL of a database holding only ``people`` and its rows."""
+    """The sync and async URL of a database where ``dtb_test_people`` was just recreated with ROWS (other tables are
+    left alone)."""
     path = tmp_path / 'people.db'
     urls = SQL_URLS if SQL_URLS[0] else (f'sqlite:///{path}', f'sqlite+aiosqlite:///{path}')
     engine = create_engine(urls[0])
