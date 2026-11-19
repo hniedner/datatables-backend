@@ -460,7 +460,7 @@ def _json_in(column: ColumnElement[Any], values: Sequence[Any]) -> ColumnElement
 
 
 def _parameter_count(stmt: Select[Any]) -> int:
-    from sqlalchemy.engine.default import DefaultDialect
+    from sqlalchemy.engine.default import DefaultDialect  # noqa: PLC0415
 
     compiled = cast(
         SQLCompiler,

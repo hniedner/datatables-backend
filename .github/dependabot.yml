@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Commit headers "ci(deps): ..." here and "build(deps): ..." / "build(deps-dev): ..." for uv.
+    commit-message:
+      prefix: ci
+      include: scope
+    # GitHub Actions supports only default-days for cooldown (Dependabot options reference).
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    # uv supports per-SemVer cooldown; minor and patch updates fall back to default-days.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      uv-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      uv-security:
+        applies-to: security-updates
+        patterns: ["*"]
