@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 8 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 9 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -100,7 +100,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-P18 | A column's `data` may be an object (DataTables' orthogonal data); the column's identity is then its `name`. An object `data` with an empty `name` is a nameless column, handled as PRD-P21 says. | DataTables sends an object `data` for orthogonal columns; such a column has no other name the server can match, and a column nothing filters or sorts needs none. | must |
 | PRD-P19 | A request holding no request parameter at all (an empty request, or DataTables 1.9's `sEcho`/`sSearch`/`iDisplayStart` form) raises `MalformedRequest`; it is never answered as an empty request. | An unread request answered unfiltered with `draw` 0 is dropped silently by DataTables. | must |
 | PRD-P20 | An integer `columns[i][data]` is read as its decimal text. | DataTables defaults `data` to the column index, an integer. | must |
-| PRD-P21 | A column's `data` of JSON `null` reads as empty text. A nameless column has an empty `name` and a `data` that is empty, `null`, an object, or the text `function`, which is how DataTables sends a function `data`. The global search skips it, and an `order` entry on it is skipped (this wins over PRD-O1); a column search on it, or a SearchBuilder criterion with an empty `origData`, is refused with `invalid_filter` (PRD-E1), as an undeclared name is (PRD-D6). | DataTables sends `data: null` for a column that only renders (JSON `null`; a form request leaves the value empty), and sends its default order `[[0, 'asc']]` whatever `orderable` says (READ, DataTables 3.1.5 `dataTables.mjs`: a function `data` sent as the text `function` at :5619-5622 and :5629, which would otherwise be an undeclared name refusing every global search; the default at :12404, `sortFlatten` at :4794-4836), so a table whose first column only renders would be refused on its first request. DataTables' own client sorts such a column by its rendered output or its `sort` key (READ, `dataGet` at :7994), which the server does not have: the server holds no value to sort such a column by, so the entry is dropped and the remaining order and PRD-O3's tie-breaker decide. A search on a nameless column names nothing the server holds, which the user can change. | must |
+| PRD-P21 | A column's `data` of JSON `null` reads as empty text. A nameless column has an empty `name` and a `data` that is empty, `null`, an object, or the text `function` (how DataTables sends a function `data`) when no declared column has the name `function`; if one does, the column is that one, as PRD-D1 and PRD-D6 say. The global search skips it, and an `order` entry on it is skipped (this wins over PRD-O1); a column search on it, or a SearchBuilder criterion with an empty `origData`, is refused with `invalid_filter` (PRD-E1), as an undeclared name is (PRD-D6). | DataTables sends `data: null` for a column that only renders (JSON `null`; a form request leaves the value empty), and sends its default order `[[0, 'asc']]` whatever `orderable` says (READ, DataTables 3.1.5 `dataTables.mjs`: a function `data` sent as the text `function` at :5619-5622 and :5628, which would otherwise be an undeclared name refusing every global search; the default at :12404, `sortFlatten` at :4794-4836), so a table whose first column only renders would be refused on its first request. DataTables' own client sorts such a column by its rendered output or its `sort` key (READ, `dataGet` at :7994), which the server does not have: the server holds no value to sort such a column by, so the entry is dropped and the remaining order and PRD-O3's tie-breaker decide. A search on a nameless column names nothing the server holds, which the user can change. | must |
 
 ### 4.2 Column declaration (D)
 
@@ -178,9 +178,9 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 |---|---|---|---|
 | PRD-O1 | An order on an index outside the request's columns is refused (PRD-E1). For a column in the request, the request's `orderable` and the server's declaration decide together: request orderable and server unorderable, the order is refused (PRD-E1); request unorderable and server orderable, the order is answered; both unorderable, the entry is skipped. An entry on a nameless column is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending). | The server decides what can be sorted. DataTables sends its default order `[[0, 'asc']]` even when that column is `orderable: false` (READ, DataTables 3.1.5 `dataTables.mjs`: `sortFlatten` ignores `orderable` at :4794-4836, and the request sends `orderable` at :5631), and its own client sorts by such a column; refusing would fail a table whose first column is not orderable on its first request. | must |
 | PRD-O2 | NULL is the lowest value: first ascending, last descending, on every backend. | One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending), as SvelteDT's local source sorts empty values first. | must |
-| PRD-O3 | After the user's order, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the last sort column's direction, so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
+| PRD-O3 | After the user's order, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the direction of the last answered order entry (a skipped entry does not decide), so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
 | PRD-O4 | With no order in the request, the rows come in the tie-breaker's ascending order. | A stable first page. | must |
-| PRD-O5 | A text-only OpenSearch string column (PRD-D13) is unorderable by default, so an order on it is refused or skipped as PRD-O1 says; declaring it orderable raises `SchemaError` at construction. | OpenSearch rejects the whole search on an analysed text sort; a silent drop would answer a different order than asked. | must |
+| PRD-O5 | A text-only OpenSearch string column (PRD-D13) is unorderable by default, so an order on it is refused or skipped as PRD-O1 says; declaring it orderable raises `SchemaError` at construction. | OpenSearch rejects the whole search on an analysed-text sort, so an entry the request marks orderable is refused rather than sent; a request-unorderable entry is skipped as PRD-O1 says. | must |
 | PRD-O6 | Text order is the database's collation; the library adds no collation of its own. | Portable and predictable per database; see the non-goals. | must |
 | PRD-O7 | OpenSearch sorts a string column on its keyword field (PRD-D13). | Sorting needs the unanalysed form. | must |
 
@@ -284,6 +284,7 @@ where a database decides. Each difference is stated here; every other answer is 
 |---|---|---|
 | Text order is the database's collation, not an ICU collator's digit-group order with case, width and kana ties. | Server and SvelteDT's local source (its PRD-B21) | PRD-O6 |
 | An order entry on a nameless column, or on one both sides mark unorderable, is skipped; DataTables' client sorts by it (its rendered output, READ `dataTables.mjs` :7994; it ignores `orderable`, :4794-4836). | Server and DataTables' client | PRD-O1, PRD-P21 |
+| A nameless column takes no part in the global search; DataTables' client searches its rendered text (READ `dataTables.mjs` :7994). | Server and DataTables' client | PRD-P21 |
 | Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source. | Server, and DataTables' client and SvelteDT's local source | PRD-F10 |
 | Dotted and dotless i match only where the database's collation makes them match; SvelteDT treats them alike in every locale (its PRD-B21, difference 3). | Server and SvelteDT's local source | PRD-F10 |
 | On SQLite, case folds for ASCII letters only. | SQLite and every other backend | PRD-F9 |
@@ -328,9 +329,9 @@ the container tests and an acceptance suite.
   (PRD-F37).
 - Ordering: NULL placement was each database's default and the SQL tie-breaker always ascended; now NULL lowest and the
   tie-breaker follows the last direction (PRD-O2, PRD-O3); a source without a primary key declares a unique key
-  (PRD-D11); an order on analysed-only text is refused instead of dropped (PRD-O5); an order the request marks
-  unorderable is answered or skipped instead of refused, so DataTables' default order never fails a first request
-  (PRD-O1); text order is stated as the database's (PRD-O6).
+  (PRD-D11); an order on analysed-only text is refused instead of dropped, or skipped when the request marks it
+  unorderable (PRD-O5); an order the request marks unorderable is answered or skipped instead of refused, so DataTables'
+  default order never fails a first request (PRD-O1); text order is stated as the database's (PRD-O6).
 - Paging: `start` up to 2^53-1 (PRD-P10); OpenSearch pages near the end served by reverse sort, middle pages refused
   with `page_out_of_range` and the real counts instead of `invalid_filter` (PRD-C10 to PRD-C13); a start past the end
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
@@ -385,7 +386,7 @@ the container tests and an acceptance suite.
 | R2 undeclared names refused; declared type decides; SQL inference | PRD-D6, D7, D8 |
 | R3 order index refused / unorderable | PRD-P16 (index authority), PRD-O1 (changed: draft 1 refused an order the request marks unorderable) |
 | R3 SQL tie-breaker on the primary key | PRD-O3 (now direction-following), O4, D11 |
-| R3 OpenSearch keyword sort; analysed text dropped with a warning | PRD-O7, PRD-O5 (now refused), PRD-D13 |
+| R3 OpenSearch keyword sort; analysed text dropped with a warning | PRD-O7, PRD-O5 (now refused, or skipped when the request also marks it unorderable), PRD-D13 |
 | R4 global search, column searches, "contains" | PRD-F1 to F3 (changed), F9, F12, F13, F11 |
 | R4 dates (SQL date text; OpenSearch global search skips dates) | PRD-F21, F22, F23, F24, F32 |
 | R4 numbers, "empty" | PRD-F25, F26 |
