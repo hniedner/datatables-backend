@@ -68,6 +68,7 @@ repos:
         name: private-word scan (files)
         entry: uv run --frozen python scripts/private_word_scan.py
         language: system
+        types: [] # the default [file] is ANDed with types_or, and a symlink is tagged `symlink` only
         types_or: [file, symlink]
       - id: private-words-message
         name: private-word scan (commit message)
@@ -89,6 +90,9 @@ repos:
         pass_filenames: false
       # Before a push: everything the push publishes, including ref names, authors, commits made by a rebase or
       # cherry-pick, which skip the commit-stage hooks, and merge results, whose files no commit-stage hook scans.
+      # It reads every reflog entry too, since pre-commit names only the first pushed ref with new commits; the remote
+      # names of the second and later refs in one push are not passed, so not scanned. An old reflog entry holding a
+      # word blocks pushes until `git reflog expire --expire-unreachable=now --all` drops it.
       - id: private-words-history
         name: private-word scan (everything a push publishes)
         entry: uv run --frozen python scripts/private_word_scan.py --history

@@ -23,6 +23,9 @@ every checkout also fails while a local branch or tag name holds a word, since a
 pre-push hook. Not covered: `git branch <name>` or `git tag` followed directly by a push with no commit or checkout
 between, and a push naming a remote ref that no local ref holds with no new commit
 (`git push origin HEAD:refs/heads/<name>`); with a new commit, the pre-push scan reads the remote ref name too.
+Also not covered: the remote names of the second and later refs in one push, which pre-commit does not pass (their
+commits are scanned). The pre-push scan reads the reflog as well, so an old reflog entry holding a word blocks pushes
+until `git reflog expire --expire-unreachable=now --all` drops it.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and

@@ -19,15 +19,19 @@ Usage:
                                          pre-commit runs no pre-push hook for it)
     private_word_scan.py --history       everything a push publishes: every ref's name and the remote ref the push
                                          writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, for
-                                         every commit reachable from any ref or from the pushed commit
-                                         (PRE_COMMIT_TO_REF) its message, author, committer and
-                                         tree paths, and every reachable blob decoded once (binary, symlink and
-                                         tagged blobs included)
+                                         every commit reachable from any ref, any reflog entry or the pushed commit
+                                         (PRE_COMMIT_TO_REF) its message, author, committer and tree paths, and
+                                         every such object's raw bytes once (blobs decoded as files are; trees,
+                                         commits and tags as text)
 
-Not covered, since no hook runs between creating the ref and pushing it: ``git branch NAME`` or ``git tag`` followed
-directly by a push with no commit or checkout between, and a push naming a remote ref that no local ref holds
-(``git push origin HEAD:refs/heads/NAME``) that brings no new commit; with a new commit, the pre-push scan reads the
-remote ref name.
+The reflog is read because pre-commit names only the first pushed ref with new commits. An old reflog entry holding a
+word therefore blocks every push until it is gone: ``git reflog expire --expire-unreachable=now --all`` (then
+``git gc --prune=now``) drops the unreachable ones.
+
+Not covered: ``git branch NAME`` or ``git tag`` followed directly by a push with no commit or checkout between, and a
+push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) that brings no new commit,
+since no hook runs for either; and the remote names of the second and later refs in one push, which pre-commit does
+not pass to the hook (their commits are still scanned).
 """
 
 from __future__ import annotations
@@ -163,34 +167,34 @@ def fields(output: bytes) -> list[str]:
     return [decode(field) for field in output.split(b'\0') if field]
 
 
-def pushed() -> list[str]:
-    """What a push publishes beyond the refs: the commit pre-commit names (``PRE_COMMIT_TO_REF``), which may be one
-    only the reflog knows (``git push origin HEAD@{1}:refs/heads/x``)."""
+def published() -> list[str]:
+    """The rev-list arguments for what a push can publish: every ref, every reflog entry (pre-commit names only the
+    first pushed ref with new commits, so ``git push origin main HEAD@{2}:refs/heads/x`` publishes a commit no ref
+    and no variable names), and the commit pre-commit names (``PRE_COMMIT_TO_REF``), which may be in neither."""
     to_ref = os.environ.get('PRE_COMMIT_TO_REF', '')
-    return [to_ref] if to_ref else []
+    return ['--all', '--reflog', *([to_ref] if to_ref else [])]
 
 
-def reachable_blobs() -> Iterator[tuple[str, bytes]]:
-    """Every blob reachable from any ref or the pushed commit, once, with one path it is reachable under
-    (``(tagged)`` for none)."""
+def reachable_objects() -> Iterator[tuple[str, str, str, bytes]]:
+    """Every object a push can publish, once: its id, kind (blob, tree, commit or tag), a path it is reachable
+    under ('' for none) and its raw bytes."""
     paths: dict[str, str] = {}
-    for line in decode(git('rev-list', '--objects', '--all', *pushed())).split('\n'):  # newline only: see below
+    for line in decode(git('rev-list', '--objects', *published())).split('\n'):  # newline only: see below
         if not line:
             continue
         sha, _, path = line.partition(' ')  # a path may hold U+0085, U+2028 and the like, which splitlines splits
-        paths.setdefault(sha, path or '(tagged)')  # commits are listed too; cat-file names each object's kind
+        paths.setdefault(sha, path)
     request = ''.join(f'{sha}\n' for sha in paths).encode()
     result = subprocess.run(['git', 'cat-file', '--batch'], input=request, capture_output=True, check=False)
     if result.returncode:
         raise subprocess.CalledProcessError(result.returncode, 'git')
     out, at = result.stdout, 0
-    for path in paths.values():  # cat-file answers in the order it was asked
+    for sha, path in paths.items():  # cat-file answers in the order it was asked
         end = out.index(b'\n', at)
         _, kind, size = out[at:end].split()
         start = end + 1
         at = start + int(size) + 1
-        if kind == b'blob':
-            yield path, out[start : start + int(size)]
+        yield sha, kind.decode(), path, out[start : start + int(size)]
 
 
 def scan_refs(words: Words) -> list[str]:
@@ -207,22 +211,24 @@ def scan_refs(words: Words) -> list[str]:
 
 
 def message_text(raw: str) -> str:
-    """A commit message file as git will store it: nothing below the scissors line (``commit -v`` puts the diff
-    there), and no comment lines when git opened the message in an editor, which it marks with its hint. A message
-    from ``-m`` or ``-F`` keeps its comment lines, as git does. The comment character is git's ``core.commentChar``,
-    ``#`` by default."""
+    """A commit message file as git will store it. Git cuts at its scissors line only where it wrote one, followed
+    by its own warning line (``commit -v``, ``--cleanup=scissors``), and drops comment lines only where its editor
+    hint says so, as a whole line. A ``-m`` or ``-F`` message keeps everything, as git does. The comment character is
+    git's ``core.commentChar``, ``#`` by default."""
     comment = decode(git('config', '--get', 'core.commentChar', ok=(0, 1))).strip() or '#'
     if comment == 'auto':  # git picks one the message does not start a line with; '#' unless taken
         comment = '#'
+    lines = raw.split('\n')
     scissors = f'{comment} ------------------------ >8 ------------------------'
-    stripped = f"with '{comment}' will be ignored" in raw
-    kept: list[str] = []
-    for line in raw.split('\n'):
-        if line == scissors:
+    warning = f'{comment} Do not modify or remove the line above.'
+    for number, line in enumerate(lines[:-1]):
+        if line == scissors and lines[number + 1] == warning:
+            lines = lines[:number]
             break
-        if not (stripped and line.startswith(comment)):
-            kept.append(line)
-    return '\n'.join(kept)
+    hint = f"{comment} with '{comment}' will be ignored, and an empty message aborts the commit."
+    if hint in lines:
+        lines = [line for line in lines if not line.startswith(comment)]
+    return '\n'.join(lines)
 
 
 def scan_history(words: Words) -> list[str]:
@@ -230,7 +236,7 @@ def scan_history(words: Words) -> list[str]:
     remote = os.environ.get('PRE_COMMIT_REMOTE_BRANCH', '')  # the ref a push writes, which no local ref may hold
     if found := hits(remote, words):
         findings.append(report(f'remote ref {redact(remote, words)} (name)', found))
-    for revision in decode(git('rev-list', '--all', *pushed())).split():
+    for revision in decode(git('rev-list', *published())).split():
         short = revision[:12]
         if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
             findings.append(report(f'{short} (message)', found))
@@ -241,9 +247,12 @@ def scan_history(words: Words) -> list[str]:
             for path in fields(git('ls-tree', '-r', '-z', '--name-only', revision))
             if (found := hits(path, words))
         )
-    for path, data in reachable_blobs():  # each blob once, decoded as file mode decodes it (symlink targets too)
-        if found := sorted({*hits(decode(data), words), *content_hits(data, words)}):
-            findings.append(report(f'{redact(path, words)} (contents)', found))
+    for sha, kind, path, data in reachable_objects():  # each object once; a blob decoded as file mode decodes it
+        other: list[int] = content_hits(data, words) if kind == 'blob' else []  # other encodings: file text only
+        found = sorted({*hits(decode(data), words), *other})
+        if found:  # trees hold names, tags and commits their text: a tag a tag wraps, a tree only a tag holds
+            shown = redact(path, words) if path else f'{kind} {sha[:12]}'
+            findings.append(report(f'{shown} ({"contents" if kind == "blob" else kind})', found))
     return findings
 
 

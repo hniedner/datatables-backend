@@ -81,9 +81,14 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     assert 'could not check' in result.stderr
 
 
-def git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+def git(repo: Path, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:  # noqa: A002
     return subprocess.run(
-        ['git', '-C', str(repo), *args], check=True, capture_output=True, text=True, env={**os.environ, **(env or {})}
+        ['git', '-C', str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        input=input,
+        env={**os.environ, **(env or {})},
     ).stdout
 
 
@@ -490,20 +495,88 @@ def test_a_comment_line_in_a_message_given_on_the_command_line_is_scanned(repo: 
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'  # nothing was committed
 
 
-def test_a_file_named_like_a_mode_is_still_a_file(tmp_path: Path, words: Path):
+@pytest.mark.parametrize('mode', ['--refs', '--history'])
+def test_a_file_named_like_a_mode_is_still_a_file(tmp_path: Path, words: Path, mode: str):
     """pre-commit passes staged paths, and a root file may be named `--refs` or `--history`."""
-    write(tmp_path / '--refs', 'clean\n')
+    write(tmp_path / mode, 'clean\n')
     write(tmp_path / 'notes.md', f'see {WORD}\n')
-    assert scan('--refs', 'notes.md', words=words, cwd=tmp_path).returncode == 1
+    assert scan(mode, 'notes.md', words=words, cwd=tmp_path).returncode == 1
 
 
-def test_a_push_of_a_commit_no_ref_holds_is_scanned(repo: Path, words: Path):
-    """`git push origin HEAD@{1}:refs/heads/x` publishes a commit only the reflog knows; pre-commit names it."""
-    commit(repo, 'b.txt', b'clean\n', message=f'Add {WORD}')
-    pushed = git(repo, 'rev-parse', 'HEAD').strip()
+@pytest.mark.parametrize('where', ['message', 'contents'])
+def test_a_commit_only_the_reflog_holds_is_scanned(repo: Path, words: Path, where: str):
+    """pre-commit names only the first pushed ref with new commits, so `git push origin main HEAD@{2}:refs/heads/x`
+    can publish a commit no ref holds and no variable names: the scan reads the reflog."""
+    if where == 'message':
+        commit(repo, 'b.txt', b'clean\n', message=f'Add {WORD}')
+    else:
+        commit(repo, 'b.txt', f'see {WORD}\n'.encode())
     git(repo, 'reset', '-q', '--hard', 'HEAD~1')
-    assert scan('--history', words=words, cwd=repo).returncode == 0  # no ref reaches it any more
-    assert scan('--history', words=words, cwd=repo, extra={'PRE_COMMIT_TO_REF': pushed}).returncode == 1
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+
+
+def test_the_pushed_commit_is_scanned_even_outside_the_reflog(repo: Path, words: Path):
+    """PRE_COMMIT_TO_REF may name a commit no ref and no reflog holds (one made by `git commit-tree`)."""
+    blob = git(repo, 'hash-object', '-w', '--stdin', input=f'see {WORD}\n').strip()
+    tree = git(repo, 'mktree', input=f'100644 blob {blob}\tb.txt\n').strip()
+    loose = git(repo, 'commit-tree', tree, '-m', 'Loose').strip()
+    assert scan('--history', words=words, cwd=repo).returncode == 0
+    assert scan('--history', words=words, cwd=repo, extra={'PRE_COMMIT_TO_REF': loose}).returncode == 1
+
+
+@pytest.mark.parametrize('where', ['tag in a tag', 'tagged tree'])
+def test_every_object_kind_is_read(repo: Path, words: Path, where: str):
+    """A tag object a tag wraps, or a tree only a tag holds, is published but is no blob and no commit."""
+    if where == 'tag in a tag':
+        git(repo, 'tag', '-a', 'inner', '-m', f'Notes on {WORD}')
+        git(repo, 'tag', '-a', 'outer', 'inner', '-m', 'Clean')
+        git(repo, 'tag', '-d', 'inner')
+    else:
+        write(repo / f'{WORD}.txt', 'clean\n')
+        git(repo, 'add', '.')
+        tree = git(repo, 'write-tree').strip()
+        git(repo, 'rm', '-q', '--cached', f'{WORD}.txt')
+        (repo / f'{WORD}.txt').unlink()
+        git(repo, 'tag', 'just-a-tree', tree)
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_staged_symlink_to_a_word_is_scanned_by_the_hook(repo: Path, words: Path):
+    hooks_config(repo)
+    (repo / 'link').symlink_to(f'../{WORD}/target')  # a target that need not exist: git stores the link's text
+    git(repo, 'add', 'link')
+    result = subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'run', 'private-words', '--hook-stage', 'pre-commit'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'link (link target): private word #3' in result.stdout
+
+
+@pytest.mark.parametrize(
+    'message',
+    [
+        f'subject\n\n{SCISSORS}\n{WORD} below',  # a scissors line git did not write: -m keeps all of it
+        f"Quote git's hint: # with '#' will be ignored, and an empty message aborts the commit.\n# {WORD}",
+    ],
+    ids=['scissors', 'quoted hint'],
+)
+def test_a_message_given_on_the_command_line_is_scanned_whole(repo: Path, words: Path, message: str):
+    hooks_config(repo)
+    git(repo, 'add', '.')
+    subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install', '--hook-type', 'commit-msg'],
+        cwd=repo, check=True, capture_output=True,
+    )  # fmt: skip
+    result = subprocess.run(
+        ['git', 'commit', '-q', '-m', message],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'
 
 
 def test_a_path_holding_a_unicode_line_separator_is_read(repo: Path, words: Path):
