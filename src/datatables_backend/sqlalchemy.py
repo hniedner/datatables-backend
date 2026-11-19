@@ -381,8 +381,7 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
         if not with_time:
             return day
         midnight = datetime(day.year, day.month, day.day)
-        # MUTATION, reverted in the next commit: a naive bound, to prove the timezone test fails without UTC bounds
-        return midnight.replace(tzinfo=UTC).replace(tzinfo=None) if aware else midnight
+        return midnight.replace(tzinfo=UTC) if aware else midnight
 
     def within(start: date, end: date) -> ColumnElement[bool]:
         return and_(column >= at(start), column < at(end))
