@@ -38,18 +38,19 @@ MAPPING = {
         'pages': {'type': 'integer'},
         'created': {'type': 'date', 'format': 'strict_date'},
         'meta': {'properties': {'author': KEYWORD_TEXT}},
+        'active': {'type': 'boolean'},
     }
 }
 DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
-     'meta': {'author': 'Ann'}},
+     'meta': {'author': 'Ann'}, 'active': True},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}},
+     'meta': {'author': 'Bob'}, 'active': False},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries'},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
-     'meta': {'author': 'Cy'}},
+     'meta': {'author': 'Cy'}, 'active': True},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
-     'meta': {'author': 'Dee'}},
+     'meta': {'author': 'Dee'}, 'active': False},
 ]  # fmt: skip
 COLUMNS = [
     IndexColumn('id', text='keyword'),
@@ -218,6 +219,20 @@ def test_searchbuilder_conditions(
     client: OpenSearch, column: str, condition: str, values: list[str], expected: list[str]
 ):
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
+
+
+def test_probe_boolean_equality(client: OpenSearch):
+    """PROBE, replaced in the next commit: records what SearchBuilder `=` does on a boolean field."""
+    flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active')])
+    outcomes: dict[str, object] = {}
+    for value in ('1', 'true', 'abc'):
+        try:
+            outcomes[value] = found(
+                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)
+            )
+        except Exception as error:  # the probe records whatever happens
+            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
+    assert outcomes == {}, outcomes
 
 
 def test_searchbuilder_groups_nest(client: OpenSearch):

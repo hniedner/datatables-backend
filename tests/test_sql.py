@@ -328,19 +328,36 @@ def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session:
 
 @pytest.mark.xfail(
     os.environ.get('DTB_SQL_DIALECT') == 'mssql',
-    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD-F42',
+    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD v2 (PRD-F42) makes it the UTC day',
     strict=True,
     raises=AssertionError,
 )
 def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
     """2026-08-01 23:00 at -05:00 is 2026-08-02 04:00 UTC. The row is added in this test's transaction only. SQLite
-    and MySQL store no offset (PRD-F21), so there it is written as its UTC time, as such a column holds it."""
+    and MySQL store no offset (PRD v2, PRD-F21), so there it is written as its UTC time, as such a column holds it.
+    On PostgreSQL this test passes because the session's +14 puts 04:00 UTC on the same day; PostgreSQL's own check
+    is the strict xfail of `test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day`."""
     stored = datetime(2026, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
     if session.get_bind().dialect.name not in ('postgresql', 'mssql'):
         stored = stored.astimezone(UTC)
     session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'seen_tz': stored})
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
+
+
+def test_probe_boolean_equality_on_every_backend(session: Session):
+    """PROBE, replaced in the next commit: records what SearchBuilder `=` does on a Boolean column per backend."""
+    flagged = SQLTable(people, [Column('id'), Column('active')])
+    outcomes: dict[str, object] = {}
+    for value in ('1', 'true', 'abc'):
+        try:
+            outcomes[value] = ids(
+                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), session)
+            )
+        except Exception as error:  # the probe records whatever happens
+            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
+            session.rollback()
+    assert outcomes == {}, outcomes
 
 
 @pytest.mark.parametrize(

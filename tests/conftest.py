@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import Boolean
 from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Date
 from sqlalchemy import DateTime
@@ -85,32 +86,33 @@ people = Table(
     ),  # TIMESTAMPTZ, DATETIMEOFFSET (DATETIME on MySQL and SQLite)
     SQLColumn('team', String(20)),
     SQLColumn('secret', String(50)),
+    SQLColumn('active', Boolean, nullable=True),  # BOOLEAN, BIT, TINYINT(1), INTEGER on SQLite
 )
 
 ROWS: list[dict[str, Any]] = [
     {
         'id': 1, 'name': 'Ann', 'email_address': 'ann@example.org', 'age': 31, 'born': date(1994, 3, 1),
         'seen': datetime(2026, 7, 15, 23, 59), 'seen_tz': datetime(2026, 7, 15, 23, 59, tzinfo=UTC),
-        'team': 'red', 'secret': 's1',
+        'team': 'red', 'secret': 's1', 'active': True,
     },
     {
         'id': 2, 'name': 'Bob', 'email_address': None, 'age': 45, 'born': date(1980, 7, 15),
         'seen': datetime(2026, 7, 16, 0, 0), 'seen_tz': datetime(2026, 7, 16, 0, 0, tzinfo=UTC),
-        'team': 'blue', 'secret': 's2',
+        'team': 'blue', 'secret': 's2', 'active': False,
     },
     {
         'id': 3, 'name': 'anna_100%', 'email_address': '', 'age': None, 'born': None,
-        'seen': None, 'seen_tz': None, 'team': 'red', 'secret': 's3',
+        'seen': None, 'seen_tz': None, 'team': 'red', 'secret': 's3', 'active': None,
     },
     {
         'id': 4, 'name': 'Cy', 'email_address': 'cy@example.org', 'age': 31, 'born': date(2001, 12, 31),
         'seen': datetime(2025, 1, 1, 12, 0), 'seen_tz': datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
-        'team': 'green', 'secret': 's4',
+        'team': 'green', 'secret': 's4', 'active': True,
     },
     {
         'id': 5, 'name': 'Dee', 'email_address': 'dee@example.org', 'age': 60, 'born': date(1966, 7, 1),
         'seen': datetime(2026, 7, 14, 20, 0), 'seen_tz': datetime(2026, 7, 14, 20, 0, tzinfo=UTC),
-        'team': 'blue', 'secret': 's5',
+        'team': 'blue', 'secret': 's5', 'active': False,
     },
 ]  # fmt: skip
 
