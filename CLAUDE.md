@@ -48,7 +48,8 @@ uv 0.13.7). The explicit environment above is checked with `uv pip check` and pr
 - **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Pushing and
   publishing still need the user's explicit OK.
 - **Next: milestone 2.**
-  - Set up GitHub Actions CI covering lint, types, and tests on 3.12–3.14, plus the minimum versions.
+  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.14, the minimum
+    versions, and an install-isolation job that imports each extra without the others.
   - Add container tests against PostgreSQL, SQL Server and OpenSearch.
   - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
