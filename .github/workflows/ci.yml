@@ -67,12 +67,19 @@ jobs:
       - if: matrix.python != '3.14'
         run: uv run --frozen pytest
       # One leg measures line and branch coverage of the library and scripts/ (the word scan's subprocess runs
-      # included): the total is reported, and the changed lines must be 95 % covered.
+      # included): the total is reported, and the lines this change touches must be 95 % covered. The change is the
+      # pull request against its base, or a push against the commit before it.
       - name: Tests with branch coverage, then coverage of the changed lines
         if: matrix.python == '3.14'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           uv run --frozen pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml --cov-report=term
-          uv run --frozen diff-cover coverage.xml --compare-branch=origin/main --fail-under=95
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo "No previous commit for this push (a new branch): comparing with HEAD~1."
+            BASE=HEAD~1
+          fi
+          uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95
 
   # Every pre-commit hook on every file, except the private-word scans, whose word list never leaves the owner's
   # machine.
@@ -85,7 +92,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked
       - env:
-          SKIP: private-words,private-words-message
+          SKIP: private-words,private-words-message,private-words-history
         run: uv run --frozen pre-commit run --all-files --show-diff-on-failure
 
   # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
