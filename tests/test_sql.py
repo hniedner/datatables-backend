@@ -292,7 +292,9 @@ def test_searchbuilder_conditions(
 def test_a_timezone_aware_column_compares_by_utc_day(
     session: Session, condition: str, values: list[str], expected: list[int]
 ):
-    """TIMESTAMPTZ on PostgreSQL, DATETIMEOFFSET on SQL Server: the day bounds are UTC midnights."""
+    """The day bounds are UTC midnights. Only PostgreSQL in a non-UTC session (CI sets PGTZ to UTC+14) checks that:
+    there a naive bound would be read in the session zone. On SQL Server and MySQL the test only shows the column
+    works."""
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
         expected

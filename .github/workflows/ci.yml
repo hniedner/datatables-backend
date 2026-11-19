@@ -250,6 +250,9 @@ jobs:
       DTB_SQL_URL: postgresql+psycopg://postgres:dtb-test-only@localhost:5432/dtb
       DTB_SQL_ASYNC_URL: postgresql+psycopg_async://postgres:dtb-test-only@localhost:5432/dtb
       DTB_SQL_DIALECT: postgresql
+      # A session zone far from UTC (libpq reads PGTZ, for psycopg and psycopg_async alike): a date criterion on a
+      # timestamptz column then fails unless its day bounds are UTC midnights.
+      PGTZ: Pacific/Kiritimati
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

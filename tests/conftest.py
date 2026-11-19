@@ -31,7 +31,8 @@ def checked_database(url: str) -> str:
     name = make_url(url).database or ''
     if name != 'dtb' and not name.startswith('dtb_test'):
         raise RuntimeError(
-            'The SQL tests drop and create tables: DTB_SQL_URL must name a database called dtb or dtb_test...'
+            'The SQL tests drop and create tables: DTB_SQL_URL and DTB_SQL_ASYNC_URL must name a database called dtb '
+            'or dtb_test...'
         )
     return name
 
@@ -53,6 +54,8 @@ def pytest_report_header() -> list[str]:
         engine = create_engine(SQL_URLS[0])
         with engine.connect() as connection:
             version = '.'.join(map(str, connection.dialect.server_version_info or ()))
+            if engine.dialect.name == 'postgresql':  # a non-UTC session is what makes the timezone test bite
+                version += f', session TimeZone {connection.exec_driver_sql("SHOW TimeZone").scalar()}'
         engine.dispose()
         lines.append(f'SQL tests on {engine.dialect.name} {version}')
     if url := os.environ.get('DTB_OPENSEARCH_URL'):
@@ -111,8 +114,8 @@ ROWS: list[dict[str, Any]] = [
 
 @pytest.fixture
 def database(tmp_path: Path) -> tuple[str, str]:
-    """The sync and async URL of a database where ``dtb_test_people`` was just recreated with ROWS (other tables are
-    left alone)."""
+    """The sync and async URL of a database where the tests' tables (TEST_TABLES) were dropped and
+    ``dtb_test_people`` recreated with ROWS; no other table is touched."""
     path = tmp_path / 'people.db'
     urls = SQL_URLS if SQL_URLS[0] else (f'sqlite:///{path}', f'sqlite+aiosqlite:///{path}')
     engine = create_engine(urls[0])
