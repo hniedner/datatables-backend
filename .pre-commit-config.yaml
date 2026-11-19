@@ -1,6 +1,6 @@
-# Install with `uv run pre-commit install` (installs the pre-commit and commit-msg hooks below).
+# Install with `uv run pre-commit install` (installs the pre-commit, commit-msg and pre-push hooks below).
 # Tools that are Python packages run through `uv run --frozen`, so uv.lock pins them.
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
 
 repos:
@@ -62,13 +62,23 @@ repos:
         files: ^\.github/
         types: [yaml]
       # The word list lives outside the repository (DTB_PRIVATE_WORDS names it); without it the hooks fail closed.
-      # CI has no list and skips these two hooks by id.
+      # CI has no list and skips these hooks by id.
       - id: private-words
         name: private-word scan (files)
         entry: uv run --frozen python scripts/private_word_scan.py
         language: system
+        types_or: [file, symlink]
       - id: private-words-message
         name: private-word scan (commit message)
         entry: uv run --frozen python scripts/private_word_scan.py --message
         language: system
         stages: [commit-msg]
+      # Before a push: everything the push publishes, including ref names, authors, and commits made by a rebase,
+      # cherry-pick or merge, which skip the two hooks above.
+      - id: private-words-history
+        name: private-word scan (everything a push publishes)
+        entry: uv run --frozen python scripts/private_word_scan.py --history
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
