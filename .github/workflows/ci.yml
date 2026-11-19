@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# GitHub's `bash` shell runs with -eo pipefail, so a failing command inside a pipe fails its step.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -95,33 +100,39 @@ jobs:
           assert sys.version.startswith(os.environ['PY'] + '.'), sys.version
           where = sys.modules['datatables_backend'].__file__
           assert 'site-packages' in where, where  # the installed wheel, not the checkout
+          dist = distribution('datatables-backend')
+          declared = set(dist.metadata.get_all('Provides-Extra') or [])
+          def canon(name):
+              return re.sub(r'[-_.]+', '-', name).lower()
+          tops = {}
+          for top, names in packages_distributions().items():
+              for name in names:
+                  tops.setdefault(canon(name), set()).add(top)
+          def packages(of):  # the installed top-level packages of the requirements under extra `of` (None: the core's)
+              found = set()
+              for req in dist.requires or []:
+                  marker = re.search(r'extra\s*==\s*["\']([^"\']+)', req)
+                  if (marker.group(1) if marker else None) == of:
+                      found |= tops.get(canon(re.match(r'[A-Za-z0-9._-]+', req).group()), set())
+              return found
+          own = packages(extra) if extra != 'core' else set()
+          assert extra == 'core' or own, f'{extra}: its requirements map to no installed package'
           if os.environ.get('ALL_EXTRAS'):
-              dist = distribution('datatables-backend')
-              declared = set(dist.metadata.get_all('Provides-Extra') or [])
               workflow = open(os.path.join(os.environ['GITHUB_WORKSPACE'], '.github/workflows/ci.yml')).read()
               legs = re.search(r'install-isolation:.*?extra: \[([^\]]*)\]', workflow, re.S).group(1)
               matrix = {leg.strip() for leg in legs.split(',')}
               assert matrix == declared | {'core'}, f'matrix {sorted(matrix)} != core + extras {sorted(declared)}'
-              def canon(name):
-                  return re.sub(r'[-_.]+', '-', name).lower()
-              tops = {}
-              for top, names in packages_distributions().items():
-                  for name in names:
-                      tops.setdefault(canon(name), set()).add(top)
-              def packages(of):  # the top-level packages of the requirements under extra `of` (None: the core's)
-                  found = set()
-                  for req in dist.requires or []:
-                      marker = re.search(r'extra\s*==\s*["\']([^"\']+)', req)
-                      if (marker.group(1) if marker else None) == of:
-                          found |= tops.get(canon(re.match(r'[A-Za-z0-9._-]+', req).group()), set())
-                  return found
-              own = packages(extra) if extra != 'core' else set()
+              unmapped = sorted(e for e in declared if not packages(e))
+              assert not unmapped, f'extras whose requirements map to no installed package: {unmapped}'
               absent = set().union(*(packages(e) for e in declared if e != extra)) - own - packages(None)
               if extra == 'sqlalchemy':
                   absent.add('sqlalchemy.ext.asyncio')
+              assert absent, f'{extra}: nothing to check'
               loaded = sorted(absent & set(sys.modules))
               print(f'{extra}, every extra installed: loaded {loaded or "nothing"} of {sorted(absent)}')
               sys.exit(f'{extra} loaded {loaded}' if loaded else 0)
+          for top in sorted(own):  # the extra's own packages import with only that extra installed
+              importlib.import_module(top)
           print(f'{extra} on {sys.version.split()[0]}, only its own extra installed: imports')
           EOF
       - name: Imports with only its own extra installed
