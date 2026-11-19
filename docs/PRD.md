@@ -165,6 +165,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F37 | NULL satisfies every negative SearchBuilder condition (`!=`, `!contains`, `!starts`, `!ends`, `!between`) on every backend. | A NULL value is not equal to, does not contain, start or end with, and is not between anything, as `!word` passes NULL (PRD-F5); DataTables' client-side SearchBuilder agrees for strings and dates (section 5). | must |
 | PRD-F38 | A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all, and a categorical filter or `multi_values` list holds at most 256 values; beyond any bound the request is refused with `invalid_filter`. | Every criterion and value is query work, and walking the tree must never recurse without bound. | must |
 | PRD-F39 | A column search holding both a value and a `multi_values` list is refused with `invalid_filter`. | One of the two would be dropped silently. | must |
+| PRD-F40 | A global search carrying a `multi_values` list is refused with `invalid_filter`; an empty list is idle. | `multi_values` belongs to a column search; on the global search the list would be dropped silently. | must |
 
 ### 4.4 Ordering (O)
 
@@ -325,9 +326,10 @@ the container tests and an acceptance suite.
   (PRD-E2, PRD-E3); the response's unused `metadata` field goes (PRD-R5).
 - New: a request with no DataTables parameter refused (PRD-P19), an integer `data` (PRD-P20), declared OpenSearch field
   kinds (PRD-D13), the hook-column rules (PRD-D14 to PRD-D16), the structure bounds (PRD-F38), a value with
-  `multi_values` refused (PRD-F39), the dotted form, the ignore rules and the refusal of filters the library does not
-  answer (PRD-P2 to PRD-P5, PRD-P7), object `data` (PRD-P18), `order[i][name]` (PRD-P16), expression columns (PRD-D10),
-  the floors (PRD-Q4 to PRD-Q9), MySQL in the container tests (PRD-Q11) and CI (PRD-Q12).
+  `multi_values` refused (PRD-F39), a global search with `multi_values` refused (PRD-F40), the dotted form, the ignore
+  rules and the refusal of filters the library does not answer (PRD-P2 to PRD-P5, PRD-P7), object `data` (PRD-P18),
+  `order[i][name]` (PRD-P16), expression columns (PRD-D10), the floors (PRD-Q4 to PRD-Q9), MySQL in the container tests
+  (PRD-Q11) and CI (PRD-Q12).
 - Owner's decisions of 2026-11-19: a column with a search-value hook takes equality only (PRD-D12); a `boolean`
   column type later (PRD-L3).
 
