@@ -126,7 +126,8 @@ is a small backend:
 - **Multi-select:** a column search with `regex: true` whose regex is only literal alternatives (`a|b`, `^(a|b)$`,
   escaped or not) is read as an exact-match IN list, following DataTables' multi-select convention. Any other regex
   is refused. A `multi_values` list in the column's search object (an extension to the DataTables
-  protocol) does the same. A column search holding both a value and `multi_values` is refused.
+  protocol) does the same. A column search holding both a value and `multi_values` is refused. `multi_values` on
+  the global search is refused (`invalid_filter`).
 - **Base filter:** an optional server filter (a SQL expression or an OpenSearch query) limits the rows the table
   shows at all. It applies to `recordsTotal`, `recordsFiltered` and the page alike.
 - **OpenSearch text fields:** declared as analysed text, they take a Google-style query: implicit AND, `OR`, `NOT`/`-`

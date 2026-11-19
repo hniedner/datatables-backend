@@ -184,7 +184,7 @@ def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
         'order[0]]',
         'columns[0][search.value]',
         'search[a.b]',
-        'search]',
+        'search[value]]',
     ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
