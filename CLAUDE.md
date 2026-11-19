@@ -11,8 +11,8 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
-  `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb` or
-  `dtb_test...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its
+  `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb`,
+  `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its
   dialect, or `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs
   Microsoft's ODBC Driver 18. The SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live
   OpenSearch test owns the index `dtb-test-docs`: each run drops them first.

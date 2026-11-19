@@ -3,6 +3,10 @@
 It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: PostgreSQL, MySQL, SQL Server).
 """
 
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 import os
 from typing import Any
 
@@ -62,7 +66,7 @@ async def test_the_async_suite_runs_on_the_database_it_was_given(async_session: 
     assert async_session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
 
 
-@pytest.mark.parametrize('name', ['people', 'staging', 'dtbx', None])
+@pytest.mark.parametrize('name', ['people', 'staging', 'dtbx', 'dtb_testx', None])
 def test_the_suite_refuses_a_database_it_does_not_own(name: str | None):
     """The fixtures drop and create tables, so a real database must be named for the tests; checked before any DDL."""
     with pytest.raises(RuntimeError, match='dtb_test'):
@@ -153,6 +157,7 @@ def test_order_follows_the_requests_columns_then_the_primary_key(session: Sessio
     reason="draft 1: NULL placement is the database's default (PostgreSQL: last ascending); PRD v2 (PRD-O2) makes it "
     'lowest everywhere',
     strict=True,
+    raises=AssertionError,
 )
 def test_null_comes_first_in_an_ascending_order(session: Session):
     params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])
@@ -314,10 +319,28 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     reason="draft 1: PostgreSQL's day text of a timestamptz is its day in the session zone; PRD v2 (PRD-F42) makes "
     'it the UTC day',
     strict=True,
+    raises=AssertionError,
 )
 def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-07-15'}), session)) == [1]
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
+    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD-F42',
+    strict=True,
+    raises=AssertionError,
+)
+def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
+    """2026-08-01 23:00 at -05:00 is 2026-08-02 04:00 UTC. The row is added in this test's transaction only. SQLite
+    and MySQL store no offset (PRD-F21), so there it is written as its UTC time, as such a column holds it."""
+    stored = datetime(2026, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
+    if session.get_bind().dialect.name not in ('postgresql', 'mssql'):
+        stored = stored.astimezone(UTC)
+    session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'seen_tz': stored})
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
 
 
 @pytest.mark.parametrize(
@@ -399,6 +422,14 @@ def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session)
     params = request(*ALL)
     params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31', '31.5']
     assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):
+    """`name` is VARCHAR(50). Cut to 50 characters this value is 'Bob' and spaces, which SQL Server compares equal to
+    'Bob'; SQL Server's JSON path must cast to an unbounded text type."""
+    params = request(*ALL)
+    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob' + ' ' * 47 + 'x']
+    assert ids(table.fetch_sync(params, session)) == []
 
 
 def test_a_join_works_as_a_source(session: Session):

@@ -27,12 +27,13 @@ from datatables_backend import parse_request
 
 
 def checked_database(url: str) -> str:
-    """The database a URL names, if the tests may drop and create tables in it: `dtb` (CI's) or `dtb_test...`."""
+    """The database a URL names, if the tests may drop and create tables in it: `dtb` (CI's), `dtb_test` or
+    `dtb_test_...`."""
     name = make_url(url).database or ''
-    if name != 'dtb' and not name.startswith('dtb_test'):
+    if not (name in ('dtb', 'dtb_test') or name.startswith('dtb_test_')):
         raise RuntimeError(
-            'The SQL tests drop and create tables: DTB_SQL_URL and DTB_SQL_ASYNC_URL must name a database called dtb '
-            'or dtb_test...'
+            'The SQL tests drop and create tables: DTB_SQL_URL and DTB_SQL_ASYNC_URL must name a database called dtb, '
+            'dtb_test or dtb_test_...'
         )
     return name
 
