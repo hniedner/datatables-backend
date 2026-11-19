@@ -63,6 +63,7 @@ jobs:
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
   # extra's module must import. With every extra and greenlet installed, importing them must not load another extra's
   # package (nor sqlalchemy.ext.asyncio on the sqlalchemy leg), which also catches an import guarded by try/except.
+  # The extras and their packages come from the wheel's metadata, and the matrix must list every declared extra.
   install-isolation:
     runs-on: ubuntu-latest
     strategy:
@@ -83,7 +84,8 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           cat > check.py <<'EOF'
-          import importlib, os, sys
+          import importlib, os, re, sys
+          from importlib.metadata import distribution, packages_distributions
           extra = os.environ['EXTRA']
           modules = ('protocol', 'columns', '_plan', 'rows', 'cache')
           core = ['datatables_backend', *(f'datatables_backend.{m}' for m in modules)]
@@ -93,8 +95,27 @@ jobs:
           where = sys.modules['datatables_backend'].__file__
           assert 'site-packages' in where, where  # the installed wheel, not the checkout
           if os.environ.get('ALL_EXTRAS'):
-              own = {'sqlalchemy': {'sqlalchemy'}, 'opensearch': {'opensearchpy'}, 'fastapi': {'fastapi', 'starlette'}}
-              absent = {'sqlalchemy', 'opensearchpy', 'fastapi', 'starlette'} - own.get(extra, set())
+              dist = distribution('datatables-backend')
+              declared = set(dist.metadata.get_all('Provides-Extra') or [])
+              workflow = open(os.path.join(os.environ['GITHUB_WORKSPACE'], '.github/workflows/ci.yml')).read()
+              legs = re.search(r'install-isolation:.*?extra: \[([^\]]*)\]', workflow, re.S).group(1)
+              matrix = {leg.strip() for leg in legs.split(',')}
+              assert matrix == declared | {'core'}, f'matrix {sorted(matrix)} != core + extras {sorted(declared)}'
+              def canon(name):
+                  return re.sub(r'[-_.]+', '-', name).lower()
+              tops = {}
+              for top, names in packages_distributions().items():
+                  for name in names:
+                      tops.setdefault(canon(name), set()).add(top)
+              def packages(of):  # the top-level packages of the requirements under extra `of` (None: the core's)
+                  found = set()
+                  for req in dist.requires or []:
+                      marker = re.search(r'extra\s*==\s*["\']([^"\']+)', req)
+                      if (marker.group(1) if marker else None) == of:
+                          found |= tops.get(canon(re.match(r'[A-Za-z0-9._-]+', req).group()), set())
+                  return found
+              own = packages(extra) if extra != 'core' else set()
+              absent = set().union(*(packages(e) for e in declared if e != extra)) - own - packages(None)
               if extra == 'sqlalchemy':
                   absent.add('sqlalchemy.ext.asyncio')
               loaded = sorted(absent & set(sys.modules))
@@ -115,7 +136,8 @@ jobs:
         run: |
           wheel=$(ls dist/*.whl)
           uv venv -q -p "$PY" all
-          uv pip install -q -p all "${wheel}[sqlalchemy,opensearch,fastapi]" greenlet
+          extras=$(unzip -p "$wheel" '*.dist-info/METADATA' | sed -n 's/^Provides-Extra: //p' | paste -sd, -)
+          uv pip install -q -p all "${wheel}[${extras}]" greenlet
           ALL_EXTRAS=1 all/bin/python check.py
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the
