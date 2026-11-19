@@ -314,8 +314,15 @@ jobs:
         with:
           python-version: '3.14'
       - run: uv sync --locked --group containers
-      - name: Microsoft's ODBC Driver 18 is installed
-        run: odbcinst -q -d | grep -Fx '[ODBC Driver 18 for SQL Server]'
+      # The runner image has no ODBC driver: install Microsoft's from its signed apt repository.
+      - name: Install Microsoft's ODBC Driver 18
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/packages-microsoft-prod.deb" \
+            "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+          sudo dpkg -i "$RUNNER_TEMP/packages-microsoft-prod.deb"
+          sudo apt-get update -q
+          sudo ACCEPT_EULA=Y apt-get install -q -y msodbcsql18 unixodbc
+          odbcinst -q -d | grep -Fx '[ODBC Driver 18 for SQL Server]'
       - name: Wait for the server, then create the database
         run: |
           uv run --frozen python - <<'EOF'
