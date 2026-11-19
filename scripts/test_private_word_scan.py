@@ -506,7 +506,7 @@ def test_a_file_named_like_a_mode_is_still_a_file(tmp_path: Path, words: Path, m
 @pytest.mark.parametrize('where', ['message', 'contents'])
 def test_a_commit_only_the_reflog_holds_is_scanned(repo: Path, words: Path, where: str):
     """pre-commit names only the first pushed ref with new commits, so `git push origin main HEAD@{2}:refs/heads/x`
-    can publish a commit no ref holds and no variable names: the scan reads the reflog."""
+    can publish a commit no ref holds and no variable names: the scan reads every object in the store."""
     if where == 'message':
         commit(repo, 'b.txt', b'clean\n', message=f'Add {WORD}')
     else:
@@ -638,8 +638,73 @@ def test_a_message_given_on_the_command_line_is_scanned_whole(repo: Path, words:
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'
 
 
-def test_a_path_holding_a_unicode_line_separator_is_read(repo: Path, words: Path):
-    """`rev-list --objects` separates objects by newline only; U+0085 and U+2028 are part of a path."""
-    commit(repo, 'a' + chr(0x85) + 'b' + chr(0x2028) + 'c.txt', b'a blob only this path holds\n')  # blobs: once
+NON_ASCII = 'Grünspecht'  # a made-up list word whose `ü` is one byte in Latin-1
+
+
+@pytest.fixture
+def non_ascii_words(tmp_path: Path) -> Path:
+    return write(tmp_path / 'non-ascii.txt', f'{NON_ASCII}\n')
+
+
+def git_bytes(repo: Path, *args: str, input: bytes) -> str:  # noqa: A002
+    """A git command fed raw bytes, for names and messages that are not UTF-8."""
+    return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, input=input).stdout.decode()
+
+
+@pytest.mark.parametrize('where', ['commit message', 'file name', 'message file'])
+def test_a_latin1_word_is_found(tmp_path: Path, repo: Path, non_ascii_words: Path, where: str):
+    """UTF-8 decoding drops the Latin-1 `ü`, so only the other readings show the word."""
+    latin1 = NON_ASCII.encode('latin-1')
+    if where == 'commit message':
+        message = tmp_path / 'msg'
+        message.write_bytes(b'Add ' + latin1 + b' notes\n')
+        git(repo, '-c', 'i18n.commitEncoding=ISO-8859-1', 'commit', '-q', '--allow-empty', '-F', str(message))
+        result = scan('--history', words=non_ascii_words, cwd=repo)
+    elif where == 'file name':
+        blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+        tree = git_bytes(repo, 'mktree', '-z', input=f'100644 blob {blob}\t'.encode() + latin1 + b'.txt\0').strip()
+        git(repo, 'commit-tree', tree, '-m', 'Loose')
+        result = scan('--history', words=non_ascii_words, cwd=repo)
+    else:
+        message = tmp_path / 'COMMIT_EDITMSG'
+        message.write_bytes(b'Add ' + latin1 + b' notes\n')
+        result = scan('--message', str(message), words=non_ascii_words)
+    assert result.returncode == 1, result.stderr
+    shown = (result.stdout + result.stderr).casefold()
+    assert NON_ASCII.casefold() not in shown
+    assert 'grnspecht' not in shown  # nor the word less the letter decoding drops
+
+
+def test_a_replaced_commit_is_read_as_stored(tmp_path: Path, repo: Path):
+    """A push sends the original objects, whatever `git replace` shows locally."""
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    first = git(repo, 'rev-parse', 'HEAD').strip()
+    (repo / 'Acme').mkdir()
+    commit(repo, 'Acme/Widget.txt', b'clean\n')
+    git(repo, 'replace', git(repo, 'rev-parse', 'HEAD').strip(), first)
+    result = scan('--history', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert SLASHED.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.parametrize('tag', ['lightweight', 'annotated'])
+def test_a_whole_path_in_a_tree_only_a_tag_holds_is_read(tmp_path: Path, repo: Path, tag: str):
+    """No commit holds the tree, so only the tree a ref names shows `Acme/Widget` whole."""
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    inner = git(repo, 'mktree', input=f'100644 blob {blob}\tWidget.txt\n').strip()
+    outer = git(repo, 'mktree', input=f'040000 tree {inner}\tAcme\n').strip()
+    git(repo, 'tag', *(['-a', '-m', 'Clean'] if tag == 'annotated' else []), 'just-a-tree', outer)
+    result = scan('--history', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert SLASHED.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_packed_unreachable_object_is_read(repo: Path, words: Path):
+    loose_commit(repo)
+    git(repo, 'repack', '-adkq')  # -k keeps the unreachable objects, now in a pack
+    git(repo, 'prune-packed')
+    assert not list((repo / '.git' / 'objects').glob('[0-9a-f][0-9a-f]/*'))  # no loose object is left
     result = scan('--history', words=words, cwd=repo)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()

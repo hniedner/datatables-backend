@@ -19,13 +19,19 @@ Usage:
                                          post-checkout stages: a push that only adds a ref brings no commit, so
                                          pre-commit runs no pre-push hook for it)
     private_word_scan.py --history       everything a push can publish: every ref's name and the remote ref the push
-                                         writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, and
-                                         every object in the repository, reachable or not (blobs decoded as files
-                                         are; trees, commits and tags as text). A push can send any object, and
-                                         pre-commit names one pushed ref to the hook, so the store is scanned whole.
+                                         writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, every
+                                         object in the repository, reachable or not, and every whole path in the
+                                         tree of each commit and of each tree a ref or tag names. A push can send
+                                         any object, and pre-commit names one pushed ref to the hook, so the store
+                                         is scanned whole.
 
-A leftover object holding a word (a dropped commit, a stash, a reflog entry) therefore blocks every push until it is
-gone: ``git reflog expire --expire-unreachable=now --all`` and then ``git gc --prune=now`` drop the unreachable ones.
+Every text, a file, an object, a path or a message, is read as UTF-8 (or by its byte order mark) and also in the
+encodings ``other_readings`` tries, so a Latin-1 commit message or file name is read too. Objects are read as
+stored: ``git replace`` is ignored, since a push sends the originals.
+
+A leftover object holding a word (a dropped commit, a reflog entry) therefore blocks every push until it is gone:
+``git reflog expire --expire-unreachable=now --all`` and then ``git gc --prune=now`` drop the unreachable ones. A
+stash is held by ``refs/stash``, so drop it first (``git stash drop``).
 
 Not covered: ``git branch NAME`` or ``git tag`` followed directly by a push with no commit or checkout between, and a
 push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) that brings no new commit,
@@ -33,10 +39,12 @@ since no hook runs for either; and the remote names of the other refs in one pus
 the hook (their objects are still scanned).
 
 The commit message is cut and stripped only where git's own commit template shows git will, and only in English: git
-must run with an English ``LC_MESSAGES`` for its template lines to be recognised. Elsewhere the scan reads more than
-git keeps, which can wrongly block a commit (a delete of a word-named file under another locale, or a ``-m``/``-F``
-message that itself holds git's template lines, which git keeps but the scan strips; the pre-push scan still reads
-that message) but never lets a word through.
+must run with an English ``LC_MESSAGES`` for its template lines to be recognised. Under another locale the scan reads
+more than git keeps, which can wrongly block a commit (a delete of a word-named file) but never lets a word through.
+A known gap of the commit-msg hook: a ``-m``/``-F`` message that itself holds git's template lines (the scissors line
+followed by its warning line, or the editor hint as a whole line) is cut or stripped by the scan, while git stores it
+as given, so a word after those lines passes the commit-msg hook. The pre-push scan reads the stored message and
+refuses it.
 """
 
 from __future__ import annotations
@@ -158,7 +166,8 @@ def scan_files(names: list[str], words: Words) -> list[str]:
 
 def git(*args: str, ok: tuple[int, ...] = (0,)) -> bytes:
     """A git command's output. Raises CalledProcessError on an unexpected exit status."""
-    result = subprocess.run(['git', *args], capture_output=True, check=False)
+    environment = os.environ | {'GIT_NO_REPLACE_OBJECTS': '1'}  # the objects a push sends, not their replacements
+    result = subprocess.run(['git', *args], capture_output=True, check=False, env=environment)
     if result.returncode not in ok:
         raise subprocess.CalledProcessError(result.returncode, 'git')
     return result.stdout
@@ -194,8 +203,10 @@ def scan_refs(words: Words) -> list[str]:
 
 def message_text(raw: str) -> str:
     """A commit message file, cut at git's scissors line and stripped of comment lines only where git's own commit
-    template (its scissors warning line, its editor hint as a whole line) shows git will; elsewhere the scan reads
-    more than git keeps, which can wrongly block a commit but never lets a word through. The comment character is
+    template (its scissors warning line, its editor hint as a whole line) shows git will. Under another locale the
+    scan reads more than git keeps, which can wrongly block a commit but never lets a word through. A known gap: a
+    ``-m``/``-F`` message that itself holds those template lines is cut or stripped here, while git stores it whole,
+    so a word after them passes; the pre-push scan reads the stored message and refuses it. The comment character is
     git's ``core.commentChar``, ``#`` by default."""
     comment = decode(git('config', '--get', 'core.commentChar', ok=(0, 1))).strip() or '#'
     if comment == 'auto':  # git picks one the message does not start a line with; '#' unless taken
@@ -213,21 +224,38 @@ def message_text(raw: str) -> str:
     return '\n'.join(lines)
 
 
+def text_hits(data: bytes, words: Words) -> list[int]:
+    """The list lines of the words the bytes hold in any reading."""
+    return sorted({*hits(decode(data), words), *content_hits(data, words)})
+
+
+def path_findings(where: str, tree: str, words: Words) -> list[str]:
+    """Every whole path under a tree-ish: a word holding a `/` spans the trees that store its parts. A path whose
+    word only another encoding shows is printed as ``***``, since ``decode`` would show the rest of the word."""
+    findings: list[str] = []
+    for raw in filter(None, git('ls-tree', '-r', '-z', '--name-only', tree).split(b'\0')):
+        if found := text_hits(raw, words):
+            path = decode(raw)
+            shown = redact(path, words) if hits(path, words) else '***'
+            findings.append(report(f'{where}:{shown} (path)', found))
+    return findings
+
+
 def scan_history(words: Words) -> list[str]:
     findings = scan_refs(words)
     remote = os.environ.get('PRE_COMMIT_REMOTE_BRANCH', '')  # the ref a push writes, which no local ref may hold
     if found := hits(remote, words):
         findings.append(report(f'remote ref {redact(remote, words)} (name)', found))
     for sha, kind, data in all_objects():  # a commit holds its message, author and committer; a tree its names
-        other: list[int] = content_hits(data, words) if kind == 'blob' else []  # other encodings: file text only
-        if found := sorted({*hits(decode(data), words), *other}):
+        if found := text_hits(data, words):
             findings.append(report(f'{kind} {sha[:12]}', found))  # an object has no single path to show
-        if kind == 'commit':  # whole paths: a word holding a `/` spans the trees that store its parts
-            findings.extend(
-                report(f'{sha[:12]}:{redact(path, words)} (path)', found)
-                for path in filter(None, decode(git('ls-tree', '-r', '-z', '--name-only', sha)).split('\0'))
-                if (found := hits(path, words))
-            )
+        if kind == 'commit':
+            findings.extend(path_findings(sha[:12], sha, words))
+    refs = decode(git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)'))
+    for line in filter(None, refs.split('\n')):  # a tree a ref or tag names has no commit to reach its paths
+        kind, peeled, ref = line.split(' ', 2)
+        if kind == 'tree' or (kind == 'tag' and peeled == 'tree'):
+            findings.extend(path_findings(redact(ref, words), ref, words))
     return findings
 
 
@@ -246,7 +274,8 @@ def main(argv: list[str]) -> int:
         elif argv[:1] == ['--message']:
             if len(argv) != 2:
                 raise CouldNotCheckError('--message needs the message file')
-            found = hits(message_text(decode(Path(argv[1]).read_bytes())), words)
+            raw = Path(argv[1]).read_bytes()
+            found = sorted({*hits(message_text(decode(raw)), words), *content_hits(raw, words)})
             findings = [report('commit message', found)] if found else []
             scanned = 'the commit message'
         else:
