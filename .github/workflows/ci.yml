@@ -82,8 +82,8 @@ jobs:
           EOF
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras, with the rest of the dev
-  # group resolved to match them. `uv run --with` is not used, because uv's `pytest` script runs the project interpreter and
-  # never sees the overlay.
+  # group resolved to match them. It does not use `uv run --with ... pytest`: with UV_PROJECT_ENVIRONMENT set, that overlay
+  # can be silently ignored. This job uses an explicit environment, checked with `uv pip check`, and asserts its versions.
   minimum-versions:
     runs-on: ubuntu-latest
     env:
