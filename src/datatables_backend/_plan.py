@@ -23,12 +23,14 @@ from .protocol import NO_USABLE_COLUMN
 from .protocol import Condition
 from .protocol import DTParams
 from .protocol import InvalidFilter
+from .protocol import Search
 from .protocol import SearchCriterion
 from .protocol import SearchGroup
 
 log = logging.getLogger('datatables_backend')
 
 REGEX_REFUSED = 'Regular-expression search is not supported.'
+VALUE_AND_VALUES = 'A column search takes a value or a list of values, not both.'
 DATE_FORMAT = 'Dates must be written as YYYY-MM-DD.'
 OUT_OF_RANGE = 'The filter value is outside the range of this column.'
 
@@ -164,16 +166,7 @@ def plan(params: DTParams, columns: Sequence[Column], type_of: Callable[[Column]
         column = lookup(requested.key)
         if not column.searchable:
             raise InvalidFilter(NO_USABLE_COLUMN)
-        kind = type_of(column)
-        if search.multi_values:
-            column_searches.append(AnyOf(column, kind, tuple(hooked(column, v) for v in search.multi_values)))
-        elif search.regex:
-            alternatives = _alternatives(search.value)
-            if alternatives is None:
-                raise InvalidFilter(REGEX_REFUSED)
-            column_searches.append(AnyOf(column, kind, tuple(hooked(column, v) for v in alternatives)))
-        else:
-            column_searches.append(Contains(column, kind, hooked(column, search.value)))
+        column_searches.append(_column_search(search, column, type_of(column), hooked))
 
     def node(item: SearchGroup | SearchCriterion) -> Criterion | Group | None:
         if isinstance(item, SearchCriterion):
@@ -267,6 +260,22 @@ def day_span(text: str) -> DaySpan:
 
 def _overflow() -> date:
     raise InvalidFilter(OUT_OF_RANGE)
+
+
+def _column_search(
+    search: Search, column: Column, kind: ColumnType, hooked: Callable[[Column, str], Any]
+) -> Contains | AnyOf:
+    """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains."""
+    if search.multi_values and search.value:
+        raise InvalidFilter(VALUE_AND_VALUES)
+    if search.multi_values:
+        return AnyOf(column, kind, tuple(hooked(column, v) for v in search.multi_values))
+    if search.regex:
+        alternatives = _alternatives(search.value)
+        if alternatives is None:
+            raise InvalidFilter(REGEX_REFUSED)
+        return AnyOf(column, kind, tuple(hooked(column, v) for v in alternatives))
+    return Contains(column, kind, hooked(column, search.value))
 
 
 def _alternatives(pattern: str) -> list[str] | None:

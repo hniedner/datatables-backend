@@ -254,11 +254,15 @@ def parse_request(
     ``empty``/``notEmpty`` logic).
 
     Raises:
-        MalformedRequest: the structure, a request key's shape, a paging number, or the page length is wrong, or a
+        MalformedRequest: the request holds no DataTables parameter (an empty one, or DataTables 1.9's form), or
+            the structure, a request key's shape, a paging number, or the page length is wrong, or a
             filter the library does not answer is sent. The message names the parameter where it can, and never
             quotes the request's keys or values.
     """
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
+    if not body.keys() & DTParams.model_fields.keys():  # empty, or another protocol (e.g. DataTables 1.9's sEcho)
+        log.warning('datatables_request_malformed', extra={'parameter': None})
+        raise MalformedRequest('The table request holds no DataTables parameter.')
     try:
         json.dumps(body, ensure_ascii=False).encode()
     except UnicodeEncodeError:  # a lone surrogate: no driver can encode it
@@ -278,9 +282,12 @@ def parse_request(
 
 
 def _is_flat(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> bool:
-    if not isinstance(data, Mapping):
+    if not isinstance(data, Mapping) or hasattr(data, 'getlist'):  # pairs, or a multi-dict of form fields
         return True
-    return any(_head(key) in DTParams.model_fields and _head(key) != key for key in cast(Mapping[str, Any], data))
+    return any(
+        isinstance(key, str) and _head(key) in DTParams.model_fields and _head(key) != key
+        for key in cast(Mapping[str, Any], data)
+    )
 
 
 def _head(key: str) -> str:
@@ -316,13 +323,17 @@ def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str,
         items = data
     root: dict[str, Any] = {}
     for key, raw in items:
+        if not isinstance(key, str):
+            raise MalformedRequest('The table request is malformed.')
         path = _path(key)
         if path is None:
             continue
         if isinstance(raw, list) and not raw and not key.endswith('[]'):  # no value for a single-value key
             raise MalformedRequest(f'Invalid {path[0]} parameter.')
-        values = raw if isinstance(raw, list) else [raw]
-        for value in cast(list[Any], values):
+        values = cast(list[Any], raw if isinstance(raw, list) else [raw])
+        if any(isinstance(value, dict) for value in values):  # an object among flat keys: JSON and form mixed
+            raise MalformedRequest(f'Invalid {path[0]} parameter.')
+        for value in values:
             _assign(root, path, value)
     return _lists(root)
 

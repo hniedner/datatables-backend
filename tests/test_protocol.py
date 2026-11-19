@@ -343,3 +343,42 @@ def test_a_searchpanes_pane_that_is_not_an_object_or_list_is_refused():
 def test_an_append_beside_a_field_is_refused():
     with pytest.raises(MalformedRequest):
         parse_request([('columns[0][data]', 'a'), ('columns[0][]', 'x')])
+
+
+def test_a_multi_dict_without_bracketed_keys_keeps_every_value():
+    """A duplicated key in a multi-dict is refused, as in any other flat form."""
+    from starlette.datastructures import ImmutableMultiDict
+
+    duplicated: ImmutableMultiDict[str, str] = ImmutableMultiDict([('draw', '1'), ('start', '0'), ('start', '5')])
+    with pytest.raises(MalformedRequest):
+        parse_request(duplicated)
+
+
+def test_an_empty_list_for_an_append_key_is_accepted():
+    params = parse_request(
+        {
+            'searchBuilder[criteria][0][condition]': 'null',
+            'searchBuilder[criteria][0][origData]': 'name',
+            'searchBuilder[criteria][0][value][]': [],
+        }
+    )
+    assert params.searchBuilder is not None
+    criterion = params.searchBuilder.criteria[0]
+    assert isinstance(criterion, SearchCriterion)
+    assert criterion.value == []
+
+
+@pytest.mark.parametrize(
+    'request_data',
+    [
+        {'search': {'value': 'x'}, 'search[regex]': 'true'},  # a nested object among flat keys
+        [(b'search[value]', 'x')],  # a key that is not text
+        {'sEcho': '1', 'iDisplayStart': '0', 'iDisplayLength': '10', 'sSearch': 'x'},  # the legacy 1.9 form
+        {},
+        [],
+    ],
+    ids=['nested-in-flat', 'bytes-key', 'legacy', 'empty-mapping', 'empty-pairs'],
+)
+def test_a_request_that_is_not_a_datatables_request_is_refused(request_data: Any):
+    with pytest.raises(MalformedRequest):
+        parse_request(request_data)

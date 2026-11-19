@@ -318,3 +318,10 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
     tagged = SQLTable(tags, [Column('code'), Column('kind')])
     response = tagged.fetch_sync(request('code', 'kind', order=[{'column': 1, 'dir': 'asc'}]), session)
     assert [row['code'] for row in response.data] == ['a', 'b', 'c']
+
+
+def test_a_column_search_with_both_a_value_and_multi_values_is_refused(session: Session):
+    params = request(*ALL)
+    params.columns[1].search.value = 'Ann'
+    params.columns[1].search.multi_values = ['Bob']
+    assert refused(table.fetch_sync(params, session))

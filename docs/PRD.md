@@ -73,7 +73,9 @@ is a small backend:
   - numbers above 2³¹−1;
   - text JSON cannot encode (lone surrogates);
   - a request key of another shape, or an index that is not `0` or 1–9 ASCII digits without a leading zero;
-  - a filter the library does not answer, unless empty or idle.
+  - a filter the library does not answer, unless empty or idle;
+  - no DataTables parameter at all (an empty request, or DataTables 1.9's `sEcho`/`sSearch` form);
+  - a key that is not text, or an object value among flat keys.
 - A column's `name` falls back to its `data`.
 
 ### R2. Column declaration (the server's schema)
@@ -124,7 +126,7 @@ is a small backend:
 - **Multi-select:** a column search with `regex: true` whose regex is only literal alternatives (`a|b`, `^(a|b)$`,
   escaped or not) is read as an exact-match IN list, following DataTables' multi-select convention. Any other regex
   is refused. A `multi_values` list in the column's search object (an extension to the DataTables
-  protocol) does the same.
+  protocol) does the same. A column search holding both a value and `multi_values` is refused.
 - **Base filter:** an optional server filter (a SQL expression or an OpenSearch query) limits the rows the table
   shows at all. It applies to `recordsTotal`, `recordsFiltered` and the page alike.
 - **OpenSearch text fields:** declared as analysed text, they take a Google-style query: implicit AND, `OR`, `NOT`/`-`
