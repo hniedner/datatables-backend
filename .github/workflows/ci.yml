@@ -61,9 +61,10 @@ jobs:
       - run: uv run --frozen pytest
 
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
-  # extra's module must import. With every extra and greenlet installed, importing them must not load another extra's
-  # package (nor sqlalchemy.ext.asyncio on the sqlalchemy leg), which also catches an import guarded by try/except.
-  # The extras and their packages come from the wheel's metadata, and the matrix must list every declared extra.
+  # extra's module must import. With every extra and greenlet installed, importing them must not load a package another
+  # extra requires directly (nor sqlalchemy.ext.asyncio on the sqlalchemy leg), which also catches such an import
+  # guarded by try/except; a guarded import of a transitive dependency (e.g. starlette, urllib3) is not caught. The
+  # extras and their direct requirements come from the wheel's metadata, and the matrix must list every declared extra.
   install-isolation:
     runs-on: ubuntu-latest
     strategy:
