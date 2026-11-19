@@ -81,28 +81,32 @@ jobs:
           sys.exit(f'{extra} loaded {leaked}' if leaked else 0)
           EOF
 
-  # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy and pydantic, with the rest of the dev group
-  # resolved to match them. `uv run --with` is not used, because uv's `pytest` script runs the project interpreter and
+  # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras, with the rest of the dev
+  # group resolved to match them. `uv run --with` is not used, because uv's `pytest` script runs the project interpreter and
   # never sees the overlay.
   minimum-versions:
     runs-on: ubuntu-latest
     env:
-      SQLALCHEMY_MIN: '2.0.30'
-      PYDANTIC_MIN: '2.10.0'
+      MIN_PINS: sqlalchemy==2.0.30 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv venv -p 3.12 .venv-min
-      - run: uv pip install -p .venv-min -e . --group dev "sqlalchemy==$SQLALCHEMY_MIN" "pydantic==$PYDANTIC_MIN"
+      - run: |
+          read -ra pins <<< "$MIN_PINS"
+          uv pip install -p .venv-min -e . --group dev "${pins[@]}"
       - run: uv pip check -p .venv-min
       - name: Show and assert the installed minimum versions
         run: |
           .venv-min/bin/python - <<'EOF'
-          import os, sys, pydantic, sqlalchemy
-          print('python', sys.version.split()[0], 'sqlalchemy', sqlalchemy.__version__, 'pydantic', pydantic.VERSION)
-          assert sqlalchemy.__version__ == os.environ['SQLALCHEMY_MIN'], sqlalchemy.__version__
-          assert pydantic.VERSION == os.environ['PYDANTIC_MIN'], pydantic.VERSION
+          from importlib.metadata import version
+          import os, sys
+          print('python', sys.version.split()[0], 'starlette', version('starlette'))
+          for pin in os.environ['MIN_PINS'].split():
+              name, wanted = pin.split('==')
+              print(name, version(name))
+              assert version(name) == wanted, f'{name} {version(name)} != {wanted}'
           EOF
       - run: .venv-min/bin/python -m pytest

@@ -519,11 +519,12 @@ dev = [
     { name = "python-multipart" },
     { name = "ruff" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "starlette" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.110" },
+    { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.133" },
     { name = "opensearch-py", marker = "extra == 'opensearch'", specifier = ">=2.6" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.9" },
@@ -535,7 +536,7 @@ provides-extras = ["fastapi", "opensearch", "sqlalchemy"]
 dev = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "basedpyright", specifier = ">=1.29" },
-    { name = "fastapi", specifier = ">=0.110" },
+    { name = "fastapi", specifier = ">=0.133" },
     { name = "httpx2", specifier = ">=2.16" },
     { name = "opensearch-py", extras = ["async"], specifier = ">=2.6" },
     { name = "pytest", specifier = ">=8.3" },
@@ -544,6 +545,7 @@ dev = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.30" },
+    { name = "starlette", specifier = ">=1.2" },
 ]
 
 [[package]]

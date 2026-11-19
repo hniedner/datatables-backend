@@ -30,7 +30,7 @@ classifiers = [
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy>=2.0.30"]
 opensearch = ["opensearch-py>=2.6"]
-fastapi = ["fastapi>=0.110", "python-multipart>=0.0.9"]
+fastapi = ["fastapi>=0.133", "python-multipart>=0.0.9"]
 
 [project.urls]
 Homepage = "https://github.com/hniedner/datatables-backend"
@@ -39,7 +39,7 @@ Homepage = "https://github.com/hniedner/datatables-backend"
 dev = [
     "aiosqlite>=0.20",
     "basedpyright>=1.29",
-    "fastapi>=0.110",
+    "fastapi>=0.133",
     "httpx2>=2.16",
     "opensearch-py[async]>=2.6",
     "pytest>=8.3",
@@ -48,6 +48,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.8",
     "sqlalchemy[asyncio]>=2.0.30",
+    "starlette>=1.2",
 ]
 
 [tool.hatch.version]
