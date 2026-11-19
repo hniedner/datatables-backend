@@ -166,9 +166,9 @@ class DTParams(_Model):
     order: list[DTOrder] = []
     search: Search = Search()
     searchBuilder: SearchGroup | None = None
-    #: SearchPanes' selections, which the library does not answer: refused unless empty. SearchPanes also sends
-    #: ``searchPanes_options`` on every request and ``searchPanesLast`` with a selection; both are ignored.
-    #: SearchPanes sends an empty object per pane on every request; only a pane holding a selection is refused.
+    #: SearchPanes' selections, which the library does not answer: a pane holding a selection is refused. SearchPanes
+    #: sends an empty object per pane on every request, ``searchPanes_options`` on every request and
+    #: ``searchPanesLast`` with a selection; those are accepted or ignored.
     searchPanes: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
     searchPanes_null: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
 
@@ -328,6 +328,8 @@ def _assign(node: dict[str, Any], path: list[str], value: Any) -> None:
     last = path[-1]
     if last == '':  # key[]: append
         appended = node.setdefault('', [])
+        if not isinstance(appended, list):  # a field was put under this append first (key[][part])
+            raise MalformedRequest('The table request is malformed.')
         cast(list[Any], appended).append(value)
     elif last in node:
         raise MalformedRequest('The table request is malformed.')

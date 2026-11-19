@@ -182,6 +182,8 @@ def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
         'search[value]x',
         'order.[0].dir',
         'order[0]]',
+        'columns[0][search.value]',
+        'search[a.b]',
     ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
@@ -308,3 +310,11 @@ def test_a_multi_dict_keeps_every_value_of_a_repeated_key():
 def test_a_searchbuilder_part_of_the_wrong_kind_is_refused(request_data: Any):
     with pytest.raises(MalformedRequest):
         parse_request(request_data)
+
+
+@pytest.mark.parametrize('key', ['search[value]', 'columns[0][data]', 'searchBuilder[criteria][0][value]'])
+@pytest.mark.parametrize('field_first', [True, False])
+def test_a_field_and_a_value_under_one_append_are_refused_in_either_order(key: str, field_first: bool):
+    pairs = [(f'{key}[][x]', '1'), (f'{key}[]', '2')]
+    with pytest.raises(MalformedRequest):
+        parse_request(pairs if field_first else pairs[::-1])
