@@ -19,6 +19,7 @@ from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import checked_database
 from .conftest import criterion
 from .conftest import people
 from .conftest import request
@@ -54,6 +55,18 @@ def refused(response: DTResponse) -> str:
 def test_the_suite_runs_on_the_database_it_was_given(session: Session):
     """A container job names its dialect, so a run that silently fell back to SQLite fails."""
     assert session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
+
+
+@pytest.mark.parametrize('name', ['people', 'staging', 'dtbx', None])
+def test_the_suite_refuses_a_database_it_does_not_own(name: str | None):
+    """The fixtures drop and create tables, so a real database must be named for the tests; checked before any DDL."""
+    with pytest.raises(RuntimeError, match='dtb_test'):
+        checked_database('postgresql+psycopg://user@host/' + (name or ''))
+
+
+@pytest.mark.parametrize('name', ['dtb', 'dtb_test', 'dtb_test_local'])
+def test_the_suite_runs_on_a_database_named_for_it(name: str):
+    assert checked_database(f'mssql+pyodbc://sa:pw@localhost:1433/{name}?driver=x') == name
 
 
 def test_a_page_comes_with_both_counts(session: Session):
@@ -125,15 +138,20 @@ def test_the_total_is_cached_until_the_ttl(session: Session):
 # -- ordering ---
 
 
+def test_order_follows_the_requests_columns_then_the_primary_key(session: Session):
+    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])  # age; Ann and Cy tie at 31; row 3's age is NULL
+    assert [row for row in ids(table.fetch_sync(params, session)) if row != 3] == [1, 4, 2, 5]
+
+
 @pytest.mark.xfail(
     os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
-    reason="draft 1: NULL placement is the database's default (PostgreSQL: last ascending); PRD-O2 makes it lowest "
-    'everywhere',
+    reason="draft 1: NULL placement is the database's default (PostgreSQL: last ascending); PRD v2 (PRD-O2) makes it "
+    'lowest everywhere',
     strict=True,
 )
-def test_order_follows_the_requests_columns_then_the_primary_key(session: Session):
-    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])  # age; Ann and Cy tie at 31, NULL first on SQLite
-    assert ids(table.fetch_sync(params, session)) == [3, 1, 4, 2, 5]
+def test_null_comes_first_in_an_ascending_order(session: Session):
+    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])
+    assert ids(table.fetch_sync(params, session))[0] == 3
 
 
 @pytest.mark.parametrize(
@@ -314,10 +332,17 @@ def test_many_multi_select_values_still_run(session: Session):
     assert ids(table.fetch_sync(params, session)) == [2]
 
 
+def test_many_multi_select_values_on_a_number_column_still_run(session: Session):
+    """Past SQL Server's 2,100-parameter limit the values travel as JSON and are cast to the column's number type."""
+    params = request(*ALL)
+    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
+    assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
 def test_a_join_works_as_a_source(session: Session):
     other = people.alias('other')
     joined = people.join(other, people.c.age == other.c.age)
-    paired = SQLTable(joined, [Column('id', field='people_id'), Column('name', field='other_name')])
+    paired = SQLTable(joined, [Column('id', field='dtb_test_people_id'), Column('name', field='other_name')])
     response = paired.fetch_sync(request('id', 'name'), session)
     assert response.recordsTotal == len(session.execute(select(people.c.id).select_from(joined)).all())
 
@@ -328,7 +353,9 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
     from sqlalchemy import String
     from sqlalchemy import Table
 
-    tags = Table('tags', MetaData(), SQLColumn('code', String(5), primary_key=True), SQLColumn('kind', String(5)))
+    tags = Table(
+        'dtb_test_tags', MetaData(), SQLColumn('code', String(5), primary_key=True), SQLColumn('kind', String(5))
+    )
     tags.create(session.connection())
     session.execute(tags.insert(), [{'code': c, 'kind': 'k'} for c in ('c', 'a', 'b')])  # stored in this order
     tagged = SQLTable(tags, [Column('code'), Column('kind')])

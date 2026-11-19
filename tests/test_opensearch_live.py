@@ -2,6 +2,10 @@
 
 Runs only when DTB_OPENSEARCH_URL names a cluster (the CI job starts one); otherwise every test here is skipped, and
 the reason shows in the summary. The index holds five synthetic documents with one field of each mapping kind.
+
+The rows asserted are what the backend answers today (draft 1). Left untested on purpose: the query syntax's OR (a
+`should` of words) in a column search, which PRD v2 drops, and a negated condition on a missing field, which PRD v2
+settles (PRD-F37).
 """
 
 from collections.abc import AsyncIterator
@@ -135,8 +139,8 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
         ('apple', ['a1', 'd4']),  # the title, analysed or whole; the body's analysed `apples` is another token
         ('APPL', ['a1', 'd4']),  # a substring of the whole title, in any case
         ('green', ['b2', 'd4']),  # an analysed body word
-        ('100%', ['c3']),
-        ('a*b', []),  # a wildcard character is text
+        ('p?e', []),  # `?` is text: unescaped, the wildcard `*p?e*` would find "Apple pie"
+        ('a*b', []),  # `*` is text too
         ('ann', ['a1']),  # the dotted author field
     ],
 )
@@ -187,6 +191,9 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('title', '=', ['Apple pie'], ['a1']),
         ('title', '!=', ['Apple pie'], ['b2', 'c3', 'd4', 'e5']),
         ('body', '=', ['green apples'], ['d4']),  # a phrase on analysed text
+        ('body', '!=', ['green apples'], ['a1', 'b2', 'c3', 'e5']),
+        ('body', 'starts', ['smith'], ['a1']),  # analysed text has no whole string: starts reads as contains
+        ('body', 'ends', ['granny'], ['a1']),  # and so does ends
         ('title', 'contains', ['TART'], ['c3']),
         ('title', '!contains', ['apple'], ['b2', 'c3', 'e5']),
         ('title', 'starts', ['apple'], ['a1', 'd4']),

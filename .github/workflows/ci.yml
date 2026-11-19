@@ -232,8 +232,6 @@ jobs:
           EOF
       - run: .venv-min/bin/python -m pytest
 
-  # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
-  # if every needed job (every matrix leg included) succeeded.
   # The behaviour suite against real databases (tests/conftest.py reads DTB_SQL_URL and DTB_SQL_ASYNC_URL). The
   # report header names the server and its version, and DTB_SQL_DIALECT makes a test fail if the run fell back to
   # SQLite. Images are pinned by digest; the passwords are for these throwaway containers only.
@@ -247,7 +245,7 @@ jobs:
           POSTGRES_DB: dtb
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres -d dtb" --health-interval 2s --health-timeout 5s --health-retries 60
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d dtb" --health-interval 2s --health-timeout 5s --health-retries 60
     env:
       DTB_SQL_URL: postgresql+psycopg://postgres:dtb-test-only@localhost:5432/dtb
       DTB_SQL_ASYNC_URL: postgresql+psycopg_async://postgres:dtb-test-only@localhost:5432/dtb
@@ -372,6 +370,8 @@ jobs:
           exit 1
       - run: uv run --frozen pytest tests/test_opensearch_live.py
 
+  # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
+  # if every needed job (every matrix leg included) succeeded.
   gate:
     if: always()
     needs: [lint, types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver, opensearch]

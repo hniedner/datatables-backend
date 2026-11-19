@@ -10,6 +10,11 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest`
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
+- Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
+  `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb` or
+  `dtb_test...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its
+  dialect, or `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs
+  Microsoft's ODBC Driver 18.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and
@@ -45,8 +50,11 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - A message or log line never contains a search value or a name the client sent. A name is logged only when the
   server declared it.
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
-  aiosqlite) and against a recording OpenSearch client. Before relying on a new test, check that it fails when the
-  behaviour is broken.
+  aiosqlite) and against a recording OpenSearch client; CI also runs the SQL tests on PostgreSQL, MySQL and SQL
+  Server (`DTB_SQL_URL`, `DTB_SQL_ASYNC_URL`, `DTB_SQL_DIALECT`) and `tests/test_opensearch_live.py` on OpenSearch
+  (`DTB_OPENSEARCH_URL`). A difference a database makes legitimate is a `strict=True` xfail for that backend citing
+  its reason; nothing is skipped silently. Before relying on a new test, check that it fails when the behaviour is
+  broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
 
 ## Status (2026-11-19)
@@ -56,7 +64,8 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - **Next: milestone 2.**
   - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.15, the minimum
     versions, and an install-isolation job that imports each extra without the others.
-  - Add container tests against PostgreSQL, SQL Server and OpenSearch.
+  - Done: container tests run the SQL suite on PostgreSQL 18, MySQL 8.4 and SQL Server 2022 and the live
+    OpenSearch tests on OpenSearch 3.9, one CI job each, all in the gate.
   - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.

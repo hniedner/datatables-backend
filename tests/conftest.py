@@ -16,6 +16,7 @@ from sqlalchemy import SmallInteger
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
@@ -23,11 +24,25 @@ from sqlalchemy.orm import Session
 from datatables_backend import DTParams
 from datatables_backend import parse_request
 
+
+def checked_database(url: str) -> str:
+    """The database a URL names, if the tests may drop and create tables in it: `dtb` (CI's) or `dtb_test...`."""
+    name = make_url(url).database or ''
+    if name != 'dtb' and not name.startswith('dtb_test'):
+        raise RuntimeError(
+            'The SQL tests drop and create tables: DTB_SQL_URL must name a database called dtb or dtb_test...'
+        )
+    return name
+
+
 #: A real database instead of SQLite: a sync URL and an async URL for the same database, both or neither (the
-#: container jobs in CI set them). Before each test, the tables the tests create (TEST_TABLES) are dropped there.
+#: container jobs in CI set them). Both must name a database the tests own (`checked_database`), checked here,
+#: before anything connects; before each test, the tables the tests create (TEST_TABLES) are dropped there.
 SQL_URLS = (os.environ.get('DTB_SQL_URL', ''), os.environ.get('DTB_SQL_ASYNC_URL', ''))
 if any(SQL_URLS) and not all(SQL_URLS):
     raise RuntimeError('Set both DTB_SQL_URL and DTB_SQL_ASYNC_URL, or neither.')
+for _url in filter(None, SQL_URLS):
+    checked_database(_url)
 
 
 def pytest_report_header() -> list[str]:
@@ -49,10 +64,10 @@ def pytest_report_header() -> list[str]:
 
 
 metadata = MetaData()
-TEST_TABLES = frozenset({'people', 'tags'})  # `tags` is created by a test in test_sql.py
+TEST_TABLES = frozenset({'dtb_test_people', 'dtb_test_tags'})  # the second is created by a test in test_sql.py
 
 people = Table(
-    'people',
+    'dtb_test_people',
     metadata,
     SQLColumn('id', Integer, primary_key=True),
     SQLColumn('name', String(50)),
