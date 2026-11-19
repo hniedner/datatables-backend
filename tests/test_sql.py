@@ -15,11 +15,11 @@ from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import BRACKETED
 from .conftest import criterion
 from .conftest import people
 from .conftest import request
-from .test_protocol import BRACKETED
-from .test_protocol import reshaped
+from .conftest import reshaped
 
 ALL = ('id', 'name', 'email', 'age', 'born', 'seen', 'team')
 COLUMNS = [

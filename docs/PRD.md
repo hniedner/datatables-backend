@@ -50,9 +50,14 @@ is a small backend:
   (`columns[0][search][value]`), which is DataTables' default `ajax` encoding, in dotted notation
   (`columns[0].search.value`, as spring-data-jpa-datatables reads it, or `columns.0.search.value`), or mixed. Every
   form reads to the same request. Strings `"true"`/`"false"` are booleans.
-- Flat keys that are not the protocol's (DataTables' GET cache-buster `_`, an app's own `ajax.data` keys) are ignored,
-  and so are unknown fields under a protocol key (e.g. DataTables' `search[fixed]`). A key that starts with a protocol
-  parameter's name but has no readable shape is refused as malformed.
+- A flat key is the request's own when its name before the first `.`, `[` or `]` is a request parameter (`draw`,
+  `start`, `length`, `columns`, `order`, `search`, `searchBuilder`). Other keys (DataTables' GET cache-buster `_`, an
+  app's own `ajax.data` keys) are ignored, so an app key must not begin with one of those names followed by `.` or `[`.
+  A request key must be `[part]` and `.part` segments, a bracket segment holding no `.`, and an index is ASCII digits;
+  a request key of any other shape is refused as malformed. Unknown fields under a request key are ignored.
+- A non-empty fixed or grouped search (`search[fixed]`, `search[groups]`, `search[groupsFixed]`,
+  `columns[i][search][fixed]`) is refused as malformed: the library does not answer it, and dropping it would answer
+  fewer filters than the client asked for. Empty ones are accepted.
 - Validate into typed models: `DTParams`, `DTColumn`, `DTOrder`, `Search`, and the recursive SearchBuilder tree.
 - Refuse a malformed request with `MalformedRequest`. Its message names the parameter, never the client's value.
   Malformed means:

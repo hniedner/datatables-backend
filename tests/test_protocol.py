@@ -9,6 +9,9 @@ from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
 from datatables_backend import parse_request
 
+from .conftest import BRACKETED
+from .conftest import reshaped
+
 
 def test_a_json_request_is_read():
     params = parse_request(
@@ -120,32 +123,6 @@ def test_flat_indexes_with_a_gap_are_refused():
         parse_request({'columns[0][data]': 'a', 'columns[2][data]': 'b'})
 
 
-BRACKETED = [
-    ('draw', '4'),
-    ('start', '0'),
-    ('length', '10'),
-    ('columns[0][data]', 'id'),
-    ('columns[1][data]', 'name'),
-    ('columns[1][search][value]', 'ann'),
-    ('columns[1][search][regex]', 'false'),
-    ('columns[2][data]', 'team'),
-    ('columns[2][orderable]', 'false'),
-    ('order[0][column]', '0'),
-    ('order[0][dir]', 'desc'),
-    ('order[0][name]', ''),
-    ('search[value]', 'r'),
-    ('search[regex]', 'false'),
-]
-
-
-def reshaped(key: str, form: str) -> str:
-    """``columns[1][search][value]`` as ``columns[1].search.value`` (spring) or ``columns.1.search.value`` (dots)."""
-    head, *parts = key.replace(']', '').split('[')
-    if form == 'spring':  # spring-data-jpa-datatables' flatten(): indexes stay bracketed, names are dotted
-        return head + ''.join(f'[{part}]' if part.isdigit() else f'.{part}' for part in parts)
-    return '.'.join([head, *parts])
-
-
 @pytest.mark.parametrize('form', ['spring', 'dots'])
 def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
     dotted = [(reshaped(key, form), value) for key, value in BRACKETED]
@@ -153,28 +130,70 @@ def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
     assert parse_request(dict(dotted)) == parse_request(dict(BRACKETED))
 
 
-def test_dotted_column_names_are_read():
-    params = parse_request({'draw': '1', 'start': '0', 'length': '10', 'columns.0.data': 'a'})
-    assert [column.key for column in params.columns] == ['a']
-
-
 def test_keys_a_real_client_adds_are_ignored():
-    """DataTables' GET cache-buster ``_``, its fixed and grouped searches, and an app's own ``ajax.data`` keys."""
-    extras = [
-        ('_', '1763550000000'),
-        ('search[fixed][0][name]', 'scope'),
-        ('search[fixed][0][term]', 'x'),
-        ('search[groups][0][columns][]', '1'),
-        ('columns[1][search][fixed][0][name]', 'scope'),
-        ('status', 'open'),
-        ('filter[owner]', 'me'),
-    ]
+    """DataTables' GET cache-buster ``_`` and an app's own ``ajax.data`` keys, in either notation."""
+    extras = [('_', '1763550000000'), ('status', 'open'), ('filter[owner]', 'me'), ('app.key', 'x')]
     assert parse_request(BRACKETED + extras) == parse_request(BRACKETED)
 
 
+def test_an_app_key_beside_a_json_body_is_ignored():
+    body = {'draw': 1, 'columns': [{'data': 'name'}], 'search': {'value': 'ann'}}
+    assert parse_request({**body, 'filter[owner]': 'me', 'app.key': 'x'}) == parse_request(body)
+
+
 @pytest.mark.parametrize(
-    'key', ['columns[0][data', 'columns[0]].data', 'columns[0]data', 'search..value', 'order.[0].dir', 'search.']
+    'extra',
+    [
+        ('search[fixed][0][name]', 'scope'),
+        ('search[groups][0][columns][]', '1'),
+        ('search[groupsFixed][0][name]', 'scope'),
+        ('columns[1][search][fixed][0][term]', 'x'),
+    ],
+)
+def test_a_fixed_or_grouped_search_is_refused(extra: tuple[str, str]):
+    """DataTables sends these only when the page sets them; dropping them would answer fewer filters than asked."""
+    with pytest.raises(MalformedRequest, match='search'):
+        parse_request([*BRACKETED, extra])
+
+
+def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
+    body: dict[str, Any] = {'columns': [{'data': 'name', 'search': {'value': '', 'fixed': []}}]}
+    assert parse_request(body) == parse_request({'columns': [{'data': 'name'}]})
+    with pytest.raises(MalformedRequest, match='search'):
+        parse_request({'search': {'value': '', 'fixed': [{'name': 'scope', 'term': 'x'}]}})
+
+
+@pytest.mark.parametrize(
+    'key',
+    [
+        'columns[0][data',
+        'columns[0]].data',
+        'columns[0]data',
+        'columns[0][name]x',
+        'search..value',
+        'order.[0].dir',
+        'search.',
+        'columns[²][data]',
+        'columns[\u0660][data]',  # ARABIC-INDIC DIGIT ZERO
+        'columns.\u0660.data',
+    ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
     with pytest.raises(MalformedRequest):
         parse_request([*BRACKETED, (key, 'x')])
+
+
+def test_a_refused_key_shape_names_the_parameter_and_never_the_key(caplog: pytest.LogCaptureFixture):
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request([*BRACKETED, ('columns[0][name]secret', 'x')])
+    assert str(refused.value) == 'Invalid columns parameter.'
+    assert 'secret' not in str(refused.value)
+    assert all('secret' not in str(vars(record)) for record in caplog.records)
+
+
+@pytest.mark.parametrize(('key', 'digit'), [('columns[\u00b2][data]', '\u00b2'), ('columns.\u0660.data', '\u0660')])
+def test_a_non_ascii_digit_index_is_refused_without_quoting_it(key: str, digit: str):
+    """Superscript two and ARABIC-INDIC DIGIT ZERO are Unicode digits, not indexes."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request([(key, 'a')])
+    assert digit not in str(refused.value)

@@ -61,6 +61,11 @@ class Search(_Model):
     regex: bool = False
     #: Not part of the DataTables protocol: a multi-select may send its values as a list here
     multi_values: list[str] | None = None
+    #: DataTables' fixed and grouped searches, which the library does not answer: refused unless empty, so a client
+    #: that uses them is told so instead of getting fewer filters than it asked for
+    fixed: list[Any] = Field(default=[], max_length=0)
+    groups: list[Any] = Field(default=[], max_length=0)
+    groupsFixed: list[Any] = Field(default=[], max_length=0)
 
 
 class DTColumn(_Model):
@@ -184,12 +189,16 @@ def parse_request(
     parameters, as a mapping or as key-value pairs (a query string or form with repeated ``key[]`` entries). Flat keys
     may be bracketed, as DataTables' default encoding sends them (``columns[0][search][value]``), dotted
     (``columns[0].search.value``, as spring-data-jpa-datatables reads them, or ``columns.0.search.value``), or mixed.
-    A flat key that does not start with a request parameter's name, such as DataTables' cache-buster ``_`` or an
-    app's own ``ajax.data`` keys, is ignored; one that does but cannot be read is refused.
+    A flat key is the request's own when its name before the first ``.``, ``[`` or ``]`` is a request parameter
+    (``draw``, ``start``, ``length``, ``columns``, ``order``, ``search``, ``searchBuilder``). Any other key, such as
+    DataTables' cache-buster ``_`` or an app's own ``ajax.data`` keys, is ignored, so an app key must not begin with one
+    of those names followed by ``.`` or ``[``. A request key must be ``[part]`` and ``.part`` segments, a bracket
+    segment holding no ``.``; an index is ASCII digits. DataTables' fixed and grouped searches (``search[fixed]``,
+    ``search[groups]``, ``search[groupsFixed]``, ``columns[i][search][fixed]``) are refused unless empty.
 
     Raises:
-        MalformedRequest: the structure, a key's shape, a paging number, or the page length is wrong. The message
-            never quotes the request's keys or values.
+        MalformedRequest: the structure, a request key's shape, a paging number, or the page length is wrong, or a
+            fixed or grouped search is sent. The message names the parameter, never the request's keys or values.
     """
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
     try:
@@ -275,7 +284,7 @@ def _lists(node: Any) -> Any:
     if set(mapping) == {''}:
         return [_lists(value) for value in mapping['']]
     converted = {key: _lists(value) for key, value in mapping.items()}
-    if converted and all(key.isdigit() for key in converted):
+    if converted and all(key.isascii() and key.isdigit() for key in converted):
         indexes = sorted(int(key) for key in converted)
         if indexes != list(range(len(indexes))):
             raise MalformedRequest('The table request is malformed.')
