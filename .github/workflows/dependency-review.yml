@@ -12,7 +12,9 @@ concurrency:
 
 jobs:
   # Fails a pull request that adds a dependency with a known vulnerability (any severity) or a licence outside the
-  # list, in runtime and development scopes alike. GitHub's dependency graph reads uv.lock.
+  # list, in runtime and development scopes alike. GitHub's dependency graph reads uv.lock, although its docs list only
+  # pip and Poetry for Python: measured 2026-11-19, the repository's SBOM (GET .../dependency-graph/sbom) held 50
+  # packages at the versions uv.lock pins.
   dependency-review:
     runs-on: ubuntu-latest
     steps:
@@ -28,5 +30,5 @@ jobs:
             Unlicense
           # The dependency graph's licence for these is wider than the package's own: aiohappyeyeballs declares
           # PSF-2.0 but is listed with GPL-1.0-or-later from a file scan; protobuf is BSD-3-Clause with a
-          # scancode reference.
-          allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf
+          # scancode reference. Pinned to the locked versions, so a new version is checked again.
+          allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs@2.7.1, pkg:pypi/protobuf@7.36.2
