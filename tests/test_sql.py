@@ -1,5 +1,9 @@
-"""The SQL backend, on SQLite, through the public API only: a request in, a response out."""
+"""The SQL backend through the public API only: a request in, a response out.
 
+It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: PostgreSQL, MySQL, SQL Server).
+"""
+
+import os
 from typing import Any
 
 import pytest
@@ -45,6 +49,11 @@ def refused(response: DTResponse) -> str:
 
 
 # -- paging, counts, rows ---------------------------------------------------------------------------------------------
+
+
+def test_the_suite_runs_on_the_database_it_was_given(session: Session):
+    """A container job names its dialect, so a run that silently fell back to SQLite fails."""
+    assert session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
 
 
 def test_a_page_comes_with_both_counts(session: Session):

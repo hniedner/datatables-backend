@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from collections.abc import Iterator
 from datetime import date
 from datetime import datetime
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,33 @@ from sqlalchemy.orm import Session
 from datatables_backend import DTParams
 from datatables_backend import parse_request
 
+#: A real database instead of SQLite: a sync URL and an async URL for the same database, both or neither (the
+#: container jobs in CI set them). Before each test, the tables the tests create (TEST_TABLES) are dropped there.
+SQL_URLS = (os.environ.get('DTB_SQL_URL', ''), os.environ.get('DTB_SQL_ASYNC_URL', ''))
+if any(SQL_URLS) and not all(SQL_URLS):
+    raise RuntimeError('Set both DTB_SQL_URL and DTB_SQL_ASYNC_URL, or neither.')
+
+
+def pytest_report_header() -> list[str]:
+    """The real servers the tests run on, with their versions, so a run cannot pass on SQLite unnoticed."""
+    lines: list[str] = []
+    if SQL_URLS[0]:
+        engine = create_engine(SQL_URLS[0])
+        with engine.connect() as connection:
+            version = '.'.join(map(str, connection.dialect.server_version_info or ()))
+        engine.dispose()
+        lines.append(f'SQL tests on {engine.dialect.name} {version}')
+    if url := os.environ.get('DTB_OPENSEARCH_URL'):
+        from opensearchpy import OpenSearch  # only for a live run
+
+        client = OpenSearch(hosts=[url])
+        lines.append(f'OpenSearch tests on {client.info()["version"]["number"]}')
+        client.close()
+    return lines
+
+
 metadata = MetaData()
+TEST_TABLES = frozenset({'people', 'tags'})  # `tags` is created by a test in test_sql.py
 
 people = Table(
     'people',
@@ -62,27 +89,32 @@ ROWS: list[dict[str, Any]] = [
 
 
 @pytest.fixture
-def database(tmp_path: Path) -> Path:
+def database(tmp_path: Path) -> tuple[str, str]:
+    """The sync and async URL of a database holding only ``people`` and its rows."""
     path = tmp_path / 'people.db'
-    engine = create_engine(f'sqlite:///{path}')
-    metadata.create_all(engine)
+    urls = SQL_URLS if SQL_URLS[0] else (f'sqlite:///{path}', f'sqlite+aiosqlite:///{path}')
+    engine = create_engine(urls[0])
     with engine.begin() as connection:
+        existing = MetaData()
+        existing.reflect(connection, only=lambda name, _: name in TEST_TABLES)  # what an earlier test left
+        existing.drop_all(connection)
+        metadata.create_all(connection)
         connection.execute(people.insert(), ROWS)
     engine.dispose()
-    return path
+    return urls
 
 
 @pytest.fixture
-def session(database: Path) -> Iterator[Session]:
-    engine = create_engine(f'sqlite:///{database}')
+def session(database: tuple[str, str]) -> Iterator[Session]:
+    engine = create_engine(database[0])
     with Session(engine) as session:
         yield session
     engine.dispose()
 
 
 @pytest.fixture
-async def async_session(database: Path) -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine(f'sqlite+aiosqlite:///{database}')
+async def async_session(database: tuple[str, str]) -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine(database[1])
     async with AsyncSession(engine) as session:
         yield session
     await engine.dispose()
