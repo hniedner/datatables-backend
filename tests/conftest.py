@@ -104,3 +104,32 @@ def criterion(column: str, condition: str, *values: str) -> dict[str, Any]:
             'criteria': [{'condition': condition, 'origData': column, 'value': list(values)}],
         }
     }
+
+
+BRACKETED = [
+    ('draw', '4'),
+    ('start', '0'),
+    ('length', '10'),
+    ('columns[0][data]', 'id'),
+    ('columns[1][data]', 'name'),
+    ('columns[1][search][value]', 'ann'),
+    ('columns[1][search][regex]', 'false'),
+    ('columns[2][data]', 'team'),
+    ('columns[2][orderable]', 'false'),
+    ('order[0][column]', '0'),
+    ('order[0][dir]', 'desc'),
+    ('order[0][name]', ''),
+    ('search[value]', 'r'),
+    ('search[regex]', 'false'),
+]
+
+
+def reshaped(key: str, form: str) -> str:
+    """``columns[1][search][value]`` as ``columns[1].search.value`` (spring), ``columns.1.search.value`` (dots) or
+    ``columns.1[search].value`` (mixed)."""
+    head, *parts = key.replace(']', '').split('[')
+    if form == 'spring':  # spring-data-jpa-datatables' flatten(): indexes stay bracketed, names are dotted
+        return head + ''.join(f'[{part}]' if part.isdigit() else f'.{part}' for part in parts)
+    if form == 'mixed':  # dots and brackets alternate, each following the other kind
+        return head + ''.join(f'[{part}]' if position % 2 else f'.{part}' for position, part in enumerate(parts))
+    return '.'.join([head, *parts])
