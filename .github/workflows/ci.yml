@@ -159,8 +159,8 @@ jobs:
           EOF
       - run: .venv-min/bin/python -m pytest
 
-  # The required status check on main. It runs whatever happened before it and passes only if every job it needs
-  # succeeded; a failed, cancelled or skipped job (or matrix leg) fails it.
+  # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
+  # if every needed job (every matrix leg included) succeeded.
   gate:
     if: always()
     needs: [lint, types, tests, install-isolation, minimum-versions]
