@@ -171,7 +171,7 @@ is a small backend:
 ### R9. Packaging and quality
 
 - The distribution is `datatables-backend` and the import is `datatables_backend`.
-- Extras are `[sqlalchemy]`, `[opensearch]` and `[fastapi]`. The core depends only on Pydantic 2.
+- Extras are `[sqlalchemy]`, `[opensearch]` and `[fastapi]`. The core depends only on Pydantic 2.10 or later.
 - Python 3.12 or later. Python 3.10 reached end of life in 2026-10, and the code uses PEP 695 syntax.
 - Fully typed (`py.typed`), checked with basedpyright and ruff.
 - Tests:

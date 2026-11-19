@@ -11,8 +11,18 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
 
-The supported range is Python 3.12+, SQLAlchemy 2.0.30+ and Pydantic 2.7+. To check the minimum versions, run
-`UV_PROJECT_ENVIRONMENT=<scratch>/venv312 uv run -p 3.12 --with 'sqlalchemy==2.0.30' --with 'pydantic==2.7.0' pytest`.
+The supported range is Python 3.12+, SQLAlchemy 2.0.30+ and Pydantic 2.10+. To check the minimum versions, build a
+resolver-consistent environment and run pytest with its own interpreter, as CI's `minimum-versions` job does:
+
+```sh
+uv venv -p 3.12 <scratch>/venv-min
+uv pip install -p <scratch>/venv-min -e . --group dev 'sqlalchemy==2.0.30' 'pydantic==2.10.0'
+uv pip check -p <scratch>/venv-min
+<scratch>/venv-min/bin/python -c 'import pydantic, sqlalchemy; print(sqlalchemy.__version__, pydantic.VERSION)'
+<scratch>/venv-min/bin/python -m pytest
+```
+
+Don't use `uv run --with ... pytest`: uv's `pytest` script runs the project interpreter, which never sees the overlay.
 
 ## Rules
 
