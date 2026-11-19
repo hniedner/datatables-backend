@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen ruff check .
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - run: uv run --frozen basedpyright
+
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run --frozen pytest
+
+  # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy and pydantic, with the rest of the dev group
+  # resolved to match them. `uv run --with` is not used, because uv's `pytest` script runs the project interpreter and
+  # never sees the overlay.
+  minimum-versions:
+    runs-on: ubuntu-latest
+    env:
+      SQLALCHEMY_MIN: '2.0.30'
+      PYDANTIC_MIN: '2.10.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p 3.12 .venv-min
+      - run: uv pip install -p .venv-min -e . --group dev "sqlalchemy==$SQLALCHEMY_MIN" "pydantic==$PYDANTIC_MIN"
+      - run: uv pip check -p .venv-min
+      - name: Show and assert the installed minimum versions
+        run: |
+          .venv-min/bin/python - <<'EOF'
+          import os, sys, pydantic, sqlalchemy
+          print('python', sys.version.split()[0], 'sqlalchemy', sqlalchemy.__version__, 'pydantic', pydantic.VERSION)
+          assert sqlalchemy.__version__ == os.environ['SQLALCHEMY_MIN'], sqlalchemy.__version__
+          assert pydantic.VERSION == os.environ['PYDANTIC_MIN'], pydantic.VERSION
+          EOF
+      - run: .venv-min/bin/python -m pytest
