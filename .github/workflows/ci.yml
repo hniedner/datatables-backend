@@ -82,7 +82,8 @@ jobs:
           EOF
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the rest
-  # of the dev group resolved to match them. It does not use `uv run --with ... pytest`: with UV_PROJECT_ENVIRONMENT set, that
+  # of the dev group resolved to match them. The 3.12 leg also forces starlette 0.40.0, the lowest that fastapi 0.133
+  # allows, as an override (the dev group's starlette>=1.2 is test tooling), plus httpx, which that TestClient needs. It does not use `uv run --with ... pytest`: with UV_PROJECT_ENVIRONMENT set, that
   # overlay can be silently ignored. This job uses an explicit environment, checked with `uv pip check`, and asserts its
   # versions.
   minimum-versions:
@@ -93,12 +94,16 @@ jobs:
         include:
           - python: '3.12'
             pins: sqlalchemy==2.0.31 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
+            overrides: starlette==0.40.0
+            tools: httpx
           - python: '3.13'
             pins: sqlalchemy==2.0.31 pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
           - python: '3.14'
             pins: sqlalchemy==2.0.31 pydantic==2.12.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0
     env:
       MIN_PINS: ${{ matrix.pins }}
+      MIN_OVERRIDES: ${{ matrix.overrides }}
+      MIN_TOOLS: ${{ matrix.tools }}
       MIN_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,8 +112,10 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv venv -p "$MIN_PYTHON" .venv-min
       - run: |
-          read -ra pins <<< "$MIN_PINS"
-          uv pip install -p .venv-min -e . --group dev "${pins[@]}"
+          read -ra pins <<< "$MIN_PINS $MIN_TOOLS"
+          read -ra overrides <<< "$MIN_OVERRIDES"
+          printf '%s\n' "${overrides[@]}" > "$RUNNER_TEMP/overrides.txt"
+          uv pip install -p .venv-min --override "$RUNNER_TEMP/overrides.txt" -e . --group dev "${pins[@]}"
       - run: uv pip check -p .venv-min
       - name: Show and assert the installed minimum versions
         run: |
@@ -117,7 +124,7 @@ jobs:
           import os, sys
           print('python', sys.version.split()[0], 'starlette', version('starlette'))
           assert sys.version.startswith(os.environ['MIN_PYTHON'] + '.'), sys.version
-          for pin in os.environ['MIN_PINS'].split():
+          for pin in (os.environ['MIN_PINS'] + ' ' + os.environ['MIN_OVERRIDES']).split():
               name, wanted = pin.split('==')
               print(name, version(name))
               assert version(name) == wanted, f'{name} {version(name)} != {wanted}'
