@@ -516,13 +516,72 @@ def test_a_commit_only_the_reflog_holds_is_scanned(repo: Path, words: Path, wher
     assert result.returncode == 1, result.stderr
 
 
-def test_the_pushed_commit_is_scanned_even_outside_the_reflog(repo: Path, words: Path):
-    """PRE_COMMIT_TO_REF may name a commit no ref and no reflog holds (one made by `git commit-tree`)."""
+def loose_commit(repo: Path) -> str:
+    """A commit no ref or reflog holds (`git commit-tree`, as `git stash create` makes one); its file holds WORD."""
     blob = git(repo, 'hash-object', '-w', '--stdin', input=f'see {WORD}\n').strip()
     tree = git(repo, 'mktree', input=f'100644 blob {blob}\tb.txt\n').strip()
-    loose = git(repo, 'commit-tree', tree, '-m', 'Loose').strip()
-    assert scan('--history', words=words, cwd=repo).returncode == 0
-    assert scan('--history', words=words, cwd=repo, extra={'PRE_COMMIT_TO_REF': loose}).returncode == 1
+    return git(repo, 'commit-tree', tree, '-p', 'HEAD', '-m', 'Loose').strip()
+
+
+def test_a_commit_no_ref_or_reflog_holds_is_scanned(repo: Path, words: Path):
+    loose_commit(repo)
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_loose_commit_pushed_as_a_second_refspec_is_refused_by_the_hook(tmp_path: Path, repo: Path, words: Path):
+    """pre-commit names one pushed ref to the hook; `git push origin main <loose>:refs/heads/wip` sends another."""
+    hooks_config(repo)
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'Add the hook config')
+    remote = tmp_path / 'remote.git'
+    git(tmp_path, 'init', '-q', '--bare', str(remote))
+    git(repo, 'remote', 'add', 'origin', str(remote))
+    subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install', '--hook-type', 'pre-push'],
+        cwd=repo, check=True, capture_output=True,
+    )  # fmt: skip
+    loose = loose_commit(repo)
+    result = subprocess.run(
+        ['git', 'push', 'origin', 'main', f'{loose}:refs/heads/wip'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert git(remote, 'for-each-ref') == ''  # nothing reached the remote
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_staged_file_named_like_a_mode_is_scanned_by_the_hook(repo: Path, words: Path):
+    hooks_config(repo)
+    write(repo / '--refs', f'see {WORD}\n')
+    git(repo, 'add', '--', '--refs')
+    result = subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'run', 'private-words', '--hook-stage', 'pre-commit'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout
+
+
+def test_an_editor_commit_removing_a_word_named_file_goes_through(repo: Path, words: Path):
+    """git lists the deleted file in its editor template; the message it stores holds only what the editor wrote."""
+    commit(repo, f'{WORD}.txt', b'clean\n')  # before the hooks: the file is the leak this commit removes
+    hooks_config(repo)
+    subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install', '--hook-type', 'commit-msg'],
+        cwd=repo, check=True, capture_output=True,
+    )  # fmt: skip
+    git(repo, 'rm', '-q', f'{WORD}.txt')
+    editor = write(repo.parent / 'editor.py', 'import sys\np = sys.argv[1]\nt = open(p).read()\n'
+                   "open(p, 'w').write('Remove a leaked file\\n' + t)\n")  # fmt: skip
+    env = {**os.environ, 'DTB_PRIVATE_WORDS': str(words), 'GIT_EDITOR': f'"{sys.executable}" "{editor}"'}
+    result = subprocess.run(
+        ['git', 'commit', '-q'],
+        cwd=repo, env={**env, 'LC_ALL': 'C', 'LANGUAGE': 'C'}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert git(repo, 'log', '-1', '--format=%s').strip() == 'Remove a leaked file'
 
 
 @pytest.mark.parametrize('where', ['tag in a tag', 'tagged tree'])

@@ -8,7 +8,9 @@ repos:
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
     hooks:
       - id: trailing-whitespace
+        stages: [pre-commit] # the manifest also lists pre-push
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: check-yaml
@@ -20,6 +22,7 @@ repos:
       - id: detect-private-key
       - id: check-added-large-files
         args: [--enforce-all] # otherwise it checks only files being added
+        stages: [pre-commit]
         exclude: ^uv\.lock$ # generated, and already near the 500 KB limit; it grows with every dependency
 
   - repo: https://github.com/gitleaks/gitleaks
@@ -66,7 +69,7 @@ repos:
       # CI has no list and skips these hooks by id.
       - id: private-words
         name: private-word scan (files)
-        entry: uv run --frozen python scripts/private_word_scan.py
+        entry: uv run --frozen python scripts/private_word_scan.py --files # a staged file may be named `--refs`
         language: system
         types: [] # the default [file] is ANDed with types_or, and a symlink is tagged `symlink` only
         types_or: [file, symlink]
@@ -88,11 +91,11 @@ repos:
         stages: [pre-commit, post-checkout]
         always_run: true
         pass_filenames: false
-      # Before a push: everything the push publishes, including ref names, authors, commits made by a rebase or
+      # Before a push: every ref name and tag, and every object in the repository, reachable or not, since a push can
+      # send any object and pre-commit names one pushed ref to the hook. That covers commits made by a rebase or
       # cherry-pick, which skip the commit-stage hooks, and merge results, whose files no commit-stage hook scans.
-      # It reads every reflog entry too, since pre-commit names only the first pushed ref with new commits; the remote
-      # names of the second and later refs in one push are not passed, so not scanned. An old reflog entry holding a
-      # word blocks pushes until `git reflog expire --expire-unreachable=now --all` drops it.
+      # The remote names of the other refs in one push are not passed, so not scanned. A leftover object holding a word
+      # blocks pushes until `git reflog expire --expire-unreachable=now --all` and `git gc --prune=now` drop it.
       - id: private-words-history
         name: private-word scan (everything a push publishes)
         entry: uv run --frozen python scripts/private_word_scan.py --history
