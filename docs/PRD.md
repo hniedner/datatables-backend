@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 3 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 4 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -80,24 +80,26 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 
 | Id | Requirement | Reason | Priority |
 |---|---|---|---|
-| PRD-P1 | A request is read from a decoded JSON object (nested), or from flat form or query parameters as a mapping or as key-value pairs with repeated `key[]` entries. | DataTables posts JSON when `ajax.submitAs` is `json` (READ, DataTables 3.1.5 reference), and form or query parameters by default. | must |
+| PRD-P1 | A request is read from a decoded JSON object (nested), or from flat form or query parameters: a mapping, a multi-dict (anything with `getlist`, every value of a repeated key read), or key-value pairs with repeated `key[]` entries. | DataTables posts JSON when `ajax.submitAs` is `json` (READ, DataTables 3.1.5 reference) and form or query parameters by default; Starlette, Werkzeug and Django hand form data over as multi-dicts. | must |
 | PRD-P2 | Flat keys are read in bracket notation (`columns[0][search][value]`), dotted notation (`columns[0].search.value` or `columns.0.search.value`) or a mix, and every form reads to the same request. | DataTables sends brackets by default; spring-data-jpa-datatables reads dotted names (READ, its README); SvelteDT's helper sends either (its PRD-B20). | must |
 | PRD-P3 | A top-level key that is not a request parameter is ignored, in every form: in a JSON body, and as a flat key whose first segment is not a request parameter (DataTables' cache-buster `_`, SearchPanes' `searchPanes_options` and `searchPanesLast`, an app's own `ajax.data` keys). | DataTables appends `_` to every request under its default `cache: false` (READ, its 3.1.5 `queryParams`); SearchPanes sends its options on every request (READ, SearchPanes 3.0.1); apps add their own keys. | must |
 | PRD-P4 | An unknown field under a request parameter is ignored, except as PRD-P5 says. | Clients add fields over time; an unknown field asks for nothing the library answers. | must |
-| PRD-P5 | A filter the library does not answer raises `MalformedRequest` (PRD-E6) unless it is empty or idle: a non-empty `search[fixed]`, `search[groups]`, `search[groupsFixed]` or `columns[i][search][fixed]`; a non-empty `searchPanes` or `searchPanes_null`; a non-empty `columns[i][columnControl][list]`; a `columns[i][columnControl][search]` with a value or the `empty` or `notEmpty` logic. | DataTables omits empty arrays (READ, its 3.1.5 serializer), and ColumnControl sends an idle search on every request, counting it active only with a value or those logics (READ, ColumnControl 2.1.3); dropping an active filter would answer fewer filters than asked, with no sign. | must |
-| PRD-P6 | A request whose structure cannot be read (a top-level value that is not an object, a request parameter of the wrong type, keys that collide or leave a gap in an index) raises `MalformedRequest`. | A structural error is an integration bug, not something the user can change. | must |
-| PRD-P7 | A flat key whose first segment is a request parameter must be `[part]` and `.part` segments, a bracket segment holding no `.`, an index being ASCII digits without a leading zero; any other shape raises `MalformedRequest`. | A key the parser cannot read must not be half-read; Unicode and leading-zero indexes once crashed the parser (MEASURED). | must |
+| PRD-P5 | A filter the library does not answer raises `MalformedRequest` (PRD-E6) unless it is empty or idle: a non-empty `search[fixed]`, `search[groups]`, `search[groupsFixed]` or `columns[i][search][fixed]`; a non-empty pane in `searchPanes` or `searchPanes_null` (SearchPanes sends an empty pane on every request); a non-empty `columns[i][columnControl][list]`; a `columns[i][columnControl][search]` with a value or the `empty` or `notEmpty` logic. | DataTables omits empty arrays (READ, its 3.1.5 serializer), and ColumnControl sends an idle search on every request, counting it active only with a value or those logics (READ, ColumnControl 2.1.3); dropping an active filter would answer fewer filters than asked, with no sign. | must |
+| PRD-P6 | A request whose structure cannot be read (a top-level value that is not an object, a request parameter of the wrong type, a key that is not text, an object value among flat keys, keys that collide or leave a gap in an index) raises `MalformedRequest`. | A structural error is an integration bug, not something the user can change. | must |
+| PRD-P7 | A flat key whose first segment is a request parameter must be `[part]` and `.part` segments, a bracket segment holding no `.`, an index being `0` or ASCII digits not starting with 0, at most 9 digits, and `[]` appending a value, never a field; any other shape raises `MalformedRequest`. | A key the parser cannot read must not be half-read; Unicode, leading-zero and over-long indexes once crashed the parser (MEASURED). | must |
 | PRD-P8 | A paging number that is not an integer raises `MalformedRequest`. | Paging must be exact. | must |
 | PRD-P9 | A negative `start` raises `MalformedRequest`. | No page lies before the first. | must |
 | PRD-P10 | `start` is accepted up to 2^53-1, and `draw`, column and order indexes up to 2^31-1; a larger value raises `MalformedRequest`. | SvelteDT pages up to 2^53-1, the largest integer JavaScript holds exactly (its PRD-B9); the other numbers never need more. | must |
 | PRD-P11 | Text in a request parameter that JSON cannot encode (a lone surrogate) raises `MalformedRequest`. | No database driver can encode it. | must |
 | PRD-P12 | A `MalformedRequest` message names the request parameter and never the client's key or value. | Client text in messages invites injection into logs and pages. | must |
-| PRD-P13 | `length` is between 1 and a configured maximum (default 1000); any other value, "All" (`-1`) included, raises `MalformedRequest`. | An unbounded page is the first way a table query goes wrong; SvelteDT pages at most 1000 rows. | must |
+| PRD-P13 | `length` is between 1 and a configured maximum (default 1000); any other value, "All" (`-1`) included, raises `MalformedRequest`. | An unbounded page is the first way a table query goes wrong; SvelteDT pages at most 1000 rows (its `docs/departures.md`, DEP-13). | must |
 | PRD-P14 | The strings `"true"` and `"false"` read as booleans. | Form and query encodings carry only strings. | must |
 | PRD-P15 | A column's `name` falls back to its `data`. | DataTables sends an empty `name` unless the page sets one. | must |
 | PRD-P16 | `order[i][column]` indexes the request's own `columns`; an `order[i][name]` beside it is accepted and the index decides. | DataTables 2.x and SvelteDT send both (its PRD-B20); one rule avoids two answers to one request. | must |
 | PRD-P17 | The request is validated into typed models (`DTParams`, `DTColumn`, `DTOrder`, `Search`, the recursive SearchBuilder tree). | Nothing downstream sees raw input. | must |
-| PRD-P18 | A column's `data` may be an object (DataTables' orthogonal data); the column's identity is then its `name`, and an object `data` with an empty `name` raises `MalformedRequest`. | DataTables sends an object `data` for orthogonal columns; such a column has no other name the server can match. | must |
+| PRD-P18 | A column's `data` may be an object (DataTables' orthogonal data); the column's identity is then its `name`. An object `data` with an empty `name` raises `MalformedRequest` only when the request searches or orders that column; a display-only column is accepted. | DataTables sends an object `data` for orthogonal columns; such a column has no other name the server can match, and a column nothing filters or sorts needs none. | must |
+| PRD-P19 | A request holding no request parameter at all (an empty request, or DataTables 1.9's `sEcho`/`sSearch`/`iDisplayStart` form) raises `MalformedRequest`; it is never answered as an empty request. | An unread request answered unfiltered with `draw` 0 is dropped silently by DataTables. | must |
+| PRD-P20 | An integer `columns[i][data]` is read as its decimal text. | DataTables defaults `data` to the column index, an integer. | must |
 
 ### 4.2 Column declaration (D)
 
@@ -114,7 +116,11 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-D9 | A column may declare a hook that transforms a search value before it reaches the query (e.g. to encrypt or encode it as stored). | Some columns are stored transformed; the user still types the plain value. | must |
 | PRD-D10 | A SQL column may be declared as an expression over the source (e.g. `unaccent(name)` or a `COLLATE` clause), searched and ordered like any column. | Accent folding and collation follow the database (PRD-F10, PRD-O6); an app that wants more uses its database's means. | should |
 | PRD-D11 | A table whose source has no primary key (every OpenSearch index; a SQL join or subquery without one) declares a unique key; constructing it without one raises `SchemaError`. | The tie-breaker of PRD-O3 must be unique; the first column of a join is not. | must |
-| PRD-D12 | A column with a search-value hook (PRD-D9) takes equality only: a global or column search matches it as equality on the transformed value, SearchBuilder `=` and `!=` are answered, and any other condition on it is refused with `invalid_filter`. | A transformed (e.g. encrypted) value cannot be matched as a substring or range; owner's decision of 2026-11-19. | must |
+| PRD-D12 | A column with a search-value hook (PRD-D9) takes equality only: a global or column search compares the whole search text, transformed once, by equality, with no smart-search grammar; SearchBuilder `=`, `!=`, `null` and `!null` are answered; any other condition on it is refused with `invalid_filter`. | A transformed (e.g. encrypted) value cannot be matched as a substring or range; `null` and `!null` need no value. Owner's decision of 2026-11-19. | must |
+| PRD-D13 | An OpenSearch string column declares its keyword field (used for sorting and exact matches) or declares itself text-only. | The backend never reads the index mapping at request time (PRD-D8, PRD-A3), so the sort (PRD-O5, PRD-O7) and exact-match (PRD-F11) rules need the field kinds declared. | must |
+| PRD-D14 | A column with a search-value hook must be of string type; declaring a hook on another type raises `SchemaError`. | The hook transforms text the user types. | must |
+| PRD-D15 | A categorical filter or `multi_values` list on a hooked column transforms each value and matches by equality. | Each value is stored transformed. | must |
+| PRD-D16 | An empty alternative on a hooked column is not transformed; it means empty, as PRD-F26 defines it. | "Empty" is a property of the stored value, not text to transform. | must |
 
 ### 4.3 Filtering and search (F)
 
@@ -123,10 +129,10 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F1 | The global search is a smart search in which the row is the unit: every word must be found in at least one of the row's searchable columns, and different words may match different columns. Example: "red 7" finds a row whose colour is red and whose price is 7. | DataTables' smart search and SvelteDT's local data source behave so (its PRD-B21); a whole-text match in one column misses rows a user expects. | must |
 | PRD-F2 | A column search is a smart search within that one column: every word must match in it. | One syntax for both search boxes, as in SvelteDT. | must |
 | PRD-F3 | Words are separated by spaces and match in any order; every word must match. | DataTables' smart search (READ, its 3.1.5 source). | must |
-| PRD-F4 | A phrase in straight double quotes, or in curly quotes (U+201C ... U+201D), is one word, which must sit inside one column; a quote left unclosed is dropped and the rest is an ordinary word. | DataTables' smart search reads phrases so, curly quotes included (READ, its 3.1.5 source: the pattern `!?["\u201C][^"\u201D]+["\u201D]` and the "smart quote" branch). | must |
+| PRD-F4 | A phrase in straight double quotes, or in curly quotes (U+201C ... U+201D), is one word, which must sit inside one column. Any other straight double quote in a word is removed (`5"` searches `5`; an unclosed `"abc` searches `abc`); an unclosed curly quote stays as text. | DataTables' smart search exactly (READ, DataTables 3.1.5 `dataTables.mjs`: the split pattern `!?["\u201C][^"\u201D]+["\u201D]\|[^ ]+` at :5924, the quote stripping at :5936-5943, `word.replace(/"/g, '')` at :5953). | must |
 | PRD-F5 | `!word` excludes: in the global search, no searchable column of the row contains the word; in a column search, the column does not contain it. A NULL column contains no word, so it passes `!word` on every backend. | DataTables' `!`; a SQL `NOT (... LIKE ...)` drops NULL rows unless written for them (MEASURED on SQLite). | must |
 | PRD-F6 | `!"phrase"` excludes the phrase; a bare `!`, empty quotes `""` and search text of spaces only add nothing. | DataTables reduces them to an empty word (READ, its 3.1.5 source); a user who types a space must not get no rows. | must |
-| PRD-F7 | A newline, U+2028 or U+2029 counts as a space. | SvelteDT's local source does so (its PRD-B21). | must |
+| PRD-F7 | In search text (the global and column searches), LF, CR, U+2028 and U+2029 count as spaces; exact values (categorical, `multi_values`, SearchBuilder) are never rewritten. | SvelteDT's local source does so (its PRD-B21, difference 4); an exact value must stay the value sent. | must |
 | PRD-F8 | No other syntax is read: `OR`, `NOT`, `-` and wildcard characters are ordinary text on every backend, OpenSearch analysed text and SearchBuilder "contains" included. | One syntax everywhere; a second syntax on one backend conflicts with `!` and surprises users. | must |
 | PRD-F9 | Matching is case-insensitive on every backend, also under a case-sensitive collation where one is configured (SQL Server, MySQL); the one exception is that SQLite folds ASCII letters only. | Case-insensitivity is portable, and the spec picks each database's means; SQLite's LIKE folds ASCII only (MEASURED: `'ÄPFEL' LIKE '%äpfel%'` is false). | must |
 | PRD-F10 | The library applies no accent folding and no dotted/dotless-i folding of its own; whether such letters match is the column's database collation. | Not portable without extensions the library does not create (non-goals, PRD-D10). | must |
@@ -134,8 +140,8 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F12 | Column searches combine with AND, with each other and with the global search. | DataTables' meaning. | must |
 | PRD-F13 | A search over no usable column is refused (PRD-E1), never answered with every row. | An empty OR silently matching everything hides a mistake. | must |
 | PRD-F14 | Search text holds at most 255 code points and 16 words; longer text is refused with `invalid_filter`. | Each word adds a condition per searchable column; SvelteDT's field allows 255 characters. | must |
-| PRD-F15 | A value holding a Unicode control character (category Cc) other than LF and CR is refused with `invalid_filter` before any query runs: the global search, a column search, a SearchBuilder value, a categorical value and a `multi_values` entry alike. LF, CR, U+2028 and U+2029 count as spaces (PRD-F7). | A NUL truncated a LIKE pattern on SQLite and matched wrong rows (MEASURED); SvelteDT refuses control characters at the field. | must |
-| PRD-F16 | A categorical filter is a column search with `regex: true` whose regex is a single value or literal alternatives: `abc`, `a\|b`, `^a$` or `^(a\|b)$`, where no value holds an unescaped character of the set `. * + ? \| ( ) [ ] { } \ $ ^` (`\|` and the anchors serve only as structure; `-` and `/` are accepted escaped or not); it matches the values exactly (an IN list). | DataTables' multi-select convention, as draft 1 accepted it; a single value sent as plain text would silently become a substring match ("red" finding "reddish"). | must |
+| PRD-F15 | A value holding a Unicode control character (category Cc) other than LF and CR is refused with `invalid_filter` before any query runs: the global search, a column search, a SearchBuilder value, a categorical value and a `multi_values` entry alike. | A NUL truncated a LIKE pattern on SQLite and matched wrong rows (MEASURED); SvelteDT refuses control characters at the field. | must |
+| PRD-F16 | A categorical filter is a column search with `regex: true` whose regex is a single value or literal alternatives: `abc`, `a\|b`, `^a$` or `^(a\|b)$`, where no value holds an unescaped character of the set `. * + ? \| ( ) [ ] { } \ $ ^` (`\|` and the anchors serve only as structure; `-` and `/` are accepted escaped or not; only escapes of PRD-F19's set are read, so any other backslash escape such as `\d`, `\w` or `\n` is refused under PRD-F18); it matches the values exactly (an IN list). | DataTables' multi-select convention, as draft 1 accepted it; a single value sent as plain text would silently become a substring match ("red" finding "reddish"). | must |
 | PRD-F17 | An empty alternative in a categorical filter means empty, as PRD-F26 defines it. | A frontend's "(empty)" option needs a value to send. | must |
 | PRD-F18 | Any other regex, an unescaped metacharacter included, is refused. | Regular-expression search is a non-goal. | must |
 | PRD-F19 | The recommended form for a sender is `^(v1\|v2)$` with each value escaped by DataTables' `util.escapeRegex` set: `/ . * + ? \| ( ) [ ] { } \ $ ^ -`. | Escaped values carry any text unambiguously (READ, the set in DataTables 3.1.5's source). | must |
@@ -152,11 +158,13 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F30 | A SearchBuilder criterion missing its values is refused. | A half-built criterion must not match everything. | must |
 | PRD-F31 | An optional base filter (a SQL expression or an OpenSearch query) limits the rows the table shows at all, for `recordsTotal`, `recordsFiltered` and the page alike. | Row-level scoping belongs to the server, not the client. | must |
 | PRD-F32 | The OpenSearch global search skips number and date columns. | OpenSearch cannot match a number or date as text without a script. | must |
-| PRD-F33 | An OpenSearch column search on a number column is an exact match. | No text form to match a substring in. | must |
+| PRD-F33 | An OpenSearch column search on a number column takes one number and matches it exactly; several words, `!` or quotes are refused with `invalid_number`. | No text form to match a substring in; smart-search syntax has no meaning there. | must |
 | PRD-F34 | An OpenSearch column search on a date column takes one date term (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); several words, `!` or quotes are refused with `invalid_date`. | A date span is one term; smart-search syntax has no meaning there. | must |
-| PRD-F35 | `!` followed by a one-character word adds nothing. | DataTables negates only a word of more than one character (READ, its 3.1.5 source: `if (word.length > 1)`), and the server and SvelteDT's local source share DataTables' grammar. | must |
+| PRD-F35 | `!` excludes a word only when the word, escaped by DataTables' `util.escapeRegex`, is longer than one character: `!-` and `!.` exclude, `!x` adds nothing. | DataTables' smart search exactly: it escapes the text first and negates a word only `if (word.length > 1)` (READ, DataTables 3.1.5 `dataTables.mjs` :5913 and :5948); the server and SvelteDT's local source share DataTables' grammar. | must |
 | PRD-F36 | A SearchBuilder criterion carrying more values than its condition takes is refused with `invalid_filter`. | Silently using the first value answers a different question than asked, as a missing value would (PRD-F30). | must |
 | PRD-F37 | NULL satisfies every negative SearchBuilder condition (`!=`, `!contains`, `!starts`, `!ends`, `!between`) on every backend. | A NULL value is not equal to, does not contain, start or end with, and is not between anything, as `!word` passes NULL (PRD-F5); DataTables' client-side SearchBuilder agrees for strings and dates (section 5). | must |
+| PRD-F38 | A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all, and a categorical filter or `multi_values` list holds at most 256 values; beyond any bound the request is refused with `invalid_filter`. | Every criterion and value is query work, and walking the tree must never recurse without bound. | must |
+| PRD-F39 | A column search holding both a value and a `multi_values` list is refused with `invalid_filter`. | One of the two would be dropped silently. | must |
 
 ### 4.4 Ordering (O)
 
@@ -166,8 +174,9 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-O2 | NULL is the lowest value: first ascending, last descending, on every backend. | One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending), as SvelteDT's local source sorts empty values first. | must |
 | PRD-O3 | After the user's order, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the last sort column's direction, so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
 | PRD-O4 | With no order in the request, the rows come in the tie-breaker's ascending order. | A stable first page. | must |
-| PRD-O5 | A column of analysed-only OpenSearch text is unorderable by default, so an order on it is refused (PRD-O1); declaring it orderable raises `SchemaError` at construction. OpenSearch sorts a string on its keyword form. | OpenSearch rejects the whole search on an analysed text sort; a silent drop would answer a different order than asked. | must |
+| PRD-O5 | A text-only OpenSearch string column (PRD-D13) is unorderable by default, so an order on it is refused (PRD-O1); declaring it orderable raises `SchemaError` at construction. | OpenSearch rejects the whole search on an analysed text sort; a silent drop would answer a different order than asked. | must |
 | PRD-O6 | Text order is the database's collation; the library adds no collation of its own. | Portable and predictable per database; see the non-goals. | must |
+| PRD-O7 | OpenSearch sorts a string column on its declared keyword field (PRD-D13). | Sorting needs the unanalysed form. | must |
 
 ### 4.5 Counts and paging (C)
 
@@ -182,7 +191,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-C7 | OpenSearch returns the page and the exact filtered count in one search. | One round trip where possible. | must |
 | PRD-C8 | On OpenSearch, `recordsTotal` reuses the filtered count when nothing beyond the base filter applies. | The second count would give the same number. | must |
 | PRD-C9 | On OpenSearch, a count that is only a lower bound is replaced by an exact count. | Never an approximate total. | must |
-| PRD-C10 | An OpenSearch page is served when `start + length <= max_result_window` (the ordinary way) or `total - start <= max_result_window` (by reversing the sort and the page). `max_result_window` defaults to 10,000 and can be set per table. | "Last page" on a large index is an ordinary press in SvelteDT's pager; the reverse sort reaches it within the window. | must |
+| PRD-C10 | An OpenSearch page is served when `start + length <= max_result_window` (the ordinary way) or `recordsFiltered - start <= max_result_window` (by reversing the sort and the page). `max_result_window` defaults to 10,000 and can be set per table. | "Last page" on a large index is an ordinary press in SvelteDT's pager; the reverse sort reaches it within the window. | must |
 | PRD-C11 | To decide PRD-C10, the filtered count, plus the total count when PRD-C8 does not reuse it, may run before the page query; these are the only queries that may run before a refusal. | Telling a near-end page from a middle one needs the total. | must |
 | PRD-C12 | Any other OpenSearch page beyond `max_result_window` is refused with `page_out_of_range`, and the answer carries the real `recordsTotal` and `recordsFiltered`. | OpenSearch would reject it; the counts let a client offer a way back (SvelteDT's helper may or may not use them). | must |
 | PRD-C13 | A reverse-sorted page may drift if the index changes between the count and the page, as offset paging always can; no point-in-time is held. | A point-in-time per request costs a server resource for a drift offset paging already has. | must |
@@ -197,7 +206,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 |---|---|---|---|
 | PRD-E1 | A request the user can fix is answered, not raised: the response carries an `error` text and an `error_code`. | The user changes the filter; the app needs no error handling for it. | must |
 | PRD-E2 | The user-error codes are `invalid_filter`, `invalid_date`, `invalid_number` and `page_out_of_range`, documented and stable. | A frontend maps codes to its own messages; SvelteDT can show the reason at the field. | must |
-| PRD-E3 | The code follows the first mistake in this order: (1) a control character (PRD-F15) or text over the bounds (PRD-F14) is `invalid_filter`; (2) a value whose format the column cannot read is `invalid_date` or `invalid_number`; (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); a page of PRD-C12 is `page_out_of_range`; every other user error is `invalid_filter`. | One code per kind of mistake, decidable when a value holds several. | must |
+| PRD-E3 | The code follows the first mistake in this order: (1) a control character (PRD-F15), text over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format the column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); (4) every other filter error is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it needs a valid count. | One code per kind of mistake, decidable when a request holds several. | must |
 | PRD-E4 | An `error` text is fixed per case apart from declared names, and never quotes the user's input. | Echoing input invites injection into logs and pages. | must |
 | PRD-E5 | `query_failed` is set only by an app, through `DTResponse.query_failed(draw)`, the conventional shape for a failure it catches. | The library never answers its own failures. | must |
 | PRD-E6 | A structural error raises `MalformedRequest`, never `invalid_filter`. | One the integrator fixes, the other the user. | must |
@@ -231,7 +240,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-A6 | The page query is built entirely before anything runs, apart from the count of PRD-C11. | With PRD-E7, a filter error is never a half-run query. | must |
 | PRD-A7 | SQL: the table takes a SQLAlchemy `FromClause` (a table, join or subquery) and accepts an `AsyncSession` or `AsyncConnection` (async) and a `Session` or `Connection` (sync). | What SQLAlchemy apps hold. | must |
 | PRD-A8 | OpenSearch: the table takes an index name and accepts an `AsyncOpenSearch` or `OpenSearch` client; queries are plain request bodies, with no DSL dependency. | No extra dependency beyond the client. | must |
-| PRD-A9 | An optional FastAPI dependency parses the request from a JSON body, a form or the query string. | The most common async Python web framework. | must |
+| PRD-A9 | An optional FastAPI dependency parses the request from the query string, a form, or a body that decodes to a JSON object, read as JSON whatever its Content-Type. | DataTables 3.1.5's `submitAs: 'json'` keeps the form Content-Type unless one is set (READ: its `ajax()` sets JSON only when `!options.contentType`, and its defaults carry form-urlencoded), so choosing the parser by Content-Type would read the JSON as a form. | must |
 | PRD-A10 | The FastAPI dependency answers 422 on `MalformedRequest`. | The structural/user split of PRD-E6. | must |
 
 ### 4.9 Packaging and quality (Q)
@@ -268,9 +277,13 @@ where a database decides. Each difference is stated here; every other answer is 
 | Difference | Between | Requirement |
 |---|---|---|
 | Text order is the database's collation, not an ICU collator's digit-group order with case, width and kana ties. | Server and SvelteDT's local source (its PRD-B21) | PRD-O6 |
-| Accent folding is the database's. | Server and SvelteDT's local source | PRD-F10 |
+| Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source. | Server, and DataTables' client and SvelteDT's local source | PRD-F10 |
 | Dotted and dotless i match only where the database's collation makes them match; SvelteDT treats them alike in every locale (its PRD-B21, difference 3). | Server and SvelteDT's local source | PRD-F10 |
 | On SQLite, case folds for ASCII letters only. | SQLite and every other backend | PRD-F9 |
+| A categorical filter matches values exactly; DataTables' client reads the same value as an unanchored regex, a substring. The server sides with SvelteDT, whose categorical filter is exact (its PRD-B7). | Server and DataTables' client | PRD-F16, PRD-F17 |
+| On OpenSearch a stored `""` is not missing, so not empty; on SQL it is empty. | SQL and OpenSearch | PRD-F26 |
+| A hooked column matches whole values by equality; SvelteDT's local source matches substrings. | Server and SvelteDT's local source | PRD-D12 |
+| LF, CR, U+2028 and U+2029 count as spaces in search text; DataTables' client splits words on spaces only. The server follows SvelteDT (its PRD-B21, difference 4). | Server and DataTables' client | PRD-F7 |
 | On SQL, number and date columns take part in the global and column searches as text; OpenSearch's global search skips them. | SQL and OpenSearch | PRD-F23, PRD-F32 |
 | An OpenSearch number column search is an exact match; on SQL it matches the number's text. | SQL and OpenSearch | PRD-F23, PRD-F33 |
 | An OpenSearch date column search takes one date term; on SQL it is a smart search of the date's text. | SQL and OpenSearch | PRD-F22, PRD-F23, PRD-F34 |
@@ -310,9 +323,11 @@ the container tests and an acceptance suite.
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - Errors: `invalid_date`, `invalid_number` and `page_out_of_range` beside `invalid_filter`, with a precedence
   (PRD-E2, PRD-E3); the response's unused `metadata` field goes (PRD-R5).
-- New: the dotted form, the ignore rules and the refusal of filters the library does not answer (PRD-P2 to PRD-P5,
-  PRD-P7), object `data` (PRD-P18), `order[i][name]` (PRD-P16), expression columns (PRD-D10), the floors (PRD-Q4 to
-  PRD-Q9), MySQL in the container tests (PRD-Q11) and CI (PRD-Q12).
+- New: a request with no DataTables parameter refused (PRD-P19), an integer `data` (PRD-P20), declared OpenSearch field
+  kinds (PRD-D13), the hook-column rules (PRD-D14 to PRD-D16), the structure bounds (PRD-F38), a value with
+  `multi_values` refused (PRD-F39), the dotted form, the ignore rules and the refusal of filters the library does not
+  answer (PRD-P2 to PRD-P5, PRD-P7), object `data` (PRD-P18), `order[i][name]` (PRD-P16), expression columns (PRD-D10),
+  the floors (PRD-Q4 to PRD-Q9), MySQL in the container tests (PRD-Q11) and CI (PRD-Q12).
 - Owner's decisions of 2026-11-19: a column with a search-value hook takes equality only (PRD-D12); a `boolean`
   column type later (PRD-L3).
 
@@ -353,7 +368,7 @@ the container tests and an acceptance suite.
 | R2 undeclared names refused; declared type decides; SQL inference | PRD-D6, D7, D8 |
 | R3 order index refused / unorderable | PRD-P16 (index authority), PRD-O1 |
 | R3 SQL tie-breaker on the primary key | PRD-O3 (now direction-following), O4, D11 |
-| R3 OpenSearch keyword sort; analysed text dropped with a warning | PRD-O5 (now refused) |
+| R3 OpenSearch keyword sort; analysed text dropped with a warning | PRD-O7, PRD-O5 (now refused), PRD-D13 |
 | R4 global search, column searches, "contains" | PRD-F1 to F3 (changed), F9, F12, F13, F11 |
 | R4 dates (SQL date text; OpenSearch global search skips dates) | PRD-F21, F22, F23, F24, F32 |
 | R4 numbers, "empty" | PRD-F25, F26 |
@@ -363,7 +378,7 @@ the container tests and an acceptance suite.
 | R4 OpenSearch Google-style text query | dropped by the owner's decision of 2026-11-19 (PRD-F8) |
 | R5 user errors answered, fixed reason, no input quoted | PRD-E1, E2, E3, E4 |
 | R5 everything else raises; `query_failed` | PRD-E8, E5 |
-| R5 `max_result_window` refusal | PRD-C12 (now `page_out_of_range`) |
+| R5 `max_result_window` refusal | PRD-C12 (now `page_out_of_range`; counts may now run first, PRD-C11) |
 | R5 partial OpenSearch answer | PRD-E9 |
 | R5 logging | PRD-E10, E11, E12 |
 | R6 SQL counts, paging, columns | PRD-C1, C2, C4, C5, C6 |
