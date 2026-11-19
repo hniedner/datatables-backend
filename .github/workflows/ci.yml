@@ -156,3 +156,17 @@ jobs:
               assert version(name) == wanted, f'{name} {version(name)} != {wanted}'
           EOF
       - run: .venv-min/bin/python -m pytest
+
+  # The required status check on main. It runs whatever happened before it and passes only if every job it needs
+  # succeeded; a failed, cancelled or skipped job (or matrix leg) fails it.
+  gate:
+    if: always()
+    needs: [lint, types, tests, install-isolation, minimum-versions]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every needed job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
