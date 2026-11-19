@@ -49,6 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # diff-cover compares with origin/main
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python }}
@@ -63,7 +64,28 @@ jobs:
           print('python', version)
           assert version.startswith(os.environ['PY'] + '.'), version
           EOF
-      - run: uv run --frozen pytest
+      - if: matrix.python != '3.14'
+        run: uv run --frozen pytest
+      # One leg measures coverage: the total is reported, and the lines this change touches must be 95 % covered.
+      - name: Tests with branch coverage, then coverage of the changed lines
+        if: matrix.python == '3.14'
+        run: |
+          uv run --frozen pytest --cov=datatables_backend --cov-branch --cov-report=xml --cov-report=term
+          uv run --frozen diff-cover coverage.xml --compare-branch=origin/main --fail-under=95
+
+  # Every pre-commit hook on every file, except the private-word scans, whose word list never leaves the owner's
+  # machine.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - env:
+          SKIP: private-words,private-words-message
+        run: uv run --frozen pre-commit run --all-files --show-diff-on-failure
 
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
   # extra's module must import. With every extra and greenlet installed, importing them must not load a package another
@@ -236,7 +258,7 @@ jobs:
   # if every needed job (every matrix leg included) succeeded.
   gate:
     if: always()
-    needs: [lint, types, tests, install-isolation, minimum-versions]
+    needs: [lint, types, tests, pre-commit, install-isolation, minimum-versions]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded
