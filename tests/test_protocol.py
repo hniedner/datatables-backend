@@ -197,3 +197,51 @@ def test_a_non_ascii_digit_index_is_refused_without_quoting_it(key: str, digit: 
     with pytest.raises(MalformedRequest) as refused:
         parse_request([(key, 'a')])
     assert digit not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    'pairs',
+    [
+        [('columns[00][data]', 'a')],
+        [('columns.00.data', 'a')],
+        [('columns[0][data]', 'a'), ('columns[01][data]', 'b')],
+    ],
+)
+def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
+    with pytest.raises(MalformedRequest, match='columns'):
+        parse_request(pairs)
+
+
+@pytest.mark.parametrize(
+    'extra',
+    [
+        ('searchPanes[team][0]', 'red'),
+        ('searchPanes_null[team][0]', 'true'),
+        ('columns[2][columnControl][search][value]', 'red'),
+        ('columns[2][columnControl][search][logic]', 'empty'),
+        ('columns[2][columnControl][list][0]', 'red'),
+    ],
+)
+def test_a_searchpanes_or_columncontrol_filter_is_refused(extra: tuple[str, str]):
+    """SearchPanes and ColumnControl filters are not answered; dropping them would answer fewer filters than asked."""
+    with pytest.raises(MalformedRequest, match=r'searchPanes|columnControl'):
+        parse_request([*BRACKETED, extra])
+
+
+def test_idle_searchpanes_and_columncontrol_parameters_are_accepted():
+    """SearchPanes sends its options, and ColumnControl an empty search, on every request."""
+    idle = [
+        ('searchPanes_options[cascade]', 'false'),
+        ('searchPanes_options[viewTotal]', 'false'),
+        ('columns[2][columnControl][search][value]', ''),
+        ('columns[2][columnControl][search][logic]', 'contains'),
+        ('columns[2][columnControl][search][type]', 'text'),
+    ]
+    without_column_control = {'columns': {'__all__': {'columnControl'}}}
+    assert parse_request(BRACKETED + idle).model_dump(exclude=without_column_control) == parse_request(
+        BRACKETED
+    ).model_dump(exclude=without_column_control)
+    body: dict[str, Any] = {'columns': [{'data': 'a', 'columnControl': {'list': {}}}], 'searchPanes': {}}
+    assert parse_request(body).model_dump(exclude=without_column_control) == parse_request(
+        {'columns': [{'data': 'a'}]}
+    ).model_dump(exclude=without_column_control)
