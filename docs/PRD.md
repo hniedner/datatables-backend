@@ -54,13 +54,15 @@ is a small backend:
   `start`, `length`, `columns`, `order`, `search`, `searchBuilder`, `searchPanes`, `searchPanes_null`). Other keys
   (DataTables' GET cache-buster `_`, SearchPanes' `searchPanes_options`, an app's own `ajax.data` keys) are ignored, so
   an app key must not begin with one of those names followed by `.` or `[`. A request key must be `[part]` and `.part`
-  segments, a bracket segment holding no `.`, and an index is ASCII digits without a leading zero; a request key of
-  any other shape is refused as malformed. Unknown fields under a request key are ignored.
+  segments, a bracket segment holding no `.`, an index is `0` or at most 9 ASCII digits without a leading zero, and
+  `[]` appends a value, never a field; a request key of any other shape is refused as malformed. Unknown fields under
+  a request key are ignored. A multi-dict (Starlette, Werkzeug, Django) is read with every value of a repeated key.
 - A filter the library does not answer is refused as malformed unless empty or idle, since dropping it would answer
   fewer filters than the client asked for: a fixed or grouped search (`search[fixed]`, `search[groups]`,
-  `search[groupsFixed]`, `columns[i][search][fixed]`), a SearchPanes selection (`searchPanes`, `searchPanes_null`), a
-  ColumnControl list (`columns[i][columnControl][list]`), and a ColumnControl search with a value or the
-  `empty`/`notEmpty` logic (READ: SearchPanes 3.0.1 and ColumnControl 2.1.3 sources).
+  `search[groupsFixed]`, `columns[i][search][fixed]`), a SearchPanes selection (a non-empty pane in `searchPanes` or
+  `searchPanes_null`; SearchPanes sends an empty pane on every request), a ColumnControl list
+  (`columns[i][columnControl][list]`), and a ColumnControl search with a value or the `empty`/`notEmpty` logic (READ:
+  SearchPanes 3.0.1 and ColumnControl 2.1.3 sources).
 - Validate into typed models: `DTParams`, `DTColumn`, `DTOrder`, `Search`, and the recursive SearchBuilder tree.
 - Refuse a malformed request with `MalformedRequest`. Its message names the parameter, never the client's value.
   Malformed means:

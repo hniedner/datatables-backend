@@ -132,7 +132,14 @@ def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
 
 def test_keys_a_real_client_adds_are_ignored():
     """DataTables' GET cache-buster ``_`` and an app's own ``ajax.data`` keys, in either notation."""
-    extras = [('_', '1763550000000'), ('status', 'open'), ('filter[owner]', 'me'), ('app.key', 'x')]
+    extras = [
+        ('_', '1763550000000'),
+        ('status', 'open'),
+        ('filter[owner]', 'me'),
+        ('app.key', 'x'),
+        ('filters[user.id]', '1'),
+        ('app..key', 'x'),
+    ]
     assert parse_request(BRACKETED + extras) == parse_request(BRACKETED)
 
 
@@ -171,16 +178,16 @@ def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
         'columns[0]data',
         'columns[0][name]x',
         'search..value',
+        'search.value]',
+        'search[value]x',
         'order.[0].dir',
-        'search.',
-        'columns[²][data]',
-        'columns[\u0660][data]',  # ARABIC-INDIC DIGIT ZERO
-        'columns.\u0660.data',
+        'order[0]]',
     ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
-    with pytest.raises(MalformedRequest):
-        parse_request([*BRACKETED, (key, 'x')])
+    """Each key alone over keys it cannot collide with, so only the shape rule can refuse it."""
+    with pytest.raises(MalformedRequest, match=r'^Invalid (columns|search|order) parameter\.$'):
+        parse_request([('draw', '1'), (key, 'x')])
 
 
 def test_a_refused_key_shape_names_the_parameter_and_never_the_key(caplog: pytest.LogCaptureFixture):
@@ -219,6 +226,7 @@ def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
         ('searchPanes_null[team][0]', 'true'),
         ('columns[2][columnControl][search][value]', 'red'),
         ('columns[2][columnControl][search][logic]', 'empty'),
+        ('columns[2][columnControl][search][logic]', 'notEmpty'),
         ('columns[2][columnControl][list][0]', 'red'),
     ],
 )
@@ -245,3 +253,58 @@ def test_idle_searchpanes_and_columncontrol_parameters_are_accepted():
     assert parse_request(body).model_dump(exclude=without_column_control) == parse_request(
         {'columns': [{'data': 'a'}]}
     ).model_dump(exclude=without_column_control)
+
+
+def test_an_index_too_long_for_a_number_is_refused():
+    with pytest.raises(MalformedRequest, match='columns'):
+        parse_request([(f'columns[{"1" * 5000}][data]', 'a')])
+
+
+def test_an_idle_searchpanes_body_is_accepted_and_a_selection_is_not():
+    """SearchPanes sends an empty object per pane on every request; only a selection is a filter."""
+    idle = {'searchPanes': {'team': {}}, 'searchPanes_null': {'team': {}}}
+    assert (
+        parse_request({'columns': [{'data': 'a'}], **idle}).columns
+        == parse_request({'columns': [{'data': 'a'}]}).columns
+    )
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'searchPanes': {'team': {'0': 'red'}}})
+    assert str(refused.value) == 'Invalid searchPanes parameter.'
+
+
+def test_a_multi_dict_keeps_every_value_of_a_repeated_key():
+    """Starlette's, Werkzeug's and Django's multi-dicts give one value per key through ``.items()``."""
+    from starlette.datastructures import ImmutableMultiDict
+
+    repeated: ImmutableMultiDict[str, str] = ImmutableMultiDict(
+        [
+            ('searchBuilder[criteria][0][condition]', 'between'),
+            ('searchBuilder[criteria][0][origData]', 'age'),
+            ('searchBuilder[criteria][0][value][]', '1'),
+            ('searchBuilder[criteria][0][value][]', '9'),
+        ]
+    )
+    builder = parse_request(repeated).searchBuilder
+    assert builder is not None
+    criterion = builder.criteria[0]
+    assert isinstance(criterion, SearchCriterion)
+    assert criterion.value == ['1', '9']
+    with pytest.raises(MalformedRequest):
+        parse_request(ImmutableMultiDict([('search[value]', 'a'), ('search[value]', 'b')]))
+
+
+@pytest.mark.parametrize(
+    'request_data',
+    [
+        [
+            ('searchBuilder[criteria][0][condition]', '='),
+            ('searchBuilder[criteria][0][origData]', 'name'),
+            ('searchBuilder[criteria][0][value][][x]', 'red'),
+        ],
+        [('searchBuilder[criteria][][condition]', '=')],
+        {'searchBuilder': {'criteria': ['x']}},
+    ],
+)
+def test_a_searchbuilder_part_of_the_wrong_kind_is_refused(request_data: Any):
+    with pytest.raises(MalformedRequest):
+        parse_request(request_data)

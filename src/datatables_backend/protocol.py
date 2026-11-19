@@ -17,6 +17,7 @@ from typing import Any
 from typing import Literal
 from typing import cast
 
+from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Discriminator
@@ -133,8 +134,13 @@ class SearchGroup(_Model):
     criteria: list[SearchNode] = []
 
 
-def _node_kind(value: Any) -> str:
-    fields = cast(Mapping[str, Any], value) if isinstance(value, Mapping) else vars(value)
+def _node_kind(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        fields: Mapping[str, Any] = cast(Mapping[str, Any], value)
+    elif isinstance(value, (SearchGroup, SearchCriterion)):
+        fields = vars(value)
+    else:  # neither: pydantic reports it, and the request is malformed
+        return None
     return 'group' if 'criteria' in fields or 'logic' in fields else 'criterion'
 
 
@@ -142,6 +148,12 @@ def _node_kind(value: Any) -> str:
 type SearchNode = Annotated[
     Annotated[SearchGroup, Tag('group')] | Annotated[SearchCriterion, Tag('criterion')], Discriminator(_node_kind)
 ]
+
+
+def _no_selection(panes: dict[str, Any]) -> dict[str, Any]:
+    if any(panes.values()):
+        raise ValueError('a SearchPanes selection is not supported')
+    return panes
 
 
 class DTParams(_Model):
@@ -156,8 +168,9 @@ class DTParams(_Model):
     searchBuilder: SearchGroup | None = None
     #: SearchPanes' selections, which the library does not answer: refused unless empty. SearchPanes also sends
     #: ``searchPanes_options`` on every request and ``searchPanesLast`` with a selection; both are ignored.
-    searchPanes: dict[str, Any] = Field(default={}, max_length=0)
-    searchPanes_null: dict[str, Any] = Field(default={}, max_length=0)
+    #: SearchPanes sends an empty object per pane on every request; only a pane holding a selection is refused.
+    searchPanes: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
+    searchPanes_null: Annotated[dict[str, Any], AfterValidator(_no_selection)] = {}
 
 
 class DTResponse(_Model):
@@ -216,7 +229,8 @@ def parse_request(
     """Read a DataTables request.
 
     ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or flat
-    parameters, as a mapping or as key-value pairs (a query string or form with repeated ``key[]`` entries). Flat keys
+    parameters, as a mapping, a multi-dict (anything with ``getlist``, whose every value is read) or key-value pairs
+    (a query string or form with repeated ``key[]`` entries). Flat keys
     may be bracketed, as DataTables' default encoding sends them (``columns[0][search][value]``), dotted
     (``columns[0].search.value``, as spring-data-jpa-datatables reads them, or ``columns.0.search.value``), or mixed.
     A flat key is the request's own when its name before the first ``.``, ``[`` or ``]`` is a request parameter
@@ -224,13 +238,14 @@ def parse_request(
     ``searchPanes_null``). Any other key, such as DataTables' cache-buster ``_``, SearchPanes' ``searchPanes_options``
     or an app's own ``ajax.data`` keys, is ignored, so an app key must not begin with one of those names followed by
     ``.`` or ``[``. A request key must be ``[part]`` and ``.part`` segments, a bracket segment holding no ``.``; an
-    index is ASCII digits without a leading zero.
+    index is ``0`` or at most 9 ASCII digits without a leading zero, and ``[]`` appends a value, never a field.
 
     Filters the library does not answer are refused unless empty or idle, so a client is told instead of getting fewer
     filters than it asked for: DataTables' fixed and grouped searches (``search[fixed]``, ``search[groups]``,
-    ``search[groupsFixed]``, ``columns[i][search][fixed]``), SearchPanes' selections (``searchPanes``,
-    ``searchPanes_null``) and ColumnControl's (``columns[i][columnControl][list]``, and a
-    ``columns[i][columnControl][search]`` with a value or the ``empty``/``notEmpty`` logic).
+    ``search[groupsFixed]``, ``columns[i][search][fixed]``), SearchPanes' selections (a pane in ``searchPanes`` or
+    ``searchPanes_null`` that is not empty; SearchPanes sends an empty one per pane) and ColumnControl's
+    (``columns[i][columnControl][list]``, and a ``columns[i][columnControl][search]`` with a value or the
+    ``empty``/``notEmpty`` logic).
 
     Raises:
         MalformedRequest: the structure, a request key's shape, a paging number, or the page length is wrong, or a
@@ -285,7 +300,14 @@ def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str,
 
     A ``key[]`` repeated is a list. Keys that are not the request's own are left out.
     """
-    items: Iterable[tuple[str, Any]] = cast(Mapping[str, Any], data).items() if isinstance(data, Mapping) else data
+    items: Iterable[tuple[str, Any]]
+    if hasattr(data, 'getlist'):  # a multi-dict (Starlette, Werkzeug, Django): every value of a repeated key
+        multi = cast(Any, data)
+        items = [(key, value) for key in multi for value in multi.getlist(key)]
+    elif isinstance(data, Mapping):
+        items = cast(Mapping[str, Any], data).items()
+    else:
+        items = data
     root: dict[str, Any] = {}
     for key, raw in items:
         path = _path(key)
@@ -314,8 +336,8 @@ def _assign(node: dict[str, Any], path: list[str], value: Any) -> None:
 
 
 def _index(key: str) -> bool:
-    """Whether ``key`` is a list index: ASCII digits without a leading zero."""
-    return key.isascii() and key.isdigit() and str(int(key)) == key
+    """Whether ``key`` is a list index: ``0``, or at most 9 ASCII digits without a leading zero."""
+    return key == '0' or (key.isascii() and key.isdigit() and len(key) <= 9 and not key.startswith('0'))
 
 
 def _lists(node: Any) -> Any:
@@ -324,7 +346,9 @@ def _lists(node: Any) -> Any:
         return node
     mapping = cast(dict[str, Any], node)
     if set(mapping) == {''}:
-        return [_lists(value) for value in mapping['']]
+        if not isinstance(mapping[''], list):  # key[][part]: a field under an append, which nothing sends
+            raise MalformedRequest('The table request is malformed.')
+        return [_lists(value) for value in cast(list[Any], mapping[''])]
     converted = {key: _lists(value) for key, value in mapping.items()}
     if converted and all(_index(key) for key in converted):
         indexes = sorted(int(key) for key in converted)
