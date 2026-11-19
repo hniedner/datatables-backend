@@ -10,6 +10,14 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest`
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
+- `uv run pre-commit install` once per clone (pre-commit and commit-msg hooks); `uv run pre-commit run --all-files`
+  runs every hook by hand.
+- `uv run pytest --cov=datatables_backend --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
+  --compare-branch=origin/main --fail-under=95` checks the changed lines as CI does.
+
+The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names (one
+word per line). Without it they fail closed ("could not check"), so set it before committing. CI skips them; it has
+no list. `uv run python scripts/private_word_scan.py --history` scans every commit on every ref.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and

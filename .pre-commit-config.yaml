@@ -1,0 +1,72 @@
+# Install with `uv run pre-commit install` (installs the pre-commit and commit-msg hooks below).
+# Tools that are Python packages run through `uv run --frozen`, so uv.lock pins them.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --frozen ruff check
+        language: system
+        types_or: [python, pyi]
+      - id: basedpyright
+        name: basedpyright
+        entry: uv run --frozen basedpyright
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+      - id: uv-lock
+        name: uv.lock matches pyproject.toml
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+      - id: actionlint
+        name: actionlint
+        entry: uv run --frozen actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+      - id: zizmor
+        name: zizmor
+        entry: uv run --frozen zizmor --offline
+        language: system
+        files: ^\.github/
+        types: [yaml]
+      # The word list lives outside the repository (DTB_PRIVATE_WORDS names it); without it the hooks fail closed.
+      # CI has no list and skips these two hooks by id.
+      - id: private-words
+        name: private-word scan (files)
+        entry: uv run --frozen python scripts/private_word_scan.py
+        language: system
+      - id: private-words-message
+        name: private-word scan (commit message)
+        entry: uv run --frozen python scripts/private_word_scan.py --message
+        language: system
+        stages: [commit-msg]
