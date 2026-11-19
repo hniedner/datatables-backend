@@ -293,7 +293,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       sqlserver:
-        image: mcr.microsoft.com/mssql/server:2022-latest@sha256:e10cd49443c94dbdcb7a050987db22ff4d8c87052ac53768abe1ed848d3fcef6
+        # MCR serves this tag as an OCI image manifest. Look its digest up with an Accept header that lists the OCI
+        # types (application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, then Docker's),
+        # and check that GET .../manifests/<digest> answers 200: a Docker-v2-only Accept gets a converted manifest
+        # whose digest docker cannot pull.
+        image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
         env:
           ACCEPT_EULA: 'Y'
           MSSQL_SA_PASSWORD: Dtb-test-only-1
