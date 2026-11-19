@@ -145,6 +145,30 @@ jobs:
           printf '%s\n' "${overrides[@]}" > "$RUNNER_TEMP/overrides.txt"
           uv pip install -p .venv-min --override "$RUNNER_TEMP/overrides.txt" -e . --group dev "${pins[@]}"
       - run: uv pip check -p .venv-min
+      - name: The pins equal the floors pyproject.toml declares for this Python
+        run: |
+          .venv-min/bin/python - <<'EOF'
+          import os, sys, tomllib
+          from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
+          from packaging.version import Version
+          project = tomllib.load(open('pyproject.toml', 'rb'))['project']
+          declared = [*project['dependencies'], *(r for rs in project['optional-dependencies'].values() for r in rs)]
+          env = {'python_version': os.environ['MIN_PYTHON']}
+          floors: dict[str, Version] = {}
+          for req in map(Requirement, declared):
+              if req.marker and not req.marker.evaluate(env):
+                  continue
+              for spec in req.specifier:
+                  if spec.operator == '>=':
+                      name = canonicalize_name(req.name)
+                      floors[name] = max(floors.get(name, Version(spec.version)), Version(spec.version))
+          pins = {canonicalize_name(n): Version(v) for n, v in (p.split('==') for p in os.environ['MIN_PINS'].split())}
+          problems = [f'{n}: pinned {pins.get(n)}, floor {f}' for n, f in sorted(floors.items()) if pins.get(n) != f]
+          problems += [f'{n}: pinned but declares no floor' for n in sorted(pins) if n not in floors]
+          print('\n'.join(problems) or f'every pin equals its declared floor: {sorted(floors)}')
+          sys.exit(1 if problems else 0)
+          EOF
       - name: Show and assert the installed minimum versions
         run: |
           .venv-min/bin/python - <<'EOF'
