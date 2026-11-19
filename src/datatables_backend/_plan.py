@@ -31,6 +31,7 @@ log = logging.getLogger('datatables_backend')
 
 REGEX_REFUSED = 'Regular-expression search is not supported.'
 VALUE_AND_VALUES = 'A column search takes a value or a list of values, not both.'
+GLOBAL_VALUES = 'The global search takes a value, not a list of values.'
 DATE_FORMAT = 'Dates must be written as YYYY-MM-DD.'
 OUT_OF_RANGE = 'The filter value is outside the range of this column.'
 
@@ -147,6 +148,8 @@ def plan(params: DTParams, columns: Sequence[Column], type_of: Callable[[Column]
         order.append(Order(column, type_of(column), item.dir == 'desc'))
 
     global_search: list[Contains] = []
+    if params.search.multi_values:
+        raise InvalidFilter(GLOBAL_VALUES)
     if params.search.value:
         if params.search.regex:
             raise InvalidFilter(REGEX_REFUSED)

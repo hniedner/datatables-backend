@@ -123,7 +123,7 @@ def test_flat_indexes_with_a_gap_are_refused():
         parse_request({'columns[0][data]': 'a', 'columns[2][data]': 'b'})
 
 
-@pytest.mark.parametrize('form', ['spring', 'dots'])
+@pytest.mark.parametrize('form', ['spring', 'dots', 'mixed'])
 def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
     dotted = [(reshaped(key, form), value) for key, value in BRACKETED]
     assert parse_request(dotted) == parse_request(BRACKETED)
@@ -345,7 +345,7 @@ def test_an_append_beside_a_field_is_refused():
         parse_request([('columns[0][data]', 'a'), ('columns[0][]', 'x')])
 
 
-def test_a_multi_dict_without_bracketed_keys_keeps_every_value():
+def test_a_key_repeated_in_a_multi_dict_is_refused():
     """A duplicated key in a multi-dict is refused, as in any other flat form."""
     from starlette.datastructures import ImmutableMultiDict
 

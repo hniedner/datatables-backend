@@ -75,7 +75,7 @@ is a small backend:
   - a request key of another shape, or an index that is not `0` or 1–9 ASCII digits without a leading zero;
   - a filter the library does not answer, unless empty or idle;
   - no DataTables parameter at all (an empty request, or DataTables 1.9's `sEcho`/`sSearch` form);
-  - a key that is not text, or an object value among flat keys.
+  - a flat key that is not text, or an object value among flat keys.
 - A column's `name` falls back to its `data`.
 
 ### R2. Column declaration (the server's schema)

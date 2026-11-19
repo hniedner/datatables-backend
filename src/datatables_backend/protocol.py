@@ -61,7 +61,8 @@ class Search(_Model):
 
     value: str = ''
     regex: bool = False
-    #: Not part of the DataTables protocol: a multi-select may send its values as a list here
+    #: Not part of the DataTables protocol: a column's multi-select may send its values as a list here; the global
+    #: search refuses one
     multi_values: list[str] | None = None
     #: DataTables' fixed and grouped searches, which the library does not answer: refused unless empty, so a client
     #: that uses them is told so instead of getting fewer filters than it asked for

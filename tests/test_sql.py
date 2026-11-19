@@ -12,6 +12,7 @@ from datatables_backend import DTResponse
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
+from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import criterion
@@ -321,7 +322,17 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
 
 
 def test_a_column_search_with_both_a_value_and_multi_values_is_refused(session: Session):
-    params = request(*ALL)
-    params.columns[1].search.value = 'Ann'
-    params.columns[1].search.multi_values = ['Bob']
+    params = parse_request(
+        [
+            ('columns[0][data]', 'name'),
+            ('columns[0][search][value]', 'Ann'),
+            ('columns[0][search][multi_values][]', 'Bob'),
+        ]
+    )
+    assert refused(table.fetch_sync(params, session))
+
+
+def test_a_global_search_with_multi_values_is_refused(session: Session):
+    """``multi_values`` belongs to a column search; on the global search it would be dropped without a word."""
+    params = parse_request([('columns[0][data]', 'name'), ('search[multi_values][]', 'Bob')])
     assert refused(table.fetch_sync(params, session))
