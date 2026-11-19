@@ -11,11 +11,12 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
 
-The supported range is Python 3.12+, Pydantic 2.10+ (2.12+ on Python 3.14, the first with a 3.14 wheel), SQLAlchemy
-2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and python-multipart 0.0.9+. FastAPI
-0.133 is the first release without a `starlette<1.0` cap; the tests need starlette 1.2+ for `httpx2`, which the dev
-group asks for. To check the minimum versions, build a resolver-consistent environment and run pytest with its own
-interpreter, as CI's `minimum-versions` job does for each Python (on 3.14, pin `pydantic==2.12.0`):
+The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
+with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and
+python-multipart 0.0.9+. FastAPI 0.133 is the first release without a `starlette<1.0` cap; the tests need starlette 1.2+
+for `httpx2`, which the dev group asks for. To check the minimum versions, build a resolver-consistent environment and
+run pytest with its own interpreter, as CI's `minimum-versions` job does for each Python (on 3.14, pin
+`pydantic==2.12.0`; on 3.15, `pydantic==2.14.0`):
 
 ```sh
 uv venv -p 3.12 <scratch>/venv-min
@@ -50,7 +51,7 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Pushing and
   publishing still need the user's explicit OK.
 - **Next: milestone 2.**
-  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.14, the minimum
+  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.15, the minimum
     versions, and an install-isolation job that imports each extra without the others.
   - Add container tests against PostgreSQL, SQL Server and OpenSearch.
   - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.

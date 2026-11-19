@@ -173,8 +173,9 @@ is a small backend:
 - The distribution is `datatables-backend` and the import is `datatables_backend`.
 - Extras are `[sqlalchemy]` (SQLAlchemy 2.0.31 or later), `[opensearch]` (opensearch-py 2.6 or later) and `[fastapi]`
   (FastAPI 0.133 or later, python-multipart 0.0.9 or later). The core depends only on Pydantic 2.10 or later, 2.12 or
-  later on Python 3.14. Every floor is tested on each supported Python.
-- Python 3.12 or later. Python 3.10 reached end of life in 2026-10, and the code uses PEP 695 syntax.
+  later on Python 3.14 and 2.14 or later on Python 3.15. Every floor is tested on each supported Python.
+- Python 3.12 or later, tested on 3.12 to 3.15. Python 3.10 reached end of life in 2026-10, and the code uses PEP 695
+  syntax.
 - Fully typed (`py.typed`), checked with basedpyright and ruff.
 - Tests:
   - SQL runs against SQLite (sync and aiosqlite) by default.
