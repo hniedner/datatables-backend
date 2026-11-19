@@ -221,18 +221,12 @@ def test_searchbuilder_conditions(
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
 
 
-def test_probe_boolean_equality(client: OpenSearch):
-    """PROBE, replaced in the next commit: records what SearchBuilder `=` does on a boolean field."""
+@pytest.mark.parametrize('value', ['1', 'true', 'abc'])
+def test_searchbuilder_equality_on_a_boolean_field_matches_nothing_today(client: OpenSearch, value: str):
+    """Draft 1 has no boolean type, so the field is a string column; `=` finds no document, `true` included. PRD v2
+    leaves this to the spec until PRD-L3 adds a `boolean` type."""
     flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active')])
-    outcomes: dict[str, object] = {}
-    for value in ('1', 'true', 'abc'):
-        try:
-            outcomes[value] = found(
-                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)
-            )
-        except Exception as error:  # the probe records whatever happens
-            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
-    assert outcomes == {}, outcomes
+    assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == []
 
 
 def test_searchbuilder_groups_nest(client: OpenSearch):

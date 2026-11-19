@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.exc import DataError
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -345,19 +347,40 @@ def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
 
 
-def test_probe_boolean_equality_on_every_backend(session: Session):
-    """PROBE, replaced in the next commit: records what SearchBuilder `=` does on a Boolean column per backend."""
+#: What SearchBuilder `=` on a Boolean column (True for ids 1 and 4, False for 2 and 5) gives today, per backend: the
+#: ids answered, or the exception raised. Draft 1 has no boolean type, so the column is a string column and the value
+#: goes to the database as text. PRD v2 leaves this to the spec until PRD-L3 adds a `boolean` type.
+BOOLEAN_TODAY: dict[str, dict[str, list[int] | type[Exception]]] = {
+    'sqlite': {'1': [1, 4], 'true': [], 'abc': []},
+    'mysql': {'1': [1, 4], 'true': [2, 5], 'abc': [2, 5]},  # text that is not a number reads as 0
+    'mssql': {'1': [1, 4], 'true': [1, 4], 'abc': DataError},
+    'postgresql': {'1': ProgrammingError, 'true': ProgrammingError, 'abc': ProgrammingError},
+}
+
+
+@pytest.mark.parametrize(
+    ('value', 'today'),
+    [
+        pytest.param(
+            value,
+            today,
+            marks=pytest.mark.xfail(
+                reason='draft 1: the database refuses the text compared with a Boolean column, so the query fails; '
+                'a user mistake should be invalid_filter (PRD v2, PRD-L3)',
+                strict=True,
+                raises=today,
+            ),
+        )
+        if isinstance(today, type)
+        else pytest.param(value, today)
+        for value, today in BOOLEAN_TODAY[os.environ.get('DTB_SQL_DIALECT', 'sqlite')].items()
+    ],
+)
+def test_searchbuilder_equality_on_a_boolean_column_as_it_is_today(
+    session: Session, value: str, today: list[int] | type[Exception]
+):
     flagged = SQLTable(people, [Column('id'), Column('active')])
-    outcomes: dict[str, object] = {}
-    for value in ('1', 'true', 'abc'):
-        try:
-            outcomes[value] = ids(
-                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), session)
-            )
-        except Exception as error:  # the probe records whatever happens
-            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
-            session.rollback()
-    assert outcomes == {}, outcomes
+    assert ids(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), session)) == today
 
 
 @pytest.mark.parametrize(
