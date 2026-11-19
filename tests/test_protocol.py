@@ -118,3 +118,63 @@ def test_a_flat_key_given_twice_is_refused():
 def test_flat_indexes_with_a_gap_are_refused():
     with pytest.raises(MalformedRequest):
         parse_request({'columns[0][data]': 'a', 'columns[2][data]': 'b'})
+
+
+BRACKETED = [
+    ('draw', '4'),
+    ('start', '0'),
+    ('length', '10'),
+    ('columns[0][data]', 'id'),
+    ('columns[1][data]', 'name'),
+    ('columns[1][search][value]', 'ann'),
+    ('columns[1][search][regex]', 'false'),
+    ('columns[2][data]', 'team'),
+    ('columns[2][orderable]', 'false'),
+    ('order[0][column]', '0'),
+    ('order[0][dir]', 'desc'),
+    ('order[0][name]', ''),
+    ('search[value]', 'r'),
+    ('search[regex]', 'false'),
+]
+
+
+def reshaped(key: str, form: str) -> str:
+    """``columns[1][search][value]`` as ``columns[1].search.value`` (spring) or ``columns.1.search.value`` (dots)."""
+    head, *parts = key.replace(']', '').split('[')
+    if form == 'spring':  # spring-data-jpa-datatables' flatten(): indexes stay bracketed, names are dotted
+        return head + ''.join(f'[{part}]' if part.isdigit() else f'.{part}' for part in parts)
+    return '.'.join([head, *parts])
+
+
+@pytest.mark.parametrize('form', ['spring', 'dots'])
+def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
+    dotted = [(reshaped(key, form), value) for key, value in BRACKETED]
+    assert parse_request(dotted) == parse_request(BRACKETED)
+    assert parse_request(dict(dotted)) == parse_request(dict(BRACKETED))
+
+
+def test_dotted_column_names_are_read():
+    params = parse_request({'draw': '1', 'start': '0', 'length': '10', 'columns.0.data': 'a'})
+    assert [column.key for column in params.columns] == ['a']
+
+
+def test_keys_a_real_client_adds_are_ignored():
+    """DataTables' GET cache-buster ``_``, its fixed and grouped searches, and an app's own ``ajax.data`` keys."""
+    extras = [
+        ('_', '1763550000000'),
+        ('search[fixed][0][name]', 'scope'),
+        ('search[fixed][0][term]', 'x'),
+        ('search[groups][0][columns][]', '1'),
+        ('columns[1][search][fixed][0][name]', 'scope'),
+        ('status', 'open'),
+        ('filter[owner]', 'me'),
+    ]
+    assert parse_request(BRACKETED + extras) == parse_request(BRACKETED)
+
+
+@pytest.mark.parametrize(
+    'key', ['columns[0][data', 'columns[0]].data', 'columns[0]data', 'search..value', 'order.[0].dir', 'search.']
+)
+def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
+    with pytest.raises(MalformedRequest):
+        parse_request([*BRACKETED, (key, 'x')])

@@ -170,7 +170,9 @@ class SchemaError(RuntimeError):
 # A search, a filter or an order on a name the server did not declare, or an order it does not allow
 NO_USABLE_COLUMN = 'This table cannot be searched or sorted that way.'
 
-_BRACKETS = re.compile(r'\[([^\]]*)\]')
+_HEAD = re.compile(r'[^.\[\]]*')
+_KEY = re.compile(r'[^.\[\]]+(?:\[[^.\[\]]*\]|\.[^.\[\]]+)*')
+_PART = re.compile(r'\[([^.\[\]]*)\]|\.([^.\[\]]+)')
 
 
 def parse_request(
@@ -178,13 +180,16 @@ def parse_request(
 ) -> DTParams:
     """Read a DataTables request.
 
-    ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or the
-    flat parameters of DataTables' default encoding (``columns[0][search][value]``), as a mapping or as key-value
-    pairs (a query string or form with repeated ``key[]`` entries).
+    ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or flat
+    parameters, as a mapping or as key-value pairs (a query string or form with repeated ``key[]`` entries). Flat keys
+    may be bracketed, as DataTables' default encoding sends them (``columns[0][search][value]``), dotted
+    (``columns[0].search.value``, as spring-data-jpa-datatables reads them, or ``columns.0.search.value``), or mixed.
+    A flat key that does not start with a request parameter's name, such as DataTables' cache-buster ``_`` or an
+    app's own ``ajax.data`` keys, is ignored; one that does but cannot be read is refused.
 
     Raises:
-        MalformedRequest: the structure, a paging number, or the page length is wrong. The message never quotes the
-            request's values.
+        MalformedRequest: the structure, a key's shape, a paging number, or the page length is wrong. The message
+            never quotes the request's keys or values.
     """
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
     try:
@@ -208,16 +213,38 @@ def parse_request(
 def _is_flat(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> bool:
     if not isinstance(data, Mapping):
         return True
-    return any('[' in key for key in cast(Mapping[str, Any], data))
+    return any(_head(key) in DTParams.model_fields and _head(key) != key for key in cast(Mapping[str, Any], data))
+
+
+def _head(key: str) -> str:
+    return cast(re.Match[str], _HEAD.match(key)).group()
+
+
+def _path(key: str) -> list[str] | None:
+    """``columns[0][search][value]``, ``columns[0].search.value`` or ``columns.0.search.value`` as its parts.
+
+    None for a key that is not the request's own; a request key of any other shape is refused.
+    """
+    head = _head(key)
+    if head not in DTParams.model_fields:
+        return None
+    if not _KEY.fullmatch(key):
+        log.warning('datatables_request_malformed', extra={'parameter': head})
+        raise MalformedRequest(f'Invalid {head} parameter.')
+    return [head, *(dotted or bracketed for bracketed, dotted in _PART.findall(key, len(head)))]
 
 
 def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str, Any]:
-    """``{'columns[0][data]': 'a'}`` as ``{'columns': [{'data': 'a'}]}``; a ``key[]`` repeated is a list."""
+    """``{'columns[0][data]': 'a'}`` or ``{'columns.0.data': 'a'}`` as ``{'columns': [{'data': 'a'}]}``.
+
+    A ``key[]`` repeated is a list. Keys that are not the request's own are left out.
+    """
     items: Iterable[tuple[str, Any]] = cast(Mapping[str, Any], data).items() if isinstance(data, Mapping) else data
     root: dict[str, Any] = {}
     for key, raw in items:
-        head, _, rest = key.partition('[')
-        path = [head, *_BRACKETS.findall('[' + rest)] if rest else [head]
+        path = _path(key)
+        if path is None:
+            continue
         values = raw if isinstance(raw, list) else [raw]
         for value in cast(list[Any], values):
             _assign(root, path, value)

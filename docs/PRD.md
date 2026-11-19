@@ -47,7 +47,12 @@ is a small backend:
 ### R1. Request parsing
 
 - Accept the request as a decoded JSON object (nested) or as flat form/query parameters in bracket notation
-  (`columns[0][search][value]`), which is DataTables' default `ajax` encoding. Strings `"true"`/`"false"` are booleans.
+  (`columns[0][search][value]`), which is DataTables' default `ajax` encoding, in dotted notation
+  (`columns[0].search.value`, as spring-data-jpa-datatables reads it, or `columns.0.search.value`), or mixed. Every
+  form reads to the same request. Strings `"true"`/`"false"` are booleans.
+- Flat keys that are not the protocol's (DataTables' GET cache-buster `_`, an app's own `ajax.data` keys) are ignored,
+  and so are unknown fields under a protocol key (e.g. DataTables' `search[fixed]`). A key that starts with a protocol
+  parameter's name but has no readable shape is refused as malformed.
 - Validate into typed models: `DTParams`, `DTColumn`, `DTOrder`, `Search`, and the recursive SearchBuilder tree.
 - Refuse a malformed request with `MalformedRequest`. Its message names the parameter, never the client's value.
   Malformed means:
