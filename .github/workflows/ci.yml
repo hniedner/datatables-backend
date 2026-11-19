@@ -50,6 +50,37 @@ jobs:
       - run: uv sync --locked
       - run: uv run --frozen pytest
 
+  # Installs the package as a user would, with one extra and no dev group, and checks that the core modules and that
+  # extra's module load no other extra (and no greenlet, which `sqlalchemy.ext.asyncio` needs).
+  install-isolation:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        extra: [core, sqlalchemy, opensearch, fastapi]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p 3.12 .venv-iso
+      - run: uv pip install -p .venv-iso -e "${{ matrix.extra == 'core' && '.' || format('.[{0}]', matrix.extra) }}"
+      - name: Import without loading other extras
+        env:
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          .venv-iso/bin/python - <<'EOF'
+          import importlib, os, sys
+          extra = os.environ['EXTRA']
+          core = ['datatables_backend', *(f'datatables_backend.{m}' for m in ('protocol', 'columns', '_plan', 'rows', 'cache'))]
+          own = {'core': set(), 'sqlalchemy': {'sqlalchemy'}, 'opensearch': {'opensearchpy'}, 'fastapi': {'fastapi', 'starlette'}}[extra]
+          for module in core if extra == 'core' else [*core, f'datatables_backend.{extra}']:
+              importlib.import_module(module)
+          leaked = sorted({'sqlalchemy', 'opensearchpy', 'fastapi', 'starlette', 'greenlet'} - own & {m.partition('.')[0] for m in sys.modules})
+          print(f'{extra}: other extras loaded: {leaked or "none"}')
+          sys.exit(f'{extra} loaded {leaked}' if leaked else 0)
+          EOF
+
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy and pydantic, with the rest of the dev group
   # resolved to match them. `uv run --with` is not used, because uv's `pytest` script runs the project interpreter and
   # never sees the overlay.
