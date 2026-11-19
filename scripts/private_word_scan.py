@@ -12,18 +12,21 @@ command and no path, since either could hold a word.
 
 Usage:
     private_word_scan.py FILE...         paths and contents of the given files (the pre-commit stage)
-    private_word_scan.py --message FILE  a commit message (the commit-msg stage)
+    private_word_scan.py --message FILE  a commit message (the commit-msg stage), without git's comment lines and
+                                         anything below its scissors line
     private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit and
                                          post-checkout stages: a push that only adds a ref brings no commit, so
                                          pre-commit runs no pre-push hook for it)
-    private_word_scan.py --history       everything a push publishes: every ref's name, every annotated tag, for
+    private_word_scan.py --history       everything a push publishes: every ref's name and the remote ref the push
+                                         writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, for
                                          every commit reachable from any ref its message, author, committer and
                                          tree paths, and every reachable blob decoded once (binary, symlink and
                                          tagged blobs included)
 
 Not covered, since no hook runs between creating the ref and pushing it: ``git branch NAME`` or ``git tag`` followed
 directly by a push with no commit or checkout between, and a push naming a remote ref that no local ref holds
-(``git push origin HEAD:refs/heads/NAME``) with no new commit.
+(``git push origin HEAD:refs/heads/NAME``) that brings no new commit; with a new commit, the pre-push scan reads the
+remote ref name.
 """
 
 from __future__ import annotations
@@ -192,8 +195,27 @@ def scan_refs(words: Words) -> list[str]:
     return findings
 
 
+def message_text(raw: str) -> str:
+    """A commit message file as git will store it: without its comment lines and anything below the scissors line
+    (``commit -v`` puts the diff there). The comment character is git's ``core.commentChar``, ``#`` by default."""
+    comment = decode(git('config', '--get', 'core.commentChar', ok=(0, 1))).strip() or '#'
+    if comment == 'auto':  # git picks one the message does not start a line with; '#' unless taken
+        comment = '#'
+    scissors = f'{comment} ------------------------ >8 ------------------------'
+    kept: list[str] = []
+    for line in raw.splitlines():
+        if line == scissors:
+            break
+        if not line.startswith(comment):
+            kept.append(line)
+    return '\n'.join(kept)
+
+
 def scan_history(words: Words) -> list[str]:
     findings = scan_refs(words)
+    remote = os.environ.get('PRE_COMMIT_REMOTE_BRANCH', '')  # the ref a push writes, which no local ref may hold
+    if found := hits(remote, words):
+        findings.append(report(f'remote ref {redact(remote, words)} (name)', found))
     for revision in decode(git('rev-list', '--all')).split():
         short = revision[:12]
         if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
@@ -223,7 +245,7 @@ def main(argv: list[str]) -> int:
         elif argv[:1] == ['--message']:
             if len(argv) != 2:
                 raise CouldNotCheckError('--message needs the message file')
-            found = hits(decode(Path(argv[1]).read_bytes()), words)
+            found = hits(message_text(decode(Path(argv[1]).read_bytes())), words)
             findings = [report('commit message', found)] if found else []
             scanned = 'the commit message'
         else:

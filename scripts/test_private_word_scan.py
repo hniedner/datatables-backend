@@ -8,14 +8,17 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 SCRIPT = Path(__file__).with_name('private_word_scan.py')
 WORD = 'Zebrafinch'  # planted; the scan must find it in any case and never print it
 SECOND = 'Otterbrook'  # the list's second word, on line 5
 
 
-def scan(*args: str, words: Path | None, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    env = {key: value for key, value in os.environ.items() if key != 'DTB_PRIVATE_WORDS'}
+def scan(
+    *args: str, words: Path | None, cwd: Path | None = None, extra: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = {key: value for key, value in os.environ.items() if key != 'DTB_PRIVATE_WORDS'} | (extra or {})
     if words is not None:
         env['DTB_PRIVATE_WORDS'] = str(words)
     return subprocess.run(
@@ -59,7 +62,9 @@ def test_clean_files_pass(tmp_path: Path, words: Path):
 
 def test_a_planted_word_in_a_commit_message_fails(tmp_path: Path, words: Path):
     message = write(tmp_path / 'COMMIT_EDITMSG', f'Port the {WORD} cases\n')
-    assert scan('--message', str(message), words=words).returncode == 1
+    result = scan('--message', str(message), words=words)
+    assert result.returncode == 1
+    assert 'commit message: private word #3' in result.stderr
     assert scan('--message', str(write(tmp_path / 'clean', 'Fix a test\n')), words=words).returncode == 0
 
 
@@ -145,7 +150,17 @@ def commit(
 
 @pytest.mark.parametrize(
     'where',
-    ['non-ascii path', 'path and contents', 'binary blob', 'ref name', 'tag message', 'author', 'committer'],
+    [
+        'non-ascii path',
+        'path and contents',
+        'binary blob',
+        'ref name',
+        'tag message',
+        'author',
+        'committer',
+        'author email',
+        'committer email',
+    ],
 )
 def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words: Path, where: str):
     if where == 'non-ascii path':  # the word in the path only
@@ -158,6 +173,10 @@ def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words
         git(repo, 'branch', f'topic-{WORD}')
     elif where == 'tag message':
         git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
+    elif where == 'author email':
+        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_EMAIL': f'{WORD.lower()}@example.org'})
+    elif where == 'committer email':
+        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_EMAIL': f'{WORD.lower()}@example.org'})
     elif where == 'author':  # the author alone: the committer stays clean
         commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'})
     else:
@@ -351,3 +370,94 @@ def test_a_file_in_another_encoding_without_a_byte_order_mark_is_read(tmp_path: 
 def test_a_blob_in_another_encoding_without_a_byte_order_mark_is_read(repo: Path, words: Path):
     commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-16-le'))
     assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
+SCISSORS = '# ------------------------ >8 ------------------------'
+
+
+@pytest.mark.parametrize(
+    'template',
+    [
+        f'Remove a leaked file\n\n# Changes to be committed:\n#\tdeleted:    {WORD}.txt\n',
+        f'Drop a line\n{SCISSORS}\n# Do not modify or remove the line above.\ndiff --git a/a.txt b/a.txt\n-{WORD}\n',
+    ],
+    ids=['status comment', 'verbose diff'],
+)
+def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, words: Path, template: str):
+    result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_message_comment_character_is_git_s(repo: Path, words: Path):
+    git(repo, 'config', 'core.commentChar', ';')
+    dropped = write(repo / 'dropped', f'Remove a file\n;\tdeleted: {WORD}.txt\n')
+    kept = write(repo / 'kept', f'# {WORD} is a heading here\n')
+    assert scan('--message', str(dropped), words=words, cwd=repo).returncode == 0
+    assert scan('--message', str(kept), words=words, cwd=repo).returncode == 1
+
+
+def test_an_automatic_comment_character_reads_as_the_default(repo: Path, words: Path):
+    git(repo, 'config', 'core.commentChar', 'auto')
+    assert scan('--message', str(write(repo / 'msg', f'Fix\n# {WORD}\n')), words=words, cwd=repo).returncode == 0
+
+
+def test_a_push_to_a_remote_ref_named_with_a_word_fails(repo: Path, words: Path):
+    """pre-commit names the remote ref a push writes; no local ref has to hold that name."""
+    result = scan('--history', words=words, cwd=repo, extra={'PRE_COMMIT_REMOTE_BRANCH': f'refs/heads/{WORD}-x'})
+    assert result.returncode == 1, result.stderr
+    assert 'remote ref refs/heads/*** (name): private word #3' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_sharp_s_in_a_list_word_matches_its_double_s_spelling(tmp_path: Path):
+    listed = write(tmp_path / 'list.txt', 'Straßenbahn\n')
+    assert scan(str(write(tmp_path / 'notes.md', 'see STRASSENBAHN\n')), words=listed).returncode == 1
+
+
+def hooks_config(repo: Path) -> None:
+    """The repository's word hooks, run by this interpreter instead of `uv run`, so the test needs no project."""
+    config = yaml.safe_load((SCRIPT.parent.parent / '.pre-commit-config.yaml').read_text(encoding='utf-8'))
+    hooks = [hook for entry in config['repos'] for hook in entry['hooks'] if hook['id'].startswith('private-words')]
+    for hook in hooks:
+        hook['entry'] = hook['entry'].replace(
+            'uv run --frozen python scripts/private_word_scan.py', f'"{sys.executable}" "{SCRIPT}"'
+        )
+    (repo / '.pre-commit-config.yaml').write_text(yaml.safe_dump({'repos': [{'repo': 'local', 'hooks': hooks}]}))
+
+
+@pytest.mark.parametrize(
+    ('hook', 'stage'),
+    [
+        ('private-words', 'pre-commit'),
+        ('private-words-message', 'commit-msg'),
+        ('private-words-refs', 'pre-commit'),
+        ('private-words-refs', 'post-checkout'),
+        ('private-words-history', 'pre-push'),
+    ],
+)
+def test_each_word_hook_runs_at_its_stage(repo: Path, words: Path, hook: str, stage: str):
+    hooks_config(repo)
+    options: list[str] = []
+    if hook == 'private-words':
+        write(repo / f'{WORD}.txt', 'clean\n')
+        git(repo, 'add', '.')
+    elif hook == 'private-words-message':
+        options = ['--commit-msg-filename', str(write(repo / 'MSG', f'Add {WORD}\n'))]
+    elif hook == 'private-words-refs':
+        git(repo, 'branch', f'topic-{WORD}')
+        if stage == 'post-checkout':
+            options = ['--from-ref', 'HEAD', '--to-ref', 'HEAD', '--checkout-type', '1']
+    else:
+        git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
+        options = ['--from-ref', 'HEAD', '--to-ref', 'HEAD', '--remote-branch', 'refs/heads/main']
+    result = subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'run', hook, '--hook-stage', stage, *options],
+        cwd=repo,
+        env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()

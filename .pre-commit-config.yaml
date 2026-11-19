@@ -78,7 +78,8 @@ repos:
       # no pre-push hook for it. A word in a local ref name or tag fails every commit, and every checkout:
       # `git switch -c NAME` exits non-zero, so `git switch -c NAME && git push` stops before the push. Git cannot
       # undo the checkout itself. Still unscanned: `git branch NAME` or `git tag` followed straight by a push, with
-      # no commit or checkout between, and a push to a remote ref no local ref holds (`git push origin HEAD:NAME`).
+      # no commit or checkout between, and a push to a remote ref no local ref holds (`git push origin HEAD:NAME`)
+      # that brings no new commit. With a new commit, the pre-push hook below scans that remote ref name too.
       - id: private-words-refs
         name: private-word scan (local ref names and tags)
         entry: uv run --frozen python scripts/private_word_scan.py --refs
