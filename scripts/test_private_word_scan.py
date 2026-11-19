@@ -224,3 +224,23 @@ def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path):
     result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=latin1)
     assert result.returncode == 2
     assert 'not UTF-8' in result.stderr
+
+
+@pytest.mark.parametrize('where', ['branch', 'tag name', 'tag message'])
+def test_a_word_in_a_local_ref_fails_every_commit_and_is_never_printed(repo: Path, words: Path, where: str):
+    """The commit-stage check: a ref-only push brings no commit, so the pre-push hooks never run for it."""
+    assert scan('--refs', words=words, cwd=repo).returncode == 0
+    if where == 'branch':
+        git(repo, 'branch', f'topic-{WORD}')
+    elif where == 'tag name':
+        git(repo, 'tag', f'v-{WORD}')
+    else:
+        git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_the_ref_scan_reads_no_history(repo: Path, words: Path):
+    commit(repo, 'b.txt', f'{WORD}\n'.encode(), message=f'Add {WORD}')
+    assert scan('--refs', words=words, cwd=repo).returncode == 0

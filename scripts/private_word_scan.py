@@ -12,10 +12,16 @@ command and no path, since either could hold a word.
 Usage:
     private_word_scan.py FILE...         paths and contents of the given files (the pre-commit stage)
     private_word_scan.py --message FILE  a commit message (the commit-msg stage)
+    private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit stage, on
+                                         every commit: a push that only adds a ref brings no commit, so pre-commit
+                                         runs no pre-push hook for it)
     private_word_scan.py --history       everything a push publishes: every ref's name, every annotated tag, for
                                          every commit reachable from any ref its message, author, committer and
                                          tree paths, and every reachable blob decoded once (binary and symlink
                                          blobs included)
+
+Not covered: a push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) and
+bringing no new commit. No hook runs for it and no local ref shows the name.
 """
 
 from __future__ import annotations
@@ -148,7 +154,7 @@ def reachable_blobs() -> Iterator[tuple[str, bytes]]:
             yield path, out[start : start + int(size)]
 
 
-def scan_history(words: Words) -> list[str]:
+def scan_refs(words: Words) -> list[str]:
     findings: list[str] = []
     for ref in decode(git('for-each-ref', '--format=%(refname)')).splitlines():  # ref names hold no newline
         shown = redact(ref, words)
@@ -158,6 +164,11 @@ def scan_history(words: Words) -> list[str]:
             continue
         if found := hits(decode(git('cat-file', '-p', ref)), words):
             findings.append(report(f'tag {shown} (tagger or message)', found))
+    return findings
+
+
+def scan_history(words: Words) -> list[str]:
+    findings = scan_refs(words)
     for revision in decode(git('rev-list', '--all')).split():
         short = revision[:12]
         if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
@@ -178,7 +189,10 @@ def scan_history(words: Words) -> list[str]:
 def main(argv: list[str]) -> int:
     try:
         words = load_words()
-        if argv[:1] == ['--history']:
+        if argv[:1] == ['--refs']:
+            findings = scan_refs(words)
+            scanned = 'every local ref'
+        elif argv[:1] == ['--history']:
             findings = scan_history(words)
             scanned = 'everything on every ref'
         elif argv[:1] == ['--message']:

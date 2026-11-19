@@ -73,6 +73,14 @@ repos:
         entry: uv run --frozen python scripts/private_word_scan.py --message
         language: system
         stages: [commit-msg]
+      # On every commit, whatever is staged: a push that only adds a ref (a new branch at an existing commit)
+      # brings no commit, so pre-commit runs no pre-push hook for it; a word in a local ref name or tag fails here.
+      - id: private-words-refs
+        name: private-word scan (local ref names and tags)
+        entry: uv run --frozen python scripts/private_word_scan.py --refs
+        language: system
+        always_run: true
+        pass_filenames: false
       # Before a push: everything the push publishes, including ref names, authors, and commits made by a rebase,
       # cherry-pick or merge, which skip the two hooks above.
       - id: private-words-history
