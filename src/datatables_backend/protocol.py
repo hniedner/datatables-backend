@@ -6,7 +6,6 @@ https://datatables.net/extensions/searchbuilder/server-side.
 
 from __future__ import annotations
 
-import builtins
 from collections.abc import Iterable
 from collections.abc import Mapping
 import json
@@ -71,6 +70,13 @@ class Search(_Model):
     groupsFixed: list[Any] = Field(default=[], max_length=0)
 
 
+def _empty(value: Any) -> Any:
+    """An empty list or object, the idle form of a filter the library does not answer; anything else is refused."""
+    if not isinstance(value, (list, dict)) or value:
+        raise ValueError('a filter the library does not answer')
+    return cast(Any, value)
+
+
 class ColumnControlSearch(_Model):
     """ColumnControl's column search, which the library does not answer: refused when active, as ColumnControl
     itself counts it (a value, or the ``empty``/``notEmpty`` logic that needs none). It sends an idle one on every
@@ -91,7 +97,7 @@ class ColumnControl(_Model):
     than it asked for."""
 
     search: ColumnControlSearch = ColumnControlSearch()
-    list: Annotated[builtins.list[Any] | dict[str, Any], Field(max_length=0)] = []
+    list: Annotated[Any, AfterValidator(_empty)] = []
 
 
 class DTColumn(_Model):
@@ -151,8 +157,8 @@ type SearchNode = Annotated[
 
 
 def _no_selection(panes: dict[str, Any]) -> dict[str, Any]:
-    if any(panes.values()):
-        raise ValueError('a SearchPanes selection is not supported')
+    for pane in panes.values():  # checked here, not by a typed dict, so a refusal never names a client's column
+        _empty(pane)
     return panes
 
 
@@ -249,8 +255,8 @@ def parse_request(
 
     Raises:
         MalformedRequest: the structure, a request key's shape, a paging number, or the page length is wrong, or a
-            filter the library does not answer is sent. The message names the parameter, never the request's keys or
-            values.
+            filter the library does not answer is sent. The message names the parameter where it can, and never
+            quotes the request's keys or values.
     """
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
     try:
@@ -313,6 +319,8 @@ def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str,
         path = _path(key)
         if path is None:
             continue
+        if isinstance(raw, list) and not raw and not key.endswith('[]'):  # no value for a single-value key
+            raise MalformedRequest(f'Invalid {path[0]} parameter.')
         values = raw if isinstance(raw, list) else [raw]
         for value in cast(list[Any], values):
             _assign(root, path, value)
@@ -347,6 +355,8 @@ def _lists(node: Any) -> Any:
     if not isinstance(node, dict):
         return node
     mapping = cast(dict[str, Any], node)
+    if '' in mapping and len(mapping) > 1:  # key[] beside key[part]: an append and a field under one parent
+        raise MalformedRequest('The table request is malformed.')
     if set(mapping) == {''}:
         if not isinstance(mapping[''], list):  # key[][part]: a field under an append, which nothing sends
             raise MalformedRequest('The table request is malformed.')

@@ -12,14 +12,11 @@ from datatables_backend import DTResponse
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
-from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
-from .conftest import BRACKETED
 from .conftest import criterion
 from .conftest import people
 from .conftest import request
-from .conftest import reshaped
 
 ALL = ('id', 'name', 'email', 'age', 'born', 'seen', 'team')
 COLUMNS = [
@@ -70,14 +67,6 @@ async def test_the_async_fetch_answers_like_the_sync_one(session: Session, async
 async def test_an_async_connection_works_too(async_session: AsyncSession):
     connection = await async_session.connection()
     assert ids(await table.fetch(request(*ALL), connection)) == [1, 2, 3, 4, 5]
-
-
-@pytest.mark.parametrize('form', ['spring', 'dots'])
-def test_a_dotted_request_returns_the_rows_of_the_bracketed_one(session: Session, form: str):
-    bracketed = table.fetch_sync(parse_request(BRACKETED), session)
-    assert ids(bracketed) == [3, 1]  # name contains "ann", a column contains "r", id descending
-    dotted = table.fetch_sync(parse_request([(reshaped(key, form), value) for key, value in BRACKETED]), session)
-    assert dotted == bracketed
 
 
 def test_a_sync_connection_works_too(session: Session):

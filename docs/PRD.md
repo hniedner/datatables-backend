@@ -71,7 +71,9 @@ is a small backend:
   - a negative `start`;
   - `length` below 1 or above the configured maximum (default 1000), so "All" (`-1`) is refused;
   - numbers above 2³¹−1;
-  - text JSON cannot encode (lone surrogates).
+  - text JSON cannot encode (lone surrogates);
+  - a request key of another shape, or an index that is not `0` or 1–9 ASCII digits without a leading zero;
+  - a filter the library does not answer, unless empty or idle.
 - A column's `name` falls back to its `data`.
 
 ### R2. Column declaration (the server's schema)

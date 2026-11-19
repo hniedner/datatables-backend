@@ -184,6 +184,7 @@ def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
         'order[0]]',
         'columns[0][search.value]',
         'search[a.b]',
+        'search]',
     ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
@@ -318,3 +319,27 @@ def test_a_field_and_a_value_under_one_append_are_refused_in_either_order(key: s
     pairs = [(f'{key}[][x]', '1'), (f'{key}[]', '2')]
     with pytest.raises(MalformedRequest):
         parse_request(pairs if field_first else pairs[::-1])
+
+
+@pytest.mark.parametrize('key', ['columns[2][columnControl][list][0]', 'columns[2][columnControl][list]'])
+def test_a_columncontrol_list_refusal_names_only_the_parameter(key: str):
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request([*BRACKETED, (key, 'red')])
+    assert str(refused.value) == 'Invalid columns.2.columnControl.list parameter.'
+
+
+def test_an_empty_list_for_a_single_value_key_is_refused():
+    """A form decoder may give a key no value as an empty list; dropping the key would drop the filter."""
+    with pytest.raises(MalformedRequest):
+        parse_request({**dict(BRACKETED), 'search[value]': []})
+
+
+def test_a_searchpanes_pane_that_is_not_an_object_or_list_is_refused():
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'searchPanes': {'team': 0}})
+    assert str(refused.value) == 'Invalid searchPanes parameter.'
+
+
+def test_an_append_beside_a_field_is_refused():
+    with pytest.raises(MalformedRequest):
+        parse_request([('columns[0][data]', 'a'), ('columns[0][]', 'x')])
