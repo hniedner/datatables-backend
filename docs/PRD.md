@@ -47,7 +47,22 @@ is a small backend:
 ### R1. Request parsing
 
 - Accept the request as a decoded JSON object (nested) or as flat form/query parameters in bracket notation
-  (`columns[0][search][value]`), which is DataTables' default `ajax` encoding. Strings `"true"`/`"false"` are booleans.
+  (`columns[0][search][value]`), which is DataTables' default `ajax` encoding, in dotted notation
+  (`columns[0].search.value`, as spring-data-jpa-datatables reads it, or `columns.0.search.value`), or mixed. Every
+  form reads to the same request. Strings `"true"`/`"false"` are booleans.
+- A flat key is the request's own when its name before the first `.`, `[` or `]` is a request parameter (`draw`,
+  `start`, `length`, `columns`, `order`, `search`, `searchBuilder`, `searchPanes`, `searchPanes_null`). Other keys
+  (DataTables' GET cache-buster `_`, SearchPanes' `searchPanes_options`, an app's own `ajax.data` keys) are ignored, so
+  an app key must not begin with one of those names followed by `.` or `[`. A request key must be `[part]` and `.part`
+  segments, a bracket segment holding no `.`, an index is `0` or at most 9 ASCII digits without a leading zero, and
+  `[]` appends a value, never a field; a request key of any other shape is refused as malformed. Unknown fields under
+  a request key are ignored. A multi-dict (Starlette, Werkzeug, Django) is read with every value of a repeated key.
+- A filter the library does not answer is refused as malformed unless empty or idle, since dropping it would answer
+  fewer filters than the client asked for: a fixed or grouped search (`search[fixed]`, `search[groups]`,
+  `search[groupsFixed]`, `columns[i][search][fixed]`), a SearchPanes selection (a non-empty pane in `searchPanes` or
+  `searchPanes_null`; SearchPanes sends an empty pane on every request), a ColumnControl list
+  (`columns[i][columnControl][list]`), and a ColumnControl search with a value or the `empty`/`notEmpty` logic (READ:
+  SearchPanes 3.0.1 and ColumnControl 2.1.3 sources).
 - Validate into typed models: `DTParams`, `DTColumn`, `DTOrder`, `Search`, and the recursive SearchBuilder tree.
 - Refuse a malformed request with `MalformedRequest`. Its message names the parameter, never the client's value.
   Malformed means:
@@ -56,7 +71,11 @@ is a small backend:
   - a negative `start`;
   - `length` below 1 or above the configured maximum (default 1000), so "All" (`-1`) is refused;
   - numbers above 2³¹−1;
-  - text JSON cannot encode (lone surrogates).
+  - text JSON cannot encode (lone surrogates);
+  - a request key of another shape, or an index that is not `0` or 1–9 ASCII digits without a leading zero;
+  - a filter the library does not answer, unless empty or idle;
+  - no DataTables parameter at all (an empty request, or DataTables 1.9's `sEcho`/`sSearch` form);
+  - a flat key that is not text, or an object value among flat keys.
 - A column's `name` falls back to its `data`.
 
 ### R2. Column declaration (the server's schema)
@@ -107,7 +126,8 @@ is a small backend:
 - **Multi-select:** a column search with `regex: true` whose regex is only literal alternatives (`a|b`, `^(a|b)$`,
   escaped or not) is read as an exact-match IN list, following DataTables' multi-select convention. Any other regex
   is refused. A `multi_values` list in the column's search object (an extension to the DataTables
-  protocol) does the same.
+  protocol) does the same. A column search holding both a value and `multi_values` is refused. `multi_values` on
+  the global search is refused (`invalid_filter`).
 - **Base filter:** an optional server filter (a SQL expression or an OpenSearch query) limits the rows the table
   shows at all. It applies to `recordsTotal`, `recordsFiltered` and the page alike.
 - **OpenSearch text fields:** declared as analysed text, they take a Google-style query: implicit AND, `OR`, `NOT`/`-`
