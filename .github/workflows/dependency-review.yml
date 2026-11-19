@@ -1,0 +1,32 @@
+name: Dependency review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fails a pull request that adds a dependency with a known vulnerability (any severity) or a licence outside the
+  # list, in runtime and development scopes alike. GitHub's dependency graph reads uv.lock.
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: low
+          fail-on-scopes: runtime, development
+          allow-licenses: >-
+            MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD, ISC, PSF-2.0, Python-2.0, Python-2.0.1, MPL-2.0,
+            Unlicense
+          # The dependency graph's licence for these is wider than the package's own: aiohappyeyeballs declares
+          # PSF-2.0 but is listed with GPL-1.0-or-later from a file scan; protobuf is BSD-3-Clause with a
+          # scancode reference.
+          allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf
