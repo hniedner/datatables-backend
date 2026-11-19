@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 14 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 15 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -151,7 +151,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F18 | Any other regex, an unescaped metacharacter included, is refused. | Regular-expression search is a non-goal. | must |
 | PRD-F19 | The recommended form for a sender is `^(v1\|v2)$` with each value escaped by DataTables' `util.escapeRegex` set: `/ . * + ? \| ( ) [ ] { } \ $ ^ -`. | Escaped values carry any text unambiguously (READ, the set in DataTables 3.1.5's source). | must |
 | PRD-F20 | A `multi_values` list in a column's search object is accepted as the same exact match; an empty entry means empty, as PRD-F26 defines it. | An extension that needs no regex escaping, for clients that build the request themselves. | must |
-| PRD-F21 | Dates are matched by day: `=`, `<`, `<=`, `>`, `>=` and `between` refer to whole days, for date and datetime columns alike. For a timezone-aware column the day is its UTC day, on every backend (OpenSearch included). A timezone-aware column is one whose SQL type carries a time zone (e.g. `DateTime(timezone=True)`). On SQLite and in a MySQL `DATETIME`, which store no offset, the stored time is read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it. A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC day only when the app sets that zone to `+00:00`. | A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL documentation, not measured here. | must |
+| PRD-F21 | Dates are matched by day: `=`, `<`, `<=`, `>`, `>=` and `between` refer to whole days, for date and datetime columns alike. For a timezone-aware column the day is its UTC day, on every backend (OpenSearch included). A timezone-aware column is a SQL column whose type carries a time zone (e.g. `DateTime(timezone=True)`), or any OpenSearch date column, which OpenSearch stores as a UTC instant. On SQLite and in a MySQL `DATETIME`, which store no offset, the stored time is read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC day only when the app sets that zone to `+00:00`. | A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL documentation, not measured here. | must |
 | PRD-F22 | SearchBuilder's "contains" on a date column, a criterion SearchBuilder itself does not send, and a column search on an OpenSearch date column, take a year, a year-month or a day (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) and mean that span, on every backend. For a timezone-aware column the span is in UTC (PRD-F21). | A partial date names a span; substring matching on date text depends on the database's date format. | must |
 | PRD-F23 | On SQL, a number or a date column takes part in the global and column searches as text: a number as its canonical text, a date as `YYYY-MM-DD`; "7" finds 17. | As in SvelteDT's search text, which holds every column as text. | must |
 | PRD-F24 | The maximum date (9999-12-31) as a bound is a user error, not a failed query. | Its next day does not exist, and a user can change it. | must |
@@ -165,7 +165,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F33 | An OpenSearch column search on a number column takes one number and matches it exactly; several words, `!` or quotes are refused with `invalid_number`. | No text form to match a substring in; smart-search syntax has no meaning there. | must |
 | PRD-F34 | An OpenSearch column search on a date column takes one date term (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); several words, `!` or quotes are refused with `invalid_date`. | A date span is one term; smart-search syntax has no meaning there. | must |
 | PRD-F35 | `!` excludes a word only when the word, escaped by DataTables' `util.escapeRegex`, is longer than one character: `!-` and `!.` exclude, `!x` adds nothing. | DataTables' smart search exactly: it escapes the text first and negates a word only `if (word.length > 1)` (READ, DataTables 3.1.5 `dataTables.mjs` :5913 and :5948); the server and SvelteDT's local source share DataTables' grammar. | must |
-| PRD-F36 | A SearchBuilder criterion carrying more values than its condition takes is refused with `invalid_filter`. | Silently using the first value answers a different question than asked, as a missing value would (PRD-F30). | must |
+| PRD-F36 | A SearchBuilder criterion carrying more values than its condition takes is refused with `invalid_filter`. `null` and `!null` take no value and ignore every value entry they carry (`[]`, `['']` or leftovers), so they are never refused for one. | Silently using the first value answers a different question than asked, as a missing value would (PRD-F30); `null` and `!null` read no value, so an entry cannot change their answer. | must |
 | PRD-F37 | NULL satisfies every negative SearchBuilder condition (`!=`, `!contains`, `!starts`, `!ends`, `!between`) on every backend. | A NULL value is not equal to, does not contain, start or end with, and is not between anything, as `!word` passes NULL (PRD-F5); DataTables' client-side SearchBuilder agrees for strings and dates (section 5). | must |
 | PRD-F38 | A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all, and a categorical filter or `multi_values` list holds at most 256 values; beyond any bound the request is refused with `invalid_filter`. | Every criterion and value is query work, and walking the tree must never recurse without bound. | must |
 | PRD-F39 | A column search holding both a value and a non-empty `multi_values` list is refused with `invalid_filter`. | One of the two would be dropped silently. | must |
@@ -179,11 +179,12 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 |---|---|---|---|
 | PRD-O1 | An order on an index outside the request's columns raises `MalformedRequest` (PRD-P6): only an integration bug sends one. For a column in the request, the request's `orderable` and the server's declaration decide together: request orderable and server unorderable, the order is refused (PRD-E1); request unorderable and server orderable, the order is answered; both unorderable, the entry is skipped. An entry the request marks unorderable on an undeclared name is skipped, not refused, so an undeclared column that only renders cannot fail a first request; an entry the request marks orderable on an undeclared name is refused (PRD-D6), which surfaces a misconfigured table. An entry on a nameless column is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending). | The server decides what can be sorted. DataTables sends its default order `[[0, 'asc']]` even when that column is `orderable: false` (READ, DataTables 3.1.5 `dataTables.mjs`: `sortFlatten` ignores `orderable` at :4794-4836, and the request sends `orderable` at :5631), and its own client sorts by such a column; refusing would fail a table whose first column is not orderable on its first request. | must |
 | PRD-O2 | NULL is the lowest value: first ascending, last descending, on every backend. | One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending), as SvelteDT's local source sorts empty values first. | must |
-| PRD-O3 | After the user's order, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the direction of the last answered order entry (a skipped entry does not decide), so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
+| PRD-O3 | After the user's order, last, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the direction of the first applied order entry (PRD-O8; a skipped entry does not decide), so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
 | PRD-O4 | With no order in the request, the rows come in the tie-breaker's ascending order. | A stable first page. | must |
 | PRD-O5 | A text-only OpenSearch string column (PRD-D13) is unorderable by default, so an order on it is refused or skipped as PRD-O1 says; declaring it orderable raises `SchemaError` at construction. | OpenSearch rejects the whole search on an analysed-text sort, so an entry the request marks orderable is refused rather than sent; a request-unorderable entry is skipped as PRD-O1 says. | must |
 | PRD-O6 | Text order is the database's collation; the library adds no collation of its own. | Portable and predictable per database; see the non-goals. | must |
 | PRD-O7 | OpenSearch sorts a string column on its keyword field (PRD-D13). | Sorting needs the unanalysed form. | must |
+| PRD-O8 | Order entries apply in request order, the first applied entry primary; a skipped entry (PRD-O1, PRD-P21) drops out, and the next applied entry takes its place. | DataTables sends a multi-column order with its primary column first (INFERRED from its multi-column ordering, where shift-click adds a column after the others). | must |
 
 ### 4.5 Counts and paging (C)
 
@@ -223,6 +224,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-E10 | Logs never contain search values or client-supplied names. | Search text can be personal data; client names are untrusted. | must |
 | PRD-E11 | A refused name is logged only if the server declared it. | A declared name is the server's own text. | must |
 | PRD-E12 | Logging uses the standard `logging` module under the logger `datatables_backend`. | Apps route it like any library's logs. | must |
+| PRD-E13 | Each refusal, a `MalformedRequest` raised or a user error answered (PRD-E1), logs exactly one WARNING with a fixed event name per case, holding no client text and only server-declared names (PRD-E10, PRD-E11). A skip the requirements allow logs nothing: an idle column or filter (PRD-P5), a column the global search leaves out (PRD-F41), an order entry skipped (PRD-O1), a nameless column (PRD-P21). No answer is partial: a request is answered in full or refused. | An operator sees every refusal once and can count them by event; an allowed skip is normal traffic (DataTables sends its default order and idle searches on every request), and logging it would bury the refusals. | must |
 
 ### 4.7 Rows and the response (R)
 
@@ -234,6 +236,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-R4 | An optional hook adds `DT_RowData` to a row. | DataTables' row data attributes. | must |
 | PRD-R5 | `DTResponse` has exactly `draw`, `recordsTotal`, `recordsFiltered` and `data`, plus `error` and `error_code` when set. | DataTables' response, extended only by the error code; an unused field invites drift. | must |
 | PRD-R6 | `draw` echoes the request's `draw`. | DataTables drops an answer whose `draw` is not the latest. | must |
+| PRD-R7 | Rows are returned as the backend reads them, changed only by the row hooks (PRD-R2 to PRD-R4); the library never HTML-escapes a value. Escaping is the frontend's or the app's job. | DataTables renders `data` as HTML unless told otherwise, so a value is safe only where it is rendered; escaping on the server would double-escape for a client that escapes, and the library renders no HTML (a non-goal). | must |
 
 ### 4.8 API (A)
 
@@ -337,26 +340,25 @@ the container tests and an acceptance suite.
   model knows, such as SearchBuilder's array `without`, is a structural error (PRD-P6); a criterion on a column the
   server declares unsearchable is refused, which draft 1's code did not check (PRD-F41).
 - Ordering: NULL placement was each database's default and the SQL tie-breaker always ascended; now NULL lowest and the
-  tie-breaker follows the last direction (PRD-O2, PRD-O3); a source without a primary key declares a unique key
-  (PRD-D11); an order on analysed-only text is refused instead of dropped, or skipped when the request marks it
-  unorderable (PRD-O5); an order the request marks unorderable is answered or skipped instead of refused, and skipped
-  even on an undeclared name, so DataTables' default order never fails a first request (PRD-O1); an order index outside
-  the request's columns raises `MalformedRequest` instead of `invalid_filter` (PRD-O1, PRD-P6); text order is stated
-  as the database's (PRD-O6).
+  tie-breaker follows the first applied entry's direction (PRD-O2, PRD-O3, PRD-O8); a source without a primary key
+  declares a unique key (PRD-D11); an order on analysed-only text is refused instead of dropped, or skipped when the
+  request marks it unorderable (PRD-O5); an order the request marks unorderable is answered or skipped instead of
+  refused, and skipped even on an undeclared name, so DataTables' default order never fails a first request
+  (PRD-O1); an order index outside the request's columns raises `MalformedRequest` instead of `invalid_filter`
+  (PRD-O1, PRD-P6); text order is stated as the database's (PRD-O6).
 - Paging: `start` up to 2^53-1 (PRD-P10); OpenSearch pages near the end served by reverse sort, middle pages refused
   with `page_out_of_range` and the real counts instead of `invalid_filter` (PRD-C10 to PRD-C13); a start past the end
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
-  whatever its Content-Type (PRD-A9, changed from draft 1's R8); the parser reads multi-dicts (PRD-P1).
+  whatever its Content-Type (PRD-A9, changed from draft 1's R8).
 - Errors: `invalid_date`, `invalid_number` and `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2,
   PRD-E3); the response's unused `metadata` field goes (PRD-R5).
-- New: a request with no DataTables parameter refused (PRD-P19), an integer `data` (PRD-P20), a `null` `data` and
-  nameless columns (PRD-P21), declared OpenSearch field kinds (PRD-D13), the hook-column rules (PRD-D14 to PRD-D18), the
-  text-only OpenSearch refusals (PRD-D19), a hooked OpenSearch column's keyword field (PRD-D20), the structure bounds
-  (PRD-F38), a value with `multi_values` refused (PRD-F39), a global search with `multi_values` refused (PRD-F40), the
-  dotted form, the ignore rules and the refusal of filters the library does not answer (PRD-P2 to PRD-P5, PRD-P7),
-  object `data` (PRD-P18), `order[i][name]` (PRD-P16), expression columns (PRD-D10), the floors (PRD-Q4 to PRD-Q9),
-  MySQL in the container tests (PRD-Q11) and CI (PRD-Q12).
+- New: an integer `data` (PRD-P20), a `null` `data` and nameless columns (PRD-P21), declared OpenSearch field kinds
+  (PRD-D13), the hook-column rules (PRD-D14 to PRD-D18), the text-only OpenSearch refusals (PRD-D19), a hooked
+  OpenSearch column's keyword field (PRD-D20), the structure bounds (PRD-F38), object `data` (PRD-P18),
+  `order[i][name]` (PRD-P16), expression columns (PRD-D10), the order of several entries (PRD-O8), one warning per
+  refusal and none per allowed skip (PRD-E13), rows never HTML-escaped (PRD-R7), MySQL in the container tests
+  (PRD-Q11) and CI (PRD-Q12).
 - Owner's decisions of 2026-11-19: a column with a search-value hook takes equality only (PRD-D12, PRD-D17, PRD-D18); a
   `boolean` column type later (PRD-L3).
 
@@ -390,7 +392,11 @@ the container tests and an acceptance suite.
 
 | Draft 1 | Here |
 |---|---|
-| R1 request parsing (JSON or bracket form) | PRD-P1, P2 |
+| R1 request parsing (JSON, bracket, dotted or mixed; multi-dicts) | PRD-P1, P2 |
+| R1 request keys, ignored keys and fields | PRD-P3, P4 |
+| R1 key shapes and indexes | PRD-P7 |
+| R1 unanswered filters refused unless empty or idle | PRD-P5 |
+| R1 malformed: no DataTables parameter, non-text flat key, object value among flat keys | PRD-P19, P6 |
 | R1 typed models | PRD-P17 |
 | R1 `MalformedRequest`, message names the parameter | PRD-P6, P12 |
 | R1 malformed: wrong structure, non-integer paging, negative start, length, numbers above 2^31-1, lone surrogates | PRD-P6, P8, P9, P13, P10 (start raised to 2^53-1), P11 |
@@ -404,7 +410,7 @@ the container tests and an acceptance suite.
 | R4 dates (SQL date text; OpenSearch global search skips dates) | PRD-F21, F22, F23, F24, F32 |
 | R4 numbers, "empty" | PRD-F25, F26 |
 | R4 SearchBuilder | PRD-F27 (PRD-F29 merged into it), F28, F30; an unknown condition: PRD-P6 |
-| R4 multi-select, `multi_values` | PRD-F16, F18, F20 |
+| R4 multi-select, `multi_values` | PRD-F16, F18, F20, F39, F40 |
 | R4 base filter | PRD-F31 |
 | R4 OpenSearch Google-style text query | dropped by the owner's decision of 2026-11-19 (PRD-F8) |
 | R5 user errors answered, fixed reason, no input quoted | PRD-E1, E2, E3, E4 |
@@ -420,7 +426,7 @@ the container tests and an acceptance suite.
 | R8 API shape | PRD-A1 to A10 (A9 changed) |
 | R9 distribution, extras | PRD-Q1, Q2 |
 | R9 Pydantic-only core (from the project rules) | PRD-Q3 |
-| R9 Python, floors | PRD-Q4 to Q9 (floors raised) |
+| R9 Python, floors | PRD-Q4 to Q9 |
 | R9 typed, tests, licence | PRD-Q10, Q11, Q13 |
 | Milestones v0.1, v0.2 | Section 6, before 1.0 |
 | Milestone "later" | PRD-L1, L2 |
