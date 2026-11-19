@@ -11,8 +11,29 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
 
-The supported range is Python 3.12+, SQLAlchemy 2.0.30+ and Pydantic 2.7+. To check the minimum versions, run
-`UV_PROJECT_ENVIRONMENT=<scratch>/venv312 uv run -p 3.12 --with 'sqlalchemy==2.0.30' --with 'pydantic==2.7.0' pytest`.
+The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
+with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and
+python-multipart 0.0.9+. FastAPI 0.133 is the first release without a `starlette<1.0` cap, so it is the oldest that runs
+with starlette 1.2+ (whose TestClient uses `httpx2`, which the dev group asks for). It still allows starlette 0.40.0,
+whose TestClient uses `httpx`. To check the minimum versions, build a resolver-consistent environment and run pytest
+with its own interpreter, as CI's `minimum-versions` job does. Its 3.12 leg, as below, also forces the lowest starlette
+through an override and adds `httpx`, as the 3.15 leg does. For another Python, change `-p 3.12` to it; on 3.13 and 3.14
+drop the override and `httpx`; on 3.14 pin `pydantic==2.12.0`, on 3.15 `pydantic==2.14.0`:
+
+```sh
+uv venv -p 3.12 <scratch>/venv-min
+printf 'starlette==0.40.0\n' > <scratch>/overrides.txt
+uv pip install -p <scratch>/venv-min --override <scratch>/overrides.txt -e . --group dev sqlalchemy==2.0.31 \
+  pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0 httpx
+uv pip check -p <scratch>/venv-min
+<scratch>/venv-min/bin/python -c 'from importlib.metadata import version as v
+for p in ("sqlalchemy", "pydantic", "fastapi", "python-multipart", "opensearch-py", "starlette"): print(p, v(p))'
+<scratch>/venv-min/bin/python -m pytest
+```
+
+Don't use `uv run --with ... pytest`: the project's `pytest` script runs the project interpreter, which does not see the
+`--with` overlay (seen with uv 0.13.7 in a fresh checkout). The explicit environment above is checked with
+`uv pip check` and prints the versions that run the tests.
 
 ## Rules
 
@@ -33,7 +54,8 @@ The supported range is Python 3.12+, SQLAlchemy 2.0.30+ and Pydantic 2.7+. To ch
 - **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Pushing and
   publishing still need the user's explicit OK.
 - **Next: milestone 2.**
-  - Set up GitHub Actions CI covering lint, types, and tests on 3.12–3.14, plus the minimum versions.
+  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.15, the minimum
+    versions, and an install-isolation job that imports each extra without the others.
   - Add container tests against PostgreSQL, SQL Server and OpenSearch.
   - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
