@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 10 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 11 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -111,7 +111,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-D3 | A column declares a value type: string, number or date. | The type decides how a value is matched (PRD-D7). | must |
 | PRD-D4 | A column declares whether it is searchable. | Some columns must not be searched. | must |
 | PRD-D5 | A column declares whether it is orderable. | Some columns must not be sorted. | must |
-| PRD-D6 | Any name the request uses to search, filter or order on (column searches, the global search, `order`, every SearchBuilder `origData`) must be a declared name; otherwise the request is refused (PRD-E1). | A backend field never becomes reachable just because the client names it. | must |
+| PRD-D6 | Any name the request uses to search, filter or order on (column searches, the global search, `order`, every SearchBuilder `origData`) must be a declared name; otherwise the request is refused (PRD-E1). The exceptions are an entry the request marks unorderable (PRD-O1) or unsearchable (PRD-F41), and a nameless column (PRD-P21). | A backend field never becomes reachable just because the client names it. | must |
 | PRD-D7 | The declared type decides how a criterion is built; the client's SearchBuilder `type` is ignored. | A wrong client type cannot change how a value is matched. | must |
 | PRD-D8 | SQL infers the type from the column when none is declared; OpenSearch defaults to string. | Most SQL columns carry their type; an index mapping is not read at request time. | must |
 | PRD-D9 | A column may declare a hook that transforms a search value before it reaches the query (e.g. to encrypt or encode it as stored). | Some columns are stored transformed; the user still types the plain value. | must |
@@ -157,9 +157,8 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F24 | The maximum date (9999-12-31) as a bound is a user error, not a failed query. | Its next day does not exist, and a user can change it. | must |
 | PRD-F25 | A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL integer range. | A database error on an out-of-range number is a user mistake surfacing late. | must |
 | PRD-F26 | "Empty" means NULL plus `''` on SQL string columns; on OpenSearch, a missing field. | Users do not tell NULL from an empty string. | must |
-| PRD-F27 | SearchBuilder's conditions are answered by the column's declared type. A string column takes `=`, `!=`, `contains`, `!contains`, `starts`, `!starts`, `ends`, `!ends`, `null`, `!null`. A number column takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `between`, `!between`, `null`, `!null`. A date column takes the number set plus `contains` and `!contains`, which mean the year, month or day span of PRD-F22. Any other condition on that type is refused with `invalid_filter`. | Typed comparisons and range filters for any DataTables 2.x client. | must |
+| PRD-F27 | SearchBuilder's conditions are answered by the column's declared type. A string column takes `=`, `!=`, `contains`, `!contains`, `starts`, `!starts`, `ends`, `!ends`, `null`, `!null`. A number column takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `between`, `!between`, `null`, `!null`. A date column takes the number set plus `contains` and `!contains`, which mean the year, month or day span of PRD-F22. These sets are narrowed by PRD-D18 and PRD-D19. One of these 16 conditions that does not fit the column's type is a user mistake, refused with `invalid_filter` and a reason; a condition outside the 16 (such as SearchBuilder's array condition `without`) raises `MalformedRequest`, since the condition set is part of the protocol model. | Typed comparisons and range filters for any DataTables 2.x client; a wrong condition is a user mistake (draft 2's PRD-F29, merged here). | must |
 | PRD-F28 | SearchBuilder groups nest and join their criteria with AND or OR; an empty group adds nothing. | SearchBuilder's tree. | must |
-| PRD-F29 | A SearchBuilder condition that does not fit the column's type is refused with a reason. | A wrong condition is a user mistake. | must |
 | PRD-F30 | A SearchBuilder criterion missing its values is refused. | A half-built criterion must not match everything. | must |
 | PRD-F31 | An optional base filter (a SQL expression or an OpenSearch query) limits the rows the table shows at all, for `recordsTotal`, `recordsFiltered` and the page alike. | Row-level scoping belongs to the server, not the client. | must |
 | PRD-F32 | The OpenSearch global search skips number and date columns. | OpenSearch cannot match a number or date as text without a script. | must |
@@ -171,13 +170,14 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F38 | A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all, and a categorical filter or `multi_values` list holds at most 256 values; beyond any bound the request is refused with `invalid_filter`. | Every criterion and value is query work, and walking the tree must never recurse without bound. | must |
 | PRD-F39 | A column search holding both a value and a non-empty `multi_values` list is refused with `invalid_filter`. | One of the two would be dropped silently. | must |
 | PRD-F40 | A global search carrying a `multi_values` list is refused with `invalid_filter`; an empty list is idle. | `multi_values` belongs to a column search; on the global search the list would be dropped silently. | must |
-| PRD-F41 | Searchable is decided by both sides. The global search skips a column that either the request or the server marks unsearchable. A column search with a value on a column the server declares unsearchable is refused with `invalid_filter`, whatever the request's `searchable` says; so is a SearchBuilder criterion on such a column. | DataTables' client leaves a column marked `searchable: false` out of its global search; the server decides what may be searched (PRD-D4), and a request cannot widen it. | must |
+| PRD-F41 | Searchable is decided by both sides. The global search skips a column that either the request or the server marks unsearchable, and a request-searchable column the server did not declare, so a rendered extra column cannot break every global search. A column search with a value or a non-empty `multi_values` list on a column the server declares unsearchable is refused with `invalid_filter`, whatever the request's `searchable` says; so is a SearchBuilder criterion on such a column. On a column the request marks unsearchable and the server declares searchable, a column search is answered: the server decides. A column search, an order or a SearchBuilder criterion naming an undeclared column stays refused (PRD-D6). | DataTables' client gives a column marked `searchable: false` empty search text, so its global search skips it (READ, DataTables 3.1.5 `dataTables.mjs` :5987-5998); the server decides what may be searched (PRD-D4), and a request cannot widen it. | must |
+| PRD-F42 | The day text of a timezone-aware column, in the global or a column search, is its UTC day: the same day PRD-F21 and PRD-F22's criteria use. | A row must fall on one day whichever way it is searched; PostgreSQL's `to_char` renders a `timestamptz` in the session zone, so a non-UTC session would give the text another day than the criteria. | must |
 
 ### 4.4 Ordering (O)
 
 | Id | Requirement | Reason | Priority |
 |---|---|---|---|
-| PRD-O1 | An order on an index outside the request's columns is refused (PRD-E1). For a column in the request, the request's `orderable` and the server's declaration decide together: request orderable and server unorderable, the order is refused (PRD-E1); request unorderable and server orderable, the order is answered; both unorderable, the entry is skipped. An entry the request marks unorderable is skipped whether or not the server declares the name, so an undeclared column that only renders cannot fail a first request; an entry the request marks orderable on an undeclared name is refused (PRD-D6), which surfaces a misconfigured table. An entry on a nameless column is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending). | The server decides what can be sorted. DataTables sends its default order `[[0, 'asc']]` even when that column is `orderable: false` (READ, DataTables 3.1.5 `dataTables.mjs`: `sortFlatten` ignores `orderable` at :4794-4836, and the request sends `orderable` at :5631), and its own client sorts by such a column; refusing would fail a table whose first column is not orderable on its first request. | must |
+| PRD-O1 | An order on an index outside the request's columns is refused (PRD-E1). For a column in the request, the request's `orderable` and the server's declaration decide together: request orderable and server unorderable, the order is refused (PRD-E1); request unorderable and server orderable, the order is answered; both unorderable, the entry is skipped. An entry the request marks unorderable on an undeclared name is skipped, not refused, so an undeclared column that only renders cannot fail a first request; an entry the request marks orderable on an undeclared name is refused (PRD-D6), which surfaces a misconfigured table. An entry on a nameless column is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending). | The server decides what can be sorted. DataTables sends its default order `[[0, 'asc']]` even when that column is `orderable: false` (READ, DataTables 3.1.5 `dataTables.mjs`: `sortFlatten` ignores `orderable` at :4794-4836, and the request sends `orderable` at :5631), and its own client sorts by such a column; refusing would fail a table whose first column is not orderable on its first request. | must |
 | PRD-O2 | NULL is the lowest value: first ascending, last descending, on every backend. | One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending), as SvelteDT's local source sorts empty values first. | must |
 | PRD-O3 | After the user's order, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the direction of the last answered order entry (a skipped entry does not decide), so descending is the exact reverse of ascending. | Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the rows. | must |
 | PRD-O4 | With no order in the request, the rows come in the tie-breaker's ascending order. | A stable first page. | must |
@@ -286,6 +286,7 @@ where a database decides. Each difference is stated here; every other answer is 
 | Text order is the database's collation, not an ICU collator's digit-group order with case, width and kana ties. | Server and SvelteDT's local source (its PRD-B21) | PRD-O6 |
 | An order entry on a nameless column, or on one both sides mark unorderable, is skipped; DataTables' client sorts by it (its rendered output, READ `dataTables.mjs` :7994; it ignores `orderable`, :4794-4836). | Server and DataTables' client | PRD-O1, PRD-P21 |
 | A nameless column takes no part in the global search; DataTables' client searches its rendered text (READ `dataTables.mjs` :7994). | Server and DataTables' client | PRD-P21 |
+| A column search on a column the request marks unsearchable but the server declares searchable is answered; DataTables' client gives such a column empty search text (READ `dataTables.mjs` :5987-5998, which its column searches read at :5803-5805 and :5879), so there it matches nothing. | Server and DataTables' client | PRD-F41 |
 | Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source. | Server, and DataTables' client and SvelteDT's local source | PRD-F10 |
 | Dotted and dotless i match only where the database's collation makes them match; SvelteDT treats them alike in every locale (its PRD-B21, difference 3). | Server and SvelteDT's local source | PRD-F10 |
 | On SQLite, case folds for ASCII letters only. | SQLite and every other backend | PRD-F9 |
@@ -323,7 +324,9 @@ the container tests and an acceptance suite.
 - Search: draft 1's global search matched the whole text in one column (OR across columns) and OpenSearch text took
   `OR`/`NOT`/`-`; now smart search with the row as the unit and one syntax (PRD-F1 to PRD-F8, PRD-F35), case-insensitive
   everywhere but SQLite's non-ASCII (PRD-F9), with bounds (PRD-F14) and control characters refused (PRD-F15); number and
-  date columns in search are stated per backend (PRD-F23, PRD-F32 to PRD-F34).
+  date columns in search are stated per backend (PRD-F23, PRD-F32 to PRD-F34); the global search leaves out a
+  request-searchable column the server did not declare, where draft 1 refused the whole search (PRD-F41); the day
+  text of a timezone-aware column is its UTC day, where PostgreSQL rendered it in the session zone (PRD-F42).
 - Categorical: draft 1's forms kept, with the refused character set named, the empty alternative (PRD-F17) and a
   recommended sender form (PRD-F19).
 - SearchBuilder: a criterion with too many values is refused (PRD-F36), and NULL satisfies every negative condition
@@ -358,8 +361,9 @@ the container tests and an acceptance suite.
    the limit of PRD-C12? SvelteDT's pager can reach any page, so users will hit it by an ordinary press.
 2. Which HTTP status does an answered user error (PRD-E1) carry: 200 with `error_code`, as DataTables expects, or a
    4xx the app chooses? SvelteDT must not show a refusal as "No data" (its PRD-B15).
-3. A column the request marks searchable but the server did not declare: refuse the global search (today), or leave
-   that column out of it?
+3. Closed 2026-11-19 (owner's ruling): the global search leaves a request-searchable column the server did not declare
+   out, as it does an unsearchable one; a column search, order or SearchBuilder criterion naming it is refused
+   (PRD-F41, PRD-D6).
 4. Does a 422 for `MalformedRequest` need a body carrying `draw`, for a client that matches answers by `draw`?
 5. Should the total cache offer opt-in invalidation on writes? It stays out until a user needs fresher totals than a
    TTL gives.
@@ -393,7 +397,7 @@ the container tests and an acceptance suite.
 | R4 global search, column searches, "contains" | PRD-F1 to F3 (changed), F9, F12, F13, F11 |
 | R4 dates (SQL date text; OpenSearch global search skips dates) | PRD-F21, F22, F23, F24, F32 |
 | R4 numbers, "empty" | PRD-F25, F26 |
-| R4 SearchBuilder | PRD-F27 to F30 |
+| R4 SearchBuilder | PRD-F27 (PRD-F29 merged into it), F28, F30 |
 | R4 multi-select, `multi_values` | PRD-F16, F18, F20 |
 | R4 base filter | PRD-F31 |
 | R4 OpenSearch Google-style text query | dropped by the owner's decision of 2026-11-19 (PRD-F8) |
