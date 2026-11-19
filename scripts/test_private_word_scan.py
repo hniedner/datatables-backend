@@ -375,10 +375,18 @@ def test_a_blob_in_another_encoding_without_a_byte_order_mark_is_read(repo: Path
 SCISSORS = '# ------------------------ >8 ------------------------'
 
 
+def editor_hint(comment: str = '#') -> str:
+    """The hint git writes into a message it opens in an editor; only then does it strip comment lines."""
+    return (
+        f'{comment} Please enter the commit message for your changes. Lines starting\n'
+        f"{comment} with '{comment}' will be ignored, and an empty message aborts the commit.\n"
+    )
+
+
 @pytest.mark.parametrize(
     'template',
     [
-        f'Remove a leaked file\n\n# Changes to be committed:\n#\tdeleted:    {WORD}.txt\n',
+        f'Remove a leaked file\n\n{editor_hint()}#\n# Changes to be committed:\n#\tdeleted:    {WORD}.txt\n',
         f'Drop a line\n{SCISSORS}\n# Do not modify or remove the line above.\ndiff --git a/a.txt b/a.txt\n-{WORD}\n',
     ],
     ids=['status comment', 'verbose diff'],
@@ -390,15 +398,16 @@ def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, w
 
 def test_the_message_comment_character_is_git_s(repo: Path, words: Path):
     git(repo, 'config', 'core.commentChar', ';')
-    dropped = write(repo / 'dropped', f'Remove a file\n;\tdeleted: {WORD}.txt\n')
-    kept = write(repo / 'kept', f'# {WORD} is a heading here\n')
+    dropped = write(repo / 'dropped', f'Remove a file\n{editor_hint(";")};\tdeleted: {WORD}.txt\n')
+    kept = write(repo / 'kept', f'{editor_hint(";")}# {WORD} is a heading here\n')
     assert scan('--message', str(dropped), words=words, cwd=repo).returncode == 0
     assert scan('--message', str(kept), words=words, cwd=repo).returncode == 1
 
 
 def test_an_automatic_comment_character_reads_as_the_default(repo: Path, words: Path):
     git(repo, 'config', 'core.commentChar', 'auto')
-    assert scan('--message', str(write(repo / 'msg', f'Fix\n# {WORD}\n')), words=words, cwd=repo).returncode == 0
+    message = write(repo / 'msg', f'Fix\n{editor_hint()}# {WORD}\n')
+    assert scan('--message', str(message), words=words, cwd=repo).returncode == 0
 
 
 def test_a_push_to_a_remote_ref_named_with_a_word_fails(repo: Path, words: Path):
@@ -422,7 +431,8 @@ def hooks_config(repo: Path) -> None:
         hook['entry'] = hook['entry'].replace(
             'uv run --frozen python scripts/private_word_scan.py', f'"{sys.executable}" "{SCRIPT}"'
         )
-    (repo / '.pre-commit-config.yaml').write_text(yaml.safe_dump({'repos': [{'repo': 'local', 'hooks': hooks}]}))
+    kept = {'default_stages': config['default_stages'], 'repos': [{'repo': 'local', 'hooks': hooks}]}
+    (repo / '.pre-commit-config.yaml').write_text(yaml.safe_dump(kept))
 
 
 @pytest.mark.parametrize(
@@ -461,3 +471,43 @@ def test_each_word_hook_runs_at_its_stage(repo: Path, words: Path, hook: str, st
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'private word #3' in result.stdout
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_comment_line_in_a_message_given_on_the_command_line_is_scanned(repo: Path, words: Path):
+    """`commit -m` and `-F` keep `#` lines (git strips comments only from a message it opened in an editor)."""
+    hooks_config(repo)
+    git(repo, 'add', '.')  # the config, so the commit has something to commit
+    subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install', '--hook-type', 'commit-msg'],
+        cwd=repo, check=True, capture_output=True,
+    )  # fmt: skip
+    result = subprocess.run(
+        ['git', 'commit', '-q', '-m', f'Fix\n\n# {WORD}'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'commit message: private word #3' in result.stdout + result.stderr  # the message hook refused it
+    assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'  # nothing was committed
+
+
+def test_a_file_named_like_a_mode_is_still_a_file(tmp_path: Path, words: Path):
+    """pre-commit passes staged paths, and a root file may be named `--refs` or `--history`."""
+    write(tmp_path / '--refs', 'clean\n')
+    write(tmp_path / 'notes.md', f'see {WORD}\n')
+    assert scan('--refs', 'notes.md', words=words, cwd=tmp_path).returncode == 1
+
+
+def test_a_push_of_a_commit_no_ref_holds_is_scanned(repo: Path, words: Path):
+    """`git push origin HEAD@{1}:refs/heads/x` publishes a commit only the reflog knows; pre-commit names it."""
+    commit(repo, 'b.txt', b'clean\n', message=f'Add {WORD}')
+    pushed = git(repo, 'rev-parse', 'HEAD').strip()
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1')
+    assert scan('--history', words=words, cwd=repo).returncode == 0  # no ref reaches it any more
+    assert scan('--history', words=words, cwd=repo, extra={'PRE_COMMIT_TO_REF': pushed}).returncode == 1
+
+
+def test_a_path_holding_a_unicode_line_separator_is_read(repo: Path, words: Path):
+    """`rev-list --objects` separates objects by newline only; U+0085 and U+2028 are part of a path."""
+    commit(repo, 'a' + chr(0x85) + 'b' + chr(0x2028) + 'c.txt', b'a blob only this path holds\n')  # blobs: once
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 0, result.stderr

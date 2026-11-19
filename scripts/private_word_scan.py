@@ -12,14 +12,15 @@ command and no path, since either could hold a word.
 
 Usage:
     private_word_scan.py FILE...         paths and contents of the given files (the pre-commit stage)
-    private_word_scan.py --message FILE  a commit message (the commit-msg stage), without git's comment lines and
-                                         anything below its scissors line
+    private_word_scan.py --message FILE  a commit message (the commit-msg stage) as git stores it: nothing below its
+                                         scissors line, and no comment lines when git opened an editor for it
     private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit and
                                          post-checkout stages: a push that only adds a ref brings no commit, so
                                          pre-commit runs no pre-push hook for it)
     private_word_scan.py --history       everything a push publishes: every ref's name and the remote ref the push
                                          writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, for
-                                         every commit reachable from any ref its message, author, committer and
+                                         every commit reachable from any ref or from the pushed commit
+                                         (PRE_COMMIT_TO_REF) its message, author, committer and
                                          tree paths, and every reachable blob decoded once (binary, symlink and
                                          tagged blobs included)
 
@@ -162,11 +163,21 @@ def fields(output: bytes) -> list[str]:
     return [decode(field) for field in output.split(b'\0') if field]
 
 
+def pushed() -> list[str]:
+    """What a push publishes beyond the refs: the commit pre-commit names (``PRE_COMMIT_TO_REF``), which may be one
+    only the reflog knows (``git push origin HEAD@{1}:refs/heads/x``)."""
+    to_ref = os.environ.get('PRE_COMMIT_TO_REF', '')
+    return [to_ref] if to_ref else []
+
+
 def reachable_blobs() -> Iterator[tuple[str, bytes]]:
-    """Every blob reachable from any ref, once, with one path it is reachable under (``(tagged)`` for none)."""
+    """Every blob reachable from any ref or the pushed commit, once, with one path it is reachable under
+    (``(tagged)`` for none)."""
     paths: dict[str, str] = {}
-    for line in decode(git('rev-list', '--objects', '--all')).splitlines():
-        sha, _, path = line.partition(' ')
+    for line in decode(git('rev-list', '--objects', '--all', *pushed())).split('\n'):  # newline only: see below
+        if not line:
+            continue
+        sha, _, path = line.partition(' ')  # a path may hold U+0085, U+2028 and the like, which splitlines splits
         paths.setdefault(sha, path or '(tagged)')  # commits are listed too; cat-file names each object's kind
     request = ''.join(f'{sha}\n' for sha in paths).encode()
     result = subprocess.run(['git', 'cat-file', '--batch'], input=request, capture_output=True, check=False)
@@ -184,7 +195,7 @@ def reachable_blobs() -> Iterator[tuple[str, bytes]]:
 
 def scan_refs(words: Words) -> list[str]:
     findings: list[str] = []
-    for ref in decode(git('for-each-ref', '--format=%(refname)')).splitlines():  # ref names hold no newline
+    for ref in filter(None, decode(git('for-each-ref', '--format=%(refname)')).split('\n')):  # no newline in a name
         shown = redact(ref, words)
         if found := hits(ref, words):
             findings.append(report(f'ref {shown} (name)', found))
@@ -196,17 +207,20 @@ def scan_refs(words: Words) -> list[str]:
 
 
 def message_text(raw: str) -> str:
-    """A commit message file as git will store it: without its comment lines and anything below the scissors line
-    (``commit -v`` puts the diff there). The comment character is git's ``core.commentChar``, ``#`` by default."""
+    """A commit message file as git will store it: nothing below the scissors line (``commit -v`` puts the diff
+    there), and no comment lines when git opened the message in an editor, which it marks with its hint. A message
+    from ``-m`` or ``-F`` keeps its comment lines, as git does. The comment character is git's ``core.commentChar``,
+    ``#`` by default."""
     comment = decode(git('config', '--get', 'core.commentChar', ok=(0, 1))).strip() or '#'
     if comment == 'auto':  # git picks one the message does not start a line with; '#' unless taken
         comment = '#'
     scissors = f'{comment} ------------------------ >8 ------------------------'
+    stripped = f"with '{comment}' will be ignored" in raw
     kept: list[str] = []
-    for line in raw.splitlines():
+    for line in raw.split('\n'):
         if line == scissors:
             break
-        if not line.startswith(comment):
+        if not (stripped and line.startswith(comment)):
             kept.append(line)
     return '\n'.join(kept)
 
@@ -216,7 +230,7 @@ def scan_history(words: Words) -> list[str]:
     remote = os.environ.get('PRE_COMMIT_REMOTE_BRANCH', '')  # the ref a push writes, which no local ref may hold
     if found := hits(remote, words):
         findings.append(report(f'remote ref {redact(remote, words)} (name)', found))
-    for revision in decode(git('rev-list', '--all')).split():
+    for revision in decode(git('rev-list', '--all', *pushed())).split():
         short = revision[:12]
         if found := hits(decode(git('log', '-1', '--format=%B', revision)), words):
             findings.append(report(f'{short} (message)', found))
@@ -236,10 +250,10 @@ def scan_history(words: Words) -> list[str]:
 def main(argv: list[str]) -> int:
     try:
         words = load_words()
-        if argv[:1] == ['--refs']:
+        if argv == ['--refs']:  # exactly, so a staged file named like a mode stays a file
             findings = scan_refs(words)
             scanned = 'every local ref'
-        elif argv[:1] == ['--history']:
+        elif argv == ['--history']:
             findings = scan_history(words)
             scanned = 'everything on every ref'
         elif argv[:1] == ['--message']:
