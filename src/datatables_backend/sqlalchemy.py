@@ -381,8 +381,7 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
         if not with_time:
             return day
         midnight = datetime(day.year, day.month, day.day)
-        # MUTATION, reverted in the next commit: a naive bound, to prove the timezone test fails without UTC bounds
-        return midnight.replace(tzinfo=UTC).replace(tzinfo=None) if aware else midnight
+        return midnight.replace(tzinfo=UTC) if aware else midnight
 
     def within(start: date, end: date) -> ColumnElement[bool]:
         return and_(column >= at(start), column < at(end))
@@ -509,7 +508,6 @@ def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: 
         column_type = column_type.copy()
         column_type.length = None  # a longer value must not be cut down to one that matches
     # TRY_CAST: a value that does not convert matches nothing, as a mismatched bound parameter would
-    # MUTATION, reverted in the next commit: no TRY_CAST, to see which test notices
-    value = f'value /* {compiler.dialect.type_compiler_instance.process(column_type)} */'
+    value = f'TRY_CAST(value AS {compiler.dialect.type_compiler_instance.process(column_type)})'
     column, parameter = compiler.process(element.column, **kw), compiler.process(element.parameter, **kw)
     return f'{column} IN (SELECT {value} FROM OPENJSON(CAST({parameter} AS NVARCHAR(max))))'  # noqa: S608
