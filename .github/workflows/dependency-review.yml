@@ -1,5 +1,6 @@
 name: Dependency review
 
+# Pull requests only: the ruleset on main admits changes through pull requests alone.
 on:
   pull_request:
 
@@ -30,5 +31,7 @@ jobs:
             Unlicense
           # The dependency graph's licence for these is wider than the package's own: aiohappyeyeballs declares
           # PSF-2.0 but is listed with GPL-1.0-or-later from a file scan; protobuf is BSD-3-Clause with a
-          # scancode reference. Pinned to the locked versions, so a new version is checked again.
-          allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs@2.7.1, pkg:pypi/protobuf@7.36.2
+          # scancode reference. The action matches these by name only, so the exemption covers every version;
+          # scripts/test_dependency_review_exemptions.py fails when the locked version changes, forcing a
+          # licence re-check of the new one.
+          allow-dependencies-licenses: pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf
