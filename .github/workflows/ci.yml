@@ -253,6 +253,9 @@ jobs:
       # A session zone far from UTC (libpq reads PGTZ, for psycopg and psycopg_async alike): a date criterion on a
       # timestamptz column then fails unless its day bounds are UTC midnights.
       PGTZ: Pacific/Kiritimati
+      # Python's local zone far from UTC too, on the other side: a bound built from local time (`.astimezone()`) would
+      # pass on the UTC runner.
+      TZ: America/Adak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

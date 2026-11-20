@@ -349,7 +349,8 @@ def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day
 
 #: What SearchBuilder `=` on a Boolean column (True for ids 1 and 4, False for 2 and 5) gives today, per backend: the
 #: ids answered, or the exception raised. Draft 1 has no boolean type, so the column is a string column and the value
-#: goes to the database as text. PRD v2 (PRD-F43) makes true/false match and refuses other text as invalid_filter.
+#: goes to the database as text. PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values
+#: as invalid_filter.
 BOOLEAN_TODAY: dict[str, dict[str, list[int] | type[Exception]]] = {
     'sqlite': {'1': [1, 4], 'true': [], 'abc': []},
     'mysql': {'1': [1, 4], 'true': [2, 5], 'abc': [2, 5]},  # text that is not a number reads as 0
@@ -366,7 +367,7 @@ BOOLEAN_TODAY: dict[str, dict[str, list[int] | type[Exception]]] = {
             today,
             marks=pytest.mark.xfail(
                 reason='draft 1: the database refuses text compared with a Boolean column, so the query fails; '
-                'PRD v2 (PRD-F43) makes true/false match and refuses other text as invalid_filter',
+                'PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values as invalid_filter',
                 strict=True,
                 raises=today,
             ),
