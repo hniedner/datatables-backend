@@ -304,9 +304,11 @@ def test_searchbuilder_conditions(
 def test_a_timezone_aware_column_compares_by_utc_day(
     session: Session, condition: str, values: list[str], expected: list[int]
 ):
-    """The day bounds are UTC midnights. Only PostgreSQL in a non-UTC session (CI sets PGTZ to UTC+14) checks that:
-    there a naive bound would be read in the session zone. Elsewhere (SQLite, MySQL, SQL Server) the test only shows
-    the column works."""
+    """The day bounds are UTC midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
+    UTC+14), which reads a naive bound as local to it, and bounds built from Python's local time through TZ
+    (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite too. SQL
+    Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there the test
+    only shows the column works."""
     if session.get_bind().dialect.name == 'postgresql':
         zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
         assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
