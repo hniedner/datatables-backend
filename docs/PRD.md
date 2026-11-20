@@ -4,7 +4,7 @@
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
 - **Status:** draft 2, approved by the owner on 2026-11-19, revision 21 (revision 20 with the owner's answers to
-  section 8 folded in; question 2 stays open). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
+  section 8 folded in; all of section 8 answered). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
   its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -255,6 +255,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-A8 | OpenSearch: the table takes an index name and accepts an `AsyncOpenSearch` or `OpenSearch` client; queries are plain request bodies, with no DSL dependency. | No extra dependency beyond the client. | must |
 | PRD-A9 | An optional FastAPI dependency parses the request from a non-empty body when there is one, otherwise from the query string; the two are never merged. A body that decodes to a JSON object is read as JSON whatever its Content-Type; any other body is read as a form. | DataTables appends its cache-buster `_` to the query string of every request, POST included (READ, DataTables 3.1.5 `dataTables.mjs`: `queryParams` adds `_` for any method when `cache === false` at :826, and its server-side request sets `cache: false` at :5550), so a non-empty query string does not mean the request is there; merging would mix two sources. DataTables 3.1.5's `submitAs: 'json'` keeps the form Content-Type unless one is set (READ: its `ajax()` sets JSON only when `!options.contentType`, and its defaults carry form-urlencoded), so choosing the parser by Content-Type would read the JSON as a form. | must |
 | PRD-A10 | The FastAPI dependency answers 422 on `MalformedRequest`. The body carries `draw` whenever `draw` parsed as a valid integer (PRD-P10), and leaves it out when `draw` itself is the malformed part. | The structural/user split of PRD-E6; a client that matches answers by `draw` can still match a 422. Owner's decision of 2026-11-19. | must |
+| PRD-A11 | The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and `error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to change the status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10). | DataTables reads the error only from a successful response (READ, DataTables 3.1.5 `dataTables.mjs`: `buildAjax`'s success callback reads `json.error` at :5512; its `error` handler at :5552 fires `xhr` with a null `json`, logs the generic "Ajax error" (tech note 7) at :5559 and does not redraw, so the old rows stay). DataTables-native server libraries answer 200 with `error` the same way. Owner's decision of 2026-11-19 (section 8, question 2). | must |
 
 ### 4.9 Packaging and quality (Q)
 
@@ -379,9 +380,10 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
 1. Closed 2026-11-19 (owner's ruling): the OpenSearch paging limit stays for 1.0. The first and last pages always
    work, a middle page beyond `max_result_window` answers `page_out_of_range`, the library never changes cluster
    settings, and a `search_after` route waits until users hit the limit (PRD-C12).
-2. Open: which HTTP status does an answered user error (PRD-E1) carry: 200 with `error_code`, as DataTables expects,
-   or a 4xx the app chooses? SvelteDT must not show a refusal as "No data" (its PRD-B15). The owner asked for research
-   on industry practice. It blocks only the FastAPI adapter's spec (PRD-A9, PRD-A10); every other spec can proceed.
+2. Closed 2026-11-19 (owner's ruling): an answered user error (PRD-E1) is HTTP 200 with `error` and `error_code`,
+   alongside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`, as DataTables expects; there is no adapter
+   option, a malformed request stays 422 with `draw` when it was readable (question 4), and an app that wants a 4xx
+   maps it in its own route (PRD-A11).
 3. Closed 2026-11-19 (owner's ruling): the global search leaves a request-searchable column the server did not declare
    out, as it does an unsearchable one; a column search with a value or a non-empty `multi_values` list, a
    SearchBuilder criterion, or an order entry the request marks orderable naming it is refused (PRD-F41, PRD-D6,
