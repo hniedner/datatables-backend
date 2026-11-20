@@ -48,8 +48,10 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - The core (`protocol`, `columns`, `_plan`, `rows`, `cache`) imports only Pydantic and the standard library. Each
   backend imports only its own extra. `sqlalchemy.ext.asyncio` is imported only under `TYPE_CHECKING`, because it
   needs `greenlet`.
-- Every user mistake is found in `_plan.plan()` or while a backend builds its query, before anything runs. It is
-  raised as `InvalidFilter` and answered as `invalid_filter`. Any other failure raises.
+- Every user mistake is found while parsing, planning (`_plan.plan()`) or building the query, before the page is
+  queried; only the counts of PRD-C11 may run first. It is answered with one of the stable codes of PRD-E2
+  (`invalid_filter`, `invalid_date`, `invalid_number`, `page_out_of_range`), as HTTP 200 in the FastAPI adapter
+  (PRD-A11). A structural error raises `MalformedRequest`, answered 422. Any other failure raises.
 - A message or log line never contains a search value or a name the client sent. A name is logged only when the
   server declared it.
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
@@ -60,15 +62,15 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
   new test, check that it fails when the behaviour is broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
 
-## Status (2026-11-19)
+## Status (2026-11-20)
 
-- **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Pushing and
-  publishing still need the user's explicit OK.
-- **Next: milestone 2.**
-  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.15, the minimum
-    versions, and an install-isolation job that imports each extra without the others.
-  - Done: container tests run the SQL suite on PostgreSQL 18, MySQL 8.4 and SQL Server 2022 and the live
-    OpenSearch tests on OpenSearch 3.9, one CI job each, all in the gate.
-  - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.
+- **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Publishing still
+  needs the user's explicit OK.
+- **PRD draft 2 is approved and merged** (`docs/PRD.md`). The roadmap lives in the GitHub milestones v0.1, v0.2, v0.3
+  and v1.0 and their issues.
+- **Done:** CI (lint, types, tests on 3.12–3.15, minimum versions, install isolation) and container tests on
+  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.9.
+- **Next (v0.2):** specs with a trace check (#9), then the PRD v2 changes test-first (#10–#14) and the acceptance
+  suite (#15, sources in `CLAUDE.local.md`).
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.
