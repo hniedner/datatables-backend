@@ -356,6 +356,7 @@ jobs:
         ports: ['9200:9200']
     env:
       DTB_OPENSEARCH_URL: http://localhost:9200
+      DTB_REQUIRE_OPENSEARCH: '1'  # without the URL the module fails instead of skipping every test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

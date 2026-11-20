@@ -26,6 +26,8 @@ from .conftest import criterion
 from .conftest import request
 
 URL = os.environ.get('DTB_OPENSEARCH_URL', '')
+if os.environ.get('DTB_REQUIRE_OPENSEARCH') == '1' and not URL:  # the CI job: a run that skips every test is a failure
+    raise RuntimeError('DTB_REQUIRE_OPENSEARCH is set, but DTB_OPENSEARCH_URL is not')
 pytestmark = pytest.mark.skipif(not URL, reason='DTB_OPENSEARCH_URL is not set')
 
 INDEX = 'dtb-test-docs'  # owned by this module: deleted and recreated on every run
@@ -223,10 +225,25 @@ def test_searchbuilder_conditions(
 
 @pytest.mark.parametrize('value', ['1', 'true', 'abc'])
 def test_searchbuilder_equality_on_a_boolean_field_matches_nothing_today(client: OpenSearch, value: str):
-    """Draft 1 has no boolean type, so the field is a string column; `=` finds no document, `true` included. PRD v2
-    leaves this to the spec until PRD-L3 adds a `boolean` type."""
+    """Draft 1 has no boolean type, so the field is a default (text+keyword) string column, and `=` queries its
+    keyword subfield `active.keyword`, which a boolean mapping does not have: no document matches, whatever the value.
+    PRD v2 (PRD-F43) makes true/false match and refuses other text as invalid_filter."""
     flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active')])
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == []
+
+
+def test_probe_boolean_equality_on_the_field_itself(client: OpenSearch):
+    """PROBE, replaced in the next commit: `=` on a keyword-kind column queries `active` itself."""
+    flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')])
+    outcomes: dict[str, object] = {}
+    for value in ('1', 'true', 'abc'):
+        try:
+            outcomes[value] = found(
+                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)
+            )
+        except Exception as error:  # the probe records whatever happens
+            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
+    assert outcomes == {}, outcomes
 
 
 def test_searchbuilder_groups_nest(client: OpenSearch):

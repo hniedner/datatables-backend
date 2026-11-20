@@ -53,9 +53,9 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
   aiosqlite) and against a recording OpenSearch client; CI also runs the SQL tests on PostgreSQL, MySQL and SQL
   Server (`DTB_SQL_URL`, `DTB_SQL_ASYNC_URL`, `DTB_SQL_DIALECT`) and `tests/test_opensearch_live.py` on OpenSearch
-  (`DTB_OPENSEARCH_URL`). A difference a database makes legitimate is a `strict=True` xfail for that backend citing
-  its reason; nothing is skipped silently. Before relying on a new test, check that it fails when the behaviour is
-  broken.
+  (`DTB_OPENSEARCH_URL`). A backend gap the PRD has yet to close is pinned as today's result, or as a `strict=True`
+  xfail naming the expected exception, citing the PRD requirement; nothing is skipped silently. Before relying on a
+  new test, check that it fails when the behaviour is broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
 
 ## Status (2026-11-19)
