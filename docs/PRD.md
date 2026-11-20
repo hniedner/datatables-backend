@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 19 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 20 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -301,9 +301,9 @@ where a database decides. Each difference is stated here; every other answer is 
 | On OpenSearch a stored `""` is not missing, so not empty; on SQL it is empty. | SQL and OpenSearch | PRD-F26 |
 | A hooked column matches whole values by equality; SvelteDT's local source matches substrings. | Server and SvelteDT's local source | PRD-D12, PRD-D17 |
 | LF, CR, U+2028 and U+2029 count as spaces in search text; DataTables' client splits words on spaces only. The server follows SvelteDT (its PRD-B21, difference 4). | Server and DataTables' client | PRD-F7 |
-| On SQL, number and date columns take part in the global and column searches as text; OpenSearch's global search skips them. | SQL and OpenSearch | PRD-F23, PRD-F32 |
-| An OpenSearch number column search is an exact match; on SQL it matches the number's text. | SQL and OpenSearch | PRD-F23, PRD-F33 |
-| An OpenSearch date column search takes one date term; on SQL it is a smart search of the date's text. | SQL and OpenSearch | PRD-F22, PRD-F23, PRD-F34 |
+| On SQL, number and date columns take part in the global and column searches as text (categorical filters and `multi_values` lists excepted, which match as `=` on every backend); OpenSearch's global search skips them. | SQL and OpenSearch | PRD-F23, PRD-F32 |
+| An OpenSearch number column search, other than a categorical filter or `multi_values` list, is an exact match; on SQL it matches the number's text. | SQL and OpenSearch | PRD-F23, PRD-F33 |
+| An OpenSearch date column search, other than a categorical filter or `multi_values` list, takes one date term; on SQL it is a smart search of the date's text. | SQL and OpenSearch | PRD-F22, PRD-F23, PRD-F34 |
 | DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between` over a range holding 0; the server lets NULL satisfy every negative condition. | Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=` and `!between`) | PRD-F37 |
 | A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page. | SQL and OpenSearch | PRD-C12 |
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
@@ -368,7 +368,7 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
   refusal and none per allowed skip (PRD-E13), rows never HTML-escaped (PRD-R7), MySQL in the container tests
   (PRD-Q11) and CI (PRD-Q12).
 - Owner's decisions of 2026-11-19: a column with a search-value hook takes equality only (PRD-D12, PRD-D17, PRD-D18); a
-  `boolean` column type in milestone 2 (PRD-D3, PRD-D8, PRD-F43, PRD-F44); exact matches case-insensitive (PRD-F9).
+  `boolean` column type in milestone 2 (PRD-D3, PRD-D8, PRD-F43, PRD-F44); exact matches on string columns case-insensitive (PRD-F9).
 - Boolean columns: draft 1 treated them as text, which raised a database error on PostgreSQL (and on SQL Server for
   non-numeric text), matched the false rows on MySQL for 'true', and matched nothing on OpenSearch (MEASURED,
   container probe run 44638017591); now a boolean type (PRD-F43, PRD-F44).
