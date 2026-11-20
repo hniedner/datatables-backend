@@ -21,12 +21,13 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `red`); an order on it marked unorderable → skipped; marked orderable → `invalid_filter`.
 - **SPEC-D7.1** [all] SearchBuilder `<` `8` on `price` sent with `type: "string"` → rows 1; `contains` `7` on
   `price` sent with `type: "string"` → `invalid_filter` (the client's type is ignored both ways).
-- **SPEC-D8.1** [SQL] The fixture's `price` (an `Integer`), `made` (a `Date`), `active` (a `Boolean`; on SQL Server a
+- **SPEC-D8.1** [SQL] The fixture's `price` (a `BigInteger`), `made` (a `Date`), `active` (a `Boolean`; on SQL Server a
   `BIT`) and `name` (a `String`), declared without a type: on `price` SearchBuilder `<` `8` → rows 1 and `contains`
   `7` → `invalid_filter`; on `made` `contains` `2024` → rows 1, 2; on `active` `=` `true` → rows 1, 4 and `<` →
   `invalid_filter`; on `name` `contains` `app` → rows 1 and `<` → `invalid_filter`.
-- **SPEC-D8.2** [MySQL] A reflected `TINYINT(1)` column without a declared type is a number: SearchBuilder `<` `1` is
-  answered; declared boolean, `=` `true` is answered.
+- **SPEC-D8.2** [MySQL] Given a table `flags` (`id`, `flag TINYINT(1)`) holding (1, 1) and (2, 0), reflected: with
+  `flag` declared without a type it is a number, so SearchBuilder `<` `1` → rows 2; with `flag` declared boolean,
+  `=` `true` → rows 1.
 - **SPEC-D8.3** [OS] A column without a declared type is a string: SearchBuilder `<` on it → `invalid_filter`.
 - **SPEC-D9.1** [all] A column search on `secret` with `Alpha` calls the hook once with `Alpha` and matches the stored
   `enc:Alpha` → rows 1.
@@ -42,14 +43,15 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   hook is called once per request with `Alpha`.
 - **SPEC-D12.4** [all] Global search `!Alpha` → rows 1, 2, 3, 4 (no other column holds `alpha`, and `!word`
   ignores the hooked column); `!apple` → rows 2, 3, 4.
-- **SPEC-D12.5** [all] On a table whose every searchable column is hooked: a global search of 20 words equal to a
-  stored value is answered (no word cap) and matches by equality; one of 256 code points → `invalid_filter`.
+- **SPEC-D12.5** [all] On a table whose only searchable column is `secret`, given a row 5 whose `secret` is stored as
+  `enc:` + a text of 20 words: a global search of those 20 words → rows 5 (no word cap; matched by equality); a
+  global search of 256 code points → `invalid_filter`.
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
   `invalid_filter`.
-- **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose other columns hold
-  neither `a` nor `b` (NULL or missing): global search `a` + LF + `b` → row 5 is among the rows (the hooked
+- **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose every other column but
+  `id` is NULL or missing: global search `a` + LF + `b` → row 5 is among the rows (the hooked
   equality, since the LF is not rewritten for it).
-- **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (250 after
+- **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (5 after
   trimming) → `invalid_filter`: the 255-code-point bound applies to the raw text.
 - **SPEC-D13.1** [OS] A `text+keyword` column (the default) sorts and matches exactly on `<field>.keyword`; a
   `keyword` column on `<field>`; recording shows the field names.
@@ -64,8 +66,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-D17.3** [all] Given a row whose `secret` is stored as `enc:a` + LF + `b`: a column search on `secret` with
   `a` + LF + `b` → that row; with `a b` → none (LF is not rewritten for the equality).
-- **SPEC-D18.1** [all] SearchBuilder on `secret`: `=` `Alpha` → rows 1; `!=` `Alpha` → rows 2, 3, 4; `null` → none;
-  `!null` → rows 1, 2, 3, 4.
+- **SPEC-D18.1** [all] Given rows 5 (`secret` NULL or missing) and 6 (`secret` `''`), SearchBuilder on `secret`:
+  `=` `Alpha` → rows 1; `!=` `Alpha` → rows 2, 3, 4, 5, 6 (PRD-F37); `null` → rows 5, 6 on SQL and rows 5 on OS;
+  `!null` → rows 1, 2, 3, 4 on SQL and rows 1, 2, 3, 4, 6 on OS.
 - **SPEC-D18.2** [all] SearchBuilder `contains`, `starts`, `ends` and their negations on `secret` → `invalid_filter`.
 - **SPEC-D19.1** [OS] On a text-only `name`: a categorical filter, a `multi_values` list, and SearchBuilder `=`,
   `!=`, `starts`, `!starts`, `ends`, `!ends`, `contains`, `!contains` → `invalid_filter`.

@@ -6,7 +6,7 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 
 - **SPEC-E1.1** [all] SearchBuilder `=` `abc` on `price`, with `draw` 7 → `fetch` and `fetch_sync` return (do not
   raise) a `DTResponse` with `draw` 7, `error_code` `invalid_number`, a non-empty `error`, `data` `[]`,
-  `recordsTotal` 0 and `recordsFiltered` 0 (no count runs before the refusal, PRD-E7).
+  `recordsTotal` 0 and `recordsFiltered` 0.
 - **SPEC-E1.2** [all] SearchBuilder `<` `a` on `name` → `fetch` and `fetch_sync` return the answer with error_code
   `invalid_filter`; `InvalidFilter` does not propagate out of either.
 - **SPEC-E2.1** [all] Across every user-error case in the specs, `fetch` answers one of exactly `invalid_filter`,
@@ -42,8 +42,8 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E6.3** [core] `MalformedRequest` is not a subclass of `InvalidFilter`, nor `InvalidFilter` of
   `MalformedRequest`.
 - **SPEC-E7.1** [SQL] Recording: a request that ends in a user error runs no statement (no page, no count).
-- **SPEC-E7.2** [OS] Recording: a user error other than `page_out_of_range` sends no call; a `page_out_of_range`
-  answer sends only the counts of PRD-C11, never a page search.
+- **SPEC-E7.2** [OS] Recording: a user error other than `page_out_of_range` sends at most the counts of PRD-C11 and
+  never a page search; a `page_out_of_range` answer sends only those counts, never a page search.
 - **SPEC-E8.1** [SQL] The table's SQLAlchemy metadata has a column `ghost` that the database table lacks, and the
   table declares `Column('ghost')` → `fetch` raises the database error; it is not answered.
 - **SPEC-E8.2** [SQL] A connection whose execute raises `OperationalError` → `fetch` and `fetch_sync` raise it.
@@ -53,15 +53,15 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E9.2** [OS] A search answer with no `_shards`, or with `_shards.total` not an integer → `PartialResultError`
   raised.
 - **SPEC-E9.3** [OS] A count answer that does not cover every shard → `PartialResultError` raised.
-- **SPEC-E10.1** [all] For every refusal in the specs, no log record of any level holds the search value or a
-  client-sent column name: with a marker string in each value and in an undeclared name, the marker appears in no
+- **SPEC-E10.1** [all] For every refusal in the specs, no log record of any level holds the search value or an
+  undeclared column name the client sent: with a marker string in each value and in an undeclared name, the marker appears in no
   record's message, arguments or extra fields.
 - **SPEC-E11.1** [all] A refusal on the undeclared `secret_field` logs a record that does not name it.
 - **SPEC-E12.1** [all] Every record the library emits comes from the logger `datatables_backend` or a child of it,
   through the standard `logging` module.
 - **SPEC-E13.1** [all] Each `MalformedRequest` raised and each user error answered logs exactly one WARNING record;
-  the same case twice logs the same event name twice, and two different cases (an undeclared column search and a
-  refused order) log different event names.
+  the same case twice logs the same event name twice, and two different cases log different event names: a column
+  search `x` on the undeclared `extra`, and an order on `secret` marked `orderable: true` (server-unorderable).
 - **SPEC-E13.2** [all] A request whose column 0 is `secret`, marked `orderable: false` (so DataTables' default order
   on column 0 is skipped: unorderable on both sides), with an idle SearchPanes pane, an idle ColumnControl search, a nameless column, a request-searchable undeclared column and a
   global search `red` (skipping the boolean `active`, PRD-F44, and on OS the number and date columns, PRD-F32) logs

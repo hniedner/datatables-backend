@@ -2,14 +2,18 @@
 
 One file per PRD section (`docs/PRD.md`, section 4): P, D, F, O, C, E, R, A, Q. Each spec statement states one
 observable behaviour, in the form a behavioural test checks it: the request goes through `parse_request`, then
-`fetch` or `fetch_sync` (the FastAPI adapter for section A). This README holds no statements.
+`fetch` or `fetch_sync`, or through the FastAPI adapter for PRD-A9 to PRD-A11. Section Q is checked in CI or in
+review. This README holds no statements.
 
 ## Statement form
 
-A statement is a list item that starts `- **SPEC-X1.n** [tag]`, followed by the input and the expected answer.
+A statement is one paragraph: a list item that starts `- **SPEC-X1.n** [tag]`, followed by the input and the
+expected answer, wrapped onto indented lines. It ends at a blank line, a heading or the next list item; a second
+paragraph under it is not read. An unindented line right after a statement is a finding.
 
-- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text is a cross-reference. A wrapped
-  statement continues on indented lines.
+- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text is a cross-reference, written as
+  one id (`PRD-F21`), never a range.
+- Each PRD requirement is a single table line; `scripts/trace_check.py` reads no other form.
 - A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2); a
   `SPEC-` id outside backticks anywhere but a statement's start is a finding.
 - `scripts/trace_check.py` (run in CI's lint job) checks that every *must* and *should* requirement has a statement,
@@ -22,7 +26,11 @@ A statement is a list item that starts `- **SPEC-X1.n** [tag]`, followed by the 
 - `[all]`: every backend, SQL and OpenSearch.
 - `[SQL]`: SQLite (sync and aiosqlite), PostgreSQL, SQL Server and MySQL. A named database (`[SQLite]`,
   `[PostgreSQL]`, ...) narrows it, with any collation or locale the statement needs.
-- `[OS]`: OpenSearch, with the async and the sync client.
+- `[OS]`: OpenSearch through a recording client (async and sync), which answers from the fixture or as the
+  statement says.
+- `[OS container]`: OpenSearch against the live cluster of CI's `opensearch` job (`tests/test_opensearch_live.py`).
+- A list (`[SQLite, PostgreSQL]`) means each backend named; a narrowed tag (`[OS, SQL join]`) means OpenSearch and a
+  SQL table over a join. A tag in the middle of a statement applies to the clauses after it.
 - `[core]`: backend-independent; checks `parse_request` or a model alone.
 - `[FastAPI]`: through a FastAPI app using the library's dependency, with its `TestClient`.
 - `[CI job]`: checked by that CI job (`install-isolation`, `minimum-versions`, `tests`, `gate`).
@@ -33,8 +41,8 @@ A statement is a list item that starts `- **SPEC-X1.n** [tag]`, followed by the 
 - `rows 1, 3`: the page holds exactly those rows, in key order unless the statement orders.
 - `none`: an empty page, no error.
 - `error_code X`, or just the code: answered (not raised) with `error`, `error_code` X, `recordsTotal` 0,
-  `recordsFiltered` 0 and `data` `[]`. No count runs before a user error (PRD-E7). The one exception is
-  `page_out_of_range`, which carries the real counts (PRD-C12).
+  `recordsFiltered` 0 and `data` `[]` (decided below). The one exception is `page_out_of_range`, which carries the
+  real counts (PRD-C12).
 - An exception class (`MalformedRequest`, `SchemaError`, `PartialResultError`): raised, from `parse_request`, the
   constructor or `fetch` as the statement says.
 - `HTTP 422`, `HTTP 200`: the status the FastAPI app answers, with the JSON body the statement names.
@@ -79,6 +87,9 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
 - **OQ1** (PRD-F38): the SearchBuilder root group counts as depth 1 (F38.1).
 - **OQ2** (PRD-D1, PRD-R1, PRD-C6): a row carries every declared column, whatever the request lists (D1.1, R7.2).
 - **OQ3** (PRD-A10): `draw` sits at the top level of the 422 body, beside `detail` (A10.1).
+- **User-error counts** (reviewer's decision, 2026-11-20): an answered user error other than `page_out_of_range`
+  carries `recordsTotal` 0 and `recordsFiltered` 0, as today's `DTResponse` defaults give, even when the counts of
+  PRD-C11 ran before the refusal (PRD-E7 allows them).
 
 ## Open questions
 

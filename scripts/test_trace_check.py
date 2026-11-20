@@ -110,7 +110,7 @@ def test_continuation_ends_at_a_blank_line(tmp_path: Path) -> None:
 def test_drifted_requirement_row_fails(tmp_path: Path, row: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD + row + '\n')
     assert result.returncode == 1
-    assert result.stderr == 'PRD row 6 is not a requirement row of the expected shape\n'
+    assert result.stderr == 'PRD.md:6 is not a requirement row of the expected shape\n'
 
 
 def test_duplicate_requirement_id_fails(tmp_path: Path) -> None:
@@ -170,7 +170,22 @@ def test_backticked_spec_id_inside_a_statement_passes(tmp_path: Path) -> None:
 def test_lazy_continuation_line_fails(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, wrapped\nonto PRD-F9.\n- **SPEC-F2.1** Two.\n'})
     assert result.returncode == 1
-    assert result.stderr == 'F.md:2 continues a statement without indentation\n'
+    assert result.stderr == 'F.md:2 follows a statement without a blank line or indentation\n'
+
+
+def test_spec_id_on_a_lazy_line_is_also_reported(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, as\nSPEC-F2.1 says.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == (
+        'F.md:2 follows a statement without a blank line or indentation\n'
+        'F.md:2 holds a SPEC id outside a statement of the expected shape\n'
+    )
+
+
+@pytest.mark.parametrize('after', ['   ', '# Heading naming PRD-F9', '1. note naming PRD-F9'])
+def test_statement_ends_at_a_blank_heading_or_other_item(tmp_path: Path, after: str) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + after + '\nProse naming PRD-F9.\n'})
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize('name', ['sub/X.md', 'notes.txt'])
@@ -194,12 +209,17 @@ def test_indented_statement_is_stray(tmp_path: Path) -> None:
         '| PRD-F3 |  | Why. | must |',
         '| PRD-f3 | Text. | Why. | must |',
         '| PRD-3 | Text. | Why. | must |',
+        '| ~~PRD-F3~~ | Text. | Why. | must |',
+        '| PRD-F3 |   | Why. | must |',
+        '| PRD-F | Text. | Why. | must |',
+        'PRD-F3 | Text. | Why. | must |',
+        '| [PRD-F3](#f3) | Text. | Why. | must |',
     ],
 )
 def test_more_drifted_requirement_rows_fail(tmp_path: Path, row: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD + row + '\n')
     assert result.returncode == 1
-    assert result.stderr == 'PRD row 6 is not a requirement row of the expected shape\n'
+    assert result.stderr == 'PRD.md:6 is not a requirement row of the expected shape\n'
 
 
 def test_trailing_spaces_on_a_row_are_ignored(tmp_path: Path) -> None:
@@ -207,7 +227,7 @@ def test_trailing_spaces_on_a_row_are_ignored(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize('bad', ['PRD-f9', 'PRD-9', 'PRD-F'])
+@pytest.mark.parametrize('bad', ['PRD-f9', 'PRD-9', 'PRD-F', 'PRD-F1..F99', 'PRD-F1-2', 'PRD-F1a'])
 def test_malformed_citation_fails(tmp_path: Path, bad: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE + f'- **SPEC-F1.2** See {bad}.\n'})
     assert result.returncode == 1

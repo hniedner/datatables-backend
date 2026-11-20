@@ -58,12 +58,12 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P19.1** [core] An empty request, and a DataTables 1.9 request (`sEcho`, `sSearch`, `iDisplayStart`), →
   `MalformedRequest`.
 - **SPEC-P20.1** [core] `columns[0][data]` as the JSON integer 0 parses to a column whose `data` is `"0"`.
-- **SPEC-P20.2** [all] With `Column('0', field='id')` declared and `columns[0][data]` the JSON integer 0: a column
+- **SPEC-P20.2** [all] With `Column('0', field='id', type='number')` declared and `columns[0][data]` the JSON integer 0: a column
   search `3` on it → rows 3.
 - **SPEC-P21.1** [all] A nameless column (`data` null, empty `name`) first, with DataTables' default order on column
   0 and a global search `red` → rows 1, 2, 4, no error.
 - **SPEC-P21.2** [all] A column with `data` `function` and an empty `name` is nameless: an order on it is skipped
-  (rows 1, 2, 3, 4); with `Column('function', field='id')` declared, it is that column: an order desc on it → rows
+  (rows 1, 2, 3, 4); with `Column('function', field='id', type='number')` declared, it is that column: an order desc on it → rows
   4, 3, 2, 1.
 - **SPEC-P21.3** [all] A column search with value `x` on a nameless column → error_code `invalid_filter`; a
   SearchBuilder criterion with an empty `origData` → error_code `invalid_filter`.

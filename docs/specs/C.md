@@ -18,9 +18,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   SQL Server) in the page statement.
 - **SPEC-C6.1** [SQL] Given a table with an undeclared column `hidden`: the page statement selects no `hidden`, and
   no row holds a `hidden` key.
-- **SPEC-C7.1** [OS] Recording, with a client whose search answers 20,000 matches (more than OpenSearch counts
-  exactly by default): a request with a filter sends one search, which returns the page, and `recordsFiltered` is
-  20,000 with no second call.
+- **SPEC-C7.1** [OS] Recording, with a client whose search answers `hits.total` 10,000 `gte` unless the body asks
+  `track_total_hits: true`, and 20,000 `eq` when it does: a request with no filter beyond the base filter sends one
+  search, which returns the page, `recordsFiltered` is 20,000, and no other call is made.
 - **SPEC-C8.1** [OS] Recording: with no filter beyond the base filter, one search answers; `recordsTotal` equals
   `recordsFiltered`.
 - **SPEC-C8.2** [OS] Recording: with a global search, a separate count gives `recordsTotal`.
@@ -38,8 +38,10 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
-- **SPEC-C13.1** [OS] Given a client whose count answers 10 and whose reversed page then sees 11 documents, the
-  answer is served (no point-in-time is opened, no error): recording shows no `create_pit`.
+- **SPEC-C13.1** [OS] With `max_result_window` 3, `start` 8 and `length` 3, a recording client whose count answers
+  10 and whose reversed page search then runs over 11 documents (rows 1 to 11, row 11 added after the count): the
+  answer is served with `recordsFiltered` 10 and rows 10, 11 (an unchanged index gives 9, 10), no error, and no
+  `create_pit` call.
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
   two requests within the TTL run one total count between them; recording shows the second ran only the filtered
   count and the page, and both answer `recordsTotal` 4.

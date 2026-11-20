@@ -32,12 +32,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   word, so it passes.
 - **SPEC-F5.3** [all] Global search `red !apple` → rows 2, 4.
 - **SPEC-F6.1** [all] Global search `!"red apple"` → rows 2, 3, 4.
-- **SPEC-F6.2** [all] Each of `"`, `"""`, `!""`, `""`, `!`, `!x` and three spaces, as the global search and as a
-  column search on `name`, → rows 1, 2, 3, 4, with no error.
+- **SPEC-F6.2** [all] Each of `"`, `"""`, `!""`, `""`, `!`, `!x` and three spaces, as the global search, as a
+  column search on `name` and as a column search on `note`, → rows 1, 2, 3, 4, with no error (on `note`, an empty
+  word kept as a condition would drop row 1's NULL).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
-- **SPEC-F7.2** [all] Given a row whose `note` is `a` + LF + `b`: `multi_values` `["a\nb"]` on `note` → that row
-  only; a row whose `note` is `a b` is not matched. SearchBuilder `=` with `a\nb` answers the same.
+- **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
+  the `a` + LF + `b` row only; SearchBuilder `=` `a\nb` on `note` answers the same.
 - **SPEC-F8.1** [all] Global search `red OR blue` → the rows holding `red`, `or` and `blue` → none in the fixture
   (no union of `red` and `blue`).
 - **SPEC-F8.2** [all] Given a row whose `note` is `-red`: global search `-red` → that row only (not rows 1, 2, 4,
@@ -60,11 +61,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F9.6** [SQLite] Global search `äpfel` → none (SQLite folds ASCII only); `ÄPFEL` → rows 4.
 - **SPEC-F9.7** [PostgreSQL in a UTF-8 non-C locale (`en_US.UTF-8`), SQL Server with a `_CI_` collation, MySQL
   with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run.
-- **SPEC-F9.9** [OS] Whole word: global search `äpfel` against row 4's `ÄPFEL`. Open: decided by the live run
-  (issue #11); no answer is claimed (OQ4 in `README.md`).
-- **SPEC-F9.10** [OS] Substring: global search `äpf` against row 4's `ÄPFEL`. Open: decided by the live run
+- **SPEC-F9.9** [OS container] Whole word: global search `äpfel` against row 4's `ÄPFEL`. Open: decided by the live
+  run (issue #11); no answer is claimed (OQ4 in `README.md`).
+- **SPEC-F9.10** [OS container] Substring: global search `äpf` against row 4's `ÄPFEL`. Open: decided by the live run
   (issue #11); no answer is claimed (OQ4).
-- **SPEC-F9.11** [OS] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open: decided by
+- **SPEC-F9.11** [OS container] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open: decided by
   the live run (issue #11); no answer is claimed (OQ4).
 - **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
   exactly, PRD-D17).
@@ -95,7 +96,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   supplementary-plane character counts as one code point.
 - **SPEC-F14.2** [all] A global search of 16 words is answered; 17 → error_code `invalid_filter`; the same for a
   column search on `name`.
-- **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 16 words plus `"`,
+- **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 15 words plus a
+  quoted phrase of two words is 16 → answered (counting the phrase as two words would refuse it); 16 words plus `"`,
   `!""` and `!x` is 16 → answered.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_filter`; so do U+0009 (TAB), U+001B and
   U+007F.
@@ -188,8 +190,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F34.1** [OS] Column search on `made`: `2024` → rows 1, 2; `2024-03-05` → rows 1.
 - **SPEC-F34.2** [OS] Column search on `made`: `2024 2023`, `!2024`, `"2024"` and `2024-13` → error_code
   `invalid_date`.
-- **SPEC-F35.1** [all] Given rows 5 (`note` `a-b`) and 6 (`note` `a.b`), every other column of both NULL or
-  missing: global search `!-` → rows 3, 6 on SQL (the date text of rows 1, 2, 4 holds `-`) and rows 1, 2, 3, 4, 6
+- **SPEC-F35.1** [all] Given rows 5 (`note` `a-b`) and 6 (`note` `a.b`), every other column of both but `id` NULL
+  or missing: global search `!-` → rows 3, 6 on SQL (the date text of rows 1, 2, 4 holds `-`) and rows 1, 2, 3, 4, 6
   on OS (dates take no part, PRD-F32); `!.` → rows 1, 2, 3, 4, 5 on all.
 - **SPEC-F35.2** [all] Global search `!x` → rows 1, 2, 3, 4 (adds nothing).
 - **SPEC-F36.1** [all] `=` on `name` with two values, and `between` on `price` with three → error_code

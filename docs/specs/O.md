@@ -23,7 +23,8 @@ lists rows in the order they come back.
 - **SPEC-O2.4** [PostgreSQL] O2.1 holds though PostgreSQL's default puts NULL last ascending.
 - **SPEC-O3.1** [all] Given rows 5 and 6 with `colour` `blue` like row 3: order `colour` asc → the blue rows come as
   3, 5, 6; desc → 6, 5, 3 (the key follows the first applied entry).
-- **SPEC-O3.2** [all] For every `length` from 1 to 6 over rows 1 to 6 ordered by `colour` asc, the pages joined give
+- **SPEC-O3.2** [all] Given rows 5 and 6 as in O3.1: for every `length` from 1 to 6 over rows 1 to 6 ordered by
+  `colour` asc, the pages joined give
   each row exactly once, and the order desc gives exactly the reverse sequence.
 - **SPEC-O3.3** [all] With rows 5 and 6 as in O3.1: order `secret` desc (request-unorderable, server-unorderable, so
   skipped) then `colour` asc → the blue rows come as 3, 5, 6: the key follows `colour`, not the skipped entry.
