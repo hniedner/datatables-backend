@@ -15,9 +15,12 @@ Usage:
                                          ``--files``, the arguments are taken as files too unless they are exactly
                                          one of the modes below)
     private_word_scan.py --message FILE  a commit message (the commit-msg stage) as git stores it
-    private_word_scan.py --refs          every local ref's name and every annotated tag (the pre-commit and
-                                         post-checkout stages: a push that only adds a ref brings no commit, so
-                                         pre-commit runs no pre-push hook for it)
+    private_word_scan.py --refs          every local ref's name, and every object a ref that names no commit (a tag,
+                                         or a ref to a blob or tree) brings that no remote-tracking ref holds: tags
+                                         it wraps, the commits, trees and blobs under it, and every whole path in
+                                         them (the pre-commit and post-checkout stages: a push that only adds a ref
+                                         brings no commit, so pre-commit runs no pre-push hook for it; a ref to a
+                                         commit brings a new commit, and with it the pre-push hook, or no object)
     private_word_scan.py --history       everything a push can publish: every ref's name and the remote ref the push
                                          writes (pre-commit's PRE_COMMIT_REMOTE_BRANCH), every annotated tag, every
                                          object in the repository, reachable or not, and every whole path in the
@@ -27,8 +30,9 @@ Usage:
 
 Every text the scan reads (a file's contents, path or link target, an object, a path in a tree, a ref name, a tag, a
 commit message file) is read from its bytes as UTF-8 (or by its byte order mark) and also in the encodings
-``other_readings`` tries, so a Latin-1 or UTF-16 word is found in any of them. Only the word list is read as UTF-8
-alone. Objects are read as stored: ``git replace`` is ignored, since a push sends the originals.
+``other_readings`` tries, so a Latin-1 or UTF-16 word is found in any of them; after a byte order mark, the bytes
+that follow it are read in all of them too, since a mark need not match the text behind it. Only the word list is
+read as UTF-8 alone. Objects are read as stored: ``git replace`` is ignored, since a push sends the originals.
 
 A leftover object holding a word (a dropped commit, a reflog entry) therefore blocks every push until it is gone:
 ``git reflog expire --expire-unreachable=now --all`` and then ``git gc --prune=now`` drop the unreachable ones. A
@@ -108,10 +112,13 @@ def decode(data: bytes) -> str:
 
 
 def other_readings(data: bytes) -> list[str]:
-    """The same bytes read in the encodings ``decode`` does not try: without a byte order mark, UTF-16 at both
-    alignments (UTF-16LE from the second byte reads UTF-16BE text), and cp1252 when the bytes are not UTF-8."""
-    if any(data.startswith(bom) for bom, _ in _BOMS):
-        return []
+    """The same bytes read in the encodings ``decode`` does not try: UTF-16 at both alignments (UTF-16LE from the
+    second byte reads UTF-16BE text), and cp1252 when the bytes are not UTF-8. After a byte order mark, which a file
+    may carry in front of text in another encoding, the bytes that follow it are read so too, and as UTF-8."""
+    for bom, _ in _BOMS:
+        if data.startswith(bom):
+            rest = data[len(bom) :]
+            return [rest.decode('utf-8', errors='ignore'), *other_readings(rest)]
     readings = [data[start:].decode('utf-16-le', errors='ignore') for start in (0, 1)]
     try:
         data.decode('utf-8')
@@ -142,11 +149,12 @@ def redact(name: bytes, words: Words) -> str:
 
     The test is ``text_hits``, the one that finds the word, so whatever is found is hidden, and nothing of a part a
     reading other than UTF-8 finds a word in is printed (``decode`` would print the word less its dropped letters). A
-    word that spans parts (one holding a ``/``) hides the whole name.
+    word that spans parts (one holding a ``/``) hides the whole name. What is printed is UTF-8 with every other byte
+    escaped (``\\x9f``), so a byte in an encoding the scan does not read is shown, not dropped.
     """
     parts = [b'***' if text_hits(part, words) else part for part in name.split(b'/')]
     joined = b'/'.join(parts)
-    return '***' if text_hits(joined, words) else decode(joined)
+    return '***' if text_hits(joined, words) else joined.decode('utf-8', errors='backslashreplace')
 
 
 def report(where: str, numbers: Iterable[int]) -> str:
@@ -174,10 +182,10 @@ def scan_files(names: list[str], words: Words) -> list[str]:
     return findings
 
 
-def git(*args: str | bytes, ok: tuple[int, ...] = (0,)) -> bytes:
+def git(*args: str | bytes, ok: tuple[int, ...] = (0,), input: bytes | None = None) -> bytes:  # noqa: A002
     """A git command's output. Raises CalledProcessError on an unexpected exit status."""
     environment = os.environ | {'GIT_NO_REPLACE_OBJECTS': '1'}  # the objects a push sends, not their replacements
-    result = subprocess.run(['git', *args], capture_output=True, check=False, env=environment)
+    result = subprocess.run(['git', *args], capture_output=True, check=False, env=environment, input=input)
     if result.returncode not in ok:
         raise subprocess.CalledProcessError(result.returncode, 'git')
     return result.stdout
@@ -188,7 +196,11 @@ def all_objects() -> Iterator[tuple[str, str, bytes]]:
 
     A push can send any object it is told to (``git push origin main <id>:refs/heads/x``), and pre-commit names one
     pushed ref to the hook, so the store is scanned whole rather than walked from refs."""
-    out = git('cat-file', '--batch-all-objects', '--batch', '--unordered')
+    return batch(git('cat-file', '--batch-all-objects', '--batch', '--unordered'))
+
+
+def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
+    """The objects of ``git cat-file --batch`` output: id, kind and raw bytes."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
@@ -199,39 +211,56 @@ def all_objects() -> Iterator[tuple[str, str, bytes]]:
 
 
 def scan_refs(words: Words) -> list[str]:
+    """Every local ref's name, and every object a ref that names no commit brings that no remote-tracking ref holds.
+
+    A ref to a commit needs no walk: a push that brings a new commit runs the pre-push hook, and one that brings none
+    sends no object. A tag (on a tag, a blob, a tree or a commit) or a ref to a blob or tree can be pushed with no new
+    commit, so the objects it brings are read here: a tag's tagger and message, a tag it wraps, a blob, a tree's names
+    and every whole path under a tree."""
     findings: list[str] = []
-    for ref in filter(None, git('for-each-ref', '--format=%(refname)').split(b'\n')):  # no newline in a name
+    refs = git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)')
+    for line in filter(None, refs.split(b'\n')):  # no newline in a name
+        kind, peeled, ref = line.split(b' ', 2)
         shown = redact(ref, words)
         if found := text_hits(ref, words):
             findings.append(report(f'ref {shown} (name)', found))
-        if decode(git('cat-file', '-t', ref)).strip() != 'tag':
+        if kind == b'commit':
             continue
-        if found := text_hits(git('cat-file', '-p', ref), words):
-            findings.append(report(f'tag {shown} (tagger or message)', found))
+        if kind == b'tree' or peeled == b'tree':  # no commit holds the tree, so no commit shows its whole paths
+            findings.extend(path_findings(shown, ref, words))
+        listed = git('rev-list', '--objects', ref, '--not', '--remotes')
+        ids = b''.join(entry.split(b' ', 1)[0] + b'\n' for entry in listed.splitlines())  # `<id> [<path>]`
+        for sha, object_kind, data in batch(git('cat-file', '--batch', input=ids)):
+            if found := text_hits(data, words):
+                findings.append(report(f'{object_kind} {sha[:12]} (brought by ref {shown})', found))
+            if object_kind == 'commit':
+                findings.extend(path_findings(sha[:12], sha, words))
     return findings
 
 
-def message_text(raw: str) -> str:
-    """A commit message file, cut at git's scissors line and stripped of comment lines only where git's own commit
-    template (its scissors warning line, its editor hint as a whole line) shows git will. Under another locale the
-    scan reads more than git keeps, which can wrongly block a commit but never lets a word through. A known gap: a
-    ``-m``/``-F`` message that itself holds those template lines is cut or stripped here, while git stores it whole,
-    so a word after them passes; the pre-push scan reads the stored message and refuses it. The comment character is
-    git's ``core.commentChar``, ``#`` by default."""
-    comment = decode(git('config', '--get', 'core.commentChar', ok=(0, 1))).strip() or '#'
-    if comment == 'auto':  # git picks one the message does not start a line with; '#' unless taken
-        comment = '#'
-    lines = raw.split('\n')
-    scissors = f'{comment} ------------------------ >8 ------------------------'
-    warning = f'{comment} Do not modify or remove the line above.'
+def message_text(raw: bytes) -> bytes:
+    """A commit message file's bytes, cut at git's scissors line and stripped of comment lines only where git's own
+    commit template (its scissors warning line, its editor hint as a whole line) shows git will. The bytes are cut, not
+    a decoded text, so every reading sees only what git keeps (a ``commit -v`` diff below the scissors line is dropped
+    whatever its encoding); the template lines are matched as UTF-8, so a message file in another encoding is read
+    whole. Under another locale the scan reads more than git keeps, which can wrongly block a commit but never lets a
+    word through. A known gap: a ``-m``/``-F`` message that itself holds those template lines is cut or stripped here,
+    while git stores it whole, so a word after them passes; the pre-push scan reads the stored message and refuses
+    it. The comment character is git's ``core.commentChar``, ``#`` by default."""
+    comment = git('config', '--get', 'core.commentChar', ok=(0, 1)).strip() or b'#'
+    if comment == b'auto':  # git picks one the message does not start a line with; '#' unless taken
+        comment = b'#'
+    lines = raw.split(b'\n')
+    scissors = comment + b' ------------------------ >8 ------------------------'
+    warning = comment + b' Do not modify or remove the line above.'
     for number, line in enumerate(lines[:-1]):
         if line == scissors and lines[number + 1] == warning:
             lines = lines[:number]
             break
-    hint = f"{comment} with '{comment}' will be ignored, and an empty message aborts the commit."
+    hint = comment + b" with '" + comment + b"' will be ignored, and an empty message aborts the commit."
     if hint in lines:
         lines = [line for line in lines if not line.startswith(comment)]
-    return '\n'.join(lines)
+    return b'\n'.join(lines)
 
 
 def path_findings(where: str, tree: str | bytes, words: Words) -> list[str]:
@@ -276,8 +305,7 @@ def main(argv: list[str]) -> int:
         elif argv[:1] == ['--message']:
             if len(argv) != 2:
                 raise CouldNotCheckError('--message needs the message file')
-            raw = Path(argv[1]).read_bytes()
-            found = sorted({*hits(message_text(decode(raw)), words), *content_hits(raw, words)})
+            found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
             findings = [report('commit message', found)] if found else []
             scanned = 'the commit message'
         else:

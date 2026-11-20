@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import importlib.util
 import os
 from pathlib import Path
@@ -787,3 +788,173 @@ def test_a_latin1_ref_name_is_found_and_hidden(repo: Path, non_ascii_words: Path
     assert result.returncode == 1, result.stderr
     assert 'ref refs/heads/*** (name)' in result.stderr
     assert not leaked(result.stdout + result.stderr, NON_ASCII)
+
+
+def test_a_tag_on_a_deleted_tag_brings_the_inner_tag_to_the_ref_scan(repo: Path, words: Path):
+    """`git push origin outer` sends the inner tag object too, and it brings no commit, so no pre-push hook runs."""
+    git(repo, 'tag', '-a', 'inner', '-m', f'Notes on {WORD}')
+    git(repo, 'tag', '-a', 'outer', 'inner', '-m', 'Clean')
+    git(repo, 'tag', '-d', 'inner')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.parametrize('tag', ['annotated', 'lightweight'])
+def test_a_tag_on_a_blob_brings_the_blob_to_the_ref_scan(repo: Path, words: Path, tag: str):
+    blob = git(repo, 'hash-object', '-w', '--stdin', input=f'see {WORD}\n').strip()
+    git(repo, 'tag', *(['-a', '-m', 'Clean'] if tag == 'annotated' else []), 'just-a-blob', blob)
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.parametrize('tag', ['annotated', 'lightweight'])
+def test_a_tag_on_a_tree_brings_its_whole_paths_to_the_ref_scan(tmp_path: Path, repo: Path, tag: str):
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    inner = git(repo, 'mktree', input=f'100644 blob {blob}\tWidget.txt\n').strip()
+    outer = git(repo, 'mktree', input=f'040000 tree {inner}\tAcme\n').strip()
+    git(repo, 'tag', *(['-a', '-m', 'Clean'] if tag == 'annotated' else []), 'just-a-tree', outer)
+    result = scan('--refs', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert SLASHED.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def with_remote(tmp_path: Path, repo: Path) -> Path:
+    """A bare remote holding main; pushed without hooks, as a published history is."""
+    remote = tmp_path / 'remote.git'
+    git(tmp_path, 'init', '-q', '--bare', str(remote))
+    git(repo, 'remote', 'add', 'origin', str(remote))
+    git(repo, 'push', '-q', 'origin', 'main')
+    return remote
+
+
+def test_the_ref_scan_skips_what_a_remote_already_holds(tmp_path: Path, repo: Path, words: Path):
+    """A word already published is the history scan's to report; a tag on that history adds nothing new."""
+    commit(repo, 'b.txt', f'see {WORD}\n'.encode())
+    with_remote(tmp_path, repo)
+    git(repo, 'tag', '-a', 'v1', '-m', 'Clean')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_lightweight_tag_on_an_unpushed_commit_is_refused_by_the_pre_push_hook(
+    tmp_path: Path, repo: Path, words: Path
+):
+    """The ref scan leaves a ref to a commit alone: a push that brings a new commit runs the pre-push hook."""
+    hooks_config(repo)
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'Add the hook config')
+    remote = with_remote(tmp_path, repo)
+    subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install', '--hook-type', 'pre-push'],
+        cwd=repo, check=True, capture_output=True,
+    )  # fmt: skip
+    commit(repo, 'b.txt', f'see {WORD}\n'.encode())
+    git(repo, 'tag', 'wip')
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1')  # only the tag holds the commit
+    result = subprocess.run(
+        ['git', 'push', 'origin', 'wip'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert git(remote, 'tag') == ''  # nothing reached the remote
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Path):
+    outside = tmp_path / 'not-a-repo'
+    outside.mkdir()
+    result = scan('--refs', words=words, cwd=outside)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
+    'utf-16 mark before ascii': (WORD, codecs.BOM_UTF16_LE + f'hello {WORD}\n'.encode()),
+    'utf-8 mark before latin-1': (NON_ASCII, codecs.BOM_UTF8 + b'see ' + NON_ASCII.encode('latin-1') + b'\n'),
+}
+
+
+@pytest.mark.parametrize('where', ['file', 'history', 'path'])
+@pytest.mark.parametrize('case', list(BOMMED))
+def test_a_byte_order_mark_does_not_hide_the_other_readings(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch, case: str, where: str
+):
+    word, data = BOMMED[case]
+    listed = write(tmp_path / 'list.txt', f'{word}\n')
+    if where == 'file':
+        planted = tmp_path / 'notes.txt'
+        planted.write_bytes(data)
+        result = scan(str(planted), words=listed)
+        assert result.returncode == 1, result.stdout
+        output = result.stdout + result.stderr
+    elif where == 'history':
+        commit(repo, 'notes.txt', data)
+        result = scan('--history', words=listed, cwd=repo)
+        assert result.returncode == 1, result.stdout
+        output = result.stdout + result.stderr
+    else:  # in process, with a synthetic name: no file is created
+        scanner = load_scanner(monkeypatch, listed)
+        monkeypatch.setattr(Path, 'is_symlink', lambda _: False)
+        monkeypatch.setattr(Path, 'read_bytes', lambda _: b'clean\n')
+        output = '\n'.join(scanner.scan_files([os.fsdecode(b'docs/' + data.rstrip(b'\n'))], scanner.load_words()))
+        assert 'docs/*** (path)' in output, output
+    assert not leaked(output, word), output
+
+
+def test_a_printed_path_keeps_every_byte(monkeypatch: pytest.MonkeyPatch, words: Path):
+    """A name in an encoding the scan does not read (Mac Roman `ü` is 0x9F) is printed escaped, never with a letter
+    dropped: the word less a letter is still the word to a reader."""
+    scanner = load_scanner(monkeypatch, words)
+    monkeypatch.setattr(Path, 'is_symlink', lambda _: False)
+    monkeypatch.setattr(Path, 'read_bytes', lambda _: f'see {WORD}\n'.encode())
+    output = '\n'.join(scanner.scan_files([os.fsdecode(b'docs/Gr\x9fnspecht.txt')], scanner.load_words()))
+    assert 'docs/Gr\\x9fnspecht.txt:1: private word #3' in output, output
+    assert 'grnspecht' not in output.casefold()
+
+
+def test_a_latin1_word_below_git_s_scissors_line_is_not_the_message(tmp_path: Path, non_ascii_words: Path):
+    """`commit -v` puts the diff below the scissors line, and git drops it, whatever its encoding."""
+    message = tmp_path / 'COMMIT_EDITMSG'
+    message.write_bytes(
+        f'Drop a line\n{SCISSORS}\n# Do not modify or remove the line above.\ndiff --git a/a.txt b/a.txt\n-'.encode()
+        + NON_ASCII.encode('latin-1')
+        + b'\n'
+    )
+    result = scan('--message', str(message), words=non_ascii_words)
+    assert result.returncode == 0, result.stderr
+
+
+def stand_in_config(repo: Path) -> None:
+    """The repository's hook config with every hook but the word hooks replaced, in place and at its stages, by a
+    stand-in that prints the file names it is given and fails, as trailing-whitespace's `Fixing <name>` does."""
+    config = yaml.safe_load((SCRIPT.parent.parent / '.pre-commit-config.yaml').read_text(encoding='utf-8'))
+    stand_in = f'"{sys.executable}" -c "import sys; print(*sys.argv[1:]); sys.exit(1)"'
+    repos = []
+    for entry in config['repos']:
+        hooks = []
+        for hook in entry['hooks']:
+            if hook['id'].startswith('private-words'):
+                scanner = f'"{sys.executable}" "{SCRIPT}"'
+                entry_line = hook['entry'].replace('uv run --frozen python scripts/private_word_scan.py', scanner)
+                hooks.append(hook | {'entry': entry_line})
+            else:
+                kept = {'stages': hook['stages']} if 'stages' in hook else {}
+                hooks.append({'id': hook['id'], 'name': hook['id'], 'entry': stand_in, 'language': 'system'} | kept)
+        repos.append({'repo': 'local', 'hooks': hooks})
+    (repo / '.pre-commit-config.yaml').write_text(yaml.safe_dump({**config, 'repos': repos}))
+
+
+def test_a_word_named_staged_file_shows_in_no_other_hook_s_output(repo: Path, words: Path):
+    stand_in_config(repo)
+    write(repo / f'{WORD}.txt', 'clean\n')
+    git(repo, 'add', '.')
+    result = subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'run', '--hook-stage', 'pre-commit'],
+        cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold(), result.stdout
