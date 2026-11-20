@@ -232,11 +232,156 @@ jobs:
           EOF
       - run: .venv-min/bin/python -m pytest
 
+  # The behaviour suite against real databases (tests/conftest.py reads DTB_SQL_URL and DTB_SQL_ASYNC_URL). The
+  # report header names the server and its version, and DTB_SQL_DIALECT makes a test fail if the run fell back to
+  # SQLite. Images are pinned by digest; the passwords are for these throwaway containers only.
+  postgresql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
+        env:
+          POSTGRES_PASSWORD: dtb-test-only
+          POSTGRES_DB: dtb
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d dtb" --health-interval 2s --health-timeout 5s --health-retries 60
+    env:
+      DTB_SQL_URL: postgresql+psycopg://postgres:dtb-test-only@localhost:5432/dtb
+      DTB_SQL_ASYNC_URL: postgresql+psycopg_async://postgres:dtb-test-only@localhost:5432/dtb
+      DTB_SQL_DIALECT: postgresql
+      # A session zone far from UTC (libpq reads PGTZ, for psycopg and psycopg_async alike): a date criterion on a
+      # timestamptz column then fails unless its day bounds are UTC midnights.
+      PGTZ: Pacific/Kiritimati
+      # Python's local zone far from UTC too, on the other side: a bound built from local time (`.astimezone()`) would
+      # pass on the UTC runner.
+      TZ: America/Adak
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: uv sync --locked --group containers
+      - run: uv run --frozen pytest tests/test_sql.py
+
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        env:
+          MYSQL_ROOT_PASSWORD: dtb-test-only
+          MYSQL_DATABASE: dtb
+        ports: ['3306:3306']
+        # TCP, not the socket: the server that initialises the data directory listens on the socket only
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uroot -pdtb-test-only -e 'SELECT 1' dtb" --health-interval 2s
+          --health-timeout 5s --health-retries 90
+    env:
+      DTB_SQL_URL: mysql+pymysql://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_ASYNC_URL: mysql+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_DIALECT: mysql
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: uv sync --locked --group containers
+      - run: uv run --frozen pytest tests/test_sql.py
+
+  sqlserver:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        # MCR serves this tag as an OCI image manifest. Look its digest up with an Accept header that lists the OCI
+        # types (application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, then Docker's),
+        # and check that GET .../manifests/<digest> answers 200: a Docker-v2-only Accept gets a converted manifest
+        # whose digest docker cannot pull.
+        image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: Dtb-test-only-1
+        ports: ['1433:1433']
+    env:
+      DTB_SQL_URL: mssql+pyodbc://sa:Dtb-test-only-1@localhost:1433/dtb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+      DTB_SQL_ASYNC_URL: mssql+aioodbc://sa:Dtb-test-only-1@localhost:1433/dtb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+      DTB_SQL_DIALECT: mssql
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: uv sync --locked --group containers
+      # The runner image has no ODBC driver: install Microsoft's from its signed apt repository.
+      - name: Install Microsoft's ODBC Driver 18
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/packages-microsoft-prod.deb" \
+            "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+          sudo dpkg -i "$RUNNER_TEMP/packages-microsoft-prod.deb"
+          sudo apt-get update -q
+          sudo ACCEPT_EULA=Y apt-get install -q -y msodbcsql18 unixodbc
+          odbcinst -q -d | grep -Fx '[ODBC Driver 18 for SQL Server]'
+      - name: Wait for the server, then create the database
+        run: |
+          uv run --frozen python - <<'EOF'
+          import time
+          import pyodbc
+          server = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost,1433;UID=sa;PWD=Dtb-test-only-1;TrustServerCertificate=yes'
+          for _ in range(90):
+              try:
+                  connection = pyodbc.connect(server, autocommit=True, timeout=5)
+                  break
+              except pyodbc.Error:
+                  time.sleep(2)
+          else:
+              raise SystemExit('SQL Server did not answer')
+          connection.execute('CREATE DATABASE dtb')
+          EOF
+      - run: uv run --frozen pytest tests/test_sql.py
+
+  # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL).
+  opensearch:
+    runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:3.9.0@sha256:3bf4fe26aeb9f7b03c0ebcb1302bb24e855ee6b89fd926d26a71a83ef6f7e076
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: 'true'
+          DISABLE_INSTALL_DEMO_CONFIG: 'true'
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports: ['9200:9200']
+    env:
+      DTB_OPENSEARCH_URL: http://localhost:9200
+      DTB_REQUIRE_OPENSEARCH: '1'  # without the URL the module fails instead of skipping every test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: uv sync --locked
+      - name: Wait for the cluster
+        run: |
+          for _ in $(seq 90); do
+            if curl -fsS "$DTB_OPENSEARCH_URL/_cluster/health?wait_for_status=yellow&timeout=2s"; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: uv run --frozen pytest tests/test_opensearch_live.py
+
   # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
   # if every needed job (every matrix leg included) succeeded.
   gate:
     if: always()
-    needs: [lint, types, tests, install-isolation, minimum-versions]
+    needs: [lint, types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver, opensearch]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded

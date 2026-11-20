@@ -314,7 +314,8 @@ def _number_criterion(node: Criterion) -> dict[str, Any]:
 
 
 def _date_criterion(node: Criterion) -> dict[str, Any]:
-    """Dates compare by day, as on SQL; a negated condition leaves out documents without the field."""
+    """Dates compare by day, as on SQL. A negated condition is a ``must_not``, which keeps documents without the
+    field; SQL leaves out a row whose value is NULL."""
     field, values = node.column.source, node.values
 
     def day(index: int, *, after: bool = False) -> str:

@@ -1,9 +1,20 @@
-"""The SQL backend, on SQLite, through the public API only: a request in, a response out."""
+"""The SQL backend through the public API only: a request in, a response out.
 
+It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: PostgreSQL, MySQL, SQL Server).
+"""
+
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+import os
 from typing import Any
 
 import pytest
+from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.exc import DataError
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -15,6 +26,7 @@ from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import checked_database
 from .conftest import criterion
 from .conftest import people
 from .conftest import request
@@ -45,6 +57,27 @@ def refused(response: DTResponse) -> str:
 
 
 # -- paging, counts, rows ---------------------------------------------------------------------------------------------
+
+
+def test_the_suite_runs_on_the_database_it_was_given(session: Session):
+    """A container job names its dialect, so a run that silently fell back to SQLite fails."""
+    assert session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
+
+
+async def test_the_async_suite_runs_on_the_database_it_was_given(async_session: AsyncSession):
+    assert async_session.get_bind().dialect.name == os.environ.get('DTB_SQL_DIALECT', 'sqlite')
+
+
+@pytest.mark.parametrize('name', ['people', 'staging', 'dtbx', 'dtb_testx', None])
+def test_the_suite_refuses_a_database_it_does_not_own(name: str | None):
+    """The fixtures drop and create tables, so a real database must be named for the tests; checked before any DDL."""
+    with pytest.raises(RuntimeError, match='dtb_test'):
+        checked_database('postgresql+psycopg://user@host/' + (name or ''))
+
+
+@pytest.mark.parametrize('name', ['dtb', 'dtb_test', 'dtb_test_local'])
+def test_the_suite_runs_on_a_database_named_for_it(name: str):
+    assert checked_database(f'mssql+pyodbc://sa:pw@localhost:1433/{name}?driver=x') == name
 
 
 def test_a_page_comes_with_both_counts(session: Session):
@@ -117,8 +150,20 @@ def test_the_total_is_cached_until_the_ttl(session: Session):
 
 
 def test_order_follows_the_requests_columns_then_the_primary_key(session: Session):
-    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])  # age; Ann and Cy tie at 31, NULL first on SQLite
-    assert ids(table.fetch_sync(params, session)) == [3, 1, 4, 2, 5]
+    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])  # age; Ann and Cy tie at 31; row 3's age is NULL
+    assert [row for row in ids(table.fetch_sync(params, session)) if row != 3] == [1, 4, 2, 5]
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
+    reason="draft 1: NULL placement is the database's default (PostgreSQL: last ascending); PRD v2 (PRD-O2) makes it "
+    'lowest everywhere',
+    strict=True,
+    raises=AssertionError,
+)
+def test_null_comes_first_in_an_ascending_order(session: Session):
+    params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])
+    assert ids(table.fetch_sync(params, session))[0] == 3
 
 
 @pytest.mark.parametrize(
@@ -152,6 +197,11 @@ def test_like_wildcards_in_a_search_are_literal(session: Session):
 
 def test_the_global_search_matches_a_date_by_its_day_text(session: Session):
     assert ids(table.fetch_sync(request(*ALL, search={'value': '2026-07-1'}), session)) == [1, 2, 5]
+    assert ids(table.fetch_sync(request(*ALL, search={'value': '1980-07'}), session)) == [2]  # a Date column
+
+
+def test_the_global_search_matches_a_number_by_its_text(session: Session):
+    assert ids(table.fetch_sync(request(*ALL, search={'value': '45'}), session)) == [2]
 
 
 def test_a_column_search_narrows_by_that_column(session: Session):
@@ -247,6 +297,112 @@ def test_searchbuilder_conditions(
     assert ids(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session)) == expected
 
 
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [('=', ['2026-07-15'], [1]), ('>', ['2026-07-15'], [2]), ('<', ['2026-07-15'], [4, 5])],
+)
+def test_a_timezone_aware_column_compares_by_utc_day(
+    session: Session, condition: str, values: list[str], expected: list[int]
+):
+    """The day bounds are UTC midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
+    UTC+14), which reads a naive bound as local to it, and bounds built from Python's local time through TZ
+    (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite
+    too. SQL Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there
+    the test only shows the column works."""
+    if session.get_bind().dialect.name == 'postgresql':
+        zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
+        assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
+        assert datetime.now().astimezone().utcoffset(), (
+            'Set TZ to a zone far from UTC, or local-time bounds go unchecked.'
+        )
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
+        expected
+    )
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
+    reason="draft 1: PostgreSQL's day text of a timestamptz is its day in the session zone; PRD v2 (PRD-F42) makes "
+    'it the UTC day',
+    strict=True,
+    raises=AssertionError,
+)
+def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-07-15'}), session)) == [1]
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
+    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD v2 (PRD-F42) makes it the UTC day',
+    strict=True,
+    raises=AssertionError,
+)
+def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
+    """2026-08-01 23:00 at -05:00 is 2026-08-02 04:00 UTC. The row is added in this test's transaction only. SQLite
+    and MySQL store no offset (PRD v2, PRD-F21), so there it is written as its UTC time, as such a column holds it.
+    On PostgreSQL this test passes because the session's +14 puts 04:00 UTC on the same day; PostgreSQL's own check
+    is the strict xfail of `test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day`."""
+    stored = datetime(2026, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
+    if session.get_bind().dialect.name not in ('postgresql', 'mssql'):
+        stored = stored.astimezone(UTC)
+    session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'seen_tz': stored})
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
+
+
+#: What SearchBuilder `=` on a Boolean column (True for ids 1 and 4, False for 2 and 5) gives today, per backend: the
+#: ids answered, or the exception raised. Draft 1 has no boolean type, so the column is a string column and the value
+#: goes to the database as text. PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values
+#: as invalid_filter.
+BOOLEAN_TODAY: dict[str, dict[str, list[int] | type[Exception]]] = {
+    'sqlite': {'1': [1, 4], 'true': [], 'abc': []},
+    'mysql': {'1': [1, 4], 'true': [2, 5], 'abc': [2, 5]},  # text that is not a number reads as 0
+    'mssql': {'1': [1, 4], 'true': [1, 4], 'abc': DataError},
+    'postgresql': {'1': ProgrammingError, 'true': ProgrammingError, 'abc': ProgrammingError},
+}
+
+
+@pytest.mark.parametrize(
+    ('value', 'today'),
+    [
+        pytest.param(
+            value,
+            today,
+            marks=pytest.mark.xfail(
+                reason='draft 1: the database refuses text compared with a Boolean column, so the query fails; '
+                'PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values as invalid_filter',
+                strict=True,
+                raises=today,
+            ),
+        )
+        if isinstance(today, type)
+        else pytest.param(value, today)
+        for value, today in BOOLEAN_TODAY[os.environ.get('DTB_SQL_DIALECT', 'sqlite')].items()
+    ],
+)
+def test_searchbuilder_equality_on_a_boolean_column_as_it_is_today(
+    session: Session, value: str, today: list[int] | type[Exception]
+):
+    flagged = SQLTable(people, [Column('id'), Column('active')])
+    assert ids(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), session)) == today
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('!=', ['1980-07-15'], [1, 4, 5]),
+        ('!between', ['1980-01-01', '1994-03-01'], [4, 5]),
+        ('!contains', ['1980'], [1, 4, 5]),
+    ],
+)
+def test_negated_date_conditions(session: Session, condition: str, values: list[str], expected: list[int]):
+    """Over rows that all have a date: what a negation does with NULL is PRD v2's to settle (PRD-F37)."""
+    dated = SQLTable(people, COLUMNS, base_filter=people.c.born.is_not(None))
+    assert ids(dated.fetch_sync(request(*ALL, **criterion('born', condition, *values)), session)) == expected
+
+
 def test_searchbuilder_groups_nest_and_empty_groups_add_nothing(session: Session):
     tree = {
         'logic': 'OR',
@@ -299,10 +455,33 @@ def test_many_multi_select_values_still_run(session: Session):
     assert ids(table.fetch_sync(params, session)) == [2]
 
 
+def test_many_multi_select_values_on_a_number_column_still_run(session: Session):
+    """Past SQL Server's 2,100-parameter limit the values travel as JSON and are cast to the column's number type."""
+    params = request(*ALL)
+    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
+    assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
+    """31.5 on a SMALLINT column: SQL Server's JSON path casts with TRY_CAST, so it matches nothing, as a bound
+    parameter does on every other database (a plain conversion would fail the whole query)."""
+    params = request(*ALL)
+    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31', '31.5']
+    assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):
+    """`name` is VARCHAR(50). Cut to 50 characters this value is 'Bob' and spaces, which SQL Server compares equal to
+    'Bob'; SQL Server's JSON path must cast to an unbounded text type."""
+    params = request(*ALL)
+    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob' + ' ' * 47 + 'x']
+    assert ids(table.fetch_sync(params, session)) == []
+
+
 def test_a_join_works_as_a_source(session: Session):
     other = people.alias('other')
     joined = people.join(other, people.c.age == other.c.age)
-    paired = SQLTable(joined, [Column('id', field='people_id'), Column('name', field='other_name')])
+    paired = SQLTable(joined, [Column('id', field='dtb_test_people_id'), Column('name', field='other_name')])
     response = paired.fetch_sync(request('id', 'name'), session)
     assert response.recordsTotal == len(session.execute(select(people.c.id).select_from(joined)).all())
 
@@ -313,7 +492,9 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
     from sqlalchemy import String
     from sqlalchemy import Table
 
-    tags = Table('tags', MetaData(), SQLColumn('code', String(5), primary_key=True), SQLColumn('kind', String(5)))
+    tags = Table(
+        'dtb_test_tags', MetaData(), SQLColumn('code', String(5), primary_key=True), SQLColumn('kind', String(5))
+    )
     tags.create(session.connection())
     session.execute(tags.insert(), [{'code': c, 'kind': 'k'} for c in ('c', 'a', 'b')])  # stored in this order
     tagged = SQLTable(tags, [Column('code'), Column('kind')])
