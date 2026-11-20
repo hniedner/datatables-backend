@@ -12,21 +12,25 @@ fetch; the tag names where each is checked (see `README.md`).
   without the others.
 - **SPEC-Q3.2** [CI install-isolation] With every extra and `greenlet` installed, importing each backend loads no
   module of another extra, and importing the SQL backend loads no `sqlalchemy.ext.asyncio`.
-- **SPEC-Q4.1** [CI tests] The wheel requires Python `>=3.12`; the test job runs on 3.12, 3.13, 3.14 and 3.15.
-- **SPEC-Q5.1** [CI minimum-versions] The suite passes with Pydantic 2.10.0 on 3.12 and 3.13, 2.12.0 on 3.14 and
-  2.14.0 on 3.15.
-- **SPEC-Q6.1** [CI minimum-versions] The suite passes with SQLAlchemy 2.0.31 on every supported Python.
-- **SPEC-Q7.1** [CI minimum-versions] The suite passes with opensearch-py 2.6.0 on every supported Python.
-- **SPEC-Q8.1** [CI minimum-versions] The suite passes with FastAPI 0.133.0 and python-multipart 0.0.9 on every
-  supported Python.
-- **SPEC-Q9.1** [CI minimum-versions] The job has one leg per supported Python, each printing the installed floor
-  versions it tested.
+- **SPEC-Q4.1** [CI tests] The suite passes on each Python of the job's matrix. [review] The wheel requires Python
+  `>=3.12`, and the matrix is 3.12, 3.13, 3.14 and 3.15.
+- **SPEC-Q5.1** [CI minimum-versions] Each leg installs its pinned Pydantic, checks the environment with
+  `uv pip check`, and passes the suite. [review] The pins are 2.10.0 on 3.12 and 3.13, 2.12.0 on 3.14 and 2.14.0 on
+  3.15.
+- **SPEC-Q6.1** [CI minimum-versions] Each leg passes the suite with its pinned SQLAlchemy. [review] Every leg pins
+  2.0.31.
+- **SPEC-Q7.1** [CI minimum-versions] Each leg passes the suite with its pinned opensearch-py. [review] Every leg
+  pins 2.6.0.
+- **SPEC-Q8.1** [CI minimum-versions] Each leg passes the suite with its pinned FastAPI and python-multipart.
+  [review] Every leg pins 0.133.0 and 0.0.9.
+- **SPEC-Q9.1** [CI minimum-versions] Each leg prints the installed versions it tested. [review] The job has one leg
+  per supported Python.
 - **SPEC-Q10.1** [review] The wheel holds `datatables_backend/py.typed`; CI's types and lint jobs run `basedpyright`
   and `ruff` and fail on any finding.
 - **SPEC-Q11.1** [review] The behaviour tests call only the public API (`parse_request`, `fetch`, `fetch_sync`, the
   FastAPI dependency); they run on SQLite sync and aiosqlite by default and on PostgreSQL, SQL Server, MySQL and
   OpenSearch in the container jobs, where none is skipped.
-- **SPEC-Q12.1** [CI gate] The `gate` check needs lint, types, tests, install-isolation, minimum-versions,
-  postgresql, mysql, sqlserver and opensearch, fails unless every one succeeded, and is the one required check on
-  `main`.
+- **SPEC-Q12.1** [CI gate] The `gate` check fails unless every job it needs succeeded. [review] It needs lint,
+  types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver and opensearch, and it is the one
+  required check on `main`.
 - **SPEC-Q13.1** [review] The wheel's metadata `License-Expression` is `MIT` and the wheel ships `LICENSE`.

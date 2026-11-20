@@ -41,9 +41,8 @@ lists rows in the order they come back.
 - **SPEC-O6.2** [SQL] The compiled ORDER BY of a string column holds no `COLLATE` clause the app did not declare
   (PRD-D10).
 - **SPEC-O7.1** [OS] Order `name` asc sends a sort on `name.keyword`; on a `keyword` column, on the field itself.
-- **SPEC-O8.1** [all] Order `active` desc then `price` asc → rows 4, 1, 2, 3: the true rows first, among them row
-  4's NULL price before row 1's 7; then false; then NULL.
-- **SPEC-O8.2** [all] Order `price` asc then `active` desc → rows 4, 1, 3, 2 (the first entry decides, the second
-  only breaks ties).
+- **SPEC-O8.1** [all] Order `active` desc then `price` desc → rows 1, 4, 2, 3: the true rows first, among them row
+  1's 7 before row 4's NULL; then false; then NULL. Dropping the `price` entry would give 4, 1, 2, 3.
+- **SPEC-O8.2** [all] Order `price` asc then `active` desc → rows 4, 1, 3, 2: the first entry is primary.
 - **SPEC-O8.3** [all] Order `secret` asc marked `orderable: false` (skipped: unorderable on both sides), then `price`
   desc → rows 2, 3, 1, 4: `price` is the primary order.

@@ -8,11 +8,14 @@ observable behaviour, in the form a behavioural test checks it: the request goes
 
 A statement is a list item that starts `- **SPEC-X1.n** [tag]`, followed by the input and the expected answer.
 
-- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text is a cross-reference.
-  `scripts/trace_check.py` (run in CI's lint job) checks that every *must* and *should* requirement has a statement,
-  that every cited id exists, and that no statement id is used twice.
+- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text is a cross-reference. A wrapped
+  statement continues on indented lines.
+- A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2); a
+  `SPEC-` id outside backticks anywhere but a statement's start is a finding.
+- `scripts/trace_check.py` (run in CI's lint job) checks that every *must* and *should* requirement has a statement,
+  that every cited id exists and is well formed, and that no statement id is used twice.
 - A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
-  `colour` redeclared as ..."). Otherwise it runs on the fixture as below.
+  the stored field renamed ..."). Otherwise it runs on the fixture as below.
 
 ## Tags
 
@@ -58,7 +61,7 @@ column is `text+keyword` unless a statement says otherwise.
 | `made` | date | searchable, orderable |
 | `at` | timezone-aware datetime | searchable, orderable |
 | `active` | boolean | searchable, orderable |
-| `note` | string, nullable | searchable, orderable |
+| `note` | string | searchable, orderable |
 | `secret` | string with a search-value hook that prefixes `enc:` | searchable, not orderable |
 
 | id | name | colour | price | made | at (UTC) | active | note | secret (stored) |
@@ -68,17 +71,19 @@ column is `text+keyword` unless a statement says otherwise.
 | 3 | `Blue 50% plum` | `blue` | 8 | NULL / missing | NULL / missing | NULL / missing | `x_y` | `enc:Gamma` |
 | 4 | `ÄPFEL` | `RED` | NULL / missing | 2023-01-01 | 2023-01-01T12:00Z | true | `5" pipe` | `enc:Delta` |
 
-"A row holding `w`" means a row with `w` in some searchable column.
+Every column but `id` is nullable (missing on OpenSearch), so a row a statement adds holds NULL wherever it gives no
+value. "A row holding `w`" means a row with `w` in some searchable column.
+
+## Decided questions (owner, 2026-11-20)
+
+- **OQ1** (PRD-F38): the SearchBuilder root group counts as depth 1 (F38.1).
+- **OQ2** (PRD-D1, PRD-R1, PRD-C6): a row carries every declared column, whatever the request lists (D1.1, R7.2).
+- **OQ3** (PRD-A10): `draw` sits at the top level of the 422 body, beside `detail` (A10.1).
 
 ## Open questions
 
-Each is marked in the statement that depends on it. The statement states the reading it assumes until the owner
-answers.
-
-- **OQ1** (PRD-F38): does the SearchBuilder root group count toward the 8-group depth? SPEC-F38.1 assumes it does.
-- **OQ2** (PRD-D1, PRD-R1, PRD-C6): does a row carry every declared column, or only the columns the request names?
-  SPEC-D1.1 assumes every declared column.
-- **OQ3** (PRD-A10): where does `draw` sit in the 422 body? SPEC-A10.1 assumes a top-level key beside `detail`.
-- **OQ4** (PRD-F9): OpenSearch's `case_insensitive` term and wildcard queries fold ASCII only (to be checked on the
-  container). If they do, OpenSearch matches non-ASCII letters case-sensitively, which PRD-F9 states only for SQLite.
-  The specs claim no non-ASCII answer on OpenSearch until the owner decides.
+- **OQ4** (PRD-F9): non-ASCII case folding on OpenSearch. A string `contains` on a `text+keyword` column is a
+  `match` on the analysed text or a `case_insensitive` wildcard on the keyword field. The standard analyser lowercases
+  whole words, which should fold non-ASCII. Substrings and exact matches depend on what `case_insensitive` does with
+  non-ASCII. F9.9 (whole word), F9.10 (substring) and F9.11 (exact `=`) claim no answer; the live run of issue #11
+  (`tests/test_opensearch_live.py`) decides them.

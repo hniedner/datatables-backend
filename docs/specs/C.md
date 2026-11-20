@@ -18,8 +18,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   SQL Server) in the page statement.
 - **SPEC-C6.1** [SQL] Given a table with an undeclared column `hidden`: the page statement selects no `hidden`, and
   no row holds a `hidden` key.
-- **SPEC-C7.1** [OS] Recording: a request with a filter sends one search carrying both the page and
-  `track_total_hits: true`, whose `hits.total` gives `recordsFiltered`.
+- **SPEC-C7.1** [OS] Recording, with a client whose search answers 20,000 matches (more than OpenSearch counts
+  exactly by default): a request with a filter sends one search, which returns the page, and `recordsFiltered` is
+  20,000 with no second call.
 - **SPEC-C8.1** [OS] Recording: with no filter beyond the base filter, one search answers; `recordsTotal` equals
   `recordsFiltered`.
 - **SPEC-C8.2** [OS] Recording: with a global search, a separate count gives `recordsTotal`.
@@ -43,17 +44,19 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   two requests within the TTL run one total count between them; recording shows the second ran only the filtered
   count and the page, and both answer `recordsTotal` 4.
 - **SPEC-C14.2** [all] After the TTL ends, the next request counts again and sees a newly inserted row.
-- **SPEC-C15.1** [SQL] Two tables over the same source whose base filters differ only in a bound value
-  (`tenant = 1`, `tenant = 2`) and share one cache → each answers its own `recordsTotal`.
+- **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
+  source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
+  sent a global search `e` → `recordsTotal` 3 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
-  with a global search `red` → `recordsTotal` 4 and 2. [OS] Two tables over the indexes `a` (4 documents) and `b`
-  (2 documents) sharing one cache → 4 and 2.
+  with a global search `red` → `recordsTotal` 4 and 2.
+- **SPEC-C15.4** [OS] One table and one `TotalCache`, fetched with two clients whose indexes hold 4 and 2 documents,
+  with a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.3** [all] With an app-supplied cache key, two tables given the same key share one total: the second
   answers the first's `recordsTotal` without counting.
 - **SPEC-C16.1** [all] `TotalCache.clear()` makes the next request count again and see a newly inserted row.
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
-- **SPEC-C17.1** [SQL Server] On a table with 9 string columns, a `multi_values` list of 256 values on each (2,304
-  values, within PRD-F38 per list) → answered with the matching rows; recording shows each IN list sent as one
-  `OPENJSON` parameter.
+- **SPEC-C17.1** [SQL Server] On a table of rows 1 to 3 with string columns `c1` to `c9`, each holding `r<id>`: a
+  `multi_values` list on each column of `r1` and 255 values that match nothing (2,304 values, within PRD-F38 per
+  list) → rows 1; recording shows each IN list sent as one `OPENJSON` parameter.
 - **SPEC-C17.2** [SQLite, PostgreSQL, MySQL] The request of C17.1 (2,304 values) binds each value as its own
   parameter (no JSON parameter) and answers the same rows.

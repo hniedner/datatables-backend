@@ -19,15 +19,21 @@ PRD = """\
 COMPLETE = '- **SPEC-F1.1** One.\n- **SPEC-F2.1** Two, see PRD-F1.\n'
 
 
-def run(tmp_path: Path, specs: dict[str, str] | None, prd: str | None = PRD) -> subprocess.CompletedProcess[str]:
+def run(
+    tmp_path: Path, specs: dict[str, str] | None, prd: str | bytes | None = PRD
+) -> subprocess.CompletedProcess[str]:
     prd_path = tmp_path / 'PRD.md'
-    if prd is not None:
+    if isinstance(prd, bytes):
+        prd_path.write_bytes(prd)
+    elif prd is not None:
         prd_path.write_text(prd, encoding='utf-8')
     specs_path = tmp_path / 'specs'
     if specs is not None:
         specs_path.mkdir()
         for name, text in specs.items():
-            (specs_path / name).write_text(text, encoding='utf-8')
+            path = specs_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding='utf-8')
     return subprocess.run(
         [sys.executable, str(SCRIPT), '--prd', str(prd_path), '--specs', str(specs_path)],
         capture_output=True,
@@ -55,7 +61,7 @@ def test_findings_are_exact_lines_on_stderr(tmp_path: Path) -> None:
 def test_statement_citing_unknown_requirement_fails(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F3.1** Three.\n'})
     assert result.returncode == 1
-    assert result.stderr == 'SPEC-F3.1 cites PRD-F3, which does not exist\n'
+    assert result.stderr == 'SPEC-F3.1 states PRD-F3, which does not exist\n'
 
 
 def test_statement_of_a_later_requirement_is_allowed(tmp_path: Path) -> None:
@@ -128,11 +134,90 @@ def test_no_statement_fails(tmp_path: Path) -> None:
 def test_missing_specs_directory_is_a_usage_error(tmp_path: Path) -> None:
     result = run(tmp_path, None)
     assert result.returncode == 2
+    assert 'is not a directory' in result.stderr
 
 
 def test_missing_prd_is_a_usage_error(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': COMPLETE}, prd=None)
     assert result.returncode == 2
+    assert 'cannot read the input' in result.stderr
+
+
+def test_undecodable_input_is_a_usage_error(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE}, prd=b'| PRD-F1 | \xff | Why. | must |\n')
+    assert result.returncode == 2
+    assert 'cannot read the input' in result.stderr
+    assert 'utf-8' in result.stderr
+
+
+def test_spec_id_on_a_continuation_line_fails(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, as\n  SPEC-F2.1 says.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:2 names a SPEC id inside a statement outside backticks\n'
+
+
+def test_spec_id_inside_a_statement_fails(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, as SPEC-F2.1 says.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:1 names a SPEC id inside a statement outside backticks\n'
+
+
+def test_backticked_spec_id_inside_a_statement_passes(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, as `SPEC-F2.1` says.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 0, result.stderr
+
+
+def test_lazy_continuation_line_fails(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One, wrapped\nonto PRD-F9.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:2 continues a statement without indentation\n'
+
+
+@pytest.mark.parametrize('name', ['sub/X.md', 'notes.txt'])
+def test_only_markdown_directly_in_the_directory_is_read(tmp_path: Path, name: str) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE, name: '- **SPEC-F9.1** Not read.\n'})
+    assert result.returncode == 0, result.stderr
+
+
+def test_indented_statement_is_stray(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '\n  - **SPEC-F1.2** Indented.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:4 holds a SPEC id outside a statement of the expected shape\n'
+
+
+@pytest.mark.parametrize(
+    'row',
+    [
+        '  | PRD-F3 | Text. | Why. | must |',
+        '| **PRD-F3** | Text. | Why. | must |',
+        '| `PRD-F3` | Text. | Why. | must |',
+        '| PRD-F3 |  | Why. | must |',
+        '| PRD-f3 | Text. | Why. | must |',
+        '| PRD-3 | Text. | Why. | must |',
+    ],
+)
+def test_more_drifted_requirement_rows_fail(tmp_path: Path, row: str) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD + row + '\n')
+    assert result.returncode == 1
+    assert result.stderr == 'PRD row 6 is not a requirement row of the expected shape\n'
+
+
+def test_trailing_spaces_on_a_row_are_ignored(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD.replace('| must |\n', '| must |   \n'))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('bad', ['PRD-f9', 'PRD-9', 'PRD-F'])
+def test_malformed_citation_fails(tmp_path: Path, bad: str) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + f'- **SPEC-F1.2** See {bad}.\n'})
+    assert result.returncode == 1
+    assert result.stderr == f'SPEC-F1.2 cites the malformed id {bad}\n'
+
+
+def test_malformed_spec_id_fails(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-Fx.2** Bad id.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 holds a SPEC id outside a statement of the expected shape\n'
 
 
 @pytest.mark.parametrize(
@@ -146,13 +231,13 @@ def test_missing_prd_is_a_usage_error(tmp_path: Path) -> None:
     ],
 )
 def test_malformed_statement_line_fails(tmp_path: Path, line: str) -> None:
-    result = run(tmp_path, {'F.md': COMPLETE + line + '\n'})
+    result = run(tmp_path, {'F.md': COMPLETE + '\n' + line + '\n'})
     assert result.returncode == 1
-    assert result.stderr == 'F.md:3 holds a SPEC id outside a statement of the expected shape\n'
+    assert result.stderr == 'F.md:4 holds a SPEC id outside a statement of the expected shape\n'
 
 
 def test_backticked_spec_id_is_text(tmp_path: Path) -> None:
-    result = run(tmp_path, {'F.md': COMPLETE + 'The form is `- **SPEC-X1.n**`.\n'})
+    result = run(tmp_path, {'F.md': COMPLETE + '\nThe form is `- **SPEC-X1.n**`.\n'})
     assert result.returncode == 0, result.stderr
 
 

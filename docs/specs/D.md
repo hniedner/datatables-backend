@@ -3,15 +3,15 @@
 Statements for PRD section 4.2. Form, backends, answers and the `items` fixture: see `README.md`.
 
 - **SPEC-D1.1** [all] A request naming the declared columns in any order, or only a subset of them, is answered;
-  each row holds every declared column's client name, whichever the request names. Whether rows carry every
-  declared column or only the requested ones is open question OQ2 in `README.md`.
-- **SPEC-D2.1** [all] `Column('colour', field=...)` over a backend field named `colour_code` → a column search on
-  `colour` filters `colour_code`, and rows carry the key `colour`, never `colour_code`.
-- **SPEC-D3.1** [all] The same text `7` on a column declared string and on one declared number: SearchBuilder `<`
-  answers on the number column and is refused with `invalid_filter` on the string column (the declared type
-  decides).
-- **SPEC-D4.1** [all] A column declared unsearchable: a global search skips it and a column search on it is
-  `invalid_filter` (PRD-F41).
+  each row holds every declared column's client name, whichever the request names (the owner's decision of
+  2026-11-20).
+- **SPEC-D2.1** [all] With the stored field renamed `colour_code` and the column declared
+  `Column('colour', field='colour_code')`: a column search `blue` on `colour` → rows 3, and rows carry the key
+  `colour`, never `colour_code`.
+- **SPEC-D3.1** [all] The declared type decides: SearchBuilder `<` `8` on `price` (declared number) → rows 1; on
+  `colour` (declared string) → `invalid_filter`.
+- **SPEC-D4.1** [all] With `name` declared unsearchable: global search `apple` → none (row 1 is not found through
+  `name`); a column search `apple` on `name` → `invalid_filter` (PRD-F41).
 - **SPEC-D5.1** [all] A column declared unorderable: an order the request marks orderable on it is `invalid_filter`
   (PRD-O1).
 - **SPEC-D6.1** [all] A column search with a value on undeclared `extra` → `invalid_filter`; with an empty value →
@@ -19,12 +19,12 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D6.2** [all] A SearchBuilder criterion whose `origData` is undeclared → `invalid_filter`.
 - **SPEC-D6.3** [all] A global search with a request-searchable undeclared column → answered (rows 1, 2, 4 for
   `red`); an order on it marked unorderable → skipped; marked orderable → `invalid_filter`.
-- **SPEC-D7.1** [all] SearchBuilder `=` `7` on `price` sent with `type: "string"` → rows 1; `contains` `7` on `price`
-  sent with `type: "string"` → `invalid_filter` (the client's type is ignored).
-- **SPEC-D8.1** [SQL] Columns declared without a type: on an `Integer` column SearchBuilder `<` `8` → rows 1 and
-  `contains` `7` → `invalid_filter`; on a `Date` column `contains` `2024` → rows 1, 2; on a `Boolean` column (SQL
-  Server `BIT` included) `=` `true` → rows 1, 4 and `<` → `invalid_filter`; on a `String` column `contains` `app` →
-  rows 1 and `<` → `invalid_filter`.
+- **SPEC-D7.1** [all] SearchBuilder `<` `8` on `price` sent with `type: "string"` → rows 1; `contains` `7` on
+  `price` sent with `type: "string"` → `invalid_filter` (the client's type is ignored both ways).
+- **SPEC-D8.1** [SQL] The fixture's `price` (an `Integer`), `made` (a `Date`), `active` (a `Boolean`; on SQL Server a
+  `BIT`) and `name` (a `String`), declared without a type: on `price` SearchBuilder `<` `8` → rows 1 and `contains`
+  `7` → `invalid_filter`; on `made` `contains` `2024` → rows 1, 2; on `active` `=` `true` → rows 1, 4 and `<` →
+  `invalid_filter`; on `name` `contains` `app` → rows 1 and `<` → `invalid_filter`.
 - **SPEC-D8.2** [MySQL] A reflected `TINYINT(1)` column without a declared type is a number: SearchBuilder `<` `1` is
   answered; declared boolean, `=` `true` is answered.
 - **SPEC-D8.3** [OS] A column without a declared type is a string: SearchBuilder `<` on it → `invalid_filter`.
@@ -46,8 +46,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   stored value is answered (no word cap) and matches by equality; one of 256 code points → `invalid_filter`.
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
   `invalid_filter`.
-- **SPEC-D12.7** [all] Global search `a` + LF + `b` on a hooked column storing `enc:a` + LF + `b` matches by the
-  whole text (LF is not rewritten to a space for the equality).
+- **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose other columns hold
+  neither `a` nor `b` (NULL or missing): global search `a` + LF + `b` → row 5 is among the rows (the hooked
+  equality, since the LF is not rewritten for it).
 - **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (250 after
   trimming) → `invalid_filter`: the 255-code-point bound applies to the raw text.
 - **SPEC-D13.1** [OS] A `text+keyword` column (the default) sorts and matches exactly on `<field>.keyword`; a

@@ -103,3 +103,4 @@ known-first-party = ["datatables_backend"]
 include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
+failOnWarnings = true

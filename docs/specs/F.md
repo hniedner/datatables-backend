@@ -9,20 +9,22 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F1.2** [SQL] Global search `red 7` → rows 1, 2 (row 2: `reddish` and the price text `17`, PRD-F23).
 - **SPEC-F1.3** [OS] Global search `red 7` → none: the number column takes no part (PRD-F32), so `7` matches nothing.
 - **SPEC-F2.1** [all] Column search on `name` with `red pear` → rows 2.
-- **SPEC-F2.2** [all] Column search on `name` with `red blue` → none: every word must match within that one column.
+- **SPEC-F2.2** [all] Column search on `colour` with `red pipe` → none: every word must match within that one column
+  (matching across the row would give rows 4).
 - **SPEC-F3.1** [all] Global search `pear reddish` → rows 2: words match in any order.
-- **SPEC-F3.2** [all] Global search `"a" "b"x` answers the rows holding each of `a`, `b` and `x`; `x"b"y` the rows
-  holding `xby`; `x"a b"` the rows holding `xa` and `b`; `"a""b"` the rows holding `a` and `b` (rows built for each).
+- **SPEC-F3.2** [all] On a table of rows whose only searchable column `note` holds 5 `a b x`, 6 `a b`, 7 `xby`, 8
+  `x b y`, 9 `xa b` and 10 `x a b`: global search `"a" "b"x` → rows 5, 9, 10 (words `a`, `b`, `x`); `x"b"y` → rows
+  7 (the word `xby`); `x"a b"` → rows 9 (`xa` and `b`, not 10); `"a""b"` → rows 5, 6, 9, 10 (`a` and `b`).
 - **SPEC-F4.1** [all] Global search `"red apple"` → rows 1; `"apple red"` → none: a phrase sits inside one column.
 - **SPEC-F4.2** [all] Global search `“red apple”` (U+201C, U+201D) → rows 1.
-- **SPEC-F4.3** [all] Given rows whose `note` is `a b”` and `a b`: global search `"a b”` → only the `a b”` row;
-  `“a b"` searches `“a b`, matching a row whose `note` is `“a b` and not one whose `note` is `a b`.
+- **SPEC-F4.3** [all] Given rows whose `note` is `a b”`, `a b` and `“a b`: global search `"a b”` → only the `a b”`
+  row; `“a b"` searches `“a b` → only the `“a b` row.
 - **SPEC-F4.4** [all] Column search on `name` with `50"` → rows 3 (it searches `50`); `"plum` (unclosed) searches
   `plum` → rows 3.
 - **SPEC-F4.5** [all] Global search `!5"` → rows 1, 2, 3: it excludes rows holding `5"`, not rows holding `5` (row 3
   holds `50`).
-- **SPEC-F4.6** [all] Given a row whose `note` is `x “abc`: global search `“abc` (an unclosed curly quote) → that
-  row only; the quote stays as text.
+- **SPEC-F4.6** [all] Given rows whose `note` is `x “abc` and `abc`: global search `“abc` (an unclosed curly quote)
+  → the `x “abc` row only; the quote stays as text.
 - **SPEC-F4.7** [all] Given rows whose `note` is `"a b”` and `a b”`: global search `!"a b”` excludes the row holding
   `"a b”` and keeps the row holding only `a b”`: a negated mixed pair keeps its straight quote.
 - **SPEC-F5.1** [all] Global search `!reddish` → rows 1, 3, 4.
@@ -57,8 +59,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   F9.4 hold unchanged on a case-sensitive collation.
 - **SPEC-F9.6** [SQLite] Global search `äpfel` → none (SQLite folds ASCII only); `ÄPFEL` → rows 4.
 - **SPEC-F9.7** [PostgreSQL in a UTF-8 non-C locale (`en_US.UTF-8`), SQL Server with a `_CI_` collation, MySQL
-  with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run; the non-ASCII answer on
-  OpenSearch is open question OQ4 in `README.md`.
+  with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run.
+- **SPEC-F9.9** [OS] Whole word: global search `äpfel` against row 4's `ÄPFEL`. Open: decided by the live run
+  (issue #11); no answer is claimed (OQ4 in `README.md`).
+- **SPEC-F9.10** [OS] Substring: global search `äpf` against row 4's `ÄPFEL`. Open: decided by the live run
+  (issue #11); no answer is claimed (OQ4).
+- **SPEC-F9.11** [OS] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open: decided by
+  the live run (issue #11); no answer is claimed (OQ4).
 - **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
   exactly, PRD-D17).
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
@@ -159,14 +166,16 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   error_code `invalid_filter`.
 - **SPEC-F27.3** [all] On `made` (date), `starts` and `ends` → error_code `invalid_filter`; `contains` is answered
   (PRD-F22).
-- **SPEC-F27.4** [all] The criterion's `type` is ignored: `=` `7` on `price` sent with `type: "string"` → rows 1.
+- **SPEC-F27.4** [all] The criterion's `type` is ignored: `<` `8` on `price` sent with `type: "string"` → rows 1
+  (honouring the client's type would refuse `<` with `invalid_filter`).
 - **SPEC-F27.5** [all] SearchBuilder condition `without` → `MalformedRequest` (PRD-P6).
 - **SPEC-F27.6** [all] On `price`: `<` `8` → rows 1; `between` `7` and `8` → rows 1, 3; `!between` `7` and `8` →
   rows 2, 4 (PRD-F37).
 - **SPEC-F28.1** [all] Group OR of `colour = blue` and `price = 7` → rows 1, 3.
 - **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 7` and `price null` → rows 1, 4.
-- **SPEC-F28.3** [all] An empty group, alone or nested in an AND group with `colour = blue`, adds nothing: rows 1, 2,
-  3, 4 and rows 3.
+- **SPEC-F28.3** [all] An empty group adds nothing: alone → rows 1, 2, 3, 4; nested in an AND group with
+  `colour = blue` → rows 3; nested in an OR group with `colour = blue` → rows 3 (an empty group read as true would
+  give every row).
 - **SPEC-F30.1** [all] `=` on `name` with no value, and `between` on `price` with one value → error_code
   `invalid_filter`.
 - **SPEC-F31.1** [all] With the base filter `price` not null: no filter → rows 1, 2, 3, `recordsTotal` 3,
@@ -192,7 +201,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   rows 1, 2, 3; `!ends` `y` → rows 1, 2, 4. Row 1 (NULL or missing) satisfies each.
 - **SPEC-F37.2** [all] On `price`: `!=` `7` → rows 2, 3, 4; `!between` `0` and `100` → rows 4.
 - **SPEC-F38.1** [all] A SearchBuilder tree 8 groups deep, the root group counted as depth 1, is answered; 9 deep →
-  error_code `invalid_filter`. Whether the root counts is open question OQ1 in `README.md`.
+  error_code `invalid_filter`.
 - **SPEC-F38.2** [all] 64 criteria in all are answered; 65 → error_code `invalid_filter`.
 - **SPEC-F38.3** [all] A categorical filter or `multi_values` list of 256 values is answered; 257 → error_code
   `invalid_filter`.
@@ -223,6 +232,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F43.3** [all] On `active`: `=` with `yes`, `2`, `t` or `''`, and any of `<`, `between`, `contains`,
   `starts` → error_code `invalid_filter`, never a database error.
 - **SPEC-F44.1** [all] Global search `true` → none (the boolean column is skipped; no other column holds `true`).
+  On a table whose only searchable column is `active`, global search `x` → error_code `invalid_filter` (no usable
+  column, PRD-F13).
 - **SPEC-F44.2** [all] Column search on `active`: `true` → rows 1, 4; `0` → rows 2; `yes` → error_code
   `invalid_filter`.
 - **SPEC-F44.3** [all] Categorical `^(true|0)$` on `active` → rows 1, 2, 4; `multi_values` `["", "1"]` → rows 1, 3,

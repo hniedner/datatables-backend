@@ -22,12 +22,14 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   imports), and every body a recording client receives is a plain `dict` of JSON values.
 - **SPEC-A9.1** [FastAPI] A POST with a form body holding `draw=5` and a query string holding `_` and `draw=99` reads
   the body only: the answer's `draw` is 5.
-- **SPEC-A9.2** [FastAPI] A POST with a JSON object body sent as `application/x-www-form-urlencoded` is read as JSON.
+- **SPEC-A9.2** [FastAPI] A POST whose body is the JSON object of the base request with `draw` 6, sent as
+  `application/x-www-form-urlencoded`, is read as JSON: the answer's `draw` is 6.
 - **SPEC-A9.3** [FastAPI] A GET with no body, and a POST with an empty body, read the query string.
 - **SPEC-A10.1** [FastAPI] A malformed request with `draw` 5 → HTTP 422 whose JSON body carries `"draw": 5` as a
-  top-level key beside `detail`; with `draw` `x` → HTTP 422 with no `draw` key. Where `draw` sits is open question
-  OQ3 in `README.md`.
+  top-level key beside `detail` (the owner's decision of 2026-11-20); with `draw` `x` → HTTP 422 with no `draw`
+  key.
 - **SPEC-A11.1** [FastAPI] SearchBuilder `=` `abc` on `price` → HTTP 200 with `error`, `error_code`
   `invalid_number`, `draw`, `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
-- **SPEC-A11.2** [FastAPI] Each of the four user-error codes answers HTTP 200; the dependency takes no option that
-  changes the status.
+- **SPEC-A11.2** [FastAPI] Each of the four user-error codes answers HTTP 200, through an app over an OpenSearch
+  table with a recording client (`page_out_of_range` exists only there, PRD-C12); the dependency takes no option
+  that changes the status.

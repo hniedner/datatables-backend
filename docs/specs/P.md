@@ -53,14 +53,17 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P17.1** [core] `parse_request` returns a `DTParams` whose columns are `DTColumn`, orders `DTOrder`, search a
   `Search`, and SearchBuilder a tree of `SearchGroup` and `SearchCriterion`.
 - **SPEC-P18.1** [all] A column whose `data` is `{"_": "name", "sort": "name"}` and `name` `name` is the declared
-  column `name` (a column search `pear` on it → rows 2); with an empty `name` it is nameless (PRD-P21).
+  column `name` (a column search `pear` on it → rows 2); with an empty `name` it is nameless (PRD-P21), so a column
+  search `pear` on it → error_code `invalid_filter`.
 - **SPEC-P19.1** [core] An empty request, and a DataTables 1.9 request (`sEcho`, `sSearch`, `iDisplayStart`), →
   `MalformedRequest`.
-- **SPEC-P20.1** [core] `columns[0][data]` as the JSON integer 0 reads as `"0"`; with a declared column `0` it is
-  that column.
+- **SPEC-P20.1** [core] `columns[0][data]` as the JSON integer 0 parses to a column whose `data` is `"0"`.
+- **SPEC-P20.2** [all] With `Column('0', field='id')` declared and `columns[0][data]` the JSON integer 0: a column
+  search `3` on it → rows 3.
 - **SPEC-P21.1** [all] A nameless column (`data` null, empty `name`) first, with DataTables' default order on column
   0 and a global search `red` → rows 1, 2, 4, no error.
 - **SPEC-P21.2** [all] A column with `data` `function` and an empty `name` is nameless: an order on it is skipped
-  (rows 1, 2, 3, 4); with a declared column named `function`, it is that column.
+  (rows 1, 2, 3, 4); with `Column('function', field='id')` declared, it is that column: an order desc on it → rows
+  4, 3, 2, 1.
 - **SPEC-P21.3** [all] A column search with value `x` on a nameless column → error_code `invalid_filter`; a
   SearchBuilder criterion with an empty `origData` → error_code `invalid_filter`.
