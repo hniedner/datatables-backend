@@ -3,8 +3,9 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 20 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
-  maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 21 (revision 20 with the owner's answers to
+  section 8 folded in; question 2 stays open). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
+  its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -203,7 +204,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-C9 | On OpenSearch, a count that is only a lower bound is replaced by an exact count. | Never an approximate total. | must |
 | PRD-C10 | An OpenSearch page is served when `start + length <= max_result_window` (the ordinary way) or `recordsFiltered - start <= max_result_window` (by reversing the sort and the page). `max_result_window` defaults to 10,000 and can be set per table. | "Last page" on a large index is an ordinary press in SvelteDT's pager; the reverse sort reaches it within the window. | must |
 | PRD-C11 | To decide PRD-C10, the filtered count, plus the total count when PRD-C8 does not reuse it, may run before the page query; these are the only queries that may run before a refusal. | Telling a near-end page from a middle one needs the total. | must |
-| PRD-C12 | Any other OpenSearch page beyond `max_result_window` is refused with `page_out_of_range`, and the answer carries the real `recordsTotal` and `recordsFiltered`. | OpenSearch would reject it; the counts let a client offer a way back (SvelteDT's helper may or may not use them). | must |
+| PRD-C12 | Any other OpenSearch page beyond `max_result_window` is refused with `page_out_of_range`, and the answer carries the real `recordsTotal` and `recordsFiltered`. The library never changes cluster settings such as `max_result_window`. | OpenSearch would reject it; the counts let a client offer a way back (SvelteDT's helper may or may not use them). Owner's decision of 2026-11-19 for 1.0: the first and last pages always work (PRD-C10, PRD-C11), and a sequential `search_after` route waits until users hit the limit. | must |
 | PRD-C13 | A reverse-sorted page may drift if the index changes between the count and the page, as offset paging always can; no point-in-time is held. | A point-in-time per request costs a server resource for a drift offset paging already has. | must |
 | PRD-C14 | `recordsTotal` can be cached by a caller-supplied TTL cache. | An unfiltered count of a large table is costly. | must |
 | PRD-C15 | Two base filters that differ only in their bound values (e.g. per tenant) never share a cached total: the cache key covers the table, the base filter with its bound values, and the database or index, or the app supplies the key. | A shared total would show one tenant another's count. | must |
@@ -219,7 +220,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-E3 | The code follows the first mistake in this order: (1) a control character (PRD-F15), text over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format a date or number column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); (4) every other filter error, a boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it needs a valid count. | One code per kind of mistake, decidable when a request holds several. | must |
 | PRD-E4 | An `error` text is fixed per case apart from declared names, and never quotes the user's input. | Echoing input invites injection into logs and pages. | must |
 | PRD-E5 | `query_failed` is set only by an app, through `DTResponse.query_failed(draw)`, the conventional shape for a failure it catches. | The library never answers its own failures. | must |
-| PRD-E6 | A structural error raises `MalformedRequest`, never `invalid_filter`. | One the integrator fixes, the other the user. | must |
+| PRD-E6 | A structural error raises `MalformedRequest`, never `invalid_filter`. `MalformedRequest` carries the request's `draw` when it parsed as a valid integer, and none otherwise (PRD-A10). | One the integrator fixes, the other the user. | must |
 | PRD-E7 | Every user mistake is found while parsing, planning or building the query, before the page is queried (the count of PRD-C11 may run first). | A filter error is never a half-run query. | must |
 | PRD-E8 | Everything else raises: a database error, a schema the table lacks, a partial OpenSearch answer. | A server failure is not the user's to fix and must not look like an empty result. | must |
 | PRD-E9 | An OpenSearch answer that does not cover every shard, or whose shard information cannot be read, raises `PartialResultError`. | A partial answer is never shown as complete. | must |
@@ -253,7 +254,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-A7 | SQL: the table takes a SQLAlchemy `FromClause` (a table, join or subquery) and accepts an `AsyncSession` or `AsyncConnection` (async) and a `Session` or `Connection` (sync). | What SQLAlchemy apps hold. | must |
 | PRD-A8 | OpenSearch: the table takes an index name and accepts an `AsyncOpenSearch` or `OpenSearch` client; queries are plain request bodies, with no DSL dependency. | No extra dependency beyond the client. | must |
 | PRD-A9 | An optional FastAPI dependency parses the request from a non-empty body when there is one, otherwise from the query string; the two are never merged. A body that decodes to a JSON object is read as JSON whatever its Content-Type; any other body is read as a form. | DataTables appends its cache-buster `_` to the query string of every request, POST included (READ, DataTables 3.1.5 `dataTables.mjs`: `queryParams` adds `_` for any method when `cache === false` at :826, and its server-side request sets `cache: false` at :5550), so a non-empty query string does not mean the request is there; merging would mix two sources. DataTables 3.1.5's `submitAs: 'json'` keeps the form Content-Type unless one is set (READ: its `ajax()` sets JSON only when `!options.contentType`, and its defaults carry form-urlencoded), so choosing the parser by Content-Type would read the JSON as a form. | must |
-| PRD-A10 | The FastAPI dependency answers 422 on `MalformedRequest`. | The structural/user split of PRD-E6. | must |
+| PRD-A10 | The FastAPI dependency answers 422 on `MalformedRequest`. The body carries `draw` whenever `draw` parsed as a valid integer (PRD-P10), and leaves it out when `draw` itself is the malformed part. | The structural/user split of PRD-E6; a client that matches answers by `draw` can still match a 422. Owner's decision of 2026-11-19. | must |
 
 ### 4.9 Packaging and quality (Q)
 
@@ -375,19 +376,22 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
 
 ## 8. Open questions for the owner
 
-1. OpenSearch middle pages: should a sequential `search_after` route, or raising `max_result_window` per index, remove
-   the limit of PRD-C12? SvelteDT's pager can reach any page, so users will hit it by an ordinary press.
-2. Which HTTP status does an answered user error (PRD-E1) carry: 200 with `error_code`, as DataTables expects, or a
-   4xx the app chooses? SvelteDT must not show a refusal as "No data" (its PRD-B15).
+1. Closed 2026-11-19 (owner's ruling): the OpenSearch paging limit stays for 1.0. The first and last pages always
+   work, a middle page beyond `max_result_window` answers `page_out_of_range`, the library never changes cluster
+   settings, and a `search_after` route waits until users hit the limit (PRD-C12).
+2. Open: which HTTP status does an answered user error (PRD-E1) carry: 200 with `error_code`, as DataTables expects,
+   or a 4xx the app chooses? SvelteDT must not show a refusal as "No data" (its PRD-B15). The owner asked for research
+   on industry practice. It blocks only the FastAPI adapter's spec (PRD-A9, PRD-A10); every other spec can proceed.
 3. Closed 2026-11-19 (owner's ruling): the global search leaves a request-searchable column the server did not declare
    out, as it does an unsearchable one; a column search with a value or a non-empty `multi_values` list, a
    SearchBuilder criterion, or an order entry the request marks orderable naming it is refused (PRD-F41, PRD-D6,
    PRD-O1).
-4. Does a 422 for `MalformedRequest` need a body carrying `draw`, for a client that matches answers by `draw`?
-5. Should the total cache offer opt-in invalidation on writes? It stays out until a user needs fresher totals than a
-   TTL gives.
-6. The SQLite `json_each` compiler for IN lists is unreached (only SQL Server uses the JSON form): remove it unless a
-    statement needs it.
+4. Closed 2026-11-19 (owner's ruling): yes; the 422 body carries `draw` whenever it parsed as a valid integer, and
+   leaves it out when `draw` itself is malformed (PRD-A10, PRD-E6).
+5. Closed 2026-11-19 (decided under the owner's delegation): no write-aware cache; the total cache stays TTL-only until
+   a user needs fresher totals than a TTL gives.
+6. Closed 2026-11-19 (decided under the owner's delegation): the unreached SQLite `json_each` compiler for IN lists is
+   removed in the TDD stage, as its own commit (PRD-C17).
 
 **Governance.** A new user-error code (PRD-E2) is added only by the owner, since frontends depend on the set.
 
