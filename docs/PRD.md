@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, revision 17 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
+- **Status:** draft 2, revision 18 (2026-11-19), for the owner's approval. It replaces draft 1 (R1 to R9); section 10
   maps every draft-1 item to its place here. Once approved, a requirement changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -139,7 +139,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F6 | `!"phrase"` excludes the phrase; a token that reduces to the empty word (a lone `"`, `"""`, `!""`, `""`, a bare `!`, or a `!` word that PRD-F35 drops) adds nothing, and so does search text of spaces only. | DataTables reduces them to an empty word (READ, its 3.1.5 source); a user who types a space must not get no rows. | must |
 | PRD-F7 | In search text (the global and column searches), LF, CR, U+2028 and U+2029 count as spaces; exact values (categorical, `multi_values`, SearchBuilder) are never rewritten. | SvelteDT's local source does so (its PRD-B21, difference 4); an exact value must stay the value sent. | must |
 | PRD-F8 | No other syntax is read: `OR`, `NOT`, `-` and wildcard characters are ordinary text on every backend, OpenSearch analysed text and SearchBuilder "contains" included. | One syntax everywhere; a second syntax on one backend conflicts with `!` and surprises users. | must |
-| PRD-F9 | Matching is case-insensitive on every backend, also under a case-sensitive collation where one is configured (SQL Server, MySQL); the one exception is that SQLite folds ASCII letters only. | Case-insensitivity is portable, and the spec picks each database's means; SQLite's LIKE folds ASCII only (MEASURED: `'ÄPFEL' LIKE '%äpfel%'` is false). | must |
+| PRD-F9 | Matching is case-insensitive on every backend, for searches (global, column, `contains`, `starts`, `ends` and their negations) and exact matches (`=`, `!=`, categorical, `multi_values`) alike, also under a case-sensitive collation; SQLite folds ASCII letters only; a column with a search-value hook compares exactly (PRD-D9, PRD-D17, PRD-D18). | Case-insensitivity is portable, and the spec picks each database's means; SQLite's LIKE folds ASCII only (MEASURED: `'ÄPFEL' LIKE '%äpfel%'` is false). Exact matches are implemented as `lower()` on both sides in SQL and as `case_insensitive` term queries on OpenSearch, a `terms` list becoming a `bool` of `term` queries (INFERRED). Owner's decision of 2026-11-19 for exact matches. | must |
 | PRD-F10 | The library applies no accent folding and no dotted/dotless-i folding of its own; whether such letters match is the column's database collation. | Not portable without extensions the library does not create (non-goals, PRD-D10). | must |
 | PRD-F11 | A word matches as a substring, except on a text-only OpenSearch column, where it is an analysed match (`red` does not find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped. | A user's `%` or `*` is text, never a pattern; wildcard injection is a known failure. | must |
 | PRD-F12 | Column searches combine with AND, with each other and with the global search. | DataTables' meaning. | must |
@@ -151,7 +151,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F18 | Any other regex, an unescaped metacharacter included, is refused. | Regular-expression search is a non-goal. | must |
 | PRD-F19 | The recommended form for a sender is `^(v1\|v2)$` with each value escaped by DataTables' `util.escapeRegex` set: `/ . * + ? \| ( ) [ ] { } \ $ ^ -`. | Escaped values carry any text unambiguously (READ, the set in DataTables 3.1.5's source). | must |
 | PRD-F20 | A `multi_values` list in a column's search object is accepted as the same exact match; an empty entry means empty, as PRD-F26 defines it. | An extension that needs no regex escaping, for clients that build the request themselves. | must |
-| PRD-F21 | Dates are matched by day: `=`, `<`, `<=`, `>`, `>=` and `between` refer to whole days, for date and datetime columns alike. For a timezone-aware column the day is its UTC day, on every backend (OpenSearch included). A timezone-aware column is a SQL column whose type carries a time zone (e.g. `DateTime(timezone=True)`), or any OpenSearch date column, which OpenSearch stores as a UTC instant. On SQLite and in a MySQL `DATETIME`, which store no offset, the stored time is read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC day only when the app sets that zone to `+00:00`. | A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL documentation, not measured here. | must |
+| PRD-F21 | Dates are matched by day: `=`, `<`, `<=`, `>`, `>=` and `between` refer to whole days, for date and datetime columns alike. For a timezone-aware column the day is its UTC day, on every backend (OpenSearch included). A timezone-aware column is a SQL column whose type carries a time zone (e.g. `DateTime(timezone=True)`), or any OpenSearch date column, which OpenSearch stores as a UTC instant. On SQLite and in a MySQL `DATETIME`, which store no offset, the stored time is read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC day only when the app sets that zone to `+00:00`. A categorical value or `multi_values` entry on a date column is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`. | A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL documentation, not measured here. | must |
 | PRD-F22 | SearchBuilder's "contains" on a date column, a criterion SearchBuilder itself does not send, and a column search on an OpenSearch date column, take a year, a year-month or a day (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) and mean that span, on every backend. For a timezone-aware column the span is in UTC (PRD-F21). | A partial date names a span; substring matching on date text depends on the database's date format. | must |
 | PRD-F23 | On SQL, a number or a date column takes part in the global and column searches as text: a number as its canonical text, a date as `YYYY-MM-DD`; "7" finds 17. | As in SvelteDT's search text, which holds every column as text. | must |
 | PRD-F24 | The maximum date (9999-12-31) as a bound is a user error, not a failed query. | Its next day does not exist, and a user can change it. | must |
@@ -163,7 +163,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-F31 | An optional base filter (a SQL expression or an OpenSearch query) limits the rows the table shows at all, for `recordsTotal`, `recordsFiltered` and the page alike. | Row-level scoping belongs to the server, not the client. | must |
 | PRD-F32 | The OpenSearch global search skips number and date columns. | OpenSearch cannot match a number or date as text without a script. | must |
 | PRD-F33 | An OpenSearch column search on a number column takes one number and matches it exactly; several words, `!` or quotes are refused with `invalid_number`. | No text form to match a substring in; smart-search syntax has no meaning there. | must |
-| PRD-F34 | An OpenSearch column search on a date column takes one date term (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); several words, `!` or quotes are refused with `invalid_date`. | A date span is one term; smart-search syntax has no meaning there. | must |
+| PRD-F34 | An OpenSearch column search on a date column, other than a categorical filter or `multi_values` list (PRD-F21), takes one date term (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); several words, `!` or quotes are refused with `invalid_date`. | A date span is one term; smart-search syntax has no meaning there. | must |
 | PRD-F35 | `!` excludes a word only when the word, escaped by DataTables' `util.escapeRegex`, is longer than one character: `!-` and `!.` exclude, `!x` adds nothing. | DataTables' smart search exactly: it escapes the text first and negates a word only `if (word.length > 1)` (READ, DataTables 3.1.5 `dataTables.mjs` :5913 and :5948); the server and SvelteDT's local source share DataTables' grammar. | must |
 | PRD-F36 | A SearchBuilder criterion carrying more values than its condition takes is refused with `invalid_filter`. `null` and `!null` take no value and ignore every value entry they carry (`[]`, `['']` or leftovers): no entry is checked or transformed, PRD-F15 included, so they are never refused with `invalid_filter` for one; a structural error (PRD-P6, PRD-P11) still raises. | Silently using the first value answers a different question than asked, as a missing value would (PRD-F30); `null` and `!null` read no value, so an entry cannot change their answer. | must |
 | PRD-F37 | NULL satisfies every negative SearchBuilder condition (`!=`, `!contains`, `!starts`, `!ends`, `!between`) on every backend. | A NULL value is not equal to, does not contain, start or end with, and is not between anything, as `!word` passes NULL (PRD-F5); DataTables' client-side SearchBuilder agrees for strings and dates (section 5). | must |
@@ -208,7 +208,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 | PRD-C14 | `recordsTotal` can be cached by a caller-supplied TTL cache. | An unfiltered count of a large table is costly. | must |
 | PRD-C15 | Two base filters that differ only in their bound values (e.g. per tenant) never share a cached total: the cache key covers the table, the base filter with its bound values, and the database or index, or the app supplies the key. | A shared total would show one tenant another's count. | must |
 | PRD-C16 | A cached total ends by its TTL or by an explicit call; the library registers no global hooks on engines or pools. | Global hooks would surprise an app. | must |
-| PRD-C17 | On SQL Server, an IN list that would exceed the 2100-parameter limit is sent as one JSON parameter (`OPENJSON`); other dialects, SQLite included, bind normally. | Large categorical filters must not fail on a driver limit. | must |
+| PRD-C17 | On SQL Server, when a query's bound parameters would exceed the 2100-parameter limit, each IN list is sent as one JSON parameter (`OPENJSON`); other dialects, SQLite included, bind normally. | Large categorical filters must not fail on a driver limit. | must |
 
 ### 4.6 Errors (E)
 
@@ -216,7 +216,7 @@ A **request parameter** is one of `draw`, `start`, `length`, `columns`, `order`,
 |---|---|---|---|
 | PRD-E1 | A request the user can fix is answered, not raised: the response carries an `error` text and an `error_code`. | The user changes the filter; the app needs no error handling for it. | must |
 | PRD-E2 | The user-error codes are `invalid_filter`, `invalid_date`, `invalid_number` and `page_out_of_range`, documented and stable. | A frontend maps codes to its own messages; SvelteDT can show the reason at the field. | must |
-| PRD-E3 | The code follows the first mistake in this order: (1) a control character (PRD-F15), text over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format the column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); (4) every other filter error is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it needs a valid count. | One code per kind of mistake, decidable when a request holds several. | must |
+| PRD-E3 | The code follows the first mistake in this order: (1) a control character (PRD-F15), text over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format a date or number column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); (4) every other filter error, a boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it needs a valid count. | One code per kind of mistake, decidable when a request holds several. | must |
 | PRD-E4 | An `error` text is fixed per case apart from declared names, and never quotes the user's input. | Echoing input invites injection into logs and pages. | must |
 | PRD-E5 | `query_failed` is set only by an app, through `DTResponse.query_failed(draw)`, the conventional shape for a failure it catches. | The library never answers its own failures. | must |
 | PRD-E6 | A structural error raises `MalformedRequest`, never `invalid_filter`. | One the integrator fixes, the other the user. | must |
@@ -335,8 +335,12 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
   request-searchable column the server did not declare, where draft 1 refused the whole search (PRD-F41); the day
   text of a timezone-aware column is its UTC day, where PostgreSQL rendered it in the session zone and SQL Server
   rendered a `DATETIMEOFFSET` in its stored offset (PRD-F42).
-- Categorical: draft 1's forms kept, with the refused character set named, the empty alternative (PRD-F17) and a
-  recommended sender form (PRD-F19).
+- Categorical: draft 1's forms kept, with the refused character set named; a backslash escape outside PRD-F19's set
+  (`\d`, `\w`, `\n`) and an alternation anchored without a group (`^a|b$`), which draft 1's code read as literal
+  values, are now refused (PRD-F16, PRD-F18); the empty alternative (PRD-F17) and a recommended sender form
+  (PRD-F19).
+- Exact matches: draft 1's exact matches compared as the column's collation does (case-sensitive on PostgreSQL, SQLite
+  and OpenSearch keyword fields); now case-insensitive on every backend, except on a hooked column (PRD-F9).
 - SearchBuilder: a criterion with too many values is refused (PRD-F36), and NULL satisfies every negative condition
   (PRD-F37); the conditions each declared type takes are listed (PRD-F27), and a condition outside the 16 the protocol
   model knows, such as SearchBuilder's array `without`, is a structural error (PRD-P6); a criterion on a column the
@@ -348,7 +352,8 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
   refused, and skipped even on an undeclared name, so DataTables' default order never fails a first request
   (PRD-O1); an order index outside the request's columns raises `MalformedRequest` instead of `invalid_filter`
   (PRD-O1, PRD-P6); text order is stated as the database's (PRD-O6).
-- Paging: `start` up to 2^53-1 (PRD-P10); OpenSearch pages near the end served by reverse sort, middle pages refused
+- Paging: `start` up to 2^53-1, and `draw` refused above 2^31-1, which draft 1 stated but its code did not check
+  (PRD-P10); OpenSearch pages near the end served by reverse sort, middle pages refused
   with `page_out_of_range` and the real counts instead of `invalid_filter` (PRD-C10 to PRD-C13); a start past the end
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
@@ -362,7 +367,7 @@ the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44)
   refusal and none per allowed skip (PRD-E13), rows never HTML-escaped (PRD-R7), MySQL in the container tests
   (PRD-Q11) and CI (PRD-Q12).
 - Owner's decisions of 2026-11-19: a column with a search-value hook takes equality only (PRD-D12, PRD-D17, PRD-D18); a
-  `boolean` column type in milestone 2 (PRD-D3, PRD-D8, PRD-F43, PRD-F44).
+  `boolean` column type in milestone 2 (PRD-D3, PRD-D8, PRD-F43, PRD-F44); exact matches case-insensitive (PRD-F9).
 - Boolean columns: draft 1 treated them as text, which raised a database error on PostgreSQL (and on SQL Server for
   non-numeric text), matched the false rows on MySQL for 'true', and matched nothing on OpenSearch (MEASURED,
   container probe run 44638017591); now a boolean type (PRD-F43, PRD-F44).
