@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -708,3 +710,80 @@ def test_a_packed_unreachable_object_is_read(repo: Path, words: Path):
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def leaked(output: str, *listed: str) -> bool:
+    """Whether the output shows a word, or the word less any one letter (what UTF-8 decoding of Latin-1 leaves).
+    Object ids are taken out first: hex digits can spell a short remainder such as `caf`."""
+    shown = re.sub(r'[0-9a-f]{12,40}', '', output).casefold()
+    return any(
+        variant in shown
+        for word in listed
+        for variant in [word.casefold()] + [word.casefold()[:i] + word.casefold()[i + 1 :] for i in range(len(word))]
+    )
+
+
+MIXED = {  # list words and a two-part path: (words, first part, second part)
+    'two words': ((WORD, NON_ASCII), WORD.encode(), NON_ASCII.encode('latin-1') + b'.txt'),
+    'one word in both encodings': (('café',), 'café'.encode(), 'café'.encode('latin-1') + b'.txt'),
+}
+
+
+def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
+    """The script as a module, for a file name the file system here may refuse to create (APFS takes UTF-8 only)."""
+    spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv('DTB_PRIVATE_WORDS', str(listed))
+    return module
+
+
+@pytest.mark.parametrize('where', ['history', 'files'])
+@pytest.mark.parametrize('case', list(MIXED))
+def test_a_path_mixing_encodings_hides_every_part_with_a_word(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch, case: str, where: str
+):
+    listed_words, first, second = MIXED[case]
+    listed = write(tmp_path / 'mixed.txt', ''.join(f'{word}\n' for word in listed_words))
+    if where == 'history':
+        blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+        inner = git_bytes(repo, 'mktree', '-z', input=f'100644 blob {blob}\t'.encode() + second + b'\0').strip()
+        outer = git_bytes(repo, 'mktree', '-z', input=f'040000 tree {inner}\t'.encode() + first + b'\0').strip()
+        git(repo, 'commit-tree', outer, '-m', 'Loose')
+        result = scan('--history', words=listed, cwd=repo)
+        assert result.returncode == 1, result.stderr
+        output = result.stdout + result.stderr
+    else:  # in process, with a synthetic name: no file is created
+        scanner = load_scanner(monkeypatch, listed)
+        monkeypatch.setattr(Path, 'is_symlink', lambda _: False)
+        monkeypatch.setattr(Path, 'read_bytes', lambda _: b'clean\n')
+        output = '\n'.join(scanner.scan_files([os.fsdecode(first + b'/' + second)], scanner.load_words()))
+    assert '***/*** (path)' in output, output
+    assert not leaked(output, *listed_words), output
+
+
+@pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
+def test_a_tag_message_in_another_encoding_fails_the_ref_scan(
+    tmp_path: Path, repo: Path, non_ascii_words: Path, encoding: str
+):
+    """A ref-only push runs no pre-push hook, so the ref scan is the only check a tag gets."""
+    message = tmp_path / 'tag-message'
+    message.write_bytes(f'Release {NON_ASCII}\n'.encode(encoding))
+    git(repo, 'tag', '-a', 'v1', '-F', str(message))
+    result = scan('--refs', words=non_ascii_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert not leaked(result.stdout + result.stderr, NON_ASCII)
+
+
+def test_a_latin1_ref_name_is_found_and_hidden(repo: Path, non_ascii_words: Path):
+    """Written into packed-refs, since a file system may refuse the name as a loose ref (Linux allows one)."""
+    head = git(repo, 'rev-parse', 'HEAD').strip()
+    (repo / '.git' / 'packed-refs').write_bytes(
+        f'{head} refs/heads/topic-'.encode() + NON_ASCII.encode('latin-1') + b'\n'
+    )
+    assert git(repo, 'for-each-ref', '--format=%(objectname)').count(head) == 2  # main and the packed ref
+    result = scan('--refs', words=non_ascii_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'ref refs/heads/*** (name)' in result.stderr
+    assert not leaked(result.stdout + result.stderr, NON_ASCII)

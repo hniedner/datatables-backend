@@ -3,8 +3,8 @@
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
 word per line, matched case-insensitively as a substring; blank lines and lines starting with ``#`` are skipped. The
 list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
-path or ref name is printed with each ``/``-separated part that holds a word replaced by ``***``, or as ``***``
-whole when a word spans parts.
+path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
+``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
 The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, it
 cannot check, and says so with exit status 2, which blocks like a finding (exit status 1). That message names no
@@ -25,9 +25,10 @@ Usage:
                                          any object, and pre-commit names one pushed ref to the hook, so the store
                                          is scanned whole.
 
-Every text, a file, an object, a path or a message, is read as UTF-8 (or by its byte order mark) and also in the
-encodings ``other_readings`` tries, so a Latin-1 commit message or file name is read too. Objects are read as
-stored: ``git replace`` is ignored, since a push sends the originals.
+Every text the scan reads (a file's contents, path or link target, an object, a path in a tree, a ref name, a tag, a
+commit message file) is read from its bytes as UTF-8 (or by its byte order mark) and also in the encodings
+``other_readings`` tries, so a Latin-1 or UTF-16 word is found in any of them. Only the word list is read as UTF-8
+alone. Objects are read as stored: ``git replace`` is ignored, since a push sends the originals.
 
 A leftover object holding a word (a dropped commit, a reflog entry) therefore blocks every push until it is gone:
 ``git reflog expire --expire-unreachable=now --all`` and then ``git gc --prune=now`` drop the unreachable ones. A
@@ -130,14 +131,22 @@ def hits(text: str, words: Words) -> list[int]:
     return [number for number, word in words if word in folded]
 
 
-def redact(text: str, words: Words) -> str:
-    """``text`` (a path or ref name) with every ``/``-separated part that holds a private word replaced by ``***``.
+def text_hits(data: bytes, words: Words) -> list[int]:
+    """The list lines of the words the bytes hold in any reading."""
+    return sorted({*hits(decode(data), words), *content_hits(data, words)})
 
-    The test is the same casefolded one as ``hits``, so whatever is found is also hidden; no position is mapped back.
-    A word that spans parts (one holding a ``/``) hides the whole text.
+
+def redact(name: bytes, words: Words) -> str:
+    """A path or ref name, as raw bytes, with every ``/``-separated part that holds a private word in any reading
+    replaced by ``***``.
+
+    The test is ``text_hits``, the one that finds the word, so whatever is found is hidden, and nothing of a part a
+    reading other than UTF-8 finds a word in is printed (``decode`` would print the word less its dropped letters). A
+    word that spans parts (one holding a ``/``) hides the whole name.
     """
-    shown = '/'.join('***' if hits(part, words) else part for part in text.split('/'))
-    return '***' if hits(shown, words) else shown
+    parts = [b'***' if text_hits(part, words) else part for part in name.split(b'/')]
+    joined = b'/'.join(parts)
+    return '***' if text_hits(joined, words) else decode(joined)
 
 
 def report(where: str, numbers: Iterable[int]) -> str:
@@ -147,12 +156,13 @@ def report(where: str, numbers: Iterable[int]) -> str:
 def scan_files(names: list[str], words: Words) -> list[str]:
     findings: list[str] = []
     for name in names:
-        shown = redact(name, words)
-        if found := hits(name, words):
+        raw = os.fsencode(name)  # the name's bytes, as git stores them, whatever their encoding
+        shown = redact(raw, words)
+        if found := text_hits(raw, words):
             findings.append(report(f'{shown} (path)', found))
         path = Path(name)
         if path.is_symlink():  # the link's own text: its target, which is what git stores and publishes
-            if found := hits(os.readlink(path), words):
+            if found := text_hits(os.fsencode(os.readlink(path)), words):
                 findings.append(report(f'{shown} (link target)', found))
             continue
         data = path.read_bytes()
@@ -164,7 +174,7 @@ def scan_files(names: list[str], words: Words) -> list[str]:
     return findings
 
 
-def git(*args: str, ok: tuple[int, ...] = (0,)) -> bytes:
+def git(*args: str | bytes, ok: tuple[int, ...] = (0,)) -> bytes:
     """A git command's output. Raises CalledProcessError on an unexpected exit status."""
     environment = os.environ | {'GIT_NO_REPLACE_OBJECTS': '1'}  # the objects a push sends, not their replacements
     result = subprocess.run(['git', *args], capture_output=True, check=False, env=environment)
@@ -190,13 +200,13 @@ def all_objects() -> Iterator[tuple[str, str, bytes]]:
 
 def scan_refs(words: Words) -> list[str]:
     findings: list[str] = []
-    for ref in filter(None, decode(git('for-each-ref', '--format=%(refname)')).split('\n')):  # no newline in a name
+    for ref in filter(None, git('for-each-ref', '--format=%(refname)').split(b'\n')):  # no newline in a name
         shown = redact(ref, words)
-        if found := hits(ref, words):
+        if found := text_hits(ref, words):
             findings.append(report(f'ref {shown} (name)', found))
         if decode(git('cat-file', '-t', ref)).strip() != 'tag':
             continue
-        if found := hits(decode(git('cat-file', '-p', ref)), words):
+        if found := text_hits(git('cat-file', '-p', ref), words):
             findings.append(report(f'tag {shown} (tagger or message)', found))
     return findings
 
@@ -224,37 +234,29 @@ def message_text(raw: str) -> str:
     return '\n'.join(lines)
 
 
-def text_hits(data: bytes, words: Words) -> list[int]:
-    """The list lines of the words the bytes hold in any reading."""
-    return sorted({*hits(decode(data), words), *content_hits(data, words)})
-
-
-def path_findings(where: str, tree: str, words: Words) -> list[str]:
-    """Every whole path under a tree-ish: a word holding a `/` spans the trees that store its parts. A path whose
-    word only another encoding shows is printed as ``***``, since ``decode`` would show the rest of the word."""
-    findings: list[str] = []
-    for raw in filter(None, git('ls-tree', '-r', '-z', '--name-only', tree).split(b'\0')):
-        if found := text_hits(raw, words):
-            path = decode(raw)
-            shown = redact(path, words) if hits(path, words) else '***'
-            findings.append(report(f'{where}:{shown} (path)', found))
-    return findings
+def path_findings(where: str, tree: str | bytes, words: Words) -> list[str]:
+    """Every whole path under a tree-ish: a word holding a `/` spans the trees that store its parts."""
+    return [
+        report(f'{where}:{redact(raw, words)} (path)', found)
+        for raw in filter(None, git('ls-tree', '-r', '-z', '--name-only', tree).split(b'\0'))
+        if (found := text_hits(raw, words))
+    ]
 
 
 def scan_history(words: Words) -> list[str]:
     findings = scan_refs(words)
-    remote = os.environ.get('PRE_COMMIT_REMOTE_BRANCH', '')  # the ref a push writes, which no local ref may hold
-    if found := hits(remote, words):
+    remote = os.fsencode(os.environ.get('PRE_COMMIT_REMOTE_BRANCH', ''))  # the ref a push writes; no local ref holds it
+    if found := text_hits(remote, words):
         findings.append(report(f'remote ref {redact(remote, words)} (name)', found))
     for sha, kind, data in all_objects():  # a commit holds its message, author and committer; a tree its names
         if found := text_hits(data, words):
             findings.append(report(f'{kind} {sha[:12]}', found))  # an object has no single path to show
         if kind == 'commit':
             findings.extend(path_findings(sha[:12], sha, words))
-    refs = decode(git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)'))
-    for line in filter(None, refs.split('\n')):  # a tree a ref or tag names has no commit to reach its paths
-        kind, peeled, ref = line.split(' ', 2)
-        if kind == 'tree' or (kind == 'tag' and peeled == 'tree'):
+    refs = git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)')
+    for line in filter(None, refs.split(b'\n')):  # a tree a ref or tag names has no commit to reach its paths
+        kind, peeled, ref = line.split(b' ', 2)
+        if kind == b'tree' or (kind == b'tag' and peeled == b'tree'):
             findings.extend(path_findings(redact(ref, words), ref, words))
     return findings
 
