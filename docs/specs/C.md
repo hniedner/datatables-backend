@@ -12,8 +12,8 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C3.2** [all] `start` 2^53-1 → `data` `[]` with both counts, no error.
 - **SPEC-C3.3** [OS] With `max_result_window` 2 and 4 rows, `start` 10 → an empty page with both counts, not
   `page_out_of_range`.
-- **SPEC-C4.1** [SQL] Recording: the counts are `SELECT count(*)` statements; `recordsFiltered` equals the number of
-  rows a full fetch of the filter returns, rows with NULL in every searched column included.
+- **SPEC-C4.1** [SQL] Recording, with column search `!pipe` on `note`: both counts are `count(*)` statements, and
+  `recordsFiltered` is 3, the rows 1, 2, 3 the page returns (row 1's NULL `note` included).
 - **SPEC-C5.1** [SQL] `start` 1, `length` 2 → rows 2, 3; recording shows `LIMIT`/`OFFSET` (`OFFSET ... FETCH` on
   SQL Server) in the page statement.
 - **SPEC-C6.1** [SQL] Given a table with an undeclared column `hidden`: the page statement selects no `hidden`, and
@@ -30,23 +30,30 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   order, fetched by a reversed sort (recording shows the reversed sort and `from` 0).
 - **SPEC-C10.3** [OS container] For every `start` a reversed page can reach, its rows equal those the ordinary way
   gives with a large `max_result_window`.
-- **SPEC-C10.4** [OS] `max_result_window` defaults to 10,000: with no setting, `start` 9990, `length` 10 is ordinary.
+- **SPEC-C10.4** [OS] `max_result_window` defaults to 10,000: with no setting and a recording client whose counts
+  answer 20,000, `start` 9990, `length` 10 is sent as an ordinary page (`from` 9990); `start` 9995, `length` 10 (past the
+  window both ways: 10,005 > 10,000 and 20,000 - 9995 > 10,000) → `page_out_of_range`.
 - **SPEC-C11.1** [OS] Recording: a `page_out_of_range` answer runs only the count calls, before any page search.
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
 - **SPEC-C13.1** [OS] Given a client whose count answers 10 and whose reversed page then sees 11 documents, the
   answer is served (no point-in-time is opened, no error): recording shows no `create_pit`.
-- **SPEC-C14.1** [all] With a TTL cache: two requests in the TTL run one total count; recording shows the second
-  request ran no total count, and both answer `recordsTotal` 4.
+- **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
+  two requests within the TTL run one total count between them; recording shows the second ran only the filtered
+  count and the page, and both answer `recordsTotal` 4.
 - **SPEC-C14.2** [all] After the TTL ends, the next request counts again and sees a newly inserted row.
 - **SPEC-C15.1** [SQL] Two tables over the same source whose base filters differ only in a bound value
   (`tenant = 1`, `tenant = 2`) and share one cache → each answers its own `recordsTotal`.
-- **SPEC-C15.2** [all] The same table on two databases or indexes sharing one cache → each answers its own total; an
-  app-supplied key decides when given.
-- **SPEC-C16.1** [all] `cache.clear()` (or the explicit call) makes the next request count again.
+- **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
+  with a global search `red` → `recordsTotal` 4 and 2. [OS] Two tables over the indexes `a` (4 documents) and `b`
+  (2 documents) sharing one cache → 4 and 2.
+- **SPEC-C15.3** [all] With an app-supplied cache key, two tables given the same key share one total: the second
+  answers the first's `recordsTotal` without counting.
+- **SPEC-C16.1** [all] `TotalCache.clear()` makes the next request count again and see a newly inserted row.
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
 - **SPEC-C17.1** [SQL Server] On a table with 9 string columns, a `multi_values` list of 256 values on each (2,304
   values, within PRD-F38 per list) → answered with the matching rows; recording shows each IN list sent as one
   `OPENJSON` parameter.
-- **SPEC-C17.2** [SQLite, PostgreSQL] `multi_values` of 256 values binds normally (no JSON parameter) and answers.
+- **SPEC-C17.2** [SQLite, PostgreSQL, MySQL] The request of C17.1 (2,304 values) binds each value as its own
+  parameter (no JSON parameter) and answers the same rows.

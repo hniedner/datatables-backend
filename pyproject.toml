@@ -91,8 +91,8 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
-"scripts/**" = ["S603", "S607", "T201"]
-"scripts/test_*.py" = ["S101", "PLR2004"]
+"scripts/trace_check.py" = ["T201"]
+"scripts/test_*.py" = ["S101", "S603"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

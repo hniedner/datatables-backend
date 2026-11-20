@@ -4,7 +4,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 
 ## Smart search
 
-- **SPEC-F1.1** [all] Global search `apple red` → rows 1: `apple` matches `name`, `red` matches `colour`, in one row.
+- **SPEC-F1.1** [all] Global search `pipe red` → rows 4: `pipe` matches only `note`, `red` matches `colour`, in one
+  row.
 - **SPEC-F1.2** [SQL] Global search `red 7` → rows 1, 2 (row 2: `reddish` and the price text `17`, PRD-F23).
 - **SPEC-F1.3** [OS] Global search `red 7` → none: the number column takes no part (PRD-F32), so `7` matches nothing.
 - **SPEC-F2.1** [all] Column search on `name` with `red pear` → rows 2.
@@ -37,9 +38,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   only; a row whose `note` is `a b` is not matched. SearchBuilder `=` with `a\nb` answers the same.
 - **SPEC-F8.1** [all] Global search `red OR blue` → the rows holding `red`, `or` and `blue` → none in the fixture
   (no union of `red` and `blue`).
-- **SPEC-F8.2** [all] Given a row whose `note` is `-red`: global search `-red` → that row only (not rows 2, 3).
-- **SPEC-F8.3** [all] Global search `red*` and `re?` → none; a row whose `note` is `red*` is found by `red*`.
-- **SPEC-F8.4** [OS] SearchBuilder `contains` `a*b` on `note` matches a row whose `note` is `xa*by` and not `xaby`.
+- **SPEC-F8.2** [all] Given a row whose `note` is `-red`: global search `-red` → that row only (not rows 1, 2, 4,
+  which hold `red` without the `-`).
+- **SPEC-F8.3** [all] Global search `red*` and `re?` → none on the fixture alone; a row whose `note` is `red*` is
+  found by `red*`.
+- **SPEC-F8.4** [all] SearchBuilder `contains` `a*b` on `note` matches a row whose `note` is `xa*by` and not `xaby`.
+- **SPEC-F8.5** [SQL] SearchBuilder `contains` `x_y` on `note` → rows 3, not a row whose `note` is `xay`; `contains`
+  `50%` on `name` → rows 3, not a row whose `name` is `50 plum`.
 
 ## Case, accents, wildcards
 
@@ -51,7 +56,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F9.5** [PostgreSQL, MySQL with `utf8mb4_bin`, SQL Server with a `_CS_` collation] The statements F9.1 to
   F9.4 hold unchanged on a case-sensitive collation.
 - **SPEC-F9.6** [SQLite] Global search `äpfel` → none (SQLite folds ASCII only); `ÄPFEL` → rows 4.
-- **SPEC-F9.7** [PostgreSQL, SQL Server, MySQL, OS] Global search `äpfel` → rows 4.
+- **SPEC-F9.7** [PostgreSQL in a UTF-8 non-C locale (`en_US.UTF-8`), SQL Server with a `_CI_` collation, MySQL
+  with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run; the non-ASCII answer on
+  OpenSearch is open question OQ4 in `README.md`.
 - **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
   exactly, PRD-D17).
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
@@ -80,7 +87,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F14.1** [all] A global search of 255 code points is answered; 256 → error_code `invalid_filter`. A
   supplementary-plane character counts as one code point.
 - **SPEC-F14.2** [all] A global search of 16 words is answered; 17 → error_code `invalid_filter`; the same for a
-  column search.
+  column search on `name`.
 - **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 16 words plus `"`,
   `!""` and `!x` is 16 → answered.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_filter`; so do U+0009 (TAB), U+001B and
@@ -103,10 +110,12 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F18.1** [all] With `regex: true`, each of `^a|b$`, `a.b`, `a*`, `(a)`, `[ab]`, `a{2}`, `\d`, `\w`, `\n`,
   `a+`, `a?` and `^(a|b)` → error_code `invalid_filter`.
 - **SPEC-F19.1** [all] With `regex: true`, every character of `/ . * + ? | ( ) [ ] { } \ $ ^ -` escaped by a
-  backslash inside `^(...)$` matches itself: given a row whose `note` is `a.b|(c)`, `^(a\.b\|\(c\))$` → that row.
+  backslash inside `^(...)$` matches itself: given a row whose `note` is `/.*+?|()[]{}\$^-` (the whole set),
+  `^(\/\.\*\+\?\|\(\)\[\]\{\}\\\$\^\-)$` → that row only.
 - **SPEC-F20.1** [all] `multi_values` `["red", "blue"]` on `colour` → rows 1, 3, 4.
 - **SPEC-F20.2** [all] `multi_values` `["", "x_y"]` on `note` → rows 1, 3 on OS; rows 1, 2, 3 on SQL.
-- **SPEC-F20.3** [all] An empty `multi_values` list with an empty value is idle → rows 1, 2, 3, 4.
+- **SPEC-F20.3** [all] A column search on `colour` with an empty value and an empty `multi_values` list is idle →
+  rows 1, 2, 3, 4.
 
 ## Dates
 
@@ -120,8 +129,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `["2024-03-06"]` → rows 2.
 - **SPEC-F21.6** [all] `multi_values` `["2024-13-01"]` or `["05.03.2024"]` on `made` → error_code `invalid_date`.
 - **SPEC-F21.7** [all] `multi_values` `[""]` on `made` → rows 3 (NULL on SQL, missing on OS).
-- **SPEC-F21.8** [SQLite] Given an aware value written with a `+02:00` offset for `2024-03-05T23:30+02:00`, the row
-  is matched by `=` `2024-03-05` (the offset is dropped and the stored time read as UTC), as the PRD states.
+- **SPEC-F21.8** [SQLite] Given a row whose `at` is written as the aware value `2024-03-06T01:00+02:00` (the instant
+  2024-03-05T23:00Z): `=` `2024-03-06` matches it and `=` `2024-03-05` does not, since the offset is dropped and the
+  stored `01:00` is read as UTC.
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
@@ -130,9 +140,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F22.4** [OS] Column search on `made` with `2024-12` → rows 2.
 - **SPEC-F23.1** [SQL] Global search `17` → rows 2; column search `7` on `price` → rows 1, 2.
 - **SPEC-F23.2** [SQL] Column search `2024-12` on `made` → rows 2; `03-05` → rows 1 (date text is `YYYY-MM-DD`).
-- **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` text).
-- **SPEC-F24.1** [all] SearchBuilder on `made` with `9999-12-31` as the value of `=`, `<=`, `>` or `contains`, or
-  as either bound of `between` → error_code `invalid_date`, not a database error.
+- **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` and `at` text).
+- **SPEC-F24.1** [all] SearchBuilder on `made` with the maximum date as a bound → error_code `invalid_date`, not a
+  database error, in each of: `=`, `!=`, `<`, `<=`, `>`, `>=` with `9999-12-31`; `between` and `!between` with
+  `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
 - **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc`, `NaN`, `inf`, `-Infinity` or `1e999` → error_code
   `invalid_number`.
 - **SPEC-F25.2** [SQL] On a 64-bit integer column, `=` `9223372036854775808` → error_code `invalid_number`;
@@ -168,18 +179,20 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F34.1** [OS] Column search on `made`: `2024` → rows 1, 2; `2024-03-05` → rows 1.
 - **SPEC-F34.2** [OS] Column search on `made`: `2024 2023`, `!2024`, `"2024"` and `2024-13` → error_code
   `invalid_date`.
-- **SPEC-F35.1** [all] Given a row whose `note` is `a-b`: global search `!-` excludes it; `!.` excludes a row whose
-  `note` is `a.b`.
+- **SPEC-F35.1** [all] Given rows 5 (`note` `a-b`) and 6 (`note` `a.b`), every other column of both NULL or
+  missing: global search `!-` → rows 3, 6 on SQL (the date text of rows 1, 2, 4 holds `-`) and rows 1, 2, 3, 4, 6
+  on OS (dates take no part, PRD-F32); `!.` → rows 1, 2, 3, 4, 5 on all.
 - **SPEC-F35.2** [all] Global search `!x` → rows 1, 2, 3, 4 (adds nothing).
 - **SPEC-F36.1** [all] `=` on `name` with two values, and `between` on `price` with three → error_code
   `invalid_filter`.
-- **SPEC-F36.2** [all] `null` on `note` with values `[]`, `[""]`, or `abc` and a value holding U+0000 → the same rows as with no
-  value (no refusal, PRD-F15 does not apply).
+- **SPEC-F36.2** [all] `null` on `note` with the values `[]` → rows 1, 2 on SQL, rows 1 on OS; with `[""]` → the
+  same; with `abc` and a value holding U+0000 → the same, no refusal (PRD-F15 does not apply).
 - **SPEC-F36.3** [all] `null` with a value that is not text → `MalformedRequest` (PRD-P6).
 - **SPEC-F37.1** [all] On `note`: `!=` `x_y` → rows 1, 2, 4; `!contains` `pipe` → rows 1, 2, 3; `!starts` `5` →
   rows 1, 2, 3; `!ends` `y` → rows 1, 2, 4. Row 1 (NULL or missing) satisfies each.
 - **SPEC-F37.2** [all] On `price`: `!=` `7` → rows 2, 3, 4; `!between` `0` and `100` → rows 4.
-- **SPEC-F38.1** [all] A SearchBuilder tree 8 groups deep is answered; 9 deep → error_code `invalid_filter`.
+- **SPEC-F38.1** [all] A SearchBuilder tree 8 groups deep, the root group counted as depth 1, is answered; 9 deep →
+  error_code `invalid_filter`. Whether the root counts is open question OQ1 in `README.md`.
 - **SPEC-F38.2** [all] 64 criteria in all are answered; 65 → error_code `invalid_filter`.
 - **SPEC-F38.3** [all] A categorical filter or `multi_values` list of 256 values is answered; 257 → error_code
   `invalid_filter`.

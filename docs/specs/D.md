@@ -2,8 +2,9 @@
 
 Statements for PRD section 4.2. Form, backends, answers and the `items` fixture: see `README.md`.
 
-- **SPEC-D1.1** [all] A request naming the declared columns in any order and subset is answered; each row holds
-  exactly the declared columns' client names.
+- **SPEC-D1.1** [all] A request naming the declared columns in any order, or only a subset of them, is answered;
+  each row holds every declared column's client name, whichever the request names. Whether rows carry every
+  declared column or only the requested ones is open question OQ2 in `README.md`.
 - **SPEC-D2.1** [all] `Column('colour', field=...)` over a backend field named `colour_code` → a column search on
   `colour` filters `colour_code`, and rows carry the key `colour`, never `colour_code`.
 - **SPEC-D3.1** [all] The same text `7` on a column declared string and on one declared number: SearchBuilder `<`
@@ -20,20 +21,21 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `red`); an order on it marked unorderable → skipped; marked orderable → `invalid_filter`.
 - **SPEC-D7.1** [all] SearchBuilder `=` `7` on `price` sent with `type: "string"` → rows 1; `contains` `7` on `price`
   sent with `type: "string"` → `invalid_filter` (the client's type is ignored).
-- **SPEC-D8.1** [SQL] Without a declared type: an `Integer` column is a number, a `Date` a date, a `Boolean` (SQL
-  Server `BIT` included) a boolean, a `String` a string.
+- **SPEC-D8.1** [SQL] Columns declared without a type: on an `Integer` column SearchBuilder `<` `8` → rows 1 and
+  `contains` `7` → `invalid_filter`; on a `Date` column `contains` `2024` → rows 1, 2; on a `Boolean` column (SQL
+  Server `BIT` included) `=` `true` → rows 1, 4 and `<` → `invalid_filter`; on a `String` column `contains` `app` →
+  rows 1 and `<` → `invalid_filter`.
 - **SPEC-D8.2** [MySQL] A reflected `TINYINT(1)` column without a declared type is a number: SearchBuilder `<` `1` is
   answered; declared boolean, `=` `true` is answered.
 - **SPEC-D8.3** [OS] A column without a declared type is a string: SearchBuilder `<` on it → `invalid_filter`.
 - **SPEC-D9.1** [all] A column search on `secret` with `Alpha` calls the hook once with `Alpha` and matches the stored
   `enc:Alpha` → rows 1.
-- **SPEC-D10.1** [SQL] A column declared as `lower(name)` is searched and ordered by that expression: order asc gives
-  the expression's order; a column search `red apple` → rows 1.
+- **SPEC-D10.1** [SQLite] A column declared as the expression `lower(colour)` is ordered by it: order asc → rows 3,
+  1, 4, 2, where the plain `colour` gives 4, 3, 1, 2 (PRD-O6); a column search `red` on it → rows 1, 2, 4.
 - **SPEC-D11.1** [OS] Constructing an OpenSearch table without a unique key → `SchemaError`.
 - **SPEC-D11.2** [SQL] Constructing a table over a join or a subquery without a primary key and without a declared
   key → `SchemaError`; over a table with a primary key, no key need be declared.
-- **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none from
-  `secret`.
+- **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none.
 - **SPEC-D12.2** [all] Global search `red Alpha` → none: neither do both words match the other columns, nor does the
   whole text `red Alpha` equal a hooked value.
 - **SPEC-D12.3** [all] Global search `  Alpha  ` (spaces, U+00A0 or U+3000 around it) → rows 1 (trimmed once); the
@@ -46,17 +48,21 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-D12.7** [all] Global search `a` + LF + `b` on a hooked column storing `enc:a` + LF + `b` matches by the
   whole text (LF is not rewritten to a space for the equality).
+- **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (250 after
+  trimming) → `invalid_filter`: the 255-code-point bound applies to the raw text.
 - **SPEC-D13.1** [OS] A `text+keyword` column (the default) sorts and matches exactly on `<field>.keyword`; a
   `keyword` column on `<field>`; recording shows the field names.
 - **SPEC-D14.1** [all] Declaring a hook on a number, date or boolean column → `SchemaError` at construction.
 - **SPEC-D15.1** [all] `multi_values` `["Alpha", "Beta"]` and categorical `^(Alpha|Beta)$` on `secret` → rows 1, 2;
   the hook is called once per value.
-- **SPEC-D16.1** [all] `multi_values` `[""]` on `secret` → the rows where `secret` is empty (NULL or `''` on SQL,
-  missing on OS); the hook is not called for the empty value.
+- **SPEC-D16.1** [all] Given rows 5 (`secret` NULL or missing) and 6 (`secret` `''`): `multi_values` `[""]` on
+  `secret` → rows 5, 6 on SQL, rows 5 on OS (PRD-F26); the hook is not called for the empty value.
 - **SPEC-D17.1** [all] Column search on `secret` with `Alpha`, ` Alpha `, and `"Alpha"`: `Alpha` and ` Alpha ` → rows
   1; `"Alpha"` → none (no smart-search grammar: the quotes are part of the value).
 - **SPEC-D17.2** [all] Column search on `secret` with 20 words is answered (no word cap); with 256 code points →
   `invalid_filter`.
+- **SPEC-D17.3** [all] Given a row whose `secret` is stored as `enc:a` + LF + `b`: a column search on `secret` with
+  `a` + LF + `b` → that row; with `a b` → none (LF is not rewritten for the equality).
 - **SPEC-D18.1** [all] SearchBuilder on `secret`: `=` `Alpha` → rows 1; `!=` `Alpha` → rows 2, 3, 4; `null` → none;
   `!null` → rows 1, 2, 3, 4.
 - **SPEC-D18.2** [all] SearchBuilder `contains`, `starts`, `ends` and their negations on `secret` → `invalid_filter`.
