@@ -306,12 +306,15 @@ def test_a_timezone_aware_column_compares_by_utc_day(
 ):
     """The day bounds are UTC midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
     UTC+14), which reads a naive bound as local to it, and bounds built from Python's local time through TZ
-    (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite too. SQL
-    Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there the test
-    only shows the column works."""
+    (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite
+    too. SQL Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there
+    the test only shows the column works."""
     if session.get_bind().dialect.name == 'postgresql':
         zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
         assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
+        assert datetime.now().astimezone().utcoffset(), (
+            'Set TZ to a zone far from UTC, or local-time bounds go unchecked.'
+        )
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
         expected
