@@ -15,6 +15,7 @@ from typing import Any
 
 from opensearchpy import AsyncOpenSearch
 from opensearchpy import OpenSearch
+from opensearchpy.exceptions import RequestError
 import pytest
 
 from datatables_backend import Column
@@ -232,18 +233,27 @@ def test_searchbuilder_equality_on_a_boolean_field_matches_nothing_today(client:
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == []
 
 
-def test_probe_boolean_equality_on_the_field_itself(client: OpenSearch):
-    """PROBE, replaced in the next commit: `=` on a keyword-kind column queries `active` itself."""
+REFUSED_BY_OPENSEARCH = pytest.mark.xfail(
+    reason='draft 1: OpenSearch rejects a term other than true/false on a boolean field, so the search fails; PRD v2 '
+    '(PRD-F43) makes 1 match and refuses other text as invalid_filter',
+    strict=True,
+    raises=RequestError,
+)
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        pytest.param('1', ['a1', 'd4'], marks=REFUSED_BY_OPENSEARCH),
+        ('true', ['a1', 'd4']),
+        pytest.param('abc', [], marks=REFUSED_BY_OPENSEARCH),  # PRD-F43 refuses it: `found` then fails, loudly
+    ],
+)
+def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, value: str, expected: list[str]):
+    """A keyword-kind column terms on `active` itself. Today only `true` and `false` reach a boolean field; the
+    expected rows are PRD-F43's."""
     flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')])
-    outcomes: dict[str, object] = {}
-    for value in ('1', 'true', 'abc'):
-        try:
-            outcomes[value] = found(
-                flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)
-            )
-        except Exception as error:  # the probe records whatever happens
-            outcomes[value] = f'{type(error).__module__}.{type(error).__qualname__}'
-    assert outcomes == {}, outcomes
+    assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == expected
 
 
 def test_searchbuilder_groups_nest(client: OpenSearch):
