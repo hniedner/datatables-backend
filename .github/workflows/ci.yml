@@ -373,6 +373,8 @@ jobs:
           done
           exit 1
       - run: uv run --frozen pytest tests/test_opensearch_live.py
+        env:
+          DTB_OPENSEARCH_URL: ''
 
   # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
   # if every needed job (every matrix leg included) succeeded.
