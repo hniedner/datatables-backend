@@ -46,12 +46,13 @@ MAPPING = {
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
     }
 }
+LONGEST = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:255]  # as many code points as PRD-F14 lets a search text hold
 DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
      'meta': {'author': 'Ann'}, 'active': True},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
      'meta': {'author': 'Bob'}, 'active': False},
-    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries'},
+    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
      'meta': {'author': 'Cy'}, 'active': True},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
@@ -102,7 +103,11 @@ def found(response: DTResponse) -> list[str]:
 
 
 def test_the_cluster_is_the_one_asked_for(client: OpenSearch):
-    assert client.info()['version']['distribution'] == 'opensearch'
+    """DTB_OPENSEARCH_VERSION (the CI job sets it for each leg) names the server the run must be on: an image pinned
+    by digest runs that digest, whatever version its tag says."""
+    version = client.info()['version']
+    assert version['distribution'] == 'opensearch'
+    assert version['number'] == os.environ.get('DTB_OPENSEARCH_VERSION', version['number'])
 
 
 def test_an_unfiltered_draw_counts_every_document_and_reads_dotted_fields(client: OpenSearch):
@@ -257,14 +262,30 @@ labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('l
 def test_a_letter_outside_ascii_is_folded_only_in_a_whole_word(
     client: OpenSearch, body: dict[str, Any], expected: list[str]
 ):
-    """PRD-F9, measured on 3.9.0: `case_insensitive` folds ASCII letters only, so a substring and an exact match in
-    another case miss `ÄPFEL`. A row turning red means the cluster folds differently, and PRD-F9 says so no longer."""
+    """PRD-F9, measured on 3.10.0 and on 2.19.7: on a `term` and a `wildcard` query `case_insensitive` folds ASCII
+    letters only, so a substring and an exact match in another case miss `ÄPFEL`. A row turning red means the cluster folds differently, and PRD-F9 says so no longer."""
     assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == expected
+
+
+whole_label = SearchTable(
+    INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label', field='label.keyword', text='keyword')]
+)  # the label as one whole string only, so no analysed word can answer for it: c3 holds LONGEST
+
+
+@pytest.mark.parametrize('condition', ['=', 'contains'])
+def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, condition: str):
+    """PRD-F14, PRD-F9: what the server does with the longest text a search may hold, as a case-insensitive `term`
+    (`=`) and a case-insensitive `wildcard` (`contains`; `starts` and `ends` are the same query). OpenSearch's
+    documentation warns that on 2.x and earlier the cost of a case-insensitive query can grow exponentially with the
+    number of characters. A row turns red when a server refuses or fails such a query at 255 letters, or stops
+    folding at that length."""
+    params = request(*LABEL_NAMES, **criterion('label', condition, LONGEST.lower()))
+    assert found(whole_label.fetch_sync(params, client)) == ['c3']
 
 
 @pytest.mark.xfail(
     reason='PRD-F38, issue #27: a list is not capped at 256 values yet, and a string list is one term query for each '
-    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", measured on 3.9.0) the '
+    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", what 3.10.0 and 2.19.7 answer) the '
     'search fails where a `terms` query answered',
     strict=True,
     raises=RequestError,

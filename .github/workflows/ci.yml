@@ -477,6 +477,7 @@ jobs:
   # together. These tracked places name a version a leg runs, and move with it: docs/PRD.md (PRD-F9),
   # spec/README.md (OQ4), tests/test_opensearch_live.py, README.md and CLAUDE.md.
   opensearch:
+    name: opensearch (${{ matrix.version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -498,6 +499,7 @@ jobs:
     env:
       DTB_OPENSEARCH_URL: http://localhost:9200
       DTB_REQUIRE_OPENSEARCH: '1'  # without the URL the module fails instead of skipping every test
+      DTB_OPENSEARCH_VERSION: ${{ matrix.version }}  # a test fails unless the server reports this version
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
