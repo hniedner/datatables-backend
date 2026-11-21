@@ -30,6 +30,8 @@ from sqlalchemy import Integer
 from sqlalchemy import Numeric
 from sqlalchemy import SmallInteger
 from sqlalchemy import String
+from sqlalchemy import Unicode
+from sqlalchemy import UnicodeText
 from sqlalchemy import and_
 from sqlalchemy import bindparam
 from sqlalchemy import cast as sql_cast
@@ -50,7 +52,6 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
-from sqlalchemy.types import TypeDecorator
 
 from ._plan import AnyOf
 from ._plan import Contains
@@ -209,7 +210,7 @@ class SQLTable:
                         values = [_number(column, number, search.column, listed=True) for number in numbers]
                     else:
                         values = list(search.values)
-                    fold = search.type == 'string' and _folds(search.column)
+                    fold = search.type == 'string' and _folds(search.column, column)
                     conditions.append(in_list(column, values, fold))
             else:
                 conditions.append(self._contains(search))
@@ -245,7 +246,7 @@ class SQLTable:
             return _date_criterion(node, column)
         if node.type == 'boolean':
             return _boolean_criterion(node, column)
-        return _string_criterion(node, column, fold=_folds(node.column))
+        return _string_criterion(node, column, fold=_folds(node.column, column))
 
     def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
         """The user's order, then the primary key, so the same rows come in the same order and a tie never splits
@@ -415,19 +416,21 @@ def _compare(
             raise AssertionError(condition)
 
 
-def _folds(declared: Column) -> bool:
-    """Whether an exact match on a string column ignores case: it is not declared ``fold_case=False``, and no hook
-    transforms what is searched for. Otherwise the comparison is sent plain, and the column's collation decides
-    (PRD-D21, PRD-F9)."""
-    return declared.fold_case and declared.search_value is None
+def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
+    """Whether an exact match on a string column ignores case: its own SQL type is a string type (``String`` and
+    its family, an ``Enum`` among them), it is not declared ``fold_case=False``, and no hook transforms what is
+    searched for. Otherwise the comparison is sent plain, and the column's collation decides (PRD-D21, PRD-F9).
+
+    A column with a type of its own (a ``TypeDecorator``, SQLAlchemy's ``Uuid``) or of a type the library cannot
+    tell (an expression declared without one) is never folded: such a type converts values and compares them in
+    its own way, which a fold would bypass."""
+    return declared.fold_case and declared.search_value is None and isinstance(column.type, String)
 
 
 def _text(column: ColumnElement[Any]) -> ColumnElement[Any]:
-    """The column's stored text, for a search or a fold: itself when its SQL type is a plain ``String``, else cast.
-    The cast keeps a ``TypeDecorator`` from converting a search pattern as if it were a value, gives PostgreSQL's
-    native enum type the text functions it lacks, and covers a type the library cannot tell, such as an
-    expression's."""
-    if isinstance(column.type, String) and not isinstance(column.type, Enum):
+    """The column as text, for a search or a fold: itself when it holds text, else cast. An ``Enum`` is cast too:
+    PostgreSQL stores one as a type of its own, which has no text functions."""
+    if _is_text(column) and not isinstance(column.type, Enum):
         return column
     return sql_cast(column, String)
 
@@ -437,21 +440,13 @@ def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
     return func.lower(_text(column))
 
 
-def _lowered(column: ColumnElement[Any], value: Any) -> ColumnElement[Any]:
-    """A value to compare with ``_lower(column)``, folded by the database too: Python lowers letters that SQLite's
-    ``lower()`` leaves alone. A ``TypeDecorator`` converts the value first, as it does in a plain comparison, so
-    what matched as sent still matches; its result is cast to text, whatever type it stores."""
-    if isinstance(column.type, TypeDecorator):
-        return func.lower(sql_cast(bindparam(None, value, type_=column.type), String))
-    return func.lower(value)
-
-
 def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool) -> ColumnElement[bool]:
     if node.condition in ('null', '!null'):
         return _empty(column) if node.condition == 'null' else not_(_empty(column))
     value = node.values[0]
     if node.condition in ('=', '!='):
-        left, right = (_lower(column), _lowered(column, value)) if fold else (column, value)
+        # The value is folded by the database too: Python lowers letters that SQLite's lower() leaves alone
+        left, right = (_lower(column), func.lower(value)) if fold else (column, value)
         return left == right if node.condition == '=' else left != right
     escaped = escape_like(str(value))
     pattern = {
@@ -546,7 +541,7 @@ type _InList = Callable[[ColumnElement[Any], Sequence[Any], bool], ColumnElement
 
 def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:
     if fold:
-        return _lower(column).in_([_lowered(column, value) for value in values])
+        return _lower(column).in_([func.lower(value) for value in values])
     return column.in_(values)
 
 
@@ -608,11 +603,13 @@ def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw:
 def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
     column_type = _sql_type(element.column)  # the type a TypeDecorator wraps: the values are cast as it stores them
     if isinstance(column_type, String):
-        column_type = column_type.copy()
-        column_type.length = None  # a longer value must not be cut down to one that matches
-        column_type.collation = None  # a cast takes no COLLATE; the column's own collation still compares
+        # No length, so a longer value is not cut down to one that matches (a bare CHAR is 30 characters), and no
+        # COLLATE, which a cast does not take: the column's own collation still compares
+        cast_as = 'NVARCHAR(max)' if isinstance(column_type, Unicode | UnicodeText) else 'VARCHAR(max)'
+    else:
+        cast_as = compiler.dialect.type_compiler_instance.process(column_type)
     # TRY_CAST: a value that does not convert matches nothing, as a mismatched bound parameter would
-    value = f'TRY_CAST(value AS {compiler.dialect.type_compiler_instance.process(column_type)})'
+    value = f'TRY_CAST(value AS {cast_as})'
     target = element.column
     if element.fold:
         target, value = _lower(target), f'lower({value})'

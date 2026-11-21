@@ -15,6 +15,7 @@ import uuid
 import warnings
 
 import pytest
+from sqlalchemy import CHAR
 from sqlalchemy import BigInteger
 from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Enum
@@ -274,14 +275,18 @@ class Wrapped(TypeDecorator[str]):
 
 
 class Guid(TypeDecorator[str]):
-    """A UUID stored as its 32 hex digits, after SQLAlchemy's documented recipe: the type converts a value on its way
-    into a statement, so `1f960000-0000-...` is compared as `1f9600000000...`."""
+    """A UUID stored as its 32 hex digits in a `CHAR(32)`, after SQLAlchemy's documented recipe: the type converts a
+    value on its way into a statement, so `1f960000-0000-...` is compared as `1f9600000000...`, and back on its way
+    out."""
 
-    impl = String
+    impl = CHAR
     cache_ok = True
 
     def process_bind_param(self, value: str | None, dialect: object) -> str | None:
         return None if value is None else uuid.UUID(value).hex
+
+    def process_result_value(self, value: str | None, dialect: object) -> str | None:
+        return None if value is None else str(uuid.UUID(value))
 
 
 def ref(row: int) -> str:
@@ -342,9 +347,6 @@ def cased(session: Session) -> SQLTable:
         # The database folds both sides: SQLite's lower() leaves `Ä` alone, where Python's would make it `ä`
         (criterion('kind', '=', 'ÄPFEL'), [5]),
         ({'column_search': {'kind': {'multi_values': ['ÄPFEL']}}}, [5]),
-        # A type of the app's own over text is a string column like any other, for `=` and for a list
-        (criterion('wrapped', '=', 'Red'), [1, 4]),
-        ({'column_search': {'wrapped': {'multi_values': ['rEd']}}}, [1, 4]),
     ],
 )
 def test_an_exact_match_on_a_string_column_ignores_case(
@@ -355,10 +357,10 @@ def test_an_exact_match_on_a_string_column_ignores_case(
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
-def test_an_exact_match_on_a_column_declared_as_an_expression_ignores_case(session: Session, cased: SQLTable):
-    """PRD-F9 with PRD-D10: a column whose SQL type the library cannot tell is declared a string, and is folded as
-    one: `upper(kind)` is `RED` for rows 1 and 4."""
-    shouted = select(cased.source.c.id, literal_column('upper(kind)').label('up')).subquery()
+def test_an_exact_match_on_an_expression_given_a_string_type_ignores_case(session: Session, cased: SQLTable):
+    """PRD-F9 with PRD-D10: an expression is folded once it says it is text; `upper(kind)` is `RED` for rows 1 and
+    4. Without a type the library cannot tell what it holds, and compares it as sent."""
+    shouted = select(cased.source.c.id, literal_column('upper(kind)', String).label('up')).subquery()
     table = SQLTable(shouted, [Column('id'), Column('up')])
     assert ids(table.fetch_sync(request('id', 'up', **criterion('up', '=', 'rEd')), session)) == [1, 4]
 
@@ -366,7 +368,7 @@ def test_an_exact_match_on_a_column_declared_as_an_expression_ignores_case(sessi
 @pytest.mark.parametrize(
     ('body', 'expected'),
     [
-        # An exact match sends the value through the column's own type, as a plain comparison does, then folds
+        # An exact match is the plain comparison, which sends the value through the column's own type
         (criterion('ref', '=', ref(1).upper()), [1]),
         (criterion('ref', '!=', ref(1)), [2, 3, 4, 5]),
         ({'column_search': {'ref': {'multi_values': [ref(1), ref(4)]}}}, [1, 4]),
@@ -376,10 +378,11 @@ def test_an_exact_match_on_a_column_declared_as_an_expression_ignores_case(sessi
         ({'search': {'value': 'SMA'}}, [1, 4]),  # the enum column, searched as text
     ],
 )
-def test_a_column_with_a_type_of_its_own_is_filtered_by_its_stored_text(
+def test_a_column_with_a_type_of_its_own_is_compared_as_its_type_compares(
     session: Session, cased: SQLTable, body: dict[str, Any], expected: list[int]
 ):
-    """PRD-F9 on a `TypeDecorator` that converts values and on an `Enum`."""
+    """PRD-F9: the library folds only a column whose SQL type is a string type. A `TypeDecorator` that converts
+    values keeps its own comparison, and a search on it or on an `Enum` reads the stored text."""
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
@@ -422,10 +425,9 @@ def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, c
     os.environ.get('DTB_SQL_DIALECT') != 'mssql',
     reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
 )
-@pytest.mark.parametrize('column', ['kind', 'wrapped'])  # a collation declared on the type, or on the type it wraps
-def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable, column: str):
+def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable):
     values = [f'n{index}' for index in range(3000)] + ['rEd']
-    params = request(*CASED, column_search={column: {'multi_values': values}})
+    params = request(*CASED, column_search={'kind': {'multi_values': values}})
     assert ids(cased.fetch_sync(params, session)) == [1, 4]
 
 
@@ -433,13 +435,24 @@ def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable,
     os.environ.get('DTB_SQL_DIALECT') != 'mssql',
     reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
 )
-@pytest.mark.parametrize(('value', 'expected'), [('rEd', []), ('RED', [4])])
+@pytest.mark.parametrize(
+    ('column', 'value', 'expected'),
+    [
+        ('plain', 'rEd', []),
+        ('plain', 'RED', [4]),
+        ('wrapped', 'RED', [4]),  # the collation is declared on the type a `TypeDecorator` wraps
+        # 32 characters on a CHAR(32): a cast to a bare CHAR would cut the value to 30. The list is sent as the
+        # client wrote it, so the stored form is what matches here
+        ('ref', uuid.UUID(ref(1)).hex, [1]),
+    ],
+)
 def test_a_list_sent_as_json_on_a_column_without_the_fold_follows_its_collation(
-    session: Session, cased: SQLTable, value: str, expected: list[int]
+    session: Session, cased: SQLTable, column: str, value: str, expected: list[int]
 ):
-    """The JSON list casts each value without a collation; the column's own, case-sensitive here, still compares."""
+    """The JSON list casts each value to text without a length or a collation; the column's own collation,
+    case-sensitive here, still compares."""
     values = [f'n{index}' for index in range(3000)] + [value]
-    params = request(*CASED, column_search={'plain': {'multi_values': values}})
+    params = request(*CASED, column_search={column: {'multi_values': values}})
     assert ids(cased.fetch_sync(params, session)) == expected
 
 

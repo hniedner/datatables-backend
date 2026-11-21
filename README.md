@@ -90,10 +90,11 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 - **An exact match can be sent plain.** It folds case by default, which a plain index on the column cannot serve:
   declare an indexed column with `fold_case=False`, and its exact matches are sent plain and follow the column's
   collation or the field's mapping. A column with a `search_value` hook is compared that way too.
-- **A SQL column with a type of its own is filtered by what it stores.** On a column whose SQLAlchemy type converts
-  values (a `TypeDecorator`), the value of an exact match goes through the type's own conversion, as in a plain
-  comparison, and case is then ignored on the stored value. A search looks at the stored text and converts
-  nothing. An `Enum` column is searched and compared as text.
+- **Only a plain string column is folded.** In SQL an exact match ignores case on a column whose SQLAlchemy type
+  is a string type (`String`, `Text`, `Unicode`, `CHAR` and the like) or an `Enum`, which is searched and compared
+  as text. **The exception:** a column with a type of its own (a `TypeDecorator`, SQLAlchemy's `Uuid`) compares as
+  that type compares, since it converts values in its own way, and an expression declared without a type is
+  compared as sent. To have an expression folded, give it a string type: `literal_column('upper(name)', String)`.
 - **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
   an `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a
   column only by its declared name. The codes are `invalid_character` for a control character such as a tab, which
