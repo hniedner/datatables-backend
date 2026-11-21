@@ -30,6 +30,7 @@ LONG_S = chr(0x17F) + 'un'  # the long s, which Unicode folds to s
 FOLDED_TO_ASCII = {'id': 'y8', 'title': 'Folded', 'body': 'folded', 'label': [KELVIN, LONG_S]}
 VALUES = [
     'kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S,  # letters outside ASCII whose other case is an ASCII letter
+    'Ä' * 256, 'ä' * 256,  # one letter more than the longest value sent as a regexp
     'apple', 'APPLE', 'pfel', 'PFEL', 'abc', LONGEST, LONGEST.lower(),  # ASCII
     'äpfel', 'ÄPFEL', 'äpf', 'ÄPF', 'bär', 'BÄR', 'Bär', 'straße', 'STRAẞE', 'izmir', 'İZMİR', 'i̇zmi̇r',  # cased
     'ǅungla', 'ǆungla', 'Ǆungla',  # a titlecase letter and its two other cases
@@ -158,25 +159,17 @@ def long_values(client: OpenSearch) -> None:
 
     field = 'label.keyword'
     forms = {
-        'term plain': lambda v: {'term': {field: v}},
-        'term ci': lambda v: {'term': {field: {'value': v, 'case_insensitive': True}}},
         'wildcard ci *v*': lambda v: {'wildcard': {field: {'value': f'*{v}*', 'case_insensitive': True}}},
         'regexp ci .*v.*': lambda v: {'regexp': {field: {'value': f'.*{v}.*', 'case_insensitive': True}}},
+        'regexp ci v': lambda v: {'regexp': {field: {'value': v, 'case_insensitive': True}}},
     }
     for form, build in forms.items():
-        for length in (255, 600, 1200, 2400):
-            if form.startswith('regexp') and length > 900:
-                continue  # over index.max_regex_length, refused for its length
-            time.sleep(5)  # a rested node: whatever the query before left can be collected
-            before = heap()
-            outcome = send(build('b' * length))
-            after = heap()
-            waited = 0
-            while send({'term': {field: 'apple'}}).startswith('RAISED') and waited < 60:
-                time.sleep(1)
-                waited += 1
-            later = f'a small query then failed for {waited} s' if waited else 'a small query then answered at once'
-            sys.stderr.write(f'LONG {form} | {length} letters -> {outcome} [heap {before} -> {after}; {later}]\n')
+        for letter in ('b', 'ä'):
+            for length in (255, 256, 300, 400, 500):
+                time.sleep(2)  # a rested node: whatever the query before left can be collected
+                before = heap()
+                outcome = send(build(letter * length))
+                sys.stderr.write(f'LONG {form} | {length} x {letter} -> {outcome} [heap {before} -> {heap()}]\n')
 
 
 def main() -> None:

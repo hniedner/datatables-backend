@@ -255,7 +255,7 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
-MAX_REGEX_LENGTH = 1000  # OpenSearch's default `index.max_regex_length`, which counts UTF-16 units
+MAX_REGEXP_VALUE = 255  # code points: PRD-F14's longest search text, and the longest value measured as a regexp
 
 
 def _cased_beyond_ascii(value: str) -> bool:
@@ -268,18 +268,16 @@ def _cased_beyond_ascii(value: str) -> bool:
 
 def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
-    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one whose
-    pattern would be longer than a server allows by default, which the server would refuse. Every character of
+    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one longer than
+    any measured as a ``regexp``, which a server may refuse where it answered the other query (its pattern is then
+    at most 768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``). Every character of
     ``value`` that is not a letter or a digit gets a backslash, which makes it that character and nothing else, so
     no operator of the syntax can come from a value; nor from a mark outside ASCII that a field's normalizer turns
     into an ASCII one (a fullwidth bracket), since the server normalizes the pattern."""
-    if not _cased_beyond_ascii(value):
+    if len(value) > MAX_REGEXP_VALUE or not _cased_beyond_ascii(value):
         return None
     literal = ''.join(char if char.isalnum() else f'\\{char}' for char in value)
-    pattern = f'{before}{literal}{after}'
-    if len(pattern.encode('utf-16-le')) // 2 > MAX_REGEX_LENGTH:
-        return None
-    return {'regexp': {field: {'value': pattern, 'case_insensitive': True}}}
+    return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
 
 
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:

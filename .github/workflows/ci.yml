@@ -95,6 +95,11 @@ jobs:
           echo "--- values 0 to 5 (letters that fold to ASCII), with the branch's source:"
           grep -E " \| [0-5] " "$RUNNER_TEMP/after.txt" || true
           echo "--- end of values 0 to 5"
+          echo "--- one letter repeated 255 and 256 times, main's source:"
+          grep -E "(ÄÄÄÄÄÄÄÄÄÄÄÄ|ääääääääääää)\.\.\." "$RUNNER_TEMP/before.txt" || true
+          echo "--- the same, the branch's source:"
+          grep -E "(ÄÄÄÄÄÄÄÄÄÄÄÄ|ääääääääääää)\.\.\." "$RUNNER_TEMP/after.txt" || true
+          echo "--- end of repeated letters"
       - name: Each character left unescaped in turn
         if: always()
         run: |

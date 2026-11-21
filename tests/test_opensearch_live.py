@@ -65,9 +65,9 @@ MAPPING = {
     }
 }
 LONGEST = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:255]  # as many code points as PRD-F14 lets a search text hold
-LONGEST_BEYOND_ASCII = ('ÄÖÜÉÈÊÀÂÎÔÛÇÑÅØÆ' * 16)[:255]  # the same length in cased letters outside ASCII
-# The value whose regular expression is the longest: a letter outside the BMP, which a server counts as two, and a
-# backslash before each of 254 dots.
+LONGEST_BEYOND_ASCII = 'Ä' * 255  # the same length in one cased letter outside ASCII, the hardest text for a pattern
+# A value whose regular expression is long, 514 UTF-16 units as a server counts them: a letter outside the BMP, which
+# counts as two, and a backslash before each of 254 dots.
 LONGEST_PATTERN = chr(0x10400) + '.' * 254
 # Every ASCII character a value may hold that is not a letter or a digit: line feed and carriage return, the two
 # control characters PRD-F15 lets through, then the space and the punctuation.
@@ -317,14 +317,16 @@ def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, con
     assert found(whole_label.fetch_sync(params, client)) == ['c3']
 
 
-@pytest.mark.parametrize(('condition', 'value'), [('=', LONGEST_BEYOND_ASCII), ('contains', LONGEST_PATTERN)])
-def test_the_longest_regular_expression_is_answered(client: OpenSearch, condition: str, value: str):
-    """PRD-F14, PRD-F9 (SPEC-F9.17): a value with a cased letter outside ASCII is a `regexp` query. The first row is
-    255 letters that each fold. The second is the longest pattern a search text of 255 code points can make, 514
-    UTF-16 units, which is what a server counts (two for the letter, a backslash before each of 254 dots, open at
-    both ends), against the 1,000 it allows by default (`index.max_regex_length`). Searched in the stored case, so
-    every server finds it. A row turns red when a server refuses or fails such a query."""
-    params = request(*LABEL_NAMES, **criterion('label', condition, value))
+@pytest.mark.parametrize('value', [LONGEST_BEYOND_ASCII, LONGEST_PATTERN])
+def test_the_longest_regular_expression_is_answered(client: OpenSearch, value: str):
+    """PRD-F14, PRD-F9 (SPEC-F9.17): a value with a cased letter outside ASCII is a `regexp` query, up to 255 code
+    points; both rows are that long, as a substring, open at both ends. The first is one folding letter repeated,
+    the text a server finds hardest to turn into an automaton (600 such letters it refuses). The second is a
+    pattern of 514 UTF-16 units, which is what a server counts (two for the letter, a backslash before each of 254
+    dots), against the 1,000 it allows by default (`index.max_regex_length`); it also turns red when a dot loses
+    its backslash. Searched in the stored case, so every server finds it. A row turns red when a server refuses or
+    fails such a query."""
+    params = request(*LABEL_NAMES, **criterion('label', 'contains', value))
     assert found(whole_label.fetch_sync(params, client)) == ['d4']
 
 
