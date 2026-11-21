@@ -204,7 +204,7 @@ class SQLTable:
                         values = [_boolean(column, value) for value in search.values]
                     elif search.type == 'number':
                         values = [
-                            _number(column, parse_number(value, search.column), search.column)
+                            _number(column, parse_number(value, search.column, listed=True), search.column)
                             for value in search.values
                         ]
                     else:

@@ -44,7 +44,7 @@ SEARCH_CONTROL_CHARACTER = (
 )
 SEARCH_REGEX = 'The search box does not take regular expressions. Search for plain text.'
 # Only a client that builds its own request sends a list here, so this one tells the integrator what to send
-SEARCH_VALUES = 'The search box takes one text, not a list of values. Send the text as the search value.'
+SEARCH_VALUES = 'The search box takes text, not a list of values. Send the text as the search value.'
 NO_SEARCHABLE_COLUMN = (
     'No column of this table can be searched from the search box. Clear it and use a column filter instead.'
 )
@@ -354,9 +354,10 @@ def _criterion(
     return Criterion(column, kind, condition, values)
 
 
-def parse_number(text: str, column: Column) -> int | float:
+def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point, else a ``float``."""
+    point, else a ``float``. ``listed`` says the text is one of a list of values, where the reason must not ask
+    for one number."""
     stripped = text.strip()
     if stripped.lstrip('+-').isdigit():
         return int(stripped)
@@ -365,11 +366,12 @@ def parse_number(text: str, column: Column) -> int | float:
     except ValueError:
         number = math.nan
     if not math.isfinite(number):
-        raise mistake(
-            'datatables_number_unreadable',
-            f'The filter on "{column.name}" needs one number, written like 42 or -3.5.',
-            column,
+        needed = (
+            f'Each value in the filter on "{column.name}" must be a number'
+            if listed
+            else f'The filter on "{column.name}" needs one number'
         )
+        raise mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
     return number
 
 
@@ -414,21 +416,17 @@ def parse_day(text: str, column: Column) -> date:
 
 
 def next_day(day: date) -> date:
-    """The day after ``day``, which ``parse_day`` made sure exists."""
+    """The day after ``day``, which ``parse_day`` and ``day_span`` made sure exists."""
     return day + timedelta(days=1)
 
 
 def day_span(text: str, column: Column) -> DaySpan:
     """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day.
     A span that holds the last day there is, is refused as that day is."""
-    value = text.strip()
-    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
-        day = parse_day(value, column)
-        return DaySpan(day, next_day(day))
-    form = re.fullmatch(r'(\d{4})(?:-(\d{2}))?', value)
+    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', text.strip())
     try:
-        start = date(int(form[1]), int(form[2] or 1), 1) if form else None
-    except ValueError:  # the year 0000, or a month that does not exist
+        start = date(int(form[1]), int(form[2] or 1), int(form[3] or 1)) if form else None
+    except ValueError:  # the year 0000, or a month or a day that does not exist
         start = None
     if form is None or start is None:
         raise mistake(
@@ -437,6 +435,10 @@ def day_span(text: str, column: Column) -> DaySpan:
             'or YYYY-MM-DD, like 2024-03.',
             column,
         )
+    if form[3]:
+        if start == date.max:
+            raise _last_day(column)
+        return DaySpan(start, next_day(start))
     last = start.month if form[2] else 12
     if (start.year, last) == (date.max.year, 12):
         raise _last_day(column)
@@ -452,7 +454,7 @@ def _column_search(
         # Only a client that builds its own request sends both, so this one tells the integrator what to send
         raise mistake(
             'datatables_values_refused',
-            f'The filter on "{column.name}" holds both a text and a list of values. Send only one of them.',
+            f'The filter on "{column.name}" holds both text and a list of values. Send only one of them.',
             column,
         )
     texts: Sequence[str]
@@ -463,8 +465,8 @@ def _column_search(
         if alternatives is None:
             raise mistake(
                 'datatables_regex_refused',
-                f'The filter on "{column.name}" does not take regular expressions. Search for plain text without '
-                'the characters . * + ? [ ] { } ( ) ^ $ |',
+                f'The filter on "{column.name}" does not take regular expressions. Remove these characters and '
+                'search for plain text: . * + ? [ ] { } ( ) ^ $ | \\',
                 column,
             )
         texts = alternatives

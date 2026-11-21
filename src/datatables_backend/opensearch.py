@@ -283,7 +283,9 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
         if search.type == 'boolean':
             return {'terms': {column.source: list(search.values)}}
         if search.type == 'number':
-            return {'terms': {column.source: [parse_number(str(value), column) for value in search.values]}}
+            return {
+                'terms': {column.source: [parse_number(str(value), column, listed=True) for value in search.values]}
+            }
         field = column.source if search.type == 'date' else _keyword(column)
         if field is None:  # analysed text holds no whole string to match exactly
             raise mistake(

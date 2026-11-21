@@ -50,18 +50,20 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `The search box holds an invisible control character, such as a tab. Delete its text and type it again.`
 - **SPEC-E4.4** [all] A column search on `name` holding a tab, or a SearchBuilder value on `name` holding one →
   `The filter on "name" holds an invisible control character, such as a tab. Delete its value and type it again.`
-- **SPEC-E4.5** [all] A column search holding a tab on the undeclared `extra` →
+- **SPEC-E4.5** [all] A column search holding a tab on the undeclared `extra`, or a SearchBuilder value holding one
+  on `extra` → `invalid_character`, not the refusal of the name, with
   `A column filter holds an invisible control character, such as a tab. Delete its value and type it again.`
 - **SPEC-E4.6** [all] SearchBuilder `=` `abc` on `price` → `invalid_number` with
   `The filter on "price" needs one number, written like 42 or -3.5.`
 - **SPEC-E4.7** [all] SearchBuilder `=` `15/07/1980` on `made` → `invalid_date` with
   `The filter on "made" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.`
-- **SPEC-E4.8** [all] SearchBuilder `contains` `1980-13` on `made` → `invalid_date` with
+- **SPEC-E4.8** [all] SearchBuilder `contains` `1980-13` on `made`, or `contains` `1980-02-30` (a day that does not
+  exist, where a year or a month would do too) → `invalid_date` with
   `The filter on "made" needs a year, a month or a day that exists, written as YYYY, YYYY-MM or YYYY-MM-DD, like 2024-03.`
 - **SPEC-E4.9** [SQL] SearchBuilder `=` `9223372036854775808` on `price` → `invalid_number` with
   `The filter on "price" needs a number between -9223372036854775808 and 9223372036854775807.` The bounds are those
   of the column's own width: -32768 and 32767 on a 16-bit integer column, -2147483648 and 2147483647 on a 32-bit one.
-- **SPEC-E4.10** [all] SearchBuilder `<` `9999-12-31` on `made` → `invalid_date` with
+- **SPEC-E4.10** [all] SearchBuilder `<` `9999-12-31` on `made`, or `contains` `9999` → `invalid_date` with
   `The filter on "made" reaches the last day of the year 9999, which cannot be searched. Use an earlier date.`
 - **SPEC-E4.11** [all] An order entry on the undeclared `extra`, marked `orderable: true` →
   `The table was asked to sort by a column the server does not offer. Sort by another column.`
@@ -77,11 +79,11 @@ it, as far as that is known when the mistake is found. A text is changed only to
 - **SPEC-E4.16** [all] A global search `a.*` with `regex` true →
   `The search box does not take regular expressions. Search for plain text.`
 - **SPEC-E4.17** [all] A column search `A.+` with `regex` true on `name` →
-  `The filter on "name" does not take regular expressions. Search for plain text without the characters . * + ? [ ] { } ( ) ^ $ |`
+  `The filter on "name" does not take regular expressions. Remove these characters and search for plain text: . * + ? [ ] { } ( ) ^ $ | \`
 - **SPEC-E4.18** [all] A global search with `multi_values` `["x"]` →
-  `The search box takes one text, not a list of values. Send the text as the search value.`
+  `The search box takes text, not a list of values. Send the text as the search value.`
 - **SPEC-E4.19** [all] A column search on `price` with the value `abc` and `multi_values` `["x"]` →
-  `The filter on "price" holds both a text and a list of values. Send only one of them.`
+  `The filter on "price" holds both text and a list of values. Send only one of them.`
 - **SPEC-E4.20** [all] SearchBuilder `contains` `3` on `price` →
   `The condition "contains" cannot be used on "price", which holds numbers. Choose another condition.` A string
   column `holds text`, a date column `holds dates`, a boolean column `holds true or false`.
@@ -94,6 +96,9 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `The column "note" can be searched only for text it contains, not for a list of exact values. Type the text to search for instead.`
 - **SPEC-E4.24** [OS] With `max_result_window` 3, `start` 4 and `length` 3 → `page_out_of_range` with
   `This table can be paged through its first 3 rows only. Go back to an earlier page, or narrow the search so fewer rows match.`
+- **SPEC-E4.25** [all] A column search on `price` with `multi_values` `["7", "abc"]` → `invalid_number` with
+  `Each value in the filter on "price" must be a number, written like 42 or -3.5.` (a list is not told to hold one
+  number, as E4.6 tells a single value).
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns
