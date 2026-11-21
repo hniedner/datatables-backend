@@ -35,8 +35,8 @@ lists rows in the order they come back.
   `colour` `blue`: a table over `items` joined to `tags` on `items.id = tags.item_id`, whose columns the join keys as
   `items_<col>` and `tags_<col>` (as in A7.1), declaring `Column('id', field='items_id')`,
   `Column('colour', field='items_colour')` and `Column('tags_id', field='tags_id')`, with `tags_id` as the unique key
-  (the join's SQLAlchemy primary key is `items.id` alone, which repeats): order `colour` asc → `tags_id` 1, 2, 3, 4
-  (items 3, 3, 5, 6); desc → 4, 3, 2, 1.
+  (the declared key is the tie-breaker; the join's SQLAlchemy primary key, `items.id` alone, repeats): order
+  `colour` asc → `tags_id` 1, 2, 3, 4 (items 3, 3, 5, 6); desc → 4, 3, 2, 1.
 - **SPEC-O4.1** [all] No order in the request → rows 1, 2, 3, 4; with rows inserted in the order 3, 1, 4, 2, still
   rows 1, 2, 3, 4.
 - **SPEC-O4.2** [all] An order whose every entry is skipped (`secret` desc, marked `orderable: false`) → rows 1, 2,
