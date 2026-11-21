@@ -1,9 +1,11 @@
 """Reading a DataTables request: both encodings DataTables sends, and every way a request is refused."""
 
+import logging
 from typing import Any
 
 import pytest
 
+from datatables_backend import DTResponse
 from datatables_backend import MalformedRequest
 from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
@@ -88,7 +90,7 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
         ({'start': -5}, 'start'),
         ({'start': 2**31}, 'start'),
         ({'start': 'ten'}, 'start'),
-        ({'order': [{'column': 0, 'dir': 'sideways'}]}, 'order.0.dir'),
+        ({'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'sideways'}]}, 'order'),
         ({'columns': 'name'}, 'columns'),
         ({'searchBuilder': {'criteria': [{'condition': 'like', 'origData': 'a'}]}}, 'searchBuilder'),
     ],
@@ -96,6 +98,84 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
 def test_a_malformed_request_names_the_parameter(body: dict[str, Any], message: str):
     with pytest.raises(MalformedRequest, match=message):
         parse_request(body)
+
+
+@pytest.mark.parametrize('index', [1, -1])
+def test_an_order_on_a_column_the_request_does_not_hold_is_malformed(index: int):
+    """SPEC-O1.1, SPEC-P12.1: only an integration bug sends one, so it is not answered as the user's mistake. The
+    request holds one column, index 0."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'draw': 1, 'columns': [{'data': 'a'}], 'order': [{'column': index, 'dir': 'asc'}]})
+    assert str(refused.value) == 'Invalid order parameter.'
+
+
+@pytest.mark.parametrize('request_data', [[{'draw': 1}], [1], 7])
+def test_a_top_level_value_that_is_neither_an_object_nor_pairs_is_malformed(request_data: Any):
+    """SPEC-P6.1: a decoded JSON list of objects or of numbers, or a bare number, is refused as a request, not left to
+    fail with whatever error reading it as pairs gives."""
+    with pytest.raises(MalformedRequest):
+        parse_request(request_data)
+
+
+@pytest.mark.parametrize(
+    ('request_data', 'draw'),
+    [
+        ({'draw': '3', 'length': 'abc'}, 3),  # SPEC-E6.1: refused while the model is validated
+        ([('draw', '4'), ('columns[0]x', 'a')], 4),  # refused before that, while the flat keys are read
+        (iter([('draw', '5'), ('length', 'abc')]), 5),  # pairs that can be read only once
+        ({'draw': ['6'], 'columns[0][data]': ['a'], 'length': ['abc']}, 6),  # urllib's parse_qs: every value a list
+        ({'draw': 'x'}, None),  # SPEC-E6.2: the draw itself is the malformed part
+        ({'draw': 2147483648}, None),  # SPEC-E6.2, SPEC-P10.2: one above the largest draw
+        ({'length': 'abc'}, None),  # no draw sent
+        ([('draw', '1'), ('draw', '2')], None),  # two draws: neither is the request's
+    ],
+)
+def test_a_malformed_request_carries_the_draw_it_could_read(request_data: Any, draw: int | None):
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(request_data)
+    assert refused.value.draw == draw
+
+
+def test_the_largest_draw_is_read():
+    """SPEC-P10.2's other half: the bound refuses nothing a client sends."""
+    assert parse_request({'draw': 2147483647}).draw == 2147483647
+
+
+def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The event of each record, after checking that each is a WARNING of the library's logger (SPEC-E12.1)."""
+    assert all((record.name, record.levelname) == ('datatables_backend', 'WARNING') for record in caplog.records), (
+        caplog.records
+    )
+    return [record.msg for record in caplog.records]
+
+
+@pytest.mark.parametrize(
+    ('request_data', 'event'),
+    [
+        ([('draw', '2'), ('columns[0][data]', 'a'), ('columns[2][data]', 'b')], 'datatables_request_malformed'),
+        ({'draw': 2, 'start': 'ten'}, 'datatables_request_malformed'),
+        ({'draw': 2, 'length': 1001}, 'datatables_length_refused'),
+        ({'draw': 2, 'columns': [], 'order': [{'column': 0}]}, 'datatables_request_malformed'),
+    ],
+    ids=['index-gap', 'wrong-type', 'length-limit', 'order-index'],
+)
+def test_a_malformed_request_is_logged_exactly_once(caplog: pytest.LogCaptureFixture, request_data: Any, event: str):
+    """SPEC-E13.1: one WARNING per refusal, under a fixed event, wherever in the reading it was refused."""
+    with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest):
+        parse_request(request_data)
+    assert warnings(caplog) == [event]
+
+
+@pytest.mark.parametrize('key', ['columns[0][searchable]', 'columns.0.searchable'])
+def test_a_refused_value_names_the_parameter_and_never_the_key_or_the_value(caplog: pytest.LogCaptureFixture, key: str):
+    """SPEC-P12.1, SPEC-E10.1: the path below the parameter is the client's own key when it sends dotted keys."""
+    with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest) as refused:
+        parse_request([('draw', '1'), (key, 'MARKER_V')])
+    assert str(refused.value) == 'Invalid columns parameter.'
+    assert warnings(caplog) == ['datatables_request_malformed']
+    logged = repr([vars(record) for record in caplog.records])
+    assert 'MARKER_V' not in logged
+    assert 'searchable' not in logged
 
 
 def test_a_refusal_never_quotes_the_value():
@@ -159,7 +239,7 @@ def test_an_app_key_beside_a_json_body_is_ignored():
 )
 def test_a_fixed_or_grouped_search_is_refused(extra: tuple[str, str]):
     """DataTables sends these only when the page sets them; dropping them would answer fewer filters than asked."""
-    with pytest.raises(MalformedRequest, match='search'):
+    with pytest.raises(MalformedRequest, match=r'^Invalid (search|columns) parameter\.$'):
         parse_request([*BRACKETED, extra])
 
 
@@ -235,7 +315,7 @@ def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
 )
 def test_a_searchpanes_or_columncontrol_filter_is_refused(extra: tuple[str, str]):
     """SearchPanes and ColumnControl filters are not answered; dropping them would answer fewer filters than asked."""
-    with pytest.raises(MalformedRequest, match=r'searchPanes|columnControl'):
+    with pytest.raises(MalformedRequest, match=r'^Invalid (searchPanes|searchPanes_null|columns) parameter\.$'):
         parse_request([*BRACKETED, extra])
 
 
@@ -325,7 +405,22 @@ def test_a_field_and_a_value_under_one_append_are_refused_in_either_order(key: s
 def test_a_columncontrol_list_refusal_names_only_the_parameter(key: str):
     with pytest.raises(MalformedRequest) as refused:
         parse_request([*BRACKETED, (key, 'red')])
-    assert str(refused.value) == 'Invalid columns.2.columnControl.list parameter.'
+    assert str(refused.value) == 'Invalid columns parameter.'
+
+
+def test_an_answer_holds_only_what_datatables_reads():
+    """SPEC-R5.2, SPEC-E5.1: the keys a caller sends on, for an ordinary answer (whatever else it was built with) and
+    for the failure an app reports itself."""
+    answer = DTResponse.model_validate({'draw': 5, 'recordsTotal': 9, 'recordsFiltered': 2, 'metadata': {'took': 3}})
+    assert answer.to_dict() == {'draw': 5, 'recordsTotal': 9, 'recordsFiltered': 2, 'data': []}
+    assert DTResponse.query_failed(5).to_dict() == {
+        'draw': 5,
+        'recordsTotal': 0,
+        'recordsFiltered': 0,
+        'data': [],
+        'error': 'The table query failed.',
+        'error_code': 'query_failed',
+    }
 
 
 def test_an_empty_list_for_a_single_value_key_is_refused():

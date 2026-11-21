@@ -5,6 +5,7 @@ container tests of milestone 2; these pin down what is sent.
 """
 
 from collections.abc import Mapping
+import logging
 from typing import Any
 
 import pytest
@@ -74,8 +75,8 @@ def query(client: Client) -> list[dict[str, Any]]:
     return must[1:]
 
 
-def refused(response: DTResponse) -> str:
-    assert response.error_code == 'invalid_filter'
+def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
+    assert response.error_code == code
     assert response.error is not None
     return response.error
 
@@ -118,11 +119,13 @@ async def test_the_async_client_answers_like_the_sync_one():
 
 
 def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
-    hit = {'_source': {'id': 'a', 'title': 'T', 'pages': 3, 'meta': {'author': 'Ann'}}, '_score': 1.0}
+    """Also SPEC-R7.2: a value comes back as `_source` holds it, an HTML text unescaped."""
+    html = '<b>x</b> & "y"'
+    hit = {'_source': {'id': 'a', 'title': html, 'pages': 3, 'meta': {'author': 'Ann'}}, '_score': 1.0}
     hooked = SearchTable('docs', COLUMNS, rows=RowHooks(row_id=lambda row: row['id']))
     (row,) = hooked.fetch_sync(request(*NAMES), Client(hits=[hit])).data
     assert row == {
-        'id': 'a', 'title': 'T', 'body': None, 'pages': 3, 'created': None, 'author': 'Ann', 'DT_RowId': 'a',
+        'id': 'a', 'title': html, 'body': None, 'pages': 3, 'created': None, 'author': 'Ann', 'DT_RowId': 'a',
     }  # fmt: skip
 
 
@@ -130,8 +133,10 @@ def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
     'answer',
     [
         {'_shards': {'total': 2, 'successful': 1, 'failed': 1}},
+        {'_shards': {'total': 2, 'successful': 1, 'failed': 0}},  # SPEC-E9.1: a shard missing, none counted as failed
         {'timed_out': True},
-        {'_shards': {'total': 2}},  # no failed count: cannot be checked
+        {'_shards': {'total': 2, 'successful': 2}},  # no failed count: cannot be checked
+        {'_shards': {'total': 2, 'failed': 0}},  # nor without the count of those that answered
         {'_shards': None},
     ],
 )
@@ -148,9 +153,78 @@ def test_a_partial_count_raises_too():
 
 
 def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
+    """The code of PRD-C12. Its counts and the pages PRD-C10 still serves are pinned below."""
     client = Client()
-    assert 'beyond row 10,000' in refused(table.fetch_sync(request(*NAMES, start=9995, length=10), client))
-    assert client.searches == []
+    response = table.fetch_sync(request(*NAMES, start=9995, length=10), client)
+    assert 'beyond row 10,000' in refused(response, 'page_out_of_range')
+    assert (client.searches, client.counts) == ([], [])
+
+
+def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():
+    """SPEC-E3.5: step 4 before step 5, so the user first hears of the filter they can change."""
+    params = request(*FLAG_NAMES, start=9995, length=10, **criterion('active', '=', 'yes'))
+    assert 'true or false' in refused(flags.fetch_sync(params, Client()))
+
+
+@pytest.mark.xfail(
+    reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1)',
+    strict=True,
+    raises=AssertionError,
+)
+def test_a_page_out_of_range_carries_the_real_counts():
+    small = SearchTable('docs', COLUMNS, max_result_window=3)
+    response = small.fetch_sync(request(*NAMES, start=4, length=3), Client(total=10, count=10))
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
+
+
+@pytest.mark.xfail(
+    reason='PRD-C3: a start past the end beyond the result window is refused, not answered with an empty page and '
+    'both counts (SPEC-C3.3)',
+    strict=True,
+    raises=AssertionError,
+)
+def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
+    small = SearchTable('docs', COLUMNS, max_result_window=2)
+    response = small.fetch_sync(request(*NAMES, start=10), Client(total=4, count=4))
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
+
+
+@pytest.mark.parametrize(
+    ('column', 'value', 'code'),
+    [
+        (3, '7 8', 'invalid_number'),  # several words
+        (3, '!7', 'invalid_number'),
+        (4, '!2024', 'invalid_date'),
+        (4, '2024-13', 'invalid_date'),
+    ],
+)
+def test_a_column_search_a_number_or_date_column_cannot_read_has_its_code(column: int, value: str, code: str):
+    """SPEC-E3.6, SPEC-F33.2, SPEC-F34.2: these are found only while the request body is built, and nothing is
+    sent."""
+    client, params = Client(), request(*NAMES)
+    params.columns[column].search.value = value
+    refused(table.fetch_sync(params, client), code)
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ('column', 'event'),
+    [(3, 'datatables_number_unreadable'), (2, 'datatables_search_refused')],
+    ids=['number', 'exact-match-on-analysed-text'],
+)
+def test_a_mistake_found_while_the_body_is_built_is_logged_once(
+    caplog: pytest.LogCaptureFixture, column: int, event: str
+):
+    """SPEC-E13.1 for the refusals of this backend's own: a value its number column cannot read, and a list of
+    exact values on analysed text, which has no whole string to match. The value is in no record."""
+    client, params = Client(), request(*NAMES)
+    params.columns[column].search.multi_values = ['MARKER']
+    with caplog.at_level(logging.DEBUG):
+        refused(table.fetch_sync(params, client), 'invalid_number' if column == 3 else 'invalid_filter')
+    assert [(record.name, record.levelname, record.msg) for record in caplog.records] == [
+        ('datatables_backend', 'WARNING', event)
+    ]
+    assert 'MARKER' not in repr([vars(record) for record in caplog.records])
 
 
 # -- searches ---
