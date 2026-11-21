@@ -11,4 +11,4 @@ dist/
 # Private, never committed
 CLAUDE.local.md
 local/
-.claude/
+.claude/settings.local.json
