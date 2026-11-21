@@ -60,9 +60,37 @@ def answer(client: OpenSearch, table: SearchTable, body: dict[str, Any]) -> str:
     return ' '.join(sorted(str(row['id']) for row in response.data)) or '-'
 
 
+def regex_length(client: OpenSearch) -> None:
+    """What `index.max_regex_length` counts: an index that allows 513, and patterns around it."""
+    name = 'dtb-regex-34'
+    if client.indices.exists(index=name):
+        client.indices.delete(index=name)
+    settings = {'number_of_replicas': 0, 'index.max_regex_length': 513}
+    client.indices.create(index=name, body={'mappings': MAPPING, 'settings': settings})
+    dots = '\\.' * 254
+    patterns = {
+        'a letter of the BMP, 513 characters': f'.*Ä{dots}.*',
+        'a letter of the BMP and one more dot, 514 characters': f'.*Ä{dots}..*',
+        'a letter outside the BMP, 513 code points, 514 UTF-16 units': f'.*{chr(0x10400)}{dots}.*',
+    }
+    try:
+        for label, pattern in patterns.items():
+            query = {'regexp': {'label.keyword': {'value': pattern, 'case_insensitive': True}}}
+            try:
+                client.search(index=name, body={'query': query})
+                outcome = 'answered'
+            except TransportError as failure:
+                info: Any = failure.info
+                outcome = str(info['error']['root_cause'][0]['reason'])[:160]
+            sys.stderr.write(f'RAW max_regex_length 513, {label} (len {len(pattern)}) -> {outcome}\n')
+    finally:
+        client.indices.delete(index=name)
+
+
 def main() -> None:
     sys.stderr.write(f'source: {datatables_backend.__file__}\n')
     client = OpenSearch(hosts=[os.environ['DTB_OPENSEARCH_URL']], timeout=120)
+    regex_length(client)
     if client.indices.exists(index=INDEX):
         client.indices.delete(index=INDEX)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
