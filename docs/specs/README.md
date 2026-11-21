@@ -44,9 +44,11 @@ An unreadable PRD or specs directory is a usage error.
 - A list (`[SQLite, PostgreSQL]`) means each backend named; a narrowed tag (`[OS, SQL join]`) means OpenSearch and a
   SQL table over a join. A tag in the middle of a statement applies to the clauses after it.
 - `[core]`: backend-independent; checks `parse_request` or a model alone.
-- `[FastAPI]`: through a FastAPI app using the library's dependency, with its `TestClient`.
+- `[FastAPI]`: through a FastAPI app using the library's dependency, with its `TestClient`, over the SQLite `items`
+  fixture unless the statement names another backend.
 - `[CI job]`: checked by that CI job (`install-isolation`, `minimum-versions`, `tests`, `gate`).
-- `[review]`: checked by reading the code or the built wheel; no automated check names it yet.
+- `[review]`: checked by reading the code, the CI configuration, the built wheel or the repository settings; no
+  automated check names it yet.
 
 ## Answers
 
@@ -67,8 +69,9 @@ An unreadable PRD or specs directory is a usage error.
 
 ## The base request
 
-DataTables' default request for the `items` columns, in column order: `draw` 1, `start` 0, `length` 10 (more than
-every fixture), every column `searchable` and `orderable` true, empty searches, and no `order`. A statement changes
+DataTables' default request for the `items` columns, in column order: each column's `data` is its name and its
+`name` is empty, `draw` 1, `start` 0, `length` 10 (more than every fixture), every column `searchable` and
+`orderable` true, empty searches, and no `order`. A statement changes
 only the part it names.
 
 ## The fixture table `items`
@@ -102,14 +105,17 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
 
 - **OQ1** (PRD-F38): the SearchBuilder root group counts as depth 1 (F38.1).
 - **OQ2** (PRD-D1, PRD-R1, PRD-C6): a row carries every declared column, whatever the request lists (D1.1, R7.2).
-- **OQ3** (PRD-A10): `draw` sits at the top level of the 422 body, beside `detail` (A10.1).
+- **OQ3** (PRD-A10): the 422 body keeps FastAPI's default shape, with `draw` inside `detail`:
+  `{"detail": {"draw": 5, ...}}` (A10.1). The owner changed this on 2026-11-20 from a top-level `draw`, which would
+  have needed every app to register an exception handler shipped by the library.
 - **User-error counts** (reviewer's decision, 2026-11-20): a user-error response other than `page_out_of_range`
   carries `recordsTotal` 0 and `recordsFiltered` 0, as today's `DTResponse` defaults give, even when the counts of
   PRD-C11 ran before the refusal (PRD-E7 allows them).
 - **OpenSearch row answers** (reviewer's decision, 2026-11-20): the recording client returns canned hits, so a
   statement naming rows cannot fail on it, and an emulator would repeat the code's own assumptions. On the recording
   client, an `[OS]` statement checks the request bodies and the answer built from the hits given. Every `[all]` or
-  `[OS]` statement that names rows is also run against the live cluster in `tests/test_opensearch_live.py`.
+  `[OS]` statement that names rows is also run against the live cluster in `tests/test_opensearch_live.py`. A
+  statement whose hits are scripted is checked on the recording client only.
 
 ## Open questions
 

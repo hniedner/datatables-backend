@@ -36,7 +36,7 @@ import re
 import sys
 
 CANDIDATE = re.compile(r'^\s*(?:\|\s*[*_`~\[]*PRD-|[*_`~\[]*PRD-[^|]*\|)')
-CELL = r' (?:[^|\\\s]|\\.)(?:[^|\\]|\\.)* '
+CELL = r' (?:[^|\\\s]|\\.)(?:(?:[^|\\]|\\.)*(?:[^|\\\s]|\\.))? '
 REQUIREMENT = re.compile(rf'^\| (PRD-[A-Z]+\d+) \|{CELL}\|{CELL}\| (must|should|later) \|$')
 STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (\S.*)$')
 CONTINUATION = re.compile(r'^\s+\S')

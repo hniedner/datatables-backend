@@ -15,9 +15,9 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P4.1** [core] Unknown fields `columns[0][foo]` and `search[smart]` are ignored; the request parses as
   without them.
 - **SPEC-P5.1** [core] A non-empty `search[fixed]`, `search[groups]`, `search[groupsFixed]` or
-  `columns[0][search][fixed]` → `MalformedRequest`; an empty one parses.
-- **SPEC-P5.2** [core] `searchPanes[colour][0]=red` → `MalformedRequest`; `searchPanes` with only empty panes, and
-  an empty `searchPanes_null`, parse.
+  `columns[0][search][fixed]` → `MalformedRequest`; an empty one (JSON `[]`, or the key absent in a form) parses.
+- **SPEC-P5.2** [core] `searchPanes[colour][0]=red` → `MalformedRequest`; `searchPanes` with only empty panes (JSON
+  `{"colour": []}`), and an empty `searchPanes_null` (JSON `{}`), parse.
 - **SPEC-P5.3** [core] `columns[0][columnControl][list][0]=x` → `MalformedRequest`;
   `columns[0][columnControl][search]` with an empty value and logic `contains` parses; with value `x`, or with logic
   `empty` or `notEmpty`, → `MalformedRequest`.

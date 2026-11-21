@@ -50,7 +50,7 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E8.2** [SQL] A connection whose execute raises `OperationalError` → `fetch` and `fetch_sync` raise it.
 - **SPEC-E8.3** [OS] A client that raises a transport error → `fetch` raises it.
 - **SPEC-E9.1** [OS] A search answer with `_shards.failed` 1 → `PartialResultError` raised; with `_shards.successful`
-  below `_shards.total` → `PartialResultError` raised.
+  below `_shards.total`, `_shards.failed` 0 and `timed_out` false → `PartialResultError` raised.
 - **SPEC-E9.2** [OS] A search answer with no `_shards`, or with `_shards.total` not an integer → `PartialResultError`
   raised.
 - **SPEC-E9.3** [OS] A count answer that does not cover every shard → `PartialResultError` raised.
@@ -64,7 +64,9 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   the same case twice logs the same event name twice, and two different cases log different event names: a column
   search `x` on the undeclared `extra`, and an order on `secret` marked `orderable: true` (server-unorderable).
 - **SPEC-E13.2** [all] A request whose column 0 is `secret`, marked `orderable: false` (so DataTables' default order
-  on column 0 is skipped: unorderable on both sides), with an idle SearchPanes pane, an idle ColumnControl search,
+  on column 0 is skipped: unorderable on both sides), with an idle SearchPanes pane (JSON `"searchPanes":
+  {"colour": []}`), an idle ColumnControl search (an empty value, logic `contains`),
   a nameless column, a request-searchable undeclared column and a global search `red` (skipping the boolean
   `active`, PRD-F44, and on OS the number and date columns, PRD-F32) logs no record.
-- **SPEC-E13.3** [all] A request holding two mistakes logs one WARNING (for the code answered) and answers no rows.
+- **SPEC-E13.3** [all] The request of E3.1 (two mistakes) logs exactly one WARNING, for the code answered, and
+  answers `data` `[]`.

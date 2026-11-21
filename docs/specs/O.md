@@ -32,7 +32,8 @@ lists rows in the order they come back.
   in the ordered column, the tie is broken by that key.
 - **SPEC-O4.1** [all] No order in the request → rows 1, 2, 3, 4; with rows inserted in the order 3, 1, 4, 2, still
   rows 1, 2, 3, 4.
-- **SPEC-O4.2** [all] An order whose every entry is skipped → rows 1, 2, 3, 4.
+- **SPEC-O4.2** [all] An order whose every entry is skipped (`secret` desc, marked `orderable: false`) → rows 1, 2,
+  3, 4 (following the skipped entry's direction would give 4, 3, 2, 1).
 - **SPEC-O5.1** [OS] A text-only `name`: order on it with request `orderable: true` → error_code `invalid_filter`
   and no search sent; with `orderable: false` → skipped, rows 1, 2, 3, 4.
 - **SPEC-O5.2** [OS] Declaring a text-only string column orderable → `SchemaError` at construction.

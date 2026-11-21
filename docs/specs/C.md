@@ -38,9 +38,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
-- **SPEC-C13.1** [OS] With `max_result_window` 3, `start` 8 and `length` 3, a recording client whose count answers
-  10 and whose reversed page search then runs over 11 documents (rows 1 to 11, row 11 added after the count): the
-  answer is served with rows 10, 11 (an unchanged index gives 9, 10), no error, and no `create_pit` call.
+- **SPEC-C13.1** [OS] Recording only, with scripted answers: with `max_result_window` 3, `start` 8 and `length` 3,
+  the count answers 10 and the reversed page search answers the hits 11, 10 (an index that grew after the count) →
+  rows 10, 11, no error, and no `create_pit` call.
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
   two requests within the TTL run one total count between them; recording shows the second ran only the page search
   (SQL: the filtered count and the page), and both answer `recordsTotal` 4.

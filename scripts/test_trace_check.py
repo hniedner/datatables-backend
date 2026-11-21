@@ -231,6 +231,10 @@ def test_indented_statement_is_stray(tmp_path: Path) -> None:
         '| PRD-F3',
         '**PRD-F3** | Text. | Why. | must |',
         '| PRD-F3 |  Text. | Why. | must |',
+        '| PRD-F3 | Text.  | Why. | must |',
+        '| PRD-F3 | Text. | Why.  | must |',
+        '| PRD-F3 | Text. | must |',
+        '|  PRD-F3 | Text. | Why. | must |',
     ],
 )
 def test_more_drifted_requirement_rows_fail(tmp_path: Path, row: str) -> None:
@@ -310,6 +314,37 @@ def test_tab_indented_continuation_is_read(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One,\n\tsee PRD-F9.\n- **SPEC-F2.1** Two.\n'})
     assert result.returncode == 1
     assert result.stderr == 'SPEC-F1.1 cites PRD-F9, which does not exist\n'
+
+
+def test_text_between_code_spans_is_not_backticked(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2** `a` SPEC-F2.1 `b`.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 names a SPEC id inside a statement outside backticks\n'
+
+
+def test_code_span_wrapped_across_lines_is_not_a_span(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2** See `SPEC-F2.1\n  continued`.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 names a SPEC id inside a statement outside backticks\n'
+
+
+@pytest.mark.parametrize('after', ['**Note** prose.', '2.0 is prose.'])
+def test_prose_right_after_a_statement_fails(tmp_path: Path, after: str) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + after + '\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 follows a statement without a blank line or indentation\n'
+
+
+def test_lazy_line_after_a_continuation_fails(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One,\n  more,\nlazy.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 follows a statement without a blank line or indentation\n'
+
+
+def test_two_spaces_after_the_id_is_stray(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2**  Two spaces.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 holds a SPEC id outside a statement of the expected shape\n'
 
 
 def test_multi_digit_ids_trace(tmp_path: Path) -> None:

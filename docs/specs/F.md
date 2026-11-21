@@ -239,7 +239,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `starts` → error_code `invalid_filter`, never a database error.
 - **SPEC-F44.1** [all] Global search `true` → none (the boolean column is skipped; no other column holds `true`).
   On a table whose only searchable column is `active`, global search `x` → error_code `invalid_filter` (no usable
-  column, PRD-F13).
+  column, PRD-F13). On SQLite, MySQL and SQL Server, where a boolean's text holds no `true`, only this second clause
+  catches a boolean column the global search fails to skip.
 - **SPEC-F44.2** [all] Column search on `active`: `true` → rows 1, 4; `0` → rows 2; `yes` → error_code
   `invalid_filter`.
 - **SPEC-F44.3** [all] Categorical `^(true|0)$` on `active` → rows 1, 2, 4; `multi_values` `["", "1"]` → rows 1, 3,

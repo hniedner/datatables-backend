@@ -24,8 +24,8 @@ fetch; the tag names where each is checked (see `README.md`).
   pins 2.6.0.
 - **SPEC-Q8.1** [CI minimum-versions] Each leg passes the suite with its pinned FastAPI and python-multipart.
   [review] Every leg pins 0.133.0 and 0.0.9.
-- **SPEC-Q9.1** [CI minimum-versions] Each leg prints the installed versions it tested. [review] The job has one leg
-  per supported Python.
+- **SPEC-Q9.1** [CI minimum-versions] Each leg asserts that its pins are the floors for its Python and that the
+  installed versions are the pins, and prints them. [review] The job has one leg per supported Python.
 - **SPEC-Q10.1** [review] The wheel holds `datatables_backend/py.typed`; CI's types and lint jobs run `basedpyright`
   and `ruff` and fail on any error or warning.
 - **SPEC-Q11.1** [review] The behaviour tests call only the public API (`parse_request`, `fetch`, `fetch_sync`, the

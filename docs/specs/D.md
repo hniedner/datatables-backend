@@ -50,8 +50,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
   `invalid_filter`.
 - **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose every other column but
-  `id` is NULL or missing: global search `a` + LF + `b` → row 5 is among the rows (the hooked
-  equality, since the LF is not rewritten for it).
+  `id` is NULL or missing: global search `a` + LF + `b` → rows 5 (the hooked equality, since
+  the LF is not rewritten for it; no fixture row holds both `a` and `b` in its other columns).
 - **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (5 after
   trimming) → `invalid_filter`: the 255-code-point bound applies to the raw text.
 - **SPEC-D13.1** [OS] A `text+keyword` column (the default) sorts and matches exactly on `<field>.keyword`; a

@@ -3,10 +3,11 @@
 Statements for PRD section 4.8. Form, tags, answers, the base request and the `items` fixture: see `README.md`.
 
 - **SPEC-A1.1** [all] One table answers request X (global search `red`), then request Y (column search `blue` on
-  `colour`, order `price` desc), then X again: the two answers to X are equal (no state from Y leaks).
+  `colour`, order `price` desc), then X again: the two answers to X are equal, and on OS so are the request bodies
+  sent for them (no state from Y leaks).
 - **SPEC-A2.1** [all] One table object answers 100 requests in turn and 20 concurrent async requests, each answer
-  equal to that of a freshly built table for the same request. On SQL each request runs on its own
-  `AsyncConnection`; on OS all share one `AsyncOpenSearch` client.
+  equal to that of a freshly built table for the same request; on OS the request bodies sent are equal too. On SQL
+  each request runs on its own `AsyncConnection`; on OS all share one `AsyncOpenSearch` client.
 - **SPEC-A3.1** [all] `SQLTable(source, columns)` and the OpenSearch table (index name, columns, key) take no
   connection or client: they construct with no database or cluster reachable, and the first call a recording
   connection or client sees is made inside `fetch` or `fetch_sync`.
@@ -32,9 +33,9 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `application/x-www-form-urlencoded`, is read as JSON: the answer's `draw` is 6.
 - **SPEC-A9.3** [FastAPI] With the base request with `draw` 8 as the query string, a GET with no body and a POST
   with an empty body each answer HTTP 200 with `draw` 8 and rows 1, 2, 3, 4.
-- **SPEC-A10.1** [FastAPI] The base request with `draw` 5 and `length` `abc` → HTTP 422 whose JSON body carries
-  `"draw": 5` as a top-level key beside `detail` (the owner's decision of 2026-11-20); the same request with `draw`
-  `x` → HTTP 422 with no `draw` key.
+- **SPEC-A10.1** [FastAPI] The base request with `draw` 5 and `length` `abc` → HTTP 422 in FastAPI's default shape,
+  with `draw` inside `detail`: `{"detail": {"draw": 5, ...}}` (the owner's decision of 2026-11-20); the same request
+  with `draw` `x` → HTTP 422 whose `detail` holds no `draw` key.
 - **SPEC-A11.1** [FastAPI] SearchBuilder `=` `abc` on `price` → HTTP 200 with `error`, `error_code`
   `invalid_number`, `draw`, `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-A11.2** [FastAPI] Through an app over an OpenSearch table with a recording client (`page_out_of_range`
