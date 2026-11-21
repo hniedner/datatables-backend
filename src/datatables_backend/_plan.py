@@ -220,8 +220,8 @@ def plan(
 
     global_search: list[Contains] = []
     with mistakes.part():
-        _no_control_character([params.search.value, *(params.search.multi_values or [])])
-        if params.search.multi_values:
+        _no_control_character([params.search.value])
+        if params.search.multi_values:  # refused as a form, so its entries are never read
             raise mistake('datatables_values_refused', GLOBAL_VALUES)
         if params.search.value:
             if params.search.regex:
