@@ -37,11 +37,9 @@ def test_the_exemptions_are_exactly_the_checked_and_the_test_only_packages():
     assert listed == set(CHECKED) | TEST_ONLY
 
 
-def test_nothing_the_wheel_requires_depends_on_a_test_only_package():
+def reachable(pending: list[str]) -> set[str]:
+    """Every locked package the named ones depend on, extras included, the named ones too."""
     packages = {package['name']: package for package in locked()}
-    project = packages['datatables-backend']
-    pending = [d['name'] for d in project.get('dependencies', [])]
-    pending += [d['name'] for extra in project.get('optional-dependencies', {}).values() for d in extra]
     reached: set[str] = set()
     while pending:
         name = re.sub(r'[-_.]+', '-', pending.pop()).lower()
@@ -51,5 +49,20 @@ def test_nothing_the_wheel_requires_depends_on_a_test_only_package():
         package = packages.get(name, {})
         pending += [d['name'] for d in package.get('dependencies', [])]
         pending += [d['name'] for extra in package.get('optional-dependencies', {}).values() for d in extra]
+    return reached
+
+
+def test_nothing_the_wheel_requires_depends_on_a_test_only_package():
+    project = next(package for package in locked() if package['name'] == 'datatables-backend')
+    pending = [d['name'] for d in project.get('dependencies', [])]
+    pending += [d['name'] for extra in project.get('optional-dependencies', {}).values() for d in extra]
+    reached = reachable(pending)
     assert reached, 'the walk found no requirement of the wheel'
+    assert not reached & TEST_ONLY
+
+
+def test_the_dev_group_does_not_depend_on_a_test_only_package():
+    project = next(package for package in locked() if package['name'] == 'datatables-backend')
+    reached = reachable([d['name'] for d in project.get('dev-dependencies', {}).get('dev', [])])
+    assert reached, 'the walk found no package of the dev group'
     assert not reached & TEST_ONLY

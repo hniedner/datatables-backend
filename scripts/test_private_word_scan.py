@@ -7,8 +7,10 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+import unicodedata
 
 import pytest
 import yaml
@@ -958,3 +960,66 @@ def test_a_word_named_staged_file_shows_in_no_other_hook_s_output(repo: Path, wo
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'private word #3' in result.stdout
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold(), result.stdout
+
+
+@pytest.mark.parametrize(
+    ('listed', 'planted'),
+    [
+        (NON_ASCII, unicodedata.normalize('NFD', NON_ASCII)),  # `ü` as `u` and a combining diaeresis
+        (WORD, ''.join(chr(ord(letter) + 0xFEE0) for letter in WORD)),  # fullwidth letters
+    ],
+    ids=['NFD', 'fullwidth'],
+)
+def test_a_canonically_equal_spelling_is_found(tmp_path: Path, listed: str, planted: str):
+    listed_words = write(tmp_path / 'listed.txt', f'{listed}\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {planted} here\n')), words=listed_words)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #1' in result.stderr
+
+
+@pytest.mark.parametrize('target', ['tree', 'commit'])
+def test_a_history_finding_is_printed_once(tmp_path: Path, repo: Path, target: str):
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    inner = git(repo, 'mktree', input=f'100644 blob {blob}\tWidget.txt\n').strip()
+    outer = git(repo, 'mktree', input=f'040000 tree {inner}\tAcme\n').strip()
+    tagged = outer if target == 'tree' else git(repo, 'commit-tree', outer, '-m', 'Loose').strip()
+    git(repo, 'tag', '-a', '-m', 'Clean', 'held', tagged)
+    result = scan('--history', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    findings = result.stderr.splitlines()
+    assert len(findings) == len(set(findings)), result.stderr
+
+
+def test_the_ref_scan_reads_whole_paths_in_a_commit_a_tag_brings(tmp_path: Path, repo: Path):
+    """No tree object holds `Acme/Widget` whole, so only the commit's path walk finds it."""
+    slashed_words = write(tmp_path / 'slashed.txt', f'{SLASHED.lower()}\n')
+    (repo / 'Acme').mkdir()
+    commit(repo, 'Acme/Widget.txt', b'clean\n')
+    git(repo, 'tag', '-a', '-m', 'Clean', 'wip')
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1')  # only the tag holds the commit
+    result = scan('--refs', words=slashed_words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert '(path): private word #1' in result.stderr
+    assert SLASHED.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.skipif(os.name != 'posix' or os.geteuid() == 0, reason='root reads any file')
+def test_an_unreadable_word_list_has_its_own_message(tmp_path: Path, words: Path):
+    words.chmod(0)
+    try:
+        result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=words)
+    finally:
+        words.chmod(0o600)
+    assert result.returncode == 2
+    assert 'private-word scan could not check: the word list cannot be read' in result.stderr
+
+
+def test_a_plain_install_creates_every_hook_the_config_names(tmp_path: Path):
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    git(scratch, 'init', '-q')
+    shutil.copy(SCRIPT.parent.parent / '.pre-commit-config.yaml', scratch)
+    subprocess.run([sys.executable, '-m', 'pre_commit', 'install'], cwd=scratch, check=True, capture_output=True)
+    installed = {path.name for path in (scratch / '.git' / 'hooks').iterdir() if not path.name.endswith('.sample')}
+    assert installed >= {'pre-commit', 'commit-msg', 'pre-push', 'post-checkout'}

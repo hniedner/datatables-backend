@@ -50,7 +50,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0 # diff-cover compares with the change's base commit
+          # Only the coverage leg (3.14, as in the two `if:`s below) needs history: diff-cover compares with the base.
+          fetch-depth: ${{ matrix.python == '3.14' && '0' || '1' }}
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python }}
@@ -67,7 +68,7 @@ jobs:
           EOF
       - if: matrix.python != '3.14'
         run: uv run --frozen pytest
-      # One leg measures line and branch coverage of the library and scripts/ (the word scan's subprocess runs
+      # One leg (3.14, named in both `if:`s and in fetch-depth above) measures line and branch coverage of the library and scripts/ (the word scan's subprocess runs
       # included): the total is reported, and the lines this change touches must be 95 % covered. The change is the
       # pull request against its base, or a push against the commit before it.
       - name: Tests with branch coverage, then coverage of the changed lines
@@ -83,7 +84,7 @@ jobs:
           uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95
 
   # Every pre-commit hook on every file, except the private-word scans, whose word list never leaves the owner's
-  # machine.
+  # machine. gitleaks' hook scans staged changes only, which here is nothing; the `secrets` job scans the history.
   pre-commit:
     runs-on: ubuntu-latest
     steps:
@@ -98,6 +99,7 @@ jobs:
 
   # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
   # nothing; this job scans what a push publishes. The release binary is checked against its published SHA-256.
+  # GITLEAKS_VERSION, GITLEAKS_SHA256 and the gitleaks rev in .pre-commit-config.yaml move together.
   secrets:
     runs-on: ubuntu-latest
     env:

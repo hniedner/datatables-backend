@@ -1,7 +1,8 @@
 """Refuse words that must never become public, in file paths, file contents, commit messages and git history.
 
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
-word per line, matched case-insensitively as a substring; blank lines and lines starting with ``#`` are skipped. The
+word per line, matched as a substring after both sides are folded (NFKC, casefold, NFKC), so case and canonically or
+compatibly equal spellings do not matter; blank lines and lines starting with ``#`` are skipped. The
 list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
 path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
 ``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
@@ -41,7 +42,11 @@ stash is held by ``refs/stash``, so drop it first (``git stash drop``).
 Not covered: ``git branch NAME`` or ``git tag`` followed directly by a push with no commit or checkout between, and a
 push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) that brings no new commit,
 since no hook runs for either; and the remote names of the other refs in one push, which pre-commit does not pass to
-the hook (their objects are still scanned).
+the hook (their objects are still scanned). Also not covered: escaped forms of a word (JSON ``\\uXXXX``, URL encoding,
+HTML entities); words inside compressed containers (zip-based office files, PDF streams, ``.gz``); a gitlink path,
+since the commit-stage hooks filter submodules out (``.gitmodules`` itself is scanned); the Turkish dotted and dotless
+I, which casefolding does not equate with ``i``; and anything authored on GitHub itself or pushed from a clone without
+the hooks, since no server-side scan exists.
 
 The commit message is cut and stripped only where git's own commit template shows git will, and only in English: git
 must run with an English ``LC_MESSAGES`` for its template lines to be recognised. Under another locale the scan reads
@@ -61,12 +66,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import unicodedata
 
 VARIABLE = 'DTB_PRIVATE_WORDS'
 FOUND = 1
 COULD_NOT_CHECK = 2
 
-type Words = list[tuple[int, str]]  # (line in the list, casefolded word)
+type Words = list[tuple[int, str]]  # (line in the list, folded word)
 
 _BOMS = [
     (codecs.BOM_UTF32_LE, 'utf-32'),
@@ -93,8 +99,10 @@ def load_words() -> Words:
         text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
     except UnicodeDecodeError:
         raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
+    except OSError:
+        raise CouldNotCheckError('the word list cannot be read') from None
     words = [
-        (number, line.strip().casefold())
+        (number, fold(line.strip()))
         for number, line in enumerate(text.splitlines(), 1)
         if line.strip() and not line.strip().startswith('#')
     ]
@@ -132,9 +140,15 @@ def content_hits(data: bytes, words: Words) -> list[int]:
     return sorted({number for reading in other_readings(data) for number in hits(reading, words)})
 
 
+def fold(text: str) -> str:
+    """Text in the one form words are compared in: NFKC, casefolded, then NFKC again, since casefolding can undo the
+    normal form. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal."""
+    return unicodedata.normalize('NFKC', unicodedata.normalize('NFKC', text).casefold())
+
+
 def hits(text: str, words: Words) -> list[int]:
     """The list lines of the words ``text`` contains."""
-    folded = text.casefold()
+    folded = fold(text)
     return [number for number, word in words if word in folded]
 
 
@@ -282,12 +296,7 @@ def scan_history(words: Words) -> list[str]:
             findings.append(report(f'{kind} {sha[:12]}', found))  # an object has no single path to show
         if kind == 'commit':
             findings.extend(path_findings(sha[:12], sha, words))
-    refs = git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)')
-    for line in filter(None, refs.split(b'\n')):  # a tree a ref or tag names has no commit to reach its paths
-        kind, peeled, ref = line.split(b' ', 2)
-        if kind == b'tree' or (kind == b'tag' and peeled == b'tree'):
-            findings.extend(path_findings(redact(ref, words), ref, words))
-    return findings
+    return list(dict.fromkeys(findings))  # a commit a tag brings is also in the store: report it once
 
 
 def main(argv: list[str]) -> int:
