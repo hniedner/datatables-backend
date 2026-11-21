@@ -391,15 +391,23 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
         ('ends', 'B.Ä', '.*B\\.Ä'),  # nor a small one
         ('=', f'ä{chr(0xFF08)}', f'ä\\{chr(0xFF08)}'),  # a fullwidth bracket, which a normalizer can make a `(`
         ('=', chr(0x24D3), chr(0x24D3)),  # a circled d, cased and no letter: a normalizer can make it `d`, and `\d`
+        ('=', 'ä ', 'ä '),  # a space: a normalizer that trims would leave its backslash at the end of the pattern
     ],
 )
 def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, value: str, pattern: str):
     """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. Every character of the
-    value that is neither a letter or a digit nor cased gets a backslash, and the pattern is open where the
-    condition is."""
+    value that is neither alphanumeric, nor cased, nor whitespace gets a backslash, and the pattern is open where
+    the condition is."""
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion('id', condition, value)), client)
     assert query(client) == [{'regexp': {'id': {'value': pattern, 'case_insensitive': True}}}]
+
+
+def test_a_negated_starts_is_anchored_at_the_start():
+    """SPEC-F37.1: `!starts` is the query of `starts` in a `must_not`, open at its end and not at its start."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', '!starts', 'ä')), client)
+    assert query(client) == [{'bool': {'must_not': [{'regexp': {'id': {'value': 'ä.*', 'case_insensitive': True}}}]}}]
 
 
 def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
@@ -443,7 +451,9 @@ def test_a_value_outside_ascii_without_case_keeps_its_query():
             {'regexp': {'secret.keyword': {'value': '.*ä', 'case_insensitive': True}}},
         ),
         (
-            Column('secret', search_value=str.upper),  # PRD-D18: what the hook made of the text
+            # Today's result, until issue #28: PRD-D18 asks for this condition to be refused on a hooked column,
+            # which is not met yet. Every search of a hooked column changes with #28, so no other path stands in.
+            Column('secret', search_value=str.upper),
             'starts',
             {'wildcard': {'secret.keyword': {'value': 'Ä*', 'case_insensitive': True}}},
         ),
@@ -452,8 +462,9 @@ def test_a_value_outside_ascii_without_case_keeps_its_query():
 def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     unfolded: Column, condition: str, clause: dict[str, Any]
 ):
-    """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column and a
-    hooked column's search are sent as before; a search on a `fold_case=False` column folds."""
+    """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
+    as before, and a search on it folds. A hooked column's search is sent as it was before the `regexp` form: the
+    row pins that, not the search itself, which PRD-D18 does away with."""
     plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)

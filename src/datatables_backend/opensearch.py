@@ -275,18 +275,21 @@ def _cased_beyond_ascii(value: str) -> bool:
 def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
     that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one longer than
-    any measured as a ``regexp`` on every server, which a server may refuse where it answered the other query (its
-    pattern is then at most 768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
+    255 code points, beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most
+    768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
 
-    Every character of ``value`` that is neither a letter or a digit nor cased gets a backslash, which makes it
-    that character and nothing else, so no operator of the syntax can come from a value. The server runs the
-    pattern through the field's normalizer, so the rule reaches beyond ASCII in both directions: a fullwidth
-    bracket gets its backslash, since a normalizer can make it an ASCII bracket; a cased character that is not a
-    letter to Python (a circled letter) gets none, since a normalizer can make it an ASCII letter, and a backslash
-    before a letter is a class of the syntax or an error."""
+    A character of ``value`` gets a backslash, which makes it that character and nothing else, also when it is
+    outside ASCII: the server runs the pattern through the field's normalizer, which can make an ASCII bracket of a
+    fullwidth one. Three kinds of character get none:
+
+    - an alphanumeric one, which is no operator of the syntax;
+    - a cased one that is not alphanumeric (a circled letter): a normalizer can make it an ASCII letter, and a
+      backslash before a letter is a class of the syntax or an error;
+    - whitespace, which is no operator either: a normalizer that trims takes a space at the end of the pattern and
+      would leave its backslash there, which is an error."""
     if len(value) > MAX_REGEXP_VALUE or not _cased_beyond_ascii(value):
         return None
-    literal = ''.join(char if char.isalnum() or _cased(char) else f'\\{char}' for char in value)
+    literal = ''.join(char if char.isalnum() or _cased(char) or char.isspace() else f'\\{char}' for char in value)
     return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
 
 

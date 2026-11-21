@@ -101,6 +101,8 @@ FULLWIDTH = {'(': 0xFF08, '*': 0xFF0A, '~': 0xFF5E, '?': 0xFF1F, '[': 0xFF3B, '.
 FULLWIDTH |= {'(a) as one character': 0x249C, '(1) as one character': 0x2474}
 FULLWIDTH |= CIRCLED
 FULLWIDTH |= {'?? as one character': 0x2047, '1. as one character': 0x2488}
+# Whitespace, which the library sends without a backslash; `dspb` holds an ASCII space between the two letters.
+FULLWIDTH |= {'no-break space': 0xA0, 'ideographic space': 0x3000, 'line separator': 0x2028}
 
 
 def more_normalizers(client: OpenSearch) -> None:
