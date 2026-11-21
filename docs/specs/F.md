@@ -100,10 +100,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 15 words plus a
   quoted phrase of two words is 16 → answered (counting the phrase as two words would refuse it); 16 words plus `"`,
   `!""` and `!x` is 16 → answered.
-- **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_filter`; so do U+0009 (TAB), U+001B and
+- **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_character`; so do U+0009 (TAB), U+001B and
   U+007F.
 - **SPEC-F15.2** [all] U+0000 in a column search, in a SearchBuilder `=` value, in a categorical value and in a
-  `multi_values` entry → error_code `invalid_filter`, before any query runs.
+  `multi_values` entry → error_code `invalid_character`, before any query runs.
 - **SPEC-F15.3** [all] LF and CR in a global search are accepted (PRD-F7).
 
 ## Categorical filters and `multi_values`

@@ -40,6 +40,7 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `invalid_number`, `draw`, `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-A11.2** [FastAPI] Through an app over an OpenSearch table with a recording client (`page_out_of_range`
   exists only there, PRD-C12), each of these answers HTTP 200 with its code: SearchBuilder `<` `a` on `name` →
-  `invalid_filter`; `=` `2024-13-01` on `made` → `invalid_date`; `=` `abc` on `price` → `invalid_number`; with
+  `invalid_filter`; a global search holding U+0009 → `invalid_character`; `=` `2024-13-01` on `made` →
+  `invalid_date`; `=` `abc` on `price` → `invalid_number`; with
   `max_result_window` 3 and rows 1 to 10, `start` 4, `length` 3 → `page_out_of_range`. The dependency takes no option
   that changes the status.
