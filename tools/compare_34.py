@@ -100,6 +100,57 @@ def regex_length(client: OpenSearch) -> None:
 FULLWIDTH = {'(': 0xFF08, '*': 0xFF0A, '~': 0xFF5E, '?': 0xFF1F, '[': 0xFF3B, '.': 0xFF0E, '|': 0xFF5C}
 FULLWIDTH |= {'(a) as one character': 0x249C, '(1) as one character': 0x2474}
 FULLWIDTH |= CIRCLED
+FULLWIDTH |= {'?? as one character': 0x2047, '1. as one character': 0x2488}
+
+
+def more_normalizers(client: OpenSearch) -> None:
+    """Keyword fields with a `trim` and with a `lowercase` normalizer, next to a plain one: what the library's
+    queries find for a value with a space at an end, and for punctuation beside letters in another case."""
+    name = 'dtb-trim-34'
+    if client.indices.exists(index=name):
+        client.indices.delete(index=name)
+    normalizers = {
+        'trimmed': {'type': 'custom', 'filter': ['trim']},
+        'lowered': {'type': 'custom', 'filter': ['lowercase']},
+    }
+    fields: dict[str, Any] = {'id': {'type': 'keyword'}, 'plain': {'type': 'keyword'}}
+    fields |= {key: {'type': 'keyword', 'normalizer': key} for key in normalizers}
+    body = {
+        'settings': {'number_of_replicas': 0, 'analysis': {'normalizer': normalizers}},
+        'mappings': {'properties': fields},
+    }
+    try:
+        client.indices.create(index=name, body=body)
+    except TransportError as failure:
+        sys.stderr.write(f'TRIM the index is refused: {failure.info!r}\n')
+        return
+    stored = {'small': 'ä', 'capital': 'Ä', 'trailing': 'ä ', 'leading': ' ä', 'inner': 'ä b', 'longer': 'äx'}
+    stored |= {'dot': 'Äx.b', 'bracket': 'ÄX(B', 'decoy': 'Äxyb'}
+    for key, value in stored.items():
+        client.index(index=name, id=key, body={'id': key, **dict.fromkeys(('plain', *normalizers), value)})
+    client.indices.refresh(index=name)
+    values = ('ä ', ' ä', 'Ä ', ' Ä', 'ä', 'a ', ' a', 'äX.B', 'äx(b', 'ÄX.B')
+    try:
+        for field in ('trimmed', 'lowered', 'plain'):
+            table = SearchTable(name, [IndexColumn('id', text='keyword'), IndexColumn(field, text='keyword')])
+            for value in values:
+                bodies: dict[str, dict[str, Any]] = {c: criterion(field, c, value) for c in ('=', 'contains')}
+                bodies |= {c: criterion(field, c, value) for c in ('starts', 'ends')}
+                bodies['global'] = {'search': {'value': value}}
+                bodies['column'] = {'column_search': {field: {'value': value}}}
+                bodies['list'] = {'column_search': {field: {'multi_values': [value]}}}
+                for kind, sent in bodies.items():
+                    try:
+                        response = table.fetch_sync(request('id', field, **sent), client)
+                        outcome = ' '.join(sorted(str(row['id']) for row in response.data)) or '-'
+                        if response.error_code:
+                            outcome = f'refused {response.error_code}'
+                    except TransportError as failure:
+                        info: Any = failure.info
+                        outcome = f'RAISED {str(info["error"]["root_cause"][0]["reason"])[:110]}'
+                    sys.stderr.write(f'TRIM library {field} {kind} {value!r} -> {outcome}\n')
+    finally:
+        client.indices.delete(index=name)
 
 
 def normalizer(client: OpenSearch) -> None:
@@ -186,6 +237,7 @@ def main() -> None:
     sys.stderr.write(f'source: {datatables_backend.__file__}\n')
     client = OpenSearch(hosts=[os.environ['DTB_OPENSEARCH_URL']], timeout=120)
     normalizer(client)
+    more_normalizers(client)
     if client.indices.exists(index=INDEX):
         client.indices.delete(index=INDEX)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
@@ -210,7 +262,7 @@ def main() -> None:
                 bodies['column'] = {'column_search': {'label': {'value': value}}}
                 bodies['list'] = {'column_search': {'label': {'multi_values': [value, 'ÄPFEL']}}}
                 for kind, body in bodies.items():
-                    sys.stdout.write(f'{name} | {kind} | {number} {shown} -> {answer(client, table, body)}\n')
+                    sys.stdout.write(f'{name} | {kind} | {number} {shown!a} -> {answer(client, table, body)}\n')
         if 'main-src' not in str(datatables_backend.__file__):  # raw queries: once is enough
             long_values(client)
     finally:
