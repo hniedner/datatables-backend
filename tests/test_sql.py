@@ -357,12 +357,17 @@ def test_an_exact_match_on_a_string_column_ignores_case(
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
-def test_an_exact_match_on_an_expression_given_a_string_type_ignores_case(session: Session, cased: SQLTable):
-    """PRD-F9 with PRD-D10: an expression is folded once it says it is text; `upper(kind)` is `RED` for rows 1 and
-    4. Without a type the library cannot tell what it holds, and compares it as sent."""
-    shouted = select(cased.source.c.id, literal_column('upper(kind)', String).label('up')).subquery()
+@pytest.mark.parametrize(
+    ('typed', 'value', 'expected'), [(String, 'rEd', [1, 4]), (None, 'rEd', []), (None, 'RED', [1, 4])]
+)
+def test_an_exact_match_on_an_expression_ignores_case_once_it_has_a_string_type(
+    session: Session, cased: SQLTable, typed: type[String] | None, value: str, expected: list[int]
+):
+    """PRD-F9 with PRD-D10 (SPEC-F9.12): `upper(kind)` is `RED` for rows 1 and 4. Without a type the library cannot
+    know the expression is text, and compares it as sent."""
+    shouted = select(cased.source.c.id, literal_column('upper(kind)', typed).label('up')).subquery()
     table = SQLTable(shouted, [Column('id'), Column('up')])
-    assert ids(table.fetch_sync(request('id', 'up', **criterion('up', '=', 'rEd')), session)) == [1, 4]
+    assert ids(table.fetch_sync(request('id', 'up', **criterion('up', '=', value)), session)) == expected
 
 
 @pytest.mark.parametrize(

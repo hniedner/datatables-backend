@@ -421,9 +421,9 @@ def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
     its family, an ``Enum`` among them), it is not declared ``fold_case=False``, and no hook transforms what is
     searched for. Otherwise the comparison is sent plain, and the column's collation decides (PRD-D21, PRD-F9).
 
-    A column with a type of its own (a ``TypeDecorator``, SQLAlchemy's ``Uuid``) or of a type the library cannot
-    tell (an expression declared without one) is never folded: such a type converts values and compares them in
-    its own way, which a fold would bypass."""
+    A column with a type of its own (a ``TypeDecorator``, SQLAlchemy's ``Uuid``) is never folded: such a type
+    converts values and compares them in its own way, which a fold would bypass. Neither is an expression declared
+    without a type, which the library cannot know to be text, nor a column of another type declared a string."""
     return declared.fold_case and declared.search_value is None and isinstance(column.type, String)
 
 
@@ -601,7 +601,7 @@ def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw:
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 @compiles(_JsonValuesIn, 'mssql')
 def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
-    column_type = _sql_type(element.column)  # the type a TypeDecorator wraps: the values are cast as it stores them
+    column_type = _sql_type(element.column)  # the type a TypeDecorator wraps says what kind of value is stored
     if isinstance(column_type, String):
         # No length, so a longer value is not cut down to one that matches (a bare CHAR is 30 characters), and no
         # COLLATE, which a cast does not take: the column's own collation still compares

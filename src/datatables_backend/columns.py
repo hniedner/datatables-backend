@@ -30,8 +30,9 @@ class Column:
             ``multi_values`` list) ignores case. ``False`` sends a plain comparison, which a plain index on the
             column can serve and which matches case as the column's collation or the field's mapping decides.
             Searches ignore case either way, and a column of another type does not read it. In SQL only a column
-            whose SQLAlchemy type is a string type or an ``Enum`` is folded; a column with a type of its own (a
-            ``TypeDecorator``, ``Uuid``) or an expression without a type is compared as sent whatever this says.
+            whose SQLAlchemy type is a string type or an ``Enum`` is folded, whatever this says: a column with a type
+            of its own (a ``TypeDecorator``, ``Uuid``) compares as that type compares, and an expression without a
+            type is compared as sent.
     """
 
     name: str

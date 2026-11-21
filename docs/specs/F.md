@@ -70,6 +70,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   string, where OpenSearch folds ASCII letters only (OQ4).
 - **SPEC-F9.11** [OS container] SearchBuilder `=` `äpfel` on `name` → none; `=` `ÄPFEL` → rows 4: an exact match
   folds ASCII letters only on OpenSearch (OQ4).
+- **SPEC-F9.12** [SQLite, PostgreSQL] Given `colour` declared as the expression `upper(colour)`: with a string
+  type, SearchBuilder `=` `rEd` → rows 1, 4; without a type, `=` `rEd` → none and `=` `RED` → rows 1, 4.
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,

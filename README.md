@@ -83,8 +83,9 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
   any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
 - **Text matches in any case.** A search, and an exact match on a string column (SearchBuilder's `=` and `!=`, a
-  multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation.
-  **Two exceptions, for letters outside ASCII:** SQLite folds ASCII letters only, and so does OpenSearch for a
+  multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation. In
+  SQL, which columns count as string columns for an exact match is narrower than it sounds: see "Only a plain
+  string column is folded" below. **Two exceptions, for letters outside ASCII:** SQLite folds ASCII letters only, and so does OpenSearch for a
   substring and for an exact match (`äpf` and `=` `äpfel` do not find `ÄPFEL`; the whole word `äpfel` does, on an
   analysed field). The library asks for no change to a schema or mapping to do more.
 - **An exact match can be sent plain.** It folds case by default, which a plain index on the column cannot serve:
@@ -92,9 +93,11 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   collation or the field's mapping. A column with a `search_value` hook is compared that way too.
 - **Only a plain string column is folded.** In SQL an exact match ignores case on a column whose SQLAlchemy type
   is a string type (`String`, `Text`, `Unicode`, `CHAR` and the like) or an `Enum`, which is searched and compared
-  as text. **The exception:** a column with a type of its own (a `TypeDecorator`, SQLAlchemy's `Uuid`) compares as
-  that type compares, since it converts values in its own way, and an expression declared without a type is
-  compared as sent. To have an expression folded, give it a string type: `literal_column('upper(name)', String)`.
+  as text. **The exceptions:** a column with a type of its own (a `TypeDecorator`, SQLAlchemy's `Uuid`) compares as
+  that type compares, since it converts values in its own way; an expression declared without a type, and a
+  column of another type declared `type='string'`, are compared as sent. To have an expression folded, give it a
+  string type: `func.upper(users.c.name, type_=String)` or `literal_column('upper(name)', String)`. A SQL function
+  called through `func` has no type unless it is given one.
 - **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
   an `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a
   column only by its declared name. The codes are `invalid_character` for a control character such as a tab, which
