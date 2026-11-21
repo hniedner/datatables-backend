@@ -6,6 +6,10 @@ on:
   pull_request:
   # release.yml runs this whole workflow on the commit it is about to publish, and publishes what `dist` uploads.
   workflow_call:
+    outputs:
+      passed:
+        description: "'true' once `gate` has seen every job succeed; empty otherwise."
+        value: ${{ jobs.gate.outputs.passed }}
 
 permissions:
   contents: read
@@ -488,6 +492,8 @@ jobs:
       [lint, types, tests, pre-commit, secrets, install-isolation, dist, minimum-versions, postgresql, mysql, sqlserver,
        opensearch]
     runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.passed.outputs.passed }}
     steps:
       - name: Every needed job succeeded
         env:
@@ -495,3 +501,6 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$RESULTS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
+      # Runs only when the step above succeeded. release.yml publishes only on this output.
+      - id: passed
+        run: echo "passed=true" >> "$GITHUB_OUTPUT"
