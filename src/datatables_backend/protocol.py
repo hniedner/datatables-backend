@@ -204,11 +204,6 @@ class DTResponse(_Model):
     error_code: ErrorCode | Literal['query_failed'] | None = None
 
     @classmethod
-    def invalid_filter(cls, draw: int, reason: str) -> DTResponse:
-        """The answer to a filter the user can change; ``reason`` is shown to them."""
-        return cls(draw=draw, error=reason, error_code='invalid_filter')
-
-    @classmethod
     def query_failed(cls, draw: int, message: str = 'The table query failed.') -> DTResponse:
         """The conventional answer for a failure that is not the user's, for an app that catches one."""
         return cls(draw=draw, error=message, error_code='query_failed')
@@ -238,18 +233,11 @@ class InvalidFilter(ValueError):
 
     ``code`` is the answer's ``error_code``, ``step`` its place in the order that decides which of a request's
     mistakes is answered (lowest first), ``event`` the fixed name it is logged under, and ``column`` the declared
-    name of the column it is about, if the log may name one.
+    name of the column it is about, if the log may name one. The library raises it for the mistakes it knows, each
+    with its event; it is not for an app to raise, so none of the three has a default.
     """
 
-    def __init__(
-        self,
-        reason: str,
-        *,
-        code: ErrorCode = 'invalid_filter',
-        step: int = 4,
-        event: str = 'datatables_filter_refused',
-        column: str | None = None,
-    ) -> None:
+    def __init__(self, reason: str, *, code: ErrorCode, step: int, event: str, column: str | None = None) -> None:
         super().__init__(reason)
         self.code: ErrorCode = code
         self.step = step
@@ -307,7 +295,10 @@ def parse_request(
     if not isinstance(data, Mapping) and not hasattr(data, 'getlist') and isinstance(data, Iterable):
         data = list(data)  # pairs may be an iterator, and a refusal reads them again for the draw
     try:
-        return _parse(data, max_length)
+        try:
+            return _parse(data, max_length)
+        except RecursionError:  # flat keys or a JSON body nested deeper than Python walks: no request has that
+            raise _malformed() from None
     except MalformedRequest as exc:
         exc.draw = _draw(data)
         log.warning(exc.event, extra={'parameter': exc.parameter})

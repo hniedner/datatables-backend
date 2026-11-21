@@ -596,13 +596,14 @@ def test_the_declared_type_decides_not_the_clients(session: Session):
         ('age', 'between', ['1'], 'invalid_filter', 'needs two values'),
         ('name', '=', [], 'invalid_filter', 'needs a value'),
         ('name', '<', ['m'], 'invalid_filter', 'not supported'),
+        ('age', 'contains', ['abc'], 'invalid_filter', 'not supported'),  # SPEC-E3.8: the value is never read
     ],
 )
 def test_a_value_the_column_cannot_take_is_refused_with_its_code_without_echoing_it(
     session: Session, column: str, condition: str, values: list[str], *, code: str, reason: str
 ):
-    """SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-E1.2: a date mistake, a number mistake and any other each have their
-    code (PRD-E3, steps 2 to 4)."""
+    """SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-E1.2, SPEC-E3.8: a date mistake, a number mistake and any other each
+    have their code (PRD-E3, steps 2 to 4)."""
     message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
     assert reason in message
     assert all(value not in message for value in values if len(value) > 2)
@@ -636,6 +637,27 @@ def test_a_range_mistake_found_while_the_query_is_built_comes_before_a_condition
         ]
     }
     refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session), 'invalid_number')
+
+
+@pytest.mark.parametrize('found_in_the_build', ['a list value that is no number', 'a number outside the range'])
+def test_a_mistake_found_while_the_query_is_built_waits_for_an_earlier_step_of_the_plan(
+    session: Session, found_in_the_build: str
+):
+    """PRD-E3 across the two places a mistake is found: one from the build must not be raised on the spot, since the
+    plan may hold one of a lower step. Each row's build mistake alone would answer `invalid_number`."""
+    if found_in_the_build == 'a list value that is no number':  # step 2, beside a control character (step 1)
+        params = request(*ALL, **criterion('name', '=', 'a\x00b'))
+        params.columns[3].search.multi_values = ['abc']
+        expected = 'invalid_filter'
+    else:  # step 3, beside a date of the wrong format (step 2)
+        tree = {
+            'criteria': [
+                {'condition': '=', 'origData': 'age', 'value': ['40000']},
+                {'condition': '=', 'origData': 'born', 'value': ['xx']},
+            ]
+        }
+        params, expected = request(*ALL, searchBuilder=tree), 'invalid_date'
+    refused(table.fetch_sync(params, session), expected)
 
 
 def test_a_group_left_with_no_criterion_by_range_mistakes_is_left_out_whole(session: Session):
@@ -873,14 +895,16 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
 
 
 def test_a_column_search_with_both_a_value_and_multi_values_is_refused(session: Session):
+    """SPEC-F39.1, and SPEC-E3.8 on a number column: the form is refused, and the value in the list, which is no
+    number, is never read."""
     params = parse_request(
         [
-            ('columns[0][data]', 'name'),
-            ('columns[0][search][value]', 'Ann'),
-            ('columns[0][search][multi_values][]', 'Bob'),
+            ('columns[0][data]', 'age'),
+            ('columns[0][search][value]', 'abc'),
+            ('columns[0][search][multi_values][]', 'x'),
         ]
     )
-    assert refused(table.fetch_sync(params, session))
+    assert 'not both' in refused(table.fetch_sync(params, session))
 
 
 def test_a_global_search_with_multi_values_is_refused(session: Session):

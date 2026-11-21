@@ -175,6 +175,21 @@ def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():
     assert 'true or false' in refused(flags.fetch_sync(params, Client()))
 
 
+@pytest.mark.parametrize('found_in_the_build', ['a column search that is no number', 'no column to search'])
+def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_the_plan(found_in_the_build: str):
+    """PRD-E3 across the two places a mistake is found: one from the build must not be raised on the spot, since the
+    plan may hold one of a lower step."""
+    if found_in_the_build == 'a column search that is no number':  # step 2, beside a control character (step 1)
+        searched, params = table, request(*NAMES, **criterion('title', '=', 'a\x00b'))
+        params.columns[3].search.value = 'abc'
+        expected = 'invalid_filter'
+    else:  # step 4: only a number and a date column, which take no free text; beside a date of the wrong format
+        searched = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
+        params = request('pages', 'created', search={'value': 'x'}, **criterion('created', '=', 'xx'))
+        expected = 'invalid_date'
+    refused(searched.fetch_sync(params, Client()), expected)
+
+
 @pytest.mark.xfail(
     reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1, issue '
     '#29)',

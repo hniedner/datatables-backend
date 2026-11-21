@@ -276,8 +276,10 @@ def _criterion(
     type_of: Callable[[Column], ColumnType],
     hooked: Callable[[Column, str], Any],
 ) -> Criterion:
-    """One criterion, or its first mistake in the order of the steps: a control character in a value the condition
-    reads, then a value of the wrong format or range, then anything else."""
+    """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
+    the condition reads; a name that is not declared; a condition the column's type does not take, reported without
+    the value being read (so ``contains`` with ``abc`` on a number column is no number mistake); a value of the
+    wrong format or range, among the values there are; a value that is missing."""
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]

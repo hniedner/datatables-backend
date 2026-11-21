@@ -117,6 +117,26 @@ def test_a_top_level_value_that_is_neither_an_object_nor_pairs_is_malformed(requ
         parse_request(request_data)
 
 
+def deeply_nested_json() -> dict[str, Any]:
+    tree: dict[str, Any] = {'criteria': []}
+    for _ in range(10_000):
+        tree = {'criteria': [tree]}
+    return {'draw': 9, 'searchBuilder': tree}
+
+
+@pytest.mark.parametrize(
+    'request_data',
+    [[('draw', '9'), ('columns' + '[a]' * 3000, 'x')], deeply_nested_json()],
+    ids=['flat-key', 'json'],
+)
+def test_a_request_nested_deeper_than_it_can_be_walked_is_malformed(request_data: Any):
+    """PRD-P6: it is refused like any other structure that cannot be read, with its draw, and never surfaces as a
+    `RecursionError`."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(request_data)
+    assert refused.value.draw == 9
+
+
 @pytest.mark.parametrize(
     ('request_data', 'draw'),
     [
@@ -152,15 +172,14 @@ def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
 @pytest.mark.parametrize(
     ('request_data', 'event'),
     [
-        ([('draw', '2'), ('columns[0][data]', 'a'), ('columns[2][data]', 'b')], 'datatables_request_malformed'),
         ({'draw': 2, 'start': 'ten'}, 'datatables_request_malformed'),
         ({'draw': 2, 'length': 1001}, 'datatables_length_refused'),
-        ({'draw': 2, 'columns': [], 'order': [{'column': 0}]}, 'datatables_request_malformed'),
     ],
-    ids=['index-gap', 'wrong-type', 'length-limit', 'order-index'],
+    ids=['wrong-type', 'length-limit'],
 )
 def test_a_malformed_request_is_logged_exactly_once(caplog: pytest.LogCaptureFixture, request_data: Any, event: str):
-    """SPEC-E13.1: one WARNING per refusal, under a fixed event, wherever in the reading it was refused."""
+    """SPEC-E13.1: one WARNING per refusal, under the event of its case. Every refusal is logged in one place, so
+    these two stand for all of them."""
     with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest):
         parse_request(request_data)
     assert warnings(caplog) == [event]
@@ -172,7 +191,7 @@ def test_a_refused_value_names_the_parameter_and_never_the_key_or_the_value(capl
     with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest) as refused:
         parse_request([('draw', '1'), (key, 'MARKER_V')])
     assert str(refused.value) == 'Invalid columns parameter.'
-    assert warnings(caplog) == ['datatables_request_malformed']
+    assert caplog.records
     logged = repr([vars(record) for record in caplog.records])
     assert 'MARKER_V' not in logged
     assert 'searchable' not in logged

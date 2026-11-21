@@ -28,6 +28,11 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E3.6** [OS] Column search `7 8` on `price` → `invalid_number`; `!2024` on `made` → `invalid_date` (step 2).
 - **SPEC-E3.7** [all] A request holding SearchBuilder `=` `9999-12-31` on `made` (step 3) and a column search `yes` on
   `active` (step 4) → `invalid_date`.
+- **SPEC-E3.8** [all] One part of a request (an order entry, the global search, one column search, one criterion)
+  reports one mistake, and a condition or form that does not fit the column is reported without its value being
+  read: SearchBuilder `contains` `abc` on `price` → `invalid_filter`, not `invalid_number`; a column search on
+  `price` with the value `abc` and `multi_values` `["x"]` → `invalid_filter` (the reviewer's decision of
+  2026-11-21).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value.
 - **SPEC-E4.2** [all] A refusal on an undeclared column `secret_field` answers a text that does not contain
