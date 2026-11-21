@@ -67,7 +67,7 @@ _HOLDS: Mapping[ColumnType, str] = {
 #: for now. ``parse_request`` logs a malformed request under two more: ``datatables_request_malformed`` and
 #: ``datatables_length_refused``.
 MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
-    'datatables_control_character': ('invalid_filter', 1),
+    'datatables_control_character': ('invalid_character', 1),
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),

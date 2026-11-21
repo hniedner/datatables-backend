@@ -616,12 +616,13 @@ def test_the_last_month_before_the_last_day_is_answered(session: Session):
 def test_a_user_error_is_an_answer_with_the_draw_and_nothing_else(session: Session):
     """SPEC-E1.1, SPEC-R5.2, SPEC-R6.1: what a caller sends on for a mistake the user can fix."""
     response = table.fetch_sync(request(*ALL, draw=7, **criterion('age', '=', 'abc')), session)
+    assert response.error  # its wording is asserted once, in the test of the texts below
     assert response.to_dict() == {
         'draw': 7,
         'recordsTotal': 0,
         'recordsFiltered': 0,
         'data': [],
-        'error': 'The filter on "age" needs one number, written like 42 or -3.5.',
+        'error': response.error,
         'error_code': 'invalid_number',
     }
 
@@ -658,23 +659,28 @@ CONDITION = 'Choose another condition.'
     ('names', 'body', 'code', 'text'),
     [
         # SPEC-E4.3 to E4.5: the owner's case, a tab nobody sees, and where it is
-        (WORDED, {'search': {'value': 'a\tb'}}, 'invalid_filter', f'The search box {CONTROL} text and type it again.'),
+        (
+            WORDED,
+            {'search': {'value': 'a\tb'}},
+            'invalid_character',
+            f'The search box {CONTROL} text and type it again.',
+        ),
         (
             WORDED,
             {'column_search': {'name': {'value': 'a\tb'}}},
-            'invalid_filter',
+            'invalid_character',
             f'The filter on "name" {CONTROL} value and type it again.',
         ),
         (
             WORDED,
             criterion('born', '=', 'a\tb'),  # the criterion finds its column by another route than a column search
-            'invalid_filter',
+            'invalid_character',
             f'The filter on "born" {CONTROL} value and type it again.',
         ),
         (
             UNDECLARED,
             {'column_search': {'extra': {'value': 'a\tb'}}},
-            'invalid_filter',
+            'invalid_character',
             f'A column filter {CONTROL} value and type it again.',
         ),
         # SPEC-E4.6 to E4.8
@@ -867,7 +873,7 @@ def test_a_mistake_found_while_the_query_is_built_waits_for_an_earlier_step_of_t
     plan may hold one of a lower step. Each row's build mistake alone would answer `invalid_number`."""
     if found_in_the_build == 'a list value that is no number':  # step 2, beside a control character (step 1)
         params = request(*ALL, column_search={'age': {'multi_values': ['abc']}}, **criterion('name', '=', 'a\x00b'))
-        expected = 'invalid_filter'
+        expected = 'invalid_character'
     else:  # step 3, beside a date of the wrong format (step 2)
         tree = {
             'criteria': [
@@ -923,7 +929,7 @@ def logged(caplog: pytest.LogCaptureFixture) -> list[str]:
 )
 def test_a_control_character_is_refused_wherever_a_value_is_read(session: Session, body: dict[str, Any]):
     """SPEC-F15.1, SPEC-F15.2: a NUL once cut a LIKE pattern short on SQLite and matched the wrong rows."""
-    assert 'control character' in refused(table.fetch_sync(request(*ALL, **body), session))
+    refused(table.fetch_sync(request(*ALL, **body), session), 'invalid_character')
 
 
 def test_a_line_break_in_a_search_is_not_a_control_character_to_refuse(session: Session):
@@ -948,7 +954,7 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
         ]
     }
     with caplog.at_level(logging.DEBUG):
-        assert 'control character' in refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+        refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session), 'invalid_character')
     assert logged(caplog) == ['datatables_control_character']
 
 

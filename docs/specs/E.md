@@ -10,12 +10,15 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E1.2** [all] SearchBuilder `<` `a` on `name` → `fetch` and `fetch_sync` return the answer with error_code
   `invalid_filter`; `InvalidFilter` does not propagate out of either.
 - **SPEC-E2.1** [all] Across every user-error case in the specs, `fetch` answers one of exactly `invalid_filter`,
-  `invalid_date`, `invalid_number`, `page_out_of_range`; it never answers another code (`query_failed` is the app's,
-  PRD-E5).
-- **SPEC-E2.2** [all] The four codes are stable: each case in P, D, F, O and C that names a code answers that code.
-  [review] The four are listed in the docstring of `DTResponse`.
-- **SPEC-E3.1** [all] A request holding both a U+0000 in the global search and `=` `abc` on `price` → `invalid_filter`
-  (step 1 before step 2).
+  `invalid_character`, `invalid_date`, `invalid_number`, `page_out_of_range`; it never answers another code
+  (`query_failed` is the app's, PRD-E5).
+- **SPEC-E2.2** [all] The five codes are stable: each case in P, D, F, O and C that names a code answers that code.
+  [review] The five are listed in the docstring of `DTResponse`.
+- **SPEC-E2.3** [review] The docstring of `DTResponse` and the README say that the list of codes is closed, that a
+  code is added only in a release that says so, and that a client treats a code it does not know as a refusal of
+  the request and shows `error`.
+- **SPEC-E3.1** [all] A request holding both a U+0000 in the global search and `=` `abc` on `price` →
+  `invalid_character` (step 1 before step 2).
 - **SPEC-E3.2** [all] A request holding a 17-word global search and `=` `2024-13-01` on `made` → `invalid_filter`;
   holding a SearchBuilder tree 10 groups deep counting the root and `=` `abc` on `price` → `invalid_filter`.
 - **SPEC-E3.3** [all] A request holding SearchBuilder `=` `abc` on `price` and `contains` `x` on `active` →
@@ -43,7 +46,7 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 Each statement from E4.3 on gives the whole `error` text of one mistake: it names the condition and what to do about
 it, as far as that is known when the mistake is found. A text is changed only together with its statement.
 
-- **SPEC-E4.3** [all] A global search holding a tab (U+0009) →
+- **SPEC-E4.3** [all] A global search holding a tab (U+0009) → `invalid_character` with
   `The search box holds an invisible control character, such as a tab. Delete its text and type it again.`
 - **SPEC-E4.4** [all] A column search on `name` holding a tab, or a SearchBuilder value on `name` holding one →
   `The filter on "name" holds an invisible control character, such as a tab. Delete its value and type it again.`

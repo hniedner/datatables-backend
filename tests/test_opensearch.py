@@ -219,7 +219,7 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     if found_in_the_build == 'a column search that is no number':  # step 2, beside a control character (step 1)
         searched = table
         params = request(*NAMES, column_search={'pages': {'value': 'abc'}}, **criterion('title', '=', 'a\x00b'))
-        expected = 'invalid_filter'
+        expected = 'invalid_character'
     else:  # step 4: only a number and a date column, which take no free text; beside a date of the wrong format
         searched = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
         params = request('pages', 'created', search={'value': 'x'}, **criterion('created', '=', 'xx'))

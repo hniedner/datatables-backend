@@ -83,12 +83,15 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
   any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
 - **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
-  a reason that never quotes the input: `invalid_number` or `invalid_date` for a value the column cannot read or
-  hold, `page_out_of_range` for an OpenSearch page beyond the result window, and `invalid_filter` for any other (an
-  unknown column, a value that is not a boolean, a control character, a condition the column's type does not take,
-  a regex search). When a request holds several, a control character is answered first, then a number or date
-  mistake, then any other, and the page last. Every other failure raises, so the app decides how to report it;
-  `DTResponse.query_failed(draw)` gives the usual shape.
+  an `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a
+  column only by its declared name. The codes are `invalid_character` for a control character such as a tab, which
+  the user cannot see, `invalid_number` or `invalid_date` for a value the column cannot read or hold,
+  `page_out_of_range` for an OpenSearch page beyond the result window, and `invalid_filter` for any other (an
+  unknown column, a value that is not a boolean, a condition the column's type does not take, a regex search). When
+  a request holds several, a control character is answered first, then a number or date mistake, then any other,
+  and the page last. The list of codes is closed: a code is added only in a release that says so, and a client
+  that reads a code it does not know treats it as a refusal of the request and shows `error`. Every other failure
+  raises, so the app decides how to report it; `DTResponse.query_failed(draw)` gives the usual shape.
 - **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
   request's own when that could be read. The FastAPI dependency answers it with 422 and

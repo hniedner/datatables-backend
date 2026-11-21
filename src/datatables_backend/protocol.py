@@ -34,7 +34,7 @@ MAX_PAGE_LENGTH = 1000
 MAX_PAGING_NUMBER = 2**31 - 1
 
 #: The codes of a mistake the user can fix; stable, since a frontend maps them to its own messages
-type ErrorCode = Literal['invalid_filter', 'invalid_date', 'invalid_number', 'page_out_of_range']
+type ErrorCode = Literal['invalid_filter', 'invalid_character', 'invalid_date', 'invalid_number', 'page_out_of_range']
 
 type Condition = Literal[
     '=',
@@ -190,10 +190,15 @@ class DTParams(_Model):
 class DTResponse(_Model):
     """The answer DataTables expects. ``error_code`` says which kind of failure ``error`` reports.
 
-    The library answers a mistake the user can fix with one of four codes: ``invalid_filter``, ``invalid_date`` (a
-    date it cannot read, or the last day there is), ``invalid_number`` (a number it cannot read, or one outside the
-    column's range) and ``page_out_of_range``. ``query_failed`` is only ever set by an app, through
-    ``DTResponse.query_failed``.
+    The library answers a mistake the user can fix with one of five codes: ``invalid_character`` (a control
+    character, which the user cannot see, in a search or filter value), ``invalid_date`` (a date it cannot read, or
+    the last day there is), ``invalid_number`` (a number it cannot read, or one outside the column's range),
+    ``page_out_of_range``, and ``invalid_filter`` for any other. ``error`` says what is wrong and what to do about
+    it. ``query_failed`` is only ever set by an app, through ``DTResponse.query_failed``.
+
+    The list is closed: a release answers only the codes its documentation lists, and a code is added only in a
+    release that says so. A client that reads a code it does not know treats it as a refusal of the request and
+    shows ``error``.
     """
 
     draw: int
