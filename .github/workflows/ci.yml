@@ -213,9 +213,10 @@ jobs:
           uv pip install -q -p all "${wheel}[${extras}]" greenlet
           ALL_EXTRAS=1 all/bin/python check.py
 
-  # Builds the sdist, and the wheel from that sdist, as a release does, and checks both: scripts/check_dist.py reads
-  # their names, metadata and members, and the wheel must install into an empty environment and import from there.
-  # A release publishes the two files this job uploads (release.yml), so the job restores no cache.
+  # Builds the sdist, and the wheel from that sdist, as a release does, and uploads both. A release publishes these
+  # two files (release.yml), so the job restores no cache. It checks nothing itself: the build backend and its
+  # dependencies are installed unpinned and run in this job, so `dist-check` judges the files from a job they never
+  # ran in.
   dist:
     runs-on: ubuntu-latest
     steps:
@@ -226,6 +227,33 @@ jobs:
         with:
           enable-cache: false
       - run: uv build --out-dir dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  # Checks the two files `dist` uploaded, the same artefact a release publishes, against a fresh checkout of the same
+  # commit: scripts/check_dist.py compares their names, metadata, members and contents with what git holds, and the
+  # wheel must install into an empty environment and import from there. Nothing here builds the project, so the
+  # build backend does not run in this job.
+  dist-check:
+    needs: dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
       - run: uv run --no-project --python 3.14 python scripts/check_dist.py dist dist
       # check_dist.py has tied the wheel's file name to the version in the source; here the installed metadata and
       # `__version__` must both be the version in that name.
@@ -250,14 +278,6 @@ jobs:
           assert wheel == f'datatables_backend-{stated}-py3-none-any.whl', (wheel, stated)
           print(f'{wheel}: installed, imports from {where}, version {stated}')
           EOF
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist
-          path: |
-            dist/*.tar.gz
-            dist/*.whl
-          if-no-files-found: error
-          retention-days: 7
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the
   # rest of the dev group resolved to match them. The 3.12 and 3.15 legs also force starlette 0.40.0, the lowest that
@@ -489,8 +509,8 @@ jobs:
   gate:
     if: always()
     needs:
-      [lint, types, tests, pre-commit, secrets, install-isolation, dist, minimum-versions, postgresql, mysql, sqlserver,
-       opensearch]
+      [lint, types, tests, pre-commit, secrets, install-isolation, dist, dist-check, minimum-versions, postgresql, mysql,
+       sqlserver, opensearch]
     runs-on: ubuntu-latest
     outputs:
       passed: ${{ steps.passed.outputs.passed }}

@@ -46,7 +46,8 @@ jobs:
       - name: The commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
-  # The whole CI workflow on this commit, `gate` included. Its `dist` job builds, checks and uploads the two files.
+  # The whole CI workflow on this commit, `gate` included. Its `dist` job builds and uploads the two files, and its
+  # `dist-check` job checks that upload.
   ci:
     needs: check-tag
     permissions:
