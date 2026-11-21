@@ -255,37 +255,48 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
+MAX_REGEX_LENGTH = 1000  # OpenSearch's default `index.max_regex_length`, which counts UTF-16 units
+
+
 def _cased_beyond_ascii(value: str) -> bool:
-    """Whether ``value`` holds a letter outside ASCII that has another case. On a ``term`` and a ``wildcard`` query
-    OpenSearch's ``case_insensitive`` folds ASCII letters only; on a ``regexp`` query it folds such a letter too,
-    from OpenSearch 3.1 on (PRD-F9). Every other value is answered alike by both, so it keeps its query."""
+    """Whether ``value`` holds a character outside ASCII that has another case, as this interpreter's Unicode tables
+    have it. On a ``term`` and a ``wildcard`` query OpenSearch's ``case_insensitive`` folds ASCII letters only; on a
+    ``regexp`` query it folds such a character too, from OpenSearch 3.1 on (PRD-F9). Every other value keeps the
+    query it had, by decision: a ``regexp`` would fold a few characters more for it (the Kelvin sign to ``k``)."""
     return any(not char.isascii() and (char.lower() != char or char.upper() != char) for char in value)
 
 
-def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any]:
-    """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``. Every ASCII
-    character of ``value`` that is not a letter or a digit gets a backslash, which makes it that character and
-    nothing else, so no operator of the syntax can come from a value."""
-    literal = ''.join(char if char.isalnum() or not char.isascii() else f'\\{char}' for char in value)
-    return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
+def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
+    """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
+    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one whose
+    pattern would be longer than a server allows by default, which the server would refuse. Every character of
+    ``value`` that is not a letter or a digit gets a backslash, which makes it that character and nothing else, so
+    no operator of the syntax can come from a value; nor from a mark outside ASCII that a field's normalizer turns
+    into an ASCII one (a fullwidth bracket), since the server normalizes the pattern."""
+    if not _cased_beyond_ascii(value):
+        return None
+    literal = ''.join(char if char.isalnum() else f'\\{char}' for char in value)
+    pattern = f'{before}{literal}{after}'
+    if len(pattern.encode('utf-16-le')) // 2 > MAX_REGEX_LENGTH:
+        return None
+    return {'regexp': {field: {'value': pattern, 'case_insensitive': True}}}
 
 
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:
     """The whole string equals ``value``, in any case where the column folds."""
     if not _folds(column):
         return {'term': {field: value}}
-    if _cased_beyond_ascii(value):
-        return _regexp(field, '', value, '')
-    return {'term': {field: {'value': value, 'case_insensitive': True}}}
+    return _regexp(field, '', value, '') or {'term': {field: {'value': value, 'case_insensitive': True}}}
 
 
 def _part(column: Column, field: str, value: str, *, start: bool = False, end: bool = False) -> dict[str, Any]:
     """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A hooked column's
     value is what its hook made of the text, and is sent as before."""
-    if column.search_value is None and _cased_beyond_ascii(value):
-        return _regexp(field, '' if start else '.*', value, '' if end else '.*')
     pattern = f'{"" if start else "*"}{escape_wildcard(value)}{"" if end else "*"}'
-    return {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+    wildcard = {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+    if column.search_value is not None:
+        return wildcard
+    return _regexp(field, '' if start else '.*', value, '' if end else '.*') or wildcard
 
 
 def escape_wildcard(value: str) -> str:
