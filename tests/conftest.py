@@ -86,7 +86,7 @@ people = Table(
     ),  # TIMESTAMPTZ, DATETIMEOFFSET (DATETIME on MySQL and SQLite)
     SQLColumn('team', String(20)),
     SQLColumn('secret', String(50)),
-    SQLColumn('active', Boolean, nullable=True),  # BOOLEAN, BIT, TINYINT(1), INTEGER on SQLite
+    SQLColumn('active', Boolean, nullable=True),  # BOOLEAN (SQLite stores 1 and 0), BIT, TINYINT(1)
 )
 
 ROWS: list[dict[str, Any]] = [

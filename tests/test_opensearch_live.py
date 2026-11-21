@@ -4,9 +4,9 @@ Runs only when DTB_OPENSEARCH_URL names a cluster (the CI job starts one); other
 the reason shows in the summary, unless DTB_REQUIRE_OPENSEARCH=1 (the CI job), which makes a missing URL an error. The
 index holds five synthetic documents with one field of each mapping kind.
 
-The rows asserted are what the backend answers today (draft 1). Left untested on purpose: the query syntax's OR (a
-`should` of words) in a column search, which PRD v2 drops, and a negated condition on a missing field, which PRD v2
-settles (PRD-F37).
+The rows asserted are what the backend answers today. Left untested on purpose: the query syntax's OR (a `should` of
+words) in a column search, which PRD v2 drops, and a negated condition on a missing field of a string, number or date
+column, which PRD v2 settles (PRD-F37). A boolean column follows PRD v2 already, its `!=` on a missing field included.
 """
 
 from collections.abc import AsyncIterator
@@ -226,9 +226,7 @@ def test_searchbuilder_conditions(
 
 
 # The two tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared
-# boolean (PRD-D8), so PRD-F43 does not change their outcomes. The boolean-type implementation must add a case with the
-# column declared boolean, where PRD-F43 makes true/false (any case) or 1/0 match and refuses other values as
-# invalid_filter.
+# boolean (PRD-D8), so PRD-F43 does not change their outcomes. The cases with the column declared boolean follow them.
 
 
 @pytest.mark.parametrize('value', ['1', 'true', 'abc'])
@@ -262,6 +260,47 @@ def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, va
     PRD-D8/PRD-F43 apply once the column is declared boolean."""
     flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')])
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == expected
+
+
+# The column declared boolean (PRD-D8): `active` is true for a1 and d4, false for b2 and e5, missing in c3. The spec
+# statements cited speak of their own four-row fixture; the rows here are the same cases on this index.
+
+FLAG_NAMES = ('id', 'active')
+flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', type='boolean')])
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('=', ['1'], ['a1', 'd4']),  # the term OpenSearch rejects on the string column above, sent as a JSON true
+        ('=', ['false'], ['b2', 'e5']),
+        ('!=', ['true'], ['b2', 'c3', 'e5']),  # a missing field is not true (PRD-F37)
+    ],
+)
+def test_searchbuilder_on_a_declared_boolean_column(
+    client: OpenSearch, condition: str, values: list[str], expected: list[str]
+):
+    """SPEC-F43.1, SPEC-F43.2: what the cluster answers to the JSON booleans the backend sends."""
+    params = request(*FLAG_NAMES, **criterion('active', condition, *values))
+    assert found(flags.fetch_sync(params, client)) == expected
+
+
+def test_a_categorical_filter_on_a_declared_boolean_column(client: OpenSearch):
+    """SPEC-F44.3: a `terms` query of both JSON booleans on the boolean field."""
+    params = request(*FLAG_NAMES)
+    params.columns[1].search.value = '^(true|0)$'
+    params.columns[1].search.regex = True
+    assert found(flags.fetch_sync(params, client)) == ['a1', 'b2', 'd4', 'e5']
+
+
+@pytest.mark.parametrize(
+    ('direction', 'expected'), [('asc', ['b2', 'e5', 'a1', 'd4']), ('desc', ['a1', 'd4', 'b2', 'e5'])]
+)
+def test_false_sorts_before_true(client: OpenSearch, direction: str, expected: list[str]):
+    """The boolean part of SPEC-O2.3, SPEC-O8.1 and SPEC-O8.2, measured: `active`, then `id` ascending, over the
+    documents that have the field. Where a missing value goes and which way the key runs are PRD-O2's and PRD-O3's."""
+    params = request(*FLAG_NAMES, order=[{'column': 1, 'dir': direction}, {'column': 0, 'dir': 'asc'}])
+    assert [row for row in ids(flags.fetch_sync(params, client)) if row != 'c3'] == expected
 
 
 def test_searchbuilder_groups_nest(client: OpenSearch):

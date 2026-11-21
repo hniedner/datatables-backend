@@ -247,6 +247,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   1, 2, 4.
 - **SPEC-F43.3** [all] On `active`: `=` with `yes`, `2`, `t` or `''`, and any of `<`, `between`, `contains`,
   `starts` → error_code `invalid_filter`, never a database error.
+- **SPEC-F43.4** [all] Whitespace around a boolean value is ignored, as around a number or a date: `=` on `active`
+  with ` true ` → rows 1, 4; with ` 0 ` → rows 2; with three spaces → error_code `invalid_filter`.
 - **SPEC-F44.1** [all] Global search `true` → none (the boolean column is skipped; no other column holds `true`).
   On a table whose only searchable column is `active`, global search `x` → error_code `invalid_filter` (no usable
   column, PRD-F13). On SQLite, MySQL and SQL Server, where a boolean's text holds no `true`, only this second clause

@@ -13,6 +13,7 @@ from datatables_backend import Column
 from datatables_backend import DTResponse
 from datatables_backend import PartialResultError
 from datatables_backend import RowHooks
+from datatables_backend import SchemaError
 from datatables_backend import TotalCache
 from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
@@ -249,3 +250,50 @@ def test_sorting_uses_the_whole_string_and_drops_analysed_text():
     order = [{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}, {'column': 3, 'dir': 'asc'}]
     table.fetch_sync(request(*NAMES, order=order), client)
     assert client.searches[0]['sort'] == [{'title.keyword': {'order': 'desc'}}, {'pages': {'order': 'asc'}}]
+
+
+# -- a boolean column ---
+#
+# What OpenSearch makes of these bodies is measured in test_opensearch_live.py.
+
+FLAG_NAMES = ('id', 'title', 'active')
+flags = SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('active', type='boolean')])
+
+
+def clauses(client: Client) -> list[dict[str, Any]]:
+    """The clauses of the last search of a table without a base filter."""
+    return client.searches[-1]['query']['bool']['must']
+
+
+@pytest.mark.parametrize(
+    ('condition', 'clause'),
+    [
+        ('=', {'term': {'active': True}}),
+        ('!=', {'bool': {'must_not': [{'term': {'active': True}}]}}),  # keeps a document without the field
+    ],
+)
+def test_searchbuilder_on_a_boolean_column_sends_a_json_boolean(condition: str, clause: dict[str, Any]):
+    """SPEC-F43.1, SPEC-F43.2: the field itself is queried, with a JSON boolean, never the user's text."""
+    client = Client()
+    flags.fetch_sync(request(*FLAG_NAMES, **criterion('active', condition, 'TRUE')), client)
+    assert clauses(client) == [clause]
+
+
+def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
+    """SPEC-F44.3: the field itself, not a keyword subfield, and JSON booleans."""
+    client, params = Client(), request(*FLAG_NAMES)
+    params.columns[2].search.value = '^(true|0)$'
+    params.columns[2].search.regex = True
+    flags.fetch_sync(params, client)
+    assert clauses(client) == [{'terms': {'active': [True, False]}}]
+
+
+@pytest.mark.xfail(
+    reason='PRD-D14: a search-value hook on a column that is not a string is not refused yet, for any type '
+    '(SPEC-D14.1)',
+    strict=True,
+    raises=pytest.fail.Exception,
+)
+def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
+    with pytest.raises(SchemaError):
+        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('active', type='boolean', search_value=str)])

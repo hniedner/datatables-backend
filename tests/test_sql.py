@@ -7,14 +7,17 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+import logging
 import os
 from typing import Any
 
 import pytest
+from sqlalchemy import Integer
+from sqlalchemy import MetaData
+from sqlalchemy import Table
+from sqlalchemy import cast
 from sqlalchemy import func
 from sqlalchemy import select
-from sqlalchemy.exc import DataError
-from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -352,41 +355,190 @@ def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
 
 
-#: What SearchBuilder `=` on a Boolean column (True for ids 1 and 4, False for 2 and 5) gives today, per backend: the
-#: ids answered, or the exception raised. Draft 1 has no boolean type, so the column is a string column and the value
-#: goes to the database as text. PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values
-#: as invalid_filter.
-BOOLEAN_TODAY: dict[str, dict[str, list[int] | type[Exception]]] = {
-    'sqlite': {'1': [1, 4], 'true': [], 'abc': []},
-    'mysql': {'1': [1, 4], 'true': [2, 5], 'abc': [2, 5]},  # text that is not a number reads as 0
-    'mssql': {'1': [1, 4], 'true': [1, 4], 'abc': DataError},
-    'postgresql': {'1': ProgrammingError, 'true': ProgrammingError, 'abc': ProgrammingError},
-}
+# -- a boolean column ---
+#
+# `active` is a SQLAlchemy `Boolean` declared without a type (BOOLEAN, also on SQLite, which stores 1 and 0; BIT on
+# SQL Server; TINYINT(1) on MySQL): true for ids 1 and 4, false for 2 and 5, NULL for 3. The spec statements cited
+# speak of their own four-row fixture; the rows here are the same cases on this one.
+
+FLAGGED = ('id', 'name', 'active')
+flagged = SQLTable(people, [Column('id'), Column('name'), Column('active')])
+
+
+def library_log(caplog: pytest.LogCaptureFixture) -> str:
+    """Everything the library's records hold: message, arguments and extra fields."""
+    return ' '.join(repr(vars(record)) for record in caplog.records if record.name.startswith('datatables_backend'))
 
 
 @pytest.mark.parametrize(
-    ('value', 'today'),
+    ('value', 'expected'),
     [
-        pytest.param(
-            value,
-            today,
-            marks=pytest.mark.xfail(
-                reason='draft 1: the database refuses text compared with a Boolean column, so the query fails; '
-                'PRD v2 (PRD-F43) makes true/false (any case) or 1/0 match and refuses other values as invalid_filter',
-                strict=True,
-                raises=today,
-            ),
-        )
-        if isinstance(today, type)
-        else pytest.param(value, today)
-        for value, today in BOOLEAN_TODAY[os.environ.get('DTB_SQL_DIALECT', 'sqlite')].items()
+        ('TRUE', [1, 4]),
+        ('1', [1, 4]),
+        ('false', [2, 5]),
+        ('0', [2, 5]),
+        (' true ', [1, 4]),  # SPEC-F43.4: surrounding whitespace is ignored, as for numbers and dates
     ],
 )
-def test_searchbuilder_equality_on_a_boolean_column_as_it_is_today(
-    session: Session, value: str, today: list[int] | type[Exception]
+def test_searchbuilder_equality_on_a_boolean_column(session: Session, value: str, expected: list[int]):
+    """SPEC-F43.1, SPEC-F43.4, and SPEC-D8.1 for `active`: a `Boolean` column is boolean without being declared so."""
+    assert ids(flagged.fetch_sync(request(*FLAGGED, **criterion('active', '=', value)), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('!=', ['true'], [2, 3, 5]),  # NULL is not true (PRD-F37)
+        ('null', [], [3]),
+        ('!null', [], [1, 2, 4, 5]),
+    ],
+)
+def test_the_other_conditions_a_boolean_column_takes(
+    session: Session, condition: str, values: list[str], expected: list[int]
 ):
-    flagged = SQLTable(people, [Column('id'), Column('active')])
-    assert ids(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), session)) == today
+    """SPEC-F43.2."""
+    assert ids(flagged.fetch_sync(request(*FLAGGED, **criterion('active', condition, *values)), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values'),
+    [
+        ('=', ['yes']),  # each of the four is a value some reading of "boolean" would take
+        ('=', ['2']),
+        ('=', ['t']),
+        ('=', ['']),
+        ('<', ['true']),  # a number's condition
+        ('contains', ['true']),  # a string's condition
+    ],
+)
+def test_a_value_or_condition_a_boolean_column_does_not_take_is_refused(
+    session: Session, caplog: pytest.LogCaptureFixture, condition: str, values: list[str]
+):
+    """SPEC-F43.3, and SPEC-D8.1's `<`: answered as `invalid_filter`, never a database error. For the value `yes`,
+    neither the reason nor a log record holds it. Today these refusals log nothing; the one WARNING of PRD-E13 comes
+    with the error codes."""
+    with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
+        reason = refused(flagged.fetch_sync(request(*FLAGGED, **criterion('active', condition, *values)), session))
+    if values == ['yes']:
+        assert 'yes' not in reason
+        assert 'yes' not in library_log(caplog)
+
+
+def test_the_global_search_skips_a_boolean_column(session: Session):
+    """SPEC-F44.1: a table whose only searchable column is boolean has no usable column for a global search
+    (PRD-F13). Were the column searched, the request would be answered."""
+    only = SQLTable(people, [Column('id', searchable=False), Column('active')])
+    refused(only.fetch_sync(request('id', 'active', search={'value': 'x'}), session))
+
+
+def test_a_skipped_boolean_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
+    """SPEC-E13.2 for the boolean column: a skip the requirements allow is not a refusal."""
+    with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
+        assert ids(flagged.fetch_sync(request(*FLAGGED, search={'value': 'ann'}), session)) == [1, 3]
+    assert library_log(caplog) == ''
+
+
+@pytest.mark.parametrize(
+    ('search', 'expected'),
+    [
+        ({'value': 'false'}, [2, 5]),  # SPEC-F44.2: the value itself, not text the cell contains
+        ({'value': '^(true|0)$', 'regex': True}, [1, 2, 4, 5]),  # SPEC-F44.3
+        ({'multi_values': ['TRUE']}, [1, 4]),  # SPEC-F44.3
+    ],
+)
+def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
+    session: Session, search: dict[str, Any], expected: list[int]
+):
+    """A plain value, a categorical filter and `multi_values` each take the values of SPEC-F43.1."""
+    params = request(*FLAGGED)
+    params.columns[2].search = params.columns[2].search.model_copy(update=search)
+    assert ids(flagged.fetch_sync(params, session)) == expected
+
+
+@pytest.mark.xfail(
+    reason='PRD-F20, PRD-F17: an empty multi_values entry does not mean empty yet, on any column type (SPEC-F44.3)',
+    strict=True,
+    raises=AssertionError,
+)
+def test_an_empty_multi_values_entry_on_a_boolean_column_means_null(session: Session):
+    params = request(*FLAGGED)
+    params.columns[2].search.multi_values = ['', '1']
+    assert ids(flagged.fetch_sync(params, session)) == [1, 3, 4]
+
+
+def test_a_reflected_boolean_column_is_typed_by_what_the_database_reports(session: Session):
+    """SPEC-D8.1 and SPEC-D8.2 on the table as the database describes it, `active` declared without a type.
+
+    SQLite, PostgreSQL and SQL Server (whose `BIT` is a SQLAlchemy `Boolean`) run the first branch: the column is
+    boolean. MySQL runs the second: its `TINYINT(1)` is a number until it is declared boolean, and both halves are
+    asserted there. Any other dialect fails."""
+    reflected = Table(people.name, MetaData(), autoload_with=session.connection())
+    undeclared = SQLTable(reflected, [Column('id'), Column('active')])
+    dialect = session.get_bind().dialect.name
+    if dialect in ('sqlite', 'postgresql', 'mssql'):
+        assert ids(undeclared.fetch_sync(request('id', 'active', **criterion('active', '=', 'true')), session)) == [
+            1,
+            4,
+        ]
+    elif dialect == 'mysql':
+        assert ids(undeclared.fetch_sync(request('id', 'active', **criterion('active', '<', '1')), session)) == [2, 5]
+        declared = SQLTable(reflected, [Column('id'), Column('active', type='boolean')])
+        assert ids(declared.fetch_sync(request('id', 'active', **criterion('active', '=', 'true')), session)) == [1, 4]
+    else:
+        pytest.fail(f'no expectation for the dialect {dialect}')
+
+
+def test_an_integer_column_declared_boolean_is_compared_with_one_and_zero(session: Session):
+    """A column that stores 1 and 0 as integers, declared boolean (SPEC-D8.2's case on every database): the value
+    reaches the database as a number. PostgreSQL has no `integer = boolean`, so a `true` sent as a boolean fails this
+    test there; the other databases read one as the other, and so cannot tell."""
+    source = select(people.c.id, cast(people.c.active, Integer).label('flag')).subquery()
+    declared = SQLTable(source, [Column('id'), Column('flag', type='boolean')])
+    assert ids(declared.fetch_sync(request('id', 'flag', **criterion('flag', '=', 'true')), session)) == [1, 4]
+    assert ids(declared.fetch_sync(request('id', 'flag', **criterion('flag', '!=', 'true')), session)) == [2, 3, 5]
+    params = request('id', 'flag')
+    params.columns[1].search.multi_values = ['1']
+    assert ids(declared.fetch_sync(params, session)) == [1, 4]
+
+
+@pytest.mark.parametrize(('direction', 'expected'), [('asc', [2, 5, 1, 4]), ('desc', [1, 4, 2, 5])])
+def test_false_sorts_before_true(session: Session, direction: str, expected: list[int]):
+    """The boolean part of SPEC-O2.3, SPEC-O8.1 and SPEC-O8.2, measured on each database: `active`, then `id`
+    ascending, over the rows that have a value. Where NULL goes and which way the key runs are PRD-O2's and PRD-O3's."""
+    params = request(*FLAGGED, order=[{'column': 2, 'dir': direction}, {'column': 0, 'dir': 'asc'}])
+    assert [row for row in ids(flagged.fetch_sync(params, session)) if row != 3] == expected
+
+
+@pytest.mark.xfail(
+    reason='PRD-D14: a search-value hook on a column that is not a string is not refused yet, for any type '
+    '(SPEC-D14.1)',
+    strict=True,
+    raises=pytest.fail.Exception,
+)
+def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
+    with pytest.raises(SchemaError):
+        SQLTable(people, [Column('id'), Column('active', search_value=str.upper)])
+
+
+@pytest.mark.xfail(
+    reason='PRD-E3: the codes invalid_number and invalid_date do not exist yet, so every mistake is invalid_filter '
+    '(SPEC-E3.3, SPEC-E3.7)',
+    strict=True,
+    raises=AssertionError,
+)
+@pytest.mark.parametrize(
+    ('column', 'value', 'code'),
+    [('age', 'abc', 'invalid_number'), ('born', '9999-12-31', 'invalid_date')],
+)
+def test_a_number_or_date_mistake_is_reported_before_a_boolean_one(
+    session: Session, column: str, value: str, code: str
+):
+    """SPEC-E3.3 (a format, step 2) and SPEC-E3.7 (a range, step 3) come before a boolean value outside the set
+    (step 4), whichever the request names first."""
+    typed = SQLTable(people, [Column('id'), Column('age'), Column('born'), Column('active')])
+    params = request('id', 'age', 'born', 'active', **criterion(column, '=', value))
+    params.columns[3].search.value = 'yes'
+    assert typed.fetch_sync(params, session).to_dict()['error_code'] == code
 
 
 @pytest.mark.parametrize(
@@ -453,6 +605,17 @@ def test_many_multi_select_values_still_run(session: Session):
     params = request(*ALL)
     params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob']
     assert ids(table.fetch_sync(params, session)) == [2]
+
+
+def test_a_boolean_filter_beside_many_multi_select_values_still_runs(session: Session):
+    """Past SQL Server's parameter limit every list of the statement travels as JSON, the boolean column's too, and
+    both of its values are cast to the column's type there (`BIT`). Row 5 is false but not among the names, and row
+    3 is among them but NULL."""
+    params = request(*FLAGGED)
+    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Ann', 'Bob', 'anna_100%', 'Cy']
+    params.columns[2].search.value = '^(true|0)$'
+    params.columns[2].search.regex = True
+    assert ids(flagged.fetch_sync(params, session)) == [1, 2, 4]
 
 
 def test_many_multi_select_values_on_a_number_column_still_run(session: Session):
