@@ -114,9 +114,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   4; rows 1, 3, 4.
 - **SPEC-F16.3** [all] With `regex: true`, given a row whose `note` is `a-b/c`: `^(a-b/c)$` and `^(a\-b\/c)$` → that
   row.
+- **SPEC-F16.4** [all] A column search on `colour` with an empty value and `regex: true` is idle → rows 1, 2, 3, 4
+  (no value, so no categorical filter; the reviewer's decision of 2026-11-20 in `README.md`).
 - **SPEC-F17.1** [all] With `regex: true`: `^(|x_y)$` on `note` → rows 1, 3 on OS (missing, `x_y`); rows 1, 2, 3 on
   SQL (NULL, `''`, `x_y`).
 - **SPEC-F17.2** [all] With `regex: true`: `^(|red)$` on `colour` → rows 1, 4 (no row is empty).
+- **SPEC-F17.3** [all] With `regex: true`: `^()$` on `note`, a group holding only the empty alternative, → rows 1, 2
+  on SQL (NULL, `''`) and rows 1 on OS (missing).
 - **SPEC-F18.1** [all] With `regex: true`, each of `^a|b$`, `a.b`, `a*`, `(a)`, `[ab]`, `a{2}`, `\d`, `\w`, `\n`,
   `a+`, `a?` and `^(a|b)` → error_code `invalid_filter`.
 - **SPEC-F18.2** [all] A global search with `search[regex]` true and a non-empty value, `red` or `^(red)$`, →
