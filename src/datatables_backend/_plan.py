@@ -24,7 +24,6 @@ import unicodedata
 
 from .columns import Column
 from .columns import ColumnType
-from .protocol import NO_USABLE_COLUMN
 from .protocol import Condition
 from .protocol import DTParams
 from .protocol import DTResponse
@@ -36,21 +35,39 @@ from .protocol import SearchGroup
 
 log = logging.getLogger('datatables_backend')
 
-REGEX_REFUSED = 'Regular-expression search is not supported.'
-VALUE_AND_VALUES = 'A column search takes a value or a list of values, not both.'
-GLOBAL_VALUES = 'The global search takes a value, not a list of values.'
-CONTROL_CHARACTER = 'The filter holds a control character, which cannot be searched for.'
-NOT_A_NUMBER = 'The filter value must be a number.'
-DATE_FORMAT = 'Dates must be written as YYYY-MM-DD.'
-SPAN_FORMAT = 'Dates must be written as YYYY, YYYY-MM or YYYY-MM-DD.'
-OUT_OF_RANGE = 'The filter value is outside the range of this column.'
+# The reasons. Each is written for the person at the table, in plain words: what is wrong, and what to do about it
+# as far as that is known here. A reason never holds what they typed (PRD-E4): it names a column only by its
+# declared name, and a limit only when the server holds it. The reasons with a column's name are built where they
+# are raised.
+SEARCH_CONTROL_CHARACTER = (
+    'The search box holds an invisible control character, such as a tab. Delete its text and type it again.'
+)
+SEARCH_REGEX = 'The search box does not take regular expressions. Search for plain text.'
+# Only a client that builds its own request sends a list here, so this one tells the integrator what to send
+SEARCH_VALUES = 'The search box takes text, not a list of values. Send the text as the search value.'
+NO_SEARCHABLE_COLUMN = (
+    'No column of this table can be searched from the search box. Clear it and use a column filter instead.'
+)
+# Issue #14 removes this one: PRD-F41 has the global search skip a request-searchable column the server did not
+# declare
+SEARCH_NOT_OFFERED = (
+    'A column of this table is not known to the server, so the search box cannot be used. Use a column filter instead.'
+)
+SORT_NOT_OFFERED = 'The table was asked to sort by a column the server does not offer. Sort by another column.'
+FILTER_NOT_OFFERED = 'A filter is on a column the server does not offer. Remove that filter.'
+_HOLDS: Mapping[ColumnType, str] = {
+    'string': 'text',
+    'number': 'numbers',
+    'date': 'dates',
+    'boolean': 'true or false',
+}
 
 #: Every mistake a user can make, by the fixed name it is logged under: the ``error_code`` it is answered with, and
 #: its step in the order that decides which of a request's mistakes is answered (PRD-E3). The names are internal
 #: for now. ``parse_request`` logs a malformed request under two more: ``datatables_request_malformed`` and
 #: ``datatables_length_refused``.
 MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
-    'datatables_control_character': ('invalid_filter', 1),
+    'datatables_control_character': ('invalid_character', 1),
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),
@@ -200,10 +217,10 @@ def plan(
     """
     declared = {column.name: column for column in columns}
 
-    def lookup(name: str) -> Column:
+    def lookup(name: str, reason: str) -> Column:
         column = declared.get(name)
         if column is None:  # never logged or answered by its name: that is the client's text
-            raise mistake('datatables_name_not_declared', NO_USABLE_COLUMN)
+            raise mistake('datatables_name_not_declared', reason)
         return column
 
     def hooked(column: Column, text: str) -> Any:
@@ -213,28 +230,33 @@ def plan(
     for item in params.order:
         with mistakes.part():
             requested = params.columns[item.column]  # parse_request refused an index outside the columns
-            column = lookup(requested.key)
+            column = lookup(requested.key, SORT_NOT_OFFERED)
             if not (requested.orderable and column.orderable):
-                raise mistake('datatables_order_refused', NO_USABLE_COLUMN, column)
+                raise mistake(
+                    'datatables_order_refused',
+                    f'The table cannot be sorted by "{column.name}". Sort by another column.',
+                    column,
+                )
             order.append(Order(column, type_of(column), item.dir == 'desc'))
 
     global_search: list[Contains] = []
     with mistakes.part():
-        _no_control_character([params.search.value])
+        if _control_character([params.search.value]):
+            raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
         if params.search.multi_values:  # refused as a form, so its entries are never read
-            raise mistake('datatables_values_refused', GLOBAL_VALUES)
+            raise mistake('datatables_values_refused', SEARCH_VALUES)
         if params.search.value:
             if params.search.regex:
-                raise mistake('datatables_regex_refused', REGEX_REFUSED)
+                raise mistake('datatables_regex_refused', SEARCH_REGEX)
             found: list[Contains] = []
             for requested in params.columns:
                 if requested.searchable and requested.key:
-                    column = lookup(requested.key)
+                    column = lookup(requested.key, SEARCH_NOT_OFFERED)
                     # A boolean column takes no part: "true" as search text is nothing a user reads in the cell
                     if column.searchable and type_of(column) != 'boolean':
                         found.append(Contains(column, type_of(column), hooked(column, params.search.value)))
             if not found:
-                raise mistake('datatables_no_searchable_column', NO_USABLE_COLUMN)
+                raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
             global_search = found  # only once the whole search stands
 
     column_searches: list[Contains | AnyOf] = []
@@ -243,16 +265,20 @@ def plan(
         if not (search.value or search.multi_values):
             continue
         with mistakes.part():
-            _no_control_character([search.value, *(search.multi_values or [])])
-            column = lookup(requested.key)
+            _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
+            column = lookup(requested.key, FILTER_NOT_OFFERED)
             if not column.searchable:
-                raise mistake('datatables_search_refused', NO_USABLE_COLUMN, column)
+                raise mistake(
+                    'datatables_search_refused',
+                    f'The column "{column.name}" cannot be filtered. Remove the filter on it.',
+                    column,
+                )
             column_searches.append(_column_search(search, column, type_of(column), hooked))
 
     def node(item: SearchGroup | SearchCriterion) -> Criterion | Group | None:
         if isinstance(item, SearchCriterion):
             with mistakes.part():
-                return _criterion(item, lookup, type_of, hooked)
+                return _criterion(item, declared, type_of, hooked)
             return None  # a criterion with a mistake is left out, like an empty group
         built = [part for part in (node(child) for child in item.criteria) if part is not None]
         if not built:
@@ -263,16 +289,26 @@ def plan(
     return Plan(tuple(global_search), tuple(column_searches), search_builder, tuple(order))
 
 
-def _no_control_character(texts: Iterable[str]) -> None:
-    """No value the request reads holds a control character (Unicode category Cc) other than LF and CR."""
-    for text in texts:
-        if any(unicodedata.category(char) == 'Cc' and char not in '\n\r' for char in text):
-            raise mistake('datatables_control_character', CONTROL_CHARACTER)
+def _control_character(texts: Iterable[str]) -> bool:
+    """Whether a value the request reads holds a control character (Unicode category Cc) other than LF and CR."""
+    return any(unicodedata.category(char) == 'Cc' and char not in '\n\r' for text in texts for char in text)
+
+
+def _no_control_character(texts: Iterable[str], column: Column | None) -> None:
+    """No value of a column's filter holds a control character. ``column`` is the declared column the filter is on,
+    which the reason names; None for a name the server did not declare, which it never does."""
+    if _control_character(texts):
+        where = f'The filter on "{column.name}"' if column else 'A column filter'
+        raise mistake(
+            'datatables_control_character',
+            f'{where} holds an invisible control character, such as a tab. Delete its value and type it again.',
+            column,
+        )
 
 
 def _criterion(
     item: SearchCriterion,
-    lookup: Callable[[str], Column],
+    declared: Mapping[str, Column],
     type_of: Callable[[Column], ColumnType],
     hooked: Callable[[Column, str], Any],
 ) -> Criterion:
@@ -285,27 +321,30 @@ def _criterion(
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]
-    _no_control_character(texts)
-    column = lookup(item.origData)
+    column = declared.get(item.origData)
+    _no_control_character(texts, column)
+    if column is None:  # never logged or answered by its name: that is the client's text
+        raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
     kind = type_of(column)
     if condition not in _CONDITIONS[kind]:
         # The condition is one of the protocol's literals, never free text
         raise mistake(
             'datatables_condition_refused',
-            f'Condition "{condition}" is not supported on the column "{column.name}".',
+            f'The condition "{condition}" cannot be used on "{column.name}", which holds {_HOLDS[kind]}. '
+            'Choose another condition.',
             column,
         )
     values: tuple[Any, ...]
     if kind == 'string':
         values = tuple(hooked(column, text) for text in texts)
     elif kind == 'number':
-        values = tuple(parse_number(text) for text in texts)
+        values = tuple(parse_number(text, column, listed=needed == 2) for text in texts)
     elif kind == 'boolean':
-        values = tuple(parse_boolean(text) for text in texts)
+        values = tuple(parse_boolean(text, column) for text in texts)
     elif condition in ('contains', '!contains'):
-        values = tuple(day_span(text) for text in texts)
+        values = tuple(day_span(text, column) for text in texts)
     else:
-        values = tuple(parse_day(text) for text in texts)
+        values = tuple(parse_day(text, column) for text in texts)
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
         raise mistake(
             'datatables_value_missing',
@@ -315,8 +354,10 @@ def _criterion(
     return Criterion(column, kind, condition, values)
 
 
-def parse_number(text: str) -> int | float:
-    """The number ``text`` names: an ``int`` when it is a whole number written without a point, else a ``float``."""
+def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
+    """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
+    point, else a ``float``. ``listed`` says the text is one of several values (a list, or the two of a
+    ``between``), where the reason must not ask for one number."""
     stripped = text.strip()
     if stripped.lstrip('+-').isdigit():
         return int(stripped)
@@ -325,54 +366,86 @@ def parse_number(text: str) -> int | float:
     except ValueError:
         number = math.nan
     if not math.isfinite(number):
-        raise mistake('datatables_number_unreadable', NOT_A_NUMBER)
+        needed = (
+            f'Each value in the filter on "{column.name}" must be a number'
+            if listed
+            else f'The filter on "{column.name}" needs one number'
+        )
+        raise mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
     return number
 
 
-def parse_boolean(text: str) -> bool:
-    """The boolean ``text`` names: ``true`` or ``false`` in any case, or ``1`` or ``0``."""
+def parse_boolean(text: str, column: Column) -> bool:
+    """The boolean ``text`` names in a filter on ``column``: ``true`` or ``false`` in any case, or ``1`` or ``0``."""
     value = _BOOLEANS.get(text.strip().lower())
     if value is None:
-        raise mistake('datatables_boolean_unreadable', 'The filter value must be true or false.')
+        raise mistake(
+            'datatables_boolean_unreadable',
+            f'The filter on "{column.name}" needs true or false (1 or 0 also work).',
+            column,
+        )
     return value
 
 
-def parse_day(text: str) -> date:
-    """The day ``text`` names (``YYYY-MM-DD``; a time after it is ignored). The last day there is, 9999-12-31, is
-    refused in every condition: it has no next day to bound it by, and that is the user's filter, not a failed
-    query."""
+def _last_day(column: Column) -> InvalidFilter:
+    """The year 9999 in the reason is the calendar's own limit, never read from what the user typed."""
+    return mistake(
+        'datatables_date_out_of_range',
+        f'The filter on "{column.name}" reaches the last day of the year 9999, which cannot be searched. '
+        'Use an earlier date.',
+        column,
+    )
+
+
+def parse_day(text: str, column: Column) -> date:
+    """The day ``text`` names in a filter on ``column`` (``YYYY-MM-DD``; a time after it is ignored). The last day
+    there is, 9999-12-31, is refused in every condition: it has no next day to bound it by, and that is the user's
+    filter, not a failed query."""
     try:
         day = date.fromisoformat(text.strip()[:10])
     except ValueError:
         # The parser's message quotes the value, which may be a date of birth
-        raise mistake('datatables_date_unreadable', DATE_FORMAT) from None
+        raise mistake(
+            'datatables_date_unreadable',
+            f'The filter on "{column.name}" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+            column,
+        ) from None
     if day == date.max:
-        raise mistake('datatables_date_out_of_range', OUT_OF_RANGE)
+        raise _last_day(column)
     return day
 
 
 def next_day(day: date) -> date:
-    """The day after ``day``, which ``parse_day`` made sure exists."""
+    """The day after ``day``, which ``parse_day`` and ``day_span`` made sure exists."""
     return day + timedelta(days=1)
 
 
-def day_span(text: str) -> DaySpan:
-    """The days a date "contains" names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day. A span that
-    holds the last day there is, is refused as that day is."""
+def day_span(text: str, column: Column) -> DaySpan:
+    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day.
+    A span that holds the last day there is, is refused as that day is."""
     value = text.strip()
-    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
-        day = parse_day(value)
-        return DaySpan(day, next_day(day))
-    form = re.fullmatch(r'(\d{4})(?:-(\d{2}))?', value)
+    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', value)
     try:
-        start = date(int(form[1]), int(form[2] or 1), 1) if form else None
-    except ValueError:  # the year 0000, or a month that does not exist
+        if form and form[3]:  # a full day is read as ``parse_day`` reads it, so `contains` and `=` take the same
+            start = date.fromisoformat(value)
+        else:
+            start = date(int(form[1]), int(form[2] or 1), 1) if form else None
+    except ValueError:  # the year 0000, or a month or a day that does not exist
         start = None
     if form is None or start is None:
-        raise mistake('datatables_date_unreadable', SPAN_FORMAT)
+        raise mistake(
+            'datatables_date_unreadable',
+            f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
+            'or YYYY-MM-DD, like 2024-03.',
+            column,
+        )
+    if form[3]:
+        if start == date.max:
+            raise _last_day(column)
+        return DaySpan(start, next_day(start))
     last = start.month if form[2] else 12
     if (start.year, last) == (date.max.year, 12):
-        raise mistake('datatables_date_out_of_range', OUT_OF_RANGE)
+        raise _last_day(column)
     return DaySpan(start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1))
 
 
@@ -382,21 +455,31 @@ def _column_search(
     """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains.
     On a boolean column a plain value is an exact value too."""
     if search.multi_values and search.value:
-        raise mistake('datatables_values_refused', VALUE_AND_VALUES, column)
+        # Only a client that builds its own request sends both, so this one tells the integrator what to send
+        raise mistake(
+            'datatables_values_refused',
+            f'The filter on "{column.name}" holds both text and a list of values. Send only one of them.',
+            column,
+        )
     texts: Sequence[str]
     if search.multi_values:
         texts = search.multi_values
     elif search.regex:
         alternatives = _alternatives(search.value)
         if alternatives is None:
-            raise mistake('datatables_regex_refused', REGEX_REFUSED, column)
+            raise mistake(
+                'datatables_regex_refused',
+                f'The filter on "{column.name}" does not take regular expressions. Remove these characters and '
+                'search for plain text: . * + ? [ ] { } ( ) ^ $ | \\',
+                column,
+            )
         texts = alternatives
     elif kind == 'boolean':
         texts = [search.value]
     else:
         return Contains(column, kind, hooked(column, search.value))
     if kind == 'boolean':
-        return AnyOf(column, kind, tuple(parse_boolean(text) for text in texts))
+        return AnyOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
     return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 

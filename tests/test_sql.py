@@ -14,6 +14,7 @@ from typing import Any
 import warnings
 
 import pytest
+from sqlalchemy import BigInteger
 from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
@@ -227,16 +228,6 @@ def test_a_multi_select_on_a_number_column_compares_numbers(session: Session):
     assert ids(table.fetch_sync(params, session)) == [1, 4, 5]
 
 
-def test_a_regex_search_is_refused(session: Session):
-    assert 'Regular-expression' in refused(
-        table.fetch_sync(request(*ALL, search={'value': 'a.*', 'regex': True}), session)
-    )
-    params = request(*ALL)
-    params.columns[1].search.value = 'A.+'
-    params.columns[1].search.regex = True
-    refused(table.fetch_sync(params, session))
-
-
 def test_an_undeclared_column_cannot_be_searched_or_sorted(session: Session):
     params = request(*ALL, 'secret')
     params.columns[7].search.value = 's1'
@@ -289,6 +280,7 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
         ('born', 'contains', ['1980'], [2]),
         ('born', 'contains', ['2001-12'], [4]),
         ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
+        ('born', 'contains', ['1980-07-14'], []),  # SPEC-F22.1: and of no more, so the day before Bob's holds nobody
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -577,35 +569,34 @@ def test_the_declared_type_decides_not_the_clients(session: Session):
     tree = {'criteria': [{'condition': '>', 'origData': 'age', 'type': 'string', 'value': ['9']}]}
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [1, 2, 4, 5]
     tree = {'criteria': [{'condition': 'contains', 'origData': 'age', 'type': 'string', 'value': ['3']}]}
-    assert '"contains"' in refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+    refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+
+
+FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the digits U+FF10 to U+FF19
 
 
 @pytest.mark.parametrize(
-    ('column', 'condition', 'values', 'code', 'reason'),
+    ('column', 'condition', 'values', 'code'),
     [
-        ('age', '>', ['old'], 'invalid_number', 'must be a number'),
-        ('age', '>', ['inf'], 'invalid_number', 'must be a number'),
-        ('age', '>', ['40000'], 'invalid_number', 'outside the range'),  # a SMALLINT
-        ('age', 'between', ['old'], 'invalid_number', 'must be a number'),  # the value there is, not the one missing
-        ('born', '=', ['15/07/1980'], 'invalid_date', 'YYYY-MM-DD'),
-        ('born', '<', ['9999-12-31'], 'invalid_date', 'outside the range'),  # SPEC-F24.1: whatever the condition
-        ('born', 'contains', ['9999'], 'invalid_date', 'outside the range'),  # a year that holds the last day
-        ('born', 'contains', ['9999-12'], 'invalid_date', 'outside the range'),  # and so does this month
-        ('born', 'contains', ['1980-13'], 'invalid_date', 'YYYY, YYYY-MM or YYYY-MM-DD'),
-        ('age', 'between', ['1'], 'invalid_filter', 'needs two values'),
-        ('name', '=', [], 'invalid_filter', 'needs a value'),
-        ('name', '<', ['m'], 'invalid_filter', 'not supported'),
-        ('age', 'contains', ['abc'], 'invalid_filter', 'not supported'),  # SPEC-E3.8: the value is never read
+        ('age', '>', ['inf'], 'invalid_number'),  # SPEC-F25.1: a number Python reads, and no column holds
+        ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
+        ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
+        ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
+        ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
+        ('born', 'contains', ['2024-03-00'], 'invalid_date'),  # nor a day 00 as the first
+        ('born', 'contains', ['0000'], 'invalid_date'),  # nor the year 0000 as the year 1
+        # A full day in full-width digits: `contains` reads a day as `=` does, which takes ASCII digits only
+        ('born', 'contains', ['2024-03-05'.translate(FULL_WIDTH)], 'invalid_date'),
+        ('age', 'contains', ['abc'], 'invalid_filter'),  # SPEC-E3.8: the value is never read
     ],
 )
 def test_a_value_the_column_cannot_take_is_refused_with_its_code_without_echoing_it(
-    session: Session, column: str, condition: str, values: list[str], *, code: str, reason: str
+    session: Session, column: str, condition: str, values: list[str], *, code: str
 ):
-    """SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-E1.2, SPEC-E3.8: a date mistake, a number mistake and any other each
-    have their code (PRD-E3, steps 2 to 4)."""
+    """SPEC-E4.1 and the cases the test of the texts below does not hold: each has its code (PRD-E3, steps 2 to 4),
+    and the text never holds the value."""
     message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
-    assert reason in message
-    assert all(value not in message for value in values if len(value) > 2)
+    assert all(value not in message for value in values)
 
 
 def test_the_last_month_before_the_last_day_is_answered(session: Session):
@@ -616,14 +607,258 @@ def test_the_last_month_before_the_last_day_is_answered(session: Session):
 def test_a_user_error_is_an_answer_with_the_draw_and_nothing_else(session: Session):
     """SPEC-E1.1, SPEC-R5.2, SPEC-R6.1: what a caller sends on for a mistake the user can fix."""
     response = table.fetch_sync(request(*ALL, draw=7, **criterion('age', '=', 'abc')), session)
+    assert response.error  # its wording is asserted once, in the test of the texts below
     assert response.to_dict() == {
         'draw': 7,
         'recordsTotal': 0,
         'recordsFiltered': 0,
         'data': [],
-        'error': 'The filter value must be a number.',
+        'error': response.error,
         'error_code': 'invalid_number',
     }
+
+
+WORDED = ('id', 'name', 'age', 'born', 'active', 'secret', 'big', 'team')
+worded = SQLTable(
+    select(
+        people.c.id,  # an INTEGER
+        people.c.name,
+        people.c.age,  # a SMALLINT
+        people.c.born,
+        people.c.active,
+        people.c.secret,
+        cast(people.c.id, BigInteger).label('big'),
+        people.c.team,
+    ).subquery(),
+    [
+        Column('id'),
+        Column('name'),
+        Column('age'),
+        Column('born'),
+        Column('active'),
+        Column('secret', searchable=False),
+        Column('big'),
+        Column('team', orderable=False),
+    ],
+)
+UNDECLARED = (*WORDED, 'extra')
+CONTROL = 'holds an invisible control character, such as a tab. Delete its'
+CONDITION = 'Choose another condition.'
+SPAN = (
+    'The filter on "born" needs a year, a month or a day that exists, written as YYYY, YYYY-MM or YYYY-MM-DD, like '
+    '2024-03.'
+)
+LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which cannot be searched. Use an earlier date.'
+
+
+@pytest.mark.parametrize(
+    ('names', 'body', 'code', 'text'),
+    [
+        # SPEC-E4.3 to E4.5: the owner's case, a tab nobody sees, and where it is
+        (
+            WORDED,
+            {'search': {'value': 'a\tb'}},
+            'invalid_character',
+            f'The search box {CONTROL} text and type it again.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'name': {'value': 'a\tb'}}},
+            'invalid_character',
+            f'The filter on "name" {CONTROL} value and type it again.',
+        ),
+        (
+            WORDED,
+            criterion('name', '=', 'a\tb'),  # the criterion finds its column by another route than a column search
+            'invalid_character',
+            f'The filter on "name" {CONTROL} value and type it again.',
+        ),
+        (
+            UNDECLARED,
+            {'column_search': {'extra': {'value': 'a\tb'}}},
+            'invalid_character',
+            f'A column filter {CONTROL} value and type it again.',
+        ),
+        (
+            UNDECLARED,
+            criterion('extra', '=', 'a\tb'),  # the control character is answered before the name that is not declared
+            'invalid_character',
+            f'A column filter {CONTROL} value and type it again.',
+        ),
+        # SPEC-E4.6 to E4.8, and SPEC-E4.25 for a list of values, which must not be told to hold one number
+        (
+            WORDED,
+            criterion('age', '=', 'abc'),
+            'invalid_number',
+            'The filter on "age" needs one number, written like 42 or -3.5.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'age': {'multi_values': ['31', 'abc']}}},
+            'invalid_number',
+            'Each value in the filter on "age" must be a number, written like 42 or -3.5.',
+        ),
+        (
+            WORDED,
+            criterion('age', 'between', '1', 'abc'),  # a `between` reads two values, so it is not told to hold one
+            'invalid_number',
+            'Each value in the filter on "age" must be a number, written like 42 or -3.5.',
+        ),
+        (
+            WORDED,
+            criterion('born', '=', '15/07/1980'),
+            'invalid_date',
+            'The filter on "born" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+        ),
+        (WORDED, criterion('born', 'contains', '1980-13'), 'invalid_date', SPAN),
+        # A day that does not exist: `contains` also takes a year or a month, so its text must say so
+        (WORDED, criterion('born', 'contains', '1980-02-30'), 'invalid_date', SPAN),
+        # SPEC-E4.9: the bounds are those of the column's own width
+        (
+            WORDED,
+            criterion('age', '=', '40000'),
+            'invalid_number',
+            'The filter on "age" needs a number between -32768 and 32767.',
+        ),
+        (
+            WORDED,
+            criterion('id', '=', '2147483648'),
+            'invalid_number',
+            'The filter on "id" needs a number between -2147483648 and 2147483647.',
+        ),
+        (
+            WORDED,
+            criterion('big', '=', '9223372036854775808'),
+            'invalid_number',
+            'The filter on "big" needs a number between -9223372036854775808 and 9223372036854775807.',
+        ),
+        # SPEC-E4.26: the list form of the range text, for a list of values and for the two of a `between`
+        (
+            WORDED,
+            {'column_search': {'age': {'multi_values': ['7', '70000']}}},
+            'invalid_number',
+            'Each value in the filter on "age" must be a number between -32768 and 32767.',
+        ),
+        (
+            WORDED,
+            criterion('age', 'between', '1', '70000'),
+            'invalid_number',
+            'Each value in the filter on "age" must be a number between -32768 and 32767.',
+        ),
+        # SPEC-E4.10, SPEC-F24.1: the last day itself, and a year that holds it
+        (WORDED, criterion('born', '<', '9999-12-31'), 'invalid_date', LAST_DAY),
+        (WORDED, criterion('born', 'contains', '9999'), 'invalid_date', LAST_DAY),
+        # SPEC-E4.11, E4.12: a name the server did not declare is never given
+        (
+            UNDECLARED,
+            {'order': [{'column': 8, 'dir': 'asc'}]},
+            'invalid_filter',
+            'The table was asked to sort by a column the server does not offer. Sort by another column.',
+        ),
+        (
+            UNDECLARED,
+            {'column_search': {'extra': {'value': 'x'}}},
+            'invalid_filter',
+            'A filter is on a column the server does not offer. Remove that filter.',
+        ),
+        # No statement: issue #14 removes this refusal (PRD-F41 has the global search skip such a column)
+        (
+            UNDECLARED,
+            {'search': {'value': 'x'}},
+            'invalid_filter',
+            'A column of this table is not known to the server, so the search box cannot be used. Use a column filter '
+            'instead.',
+        ),
+        # SPEC-E4.13 to E4.15
+        (
+            WORDED,
+            {'order': [{'column': 7, 'dir': 'asc'}]},
+            'invalid_filter',
+            'The table cannot be sorted by "team". Sort by another column.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'secret': {'value': 'x'}}},
+            'invalid_filter',
+            'The column "secret" cannot be filtered. Remove the filter on it.',
+        ),
+        (
+            ('active',),  # the only column asked for is a boolean, which the search box skips
+            {'search': {'value': 'x'}},
+            'invalid_filter',
+            'No column of this table can be searched from the search box. Clear it and use a column filter instead.',
+        ),
+        # SPEC-E4.16, E4.17
+        (
+            WORDED,
+            {'search': {'value': 'a.*', 'regex': True}},
+            'invalid_filter',
+            'The search box does not take regular expressions. Search for plain text.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'name': {'value': 'A.+', 'regex': True}}},
+            'invalid_filter',
+            'The filter on "name" does not take regular expressions. Remove these characters and search for plain '
+            'text: . * + ? [ ] { } ( ) ^ $ | \\',
+        ),
+        # SPEC-E4.18, E4.19, SPEC-F40.1, SPEC-F39.1: only a client that builds its own request makes these. The
+        # second is SPEC-E3.8 on a number column too: the form is refused, and `abc`, which is no number, never read
+        (
+            WORDED,
+            {'search': {'value': '', 'multi_values': ['Bob']}},
+            'invalid_filter',
+            'The search box takes text, not a list of values. Send the text as the search value.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'age': {'value': 'abc', 'multi_values': ['x']}}},
+            'invalid_filter',
+            'The filter on "age" holds both text and a list of values. Send only one of them.',
+        ),
+        # SPEC-E4.20: what the column holds, by its declared type
+        (
+            WORDED,
+            criterion('name', '<', 'm'),
+            'invalid_filter',
+            f'The condition "<" cannot be used on "name", which holds text. {CONDITION}',
+        ),
+        (
+            WORDED,
+            criterion('age', 'contains', '3'),
+            'invalid_filter',
+            f'The condition "contains" cannot be used on "age", which holds numbers. {CONDITION}',
+        ),
+        (
+            WORDED,
+            criterion('born', 'starts', '19'),
+            'invalid_filter',
+            f'The condition "starts" cannot be used on "born", which holds dates. {CONDITION}',
+        ),
+        (
+            WORDED,
+            criterion('active', '<', '1'),
+            'invalid_filter',
+            f'The condition "<" cannot be used on "active", which holds true or false. {CONDITION}',
+        ),
+        # SPEC-E4.21, E4.22
+        (WORDED, criterion('name', '='), 'invalid_filter', 'The filter on "name" needs a value.'),
+        (WORDED, criterion('age', 'between', '1'), 'invalid_filter', 'The filter on "age" needs two values.'),
+        (
+            WORDED,
+            criterion('active', '=', 'yes'),
+            'invalid_filter',
+            'The filter on "active" needs true or false (1 or 0 also work).',
+        ),
+    ],
+)
+def test_a_user_error_says_what_is_wrong_and_what_to_do(
+    session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
+):
+    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 and SPEC-E4.26: each mistake has a text of its own, which names the condition and the
+    fix, and a column only by the name the server declared. A text is asserted here and nowhere else. The rows are
+    also the proof of their codes: SPEC-E1.2, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-F39.1, SPEC-F40.1."""
+    assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
 @pytest.mark.parametrize(
@@ -658,7 +893,7 @@ def test_a_mistake_found_while_the_query_is_built_waits_for_an_earlier_step_of_t
     plan may hold one of a lower step. Each row's build mistake alone would answer `invalid_number`."""
     if found_in_the_build == 'a list value that is no number':  # step 2, beside a control character (step 1)
         params = request(*ALL, column_search={'age': {'multi_values': ['abc']}}, **criterion('name', '=', 'a\x00b'))
-        expected = 'invalid_filter'
+        expected = 'invalid_character'
     else:  # step 3, beside a date of the wrong format (step 2)
         tree = {
             'criteria': [
@@ -714,7 +949,7 @@ def logged(caplog: pytest.LogCaptureFixture) -> list[str]:
 )
 def test_a_control_character_is_refused_wherever_a_value_is_read(session: Session, body: dict[str, Any]):
     """SPEC-F15.1, SPEC-F15.2: a NUL once cut a LIKE pattern short on SQLite and matched the wrong rows."""
-    assert 'control character' in refused(table.fetch_sync(request(*ALL, **body), session))
+    refused(table.fetch_sync(request(*ALL, **body), session), 'invalid_character')
 
 
 def test_a_line_break_in_a_search_is_not_a_control_character_to_refuse(session: Session):
@@ -739,7 +974,7 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
         ]
     }
     with caplog.at_level(logging.DEBUG):
-        assert 'control character' in refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+        refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session), 'invalid_character')
     assert logged(caplog) == ['datatables_control_character']
 
 
@@ -893,20 +1128,8 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
     assert [row['code'] for row in response.data] == ['a', 'b', 'c']
 
 
-def test_a_column_search_with_both_a_value_and_multi_values_is_refused(session: Session):
-    """SPEC-F39.1, and SPEC-E3.8 on a number column: the form is refused, and the value in the list, which is no
-    number, is never read."""
-    params = parse_request(
-        [
-            ('columns[0][data]', 'age'),
-            ('columns[0][search][value]', 'abc'),
-            ('columns[0][search][multi_values][]', 'x'),
-        ]
-    )
-    assert 'not both' in refused(table.fetch_sync(params, session))
-
-
-def test_a_global_search_with_multi_values_is_refused(session: Session):
-    """``multi_values`` belongs to a column search; on the global search it would be dropped without a word."""
+def test_a_form_encoded_multi_values_list_is_read(session: Session):
+    """The only request that sends ``multi_values`` as a form does (``...[multi_values][]``): were the key dropped or
+    read as no list, this global search would be idle and answered."""
     params = parse_request([('columns[0][data]', 'name'), ('search[multi_values][]', 'Bob')])
-    assert refused(table.fetch_sync(params, session))
+    refused(table.fetch_sync(params, session))

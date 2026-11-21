@@ -21,6 +21,7 @@ from typing import Literal
 from typing import Protocol
 from typing import cast
 
+from ._plan import NO_SEARCHABLE_COLUMN
 from ._plan import AnyOf
 from ._plan import Contains
 from ._plan import Criterion
@@ -38,7 +39,6 @@ from ._text_query import QueryParser
 from .cache import TotalCache
 from .columns import Column
 from .columns import ColumnType
-from .protocol import NO_USABLE_COLUMN
 from .protocol import DTParams
 from .protocol import DTResponse
 from .protocol import InvalidFilter
@@ -157,7 +157,7 @@ class SearchTable:
             should = [_global_clause(search) for search in request.global_search if search.type == 'string']
             with mistakes.part():
                 if not should:  # numbers and dates take no free text; an empty should would match every document
-                    raise mistake('datatables_no_searchable_column', NO_USABLE_COLUMN)
+                    raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
                 must.append(_any(should))
         for column_search in request.column_searches:
             with mistakes.part():
@@ -167,7 +167,9 @@ class SearchTable:
         with mistakes.part():
             if params.start + params.length > self.max_result_window:
                 raise mistake(
-                    'datatables_page_out_of_range', f'This table cannot page beyond row {self.max_result_window:,}.'
+                    'datatables_page_out_of_range',
+                    f'This table can be paged through its first {self.max_result_window:,} rows only. Go back to an '
+                    'earlier page, or narrow the search so fewer rows match.',
                 )
         mistakes.raise_first()
         search = {
@@ -281,16 +283,23 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
         if search.type == 'boolean':
             return {'terms': {column.source: list(search.values)}}
         if search.type == 'number':
-            return {'terms': {column.source: [parse_number(str(value)) for value in search.values]}}
+            return {
+                'terms': {column.source: [parse_number(str(value), column, listed=True) for value in search.values]}
+            }
         field = column.source if search.type == 'date' else _keyword(column)
         if field is None:  # analysed text holds no whole string to match exactly
-            raise mistake('datatables_search_refused', NO_USABLE_COLUMN, column)
+            raise mistake(
+                'datatables_search_refused',
+                f'The column "{column.name}" can be searched only for text it contains, not for a list of exact '
+                'values. Type the text to search for instead.',
+                column,
+            )
         return {'terms': {field: list(search.values)}}
     match search.type:
         case 'number':
-            return {'term': {column.source: parse_number(str(search.value))}}
+            return {'term': {column.source: parse_number(str(search.value), column)}}
         case 'date':
-            span = day_span(str(search.value))
+            span = day_span(str(search.value), column)
             return _days(column.source, span.start.isoformat(), span.end.isoformat())
         case 'string':
             return _string_contains(column, str(search.value), parse=True)
