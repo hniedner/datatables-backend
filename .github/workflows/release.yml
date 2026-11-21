@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing the tag v<version> publishes that version to PyPI by trusted publishing (OIDC: no token is stored). A manual
-# run is a rehearsal: everything but `publish`.
+# run on main is a rehearsal: everything but `publish`. A manual run on a commit that is not in main fails in
+# `check-tag`.
 on:
   push:
     tags: ['v*']
@@ -37,7 +38,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
-      - name: The tag is v<version> (a rehearsal from a branch has no tag)
+      - name: The tag is v<version> (a rehearsal is a manual run on main and has no tag)
         if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}

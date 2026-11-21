@@ -85,7 +85,7 @@ jobs:
         run: |
           uv run --frozen pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml --cov-report=term
           if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
-            echo "No previous commit for this push (a new branch): comparing with HEAD~1."
+            echo "This event names no base commit (a new branch or tag, or a manual run): comparing with HEAD~1."
             BASE=HEAD~1
           fi
           uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95

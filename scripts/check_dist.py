@@ -9,8 +9,9 @@ the ``.gitignore`` that ``uv build`` writes there) and:
 - each file's metadata states that version;
 - every sdist member lies under ``datatables_backend-<version>/`` and is ``PKG-INFO`` or a file git tracks, so a
   build in a working checkout cannot ship an untracked file;
-- no sdist member is, or lies under, ``local``, ``.claude`` or ``CLAUDE.local.md`` (untracked today, so the rule above
-  already covers them; they are named for a message that says what went wrong);
+- no sdist member has ``local``, ``.claude`` or ``CLAUDE.local.md`` as any part of its path, at any depth (the three at
+  the top of the checkout are untracked today, so the rule above already covers them; they are named for a message
+  that says what went wrong);
 - every wheel member lies under ``datatables_backend/`` or ``datatables_backend-<version>.dist-info/``.
 
 Findings go to stderr, one line each, with exit status 1. Run it from anywhere inside the checkout.
