@@ -44,17 +44,22 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
   two requests within the TTL run one total count between them; recording shows the second ran only the page search
   (SQL: the filtered count and the page), and both answer `recordsTotal` 4.
-- **SPEC-C14.2** [all] After the TTL ends, the next request counts again and sees a newly inserted row.
+- **SPEC-C14.2** [all] With a `TotalCache` of TTL 1 second and a global search `red` (so the total is a count of
+  its own, PRD-C8): the first request answers `recordsTotal` 4; after a row 5 is inserted, a request within the TTL
+  still answers 4, and one after the TTL has ended counts again and answers 5.
 - **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
   source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
   sent a global search `e` → `recordsTotal` 3 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
   holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.3** [all] With an app-supplied cache key, two tables given the same key share one total: the second
-  answers the first's `recordsTotal` without counting.
+- **SPEC-C15.3** [all] Two tables over `items`, one with no base filter and one with the base filter `price` not
+  null, given the same app-supplied cache key and one `TotalCache`, each sent a global search `red`: the first
+  answers `recordsTotal` 4; the second answers 4 (the first's total, not its own 3) and runs no total count.
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C16.1** [all] `TotalCache.clear()` makes the next request count again and see a newly inserted row.
+- **SPEC-C16.1** [all] With a `TotalCache` (TTL far longer than the test) and a global search `red`: the first
+  request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
+  counts again and answers 5 (without the clear it would answer 4).
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
 - **SPEC-C17.1** [SQL Server] On a table of rows 1 to 3 with string columns `c1` to `c9`, each holding `r<id>`: a
   `multi_values` list on each column of `r1` and 255 values that match nothing (2,304 values, within PRD-F38 per

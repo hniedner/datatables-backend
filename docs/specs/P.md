@@ -31,8 +31,9 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P6.4** [core] A SearchBuilder condition `without` or `regex` → `MalformedRequest`.
 - **SPEC-P7.1** [core] On a request whose only column is `columns[0]`, a flat key at the next free index in a bad
   form, where a lenient parser would read it as column 1, → `MalformedRequest`: `columns[01][data]` and
-  `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]`, `columns[0.x][data]`,
-  `columns[0]x` and `columns[0][data][]x`.
+  `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]` (10 digits),
+  `columns[<5000 ASCII digits>][data]` (a `MalformedRequest`, not a `ValueError` from converting the index),
+  `columns[0.x][data]`, `columns[0]x` and `columns[0][data][]x`.
 - **SPEC-P7.2** [core] `columns[0][search][multi_values][]` repeated appends its values; `columns[][data]` (`[]` in
   place of an index) → `MalformedRequest`.
 - **SPEC-P8.1** [core] `start` as the form text `1.5`, `abc` or empty, as the JSON number `1.5`, and `length` as the

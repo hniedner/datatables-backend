@@ -143,7 +143,7 @@ def main() -> int:
         files = [
             (path.name, path.read_text(encoding='utf-8'))
             for path in sorted(args.specs.iterdir())
-            if path.suffix == '.md' and path.name != 'README.md' and path.is_file()
+            if path.suffix == '.md' and path.name != 'README.md' and not path.is_dir()
         ]
     except (OSError, UnicodeDecodeError) as error:
         parser.error(f'cannot read the input: {error}')

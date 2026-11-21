@@ -28,8 +28,13 @@ lists rows in the order they come back.
   each row exactly once, and the order desc gives exactly the reverse sequence.
 - **SPEC-O3.3** [all] With rows 5 and 6 as in O3.1: order `secret` desc (request-unorderable, server-unorderable, so
   skipped) then `colour` asc → the blue rows come as 3, 5, 6: the key follows `colour`, not the skipped entry.
-- **SPEC-O3.4** [OS, SQL join] A table over a join or an OpenSearch index declares a unique key; with two rows equal
-  in the ordered column, the tie is broken by that key.
+- **SPEC-O3.4** [OS] With `id` declared as the unique key and rows 5 and 6 added with `colour` `blue` like row 3,
+  indexed in the order 6, 5: order `colour` asc → the blue rows come 3, 5, 6; desc → 6, 5, 3.
+- **SPEC-O3.5** [SQL] Given a table `tags` (`id`, `item_id`, `tag`) holding (1, 3, `x`), (2, 3, `y`), (3, 5, `x`),
+  (4, 6, `x`), inserted in the order 4, 3, 2, 1, and rows 5 and 6 added to `items` with `colour` `blue`: a table over
+  `items` joined to `tags` on `items.id = tags.item_id`, whose first column `items_id` repeats (3, 3), with
+  `tags_id` declared as the unique key: order `colour` asc → the rows come with `tags_id` 1, 2, 3, 4 (items 3, 3, 5,
+  6); desc → `tags_id` 4, 3, 2, 1.
 - **SPEC-O4.1** [all] No order in the request → rows 1, 2, 3, 4; with rows inserted in the order 3, 1, 4, 2, still
   rows 1, 2, 3, 4.
 - **SPEC-O4.2** [all] An order whose every entry is skipped (`secret` desc, marked `orderable: false`) → rows 1, 2,

@@ -119,6 +119,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F17.2** [all] With `regex: true`: `^(|red)$` on `colour` → rows 1, 4 (no row is empty).
 - **SPEC-F18.1** [all] With `regex: true`, each of `^a|b$`, `a.b`, `a*`, `(a)`, `[ab]`, `a{2}`, `\d`, `\w`, `\n`,
   `a+`, `a?` and `^(a|b)` → error_code `invalid_filter`.
+- **SPEC-F18.2** [all] A global search with `search[regex]` true and a non-empty value, `red` or `^(red)$`, →
+  error_code `invalid_filter`: the categorical forms of PRD-F16 are column searches only, so any regex in the global
+  search is "any other regex".
 - **SPEC-F19.1** [all] With `regex: true`, every character of `/ . * + ? | ( ) [ ] { } \ $ ^ -` escaped by a
   backslash inside `^(...)$` matches itself: given a row whose `note` is `/.*+?|()[]{}\$^-` (the whole set),
   `^(\/\.\*\+\?\|\(\)\[\]\{\}\\\$\^\-)$` → that row only.
