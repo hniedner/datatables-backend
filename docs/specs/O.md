@@ -30,11 +30,13 @@ lists rows in the order they come back.
   skipped) then `colour` asc → the blue rows come as 3, 5, 6: the key follows `colour`, not the skipped entry.
 - **SPEC-O3.4** [OS] With `id` declared as the unique key and rows 5 and 6 added with `colour` `blue` like row 3,
   indexed in the order 6, 5: order `colour` asc → the blue rows come 3, 5, 6; desc → 6, 5, 3.
-- **SPEC-O3.5** [SQL] Given a table `tags` (`id`, `item_id`, `tag`) holding (1, 3, `x`), (2, 3, `y`), (3, 5, `x`),
-  (4, 6, `x`), inserted in the order 4, 3, 2, 1, and rows 5 and 6 added to `items` with `colour` `blue`: a table over
-  `items` joined to `tags` on `items.id = tags.item_id`, whose first column `items_id` repeats (3, 3), with
-  `tags_id` declared as the unique key: order `colour` asc → the rows come with `tags_id` 1, 2, 3, 4 (items 3, 3, 5,
-  6); desc → `tags_id` 4, 3, 2, 1.
+- **SPEC-O3.5** [SQL] Given a table `tags` (`id`, `item_id`, `tag`) with no primary key, holding (1, 3, `x`),
+  (2, 3, `y`), (3, 5, `x`), (4, 6, `x`), inserted in the order 4, 3, 2, 1, and rows 5 and 6 added to `items` with
+  `colour` `blue`: a table over `items` joined to `tags` on `items.id = tags.item_id`, whose columns the join keys as
+  `items_<col>` and `tags_<col>` (as in A7.1), declaring `Column('id', field='items_id')`,
+  `Column('colour', field='items_colour')` and `Column('tags_id', field='tags_id')`, with `tags_id` as the unique key
+  (the join's SQLAlchemy primary key is `items.id` alone, which repeats): order `colour` asc → `tags_id` 1, 2, 3, 4
+  (items 3, 3, 5, 6); desc → 4, 3, 2, 1.
 - **SPEC-O4.1** [all] No order in the request → rows 1, 2, 3, 4; with rows inserted in the order 3, 1, 4, 2, still
   rows 1, 2, 3, 4.
 - **SPEC-O4.2** [all] An order whose every entry is skipped (`secret` desc, marked `orderable: false`) → rows 1, 2,

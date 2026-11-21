@@ -44,9 +44,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
   two requests within the TTL run one total count between them; recording shows the second ran only the page search
   (SQL: the filtered count and the page), and both answer `recordsTotal` 4.
-- **SPEC-C14.2** [all] With a `TotalCache` of TTL 1 second and a global search `red` (so the total is a count of
-  its own, PRD-C8): the first request answers `recordsTotal` 4; after a row 5 is inserted, a request within the TTL
-  still answers 4, and one after the TTL has ended counts again and answers 5.
+- **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
+  its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
+  answers 4; after the test waits past the TTL, the next request counts again and answers 5.
 - **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
   source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
   sent a global search `e` → `recordsTotal` 3 and 1.

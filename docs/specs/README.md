@@ -118,9 +118,9 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
   statement whose hits are scripted is checked on the recording client only.
 - **Sort direction** (reviewer's decision, 2026-11-20): `order[i][dir]` must be exactly `asc` or `desc`; anything
   else is `MalformedRequest`, a structural error, since DataTables and SvelteDT send only those words (P6.5).
-- **Empty global regex** (reviewer's decision, 2026-11-20): an empty global search with `search[regex]` true is
-  idle, since the flag has nothing to apply to (PRD-F6) and a regex-configured client sends it on every request
-  (F18.3).
+- **Empty global regex** (reviewer's decision, 2026-11-20): a global search with `search[regex]` true whose value is
+  empty or spaces only is idle, since the flag has nothing to apply to (PRD-F6) and a regex-configured client sends
+  it on every request (F18.3).
 - **Empty column value with regex** (reviewer's decision, 2026-11-20): a column search with an empty value is idle
   whatever its `regex` flag, since PRD-D6 and PRD-F41 count a column search only with a value, so no categorical
   filter exists for PRD-F16 and PRD-F17 to read (F16.4).
