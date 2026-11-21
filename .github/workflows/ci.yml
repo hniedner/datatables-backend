@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # release.yml runs this whole workflow on the commit it is about to publish, and publishes what `dist` uploads.
+  workflow_call:
+    outputs:
+      passed:
+        description: "'true' once `gate` has seen every job succeed; empty otherwise."
+        value: ${{ jobs.gate.outputs.passed }}
 
 permissions:
   contents: read
@@ -79,7 +85,7 @@ jobs:
         run: |
           uv run --frozen pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml --cov-report=term
           if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
-            echo "No previous commit for this push (a new branch): comparing with HEAD~1."
+            echo "This event names no base commit (a new branch or tag, or a manual run): comparing with HEAD~1."
             BASE=HEAD~1
           fi
           uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95
@@ -206,6 +212,52 @@ jobs:
           extras=$(unzip -p "$wheel" '*.dist-info/METADATA' | sed -n 's/^Provides-Extra: //p' | paste -sd, -)
           uv pip install -q -p all "${wheel}[${extras}]" greenlet
           ALL_EXTRAS=1 all/bin/python check.py
+
+  # Builds the sdist, and the wheel from that sdist, as a release does, and checks both: scripts/check_dist.py reads
+  # their names, metadata and members, and the wheel must install into an empty environment and import from there.
+  # A release publishes the two files this job uploads (release.yml), so the job restores no cache.
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - run: uv build --out-dir dist
+      - run: uv run --no-project --python 3.14 python scripts/check_dist.py dist dist
+      # check_dist.py has tied the wheel's file name to the version in the source; here the installed metadata and
+      # `__version__` must both be the version in that name.
+      - name: The wheel installs into an empty environment and imports from there
+        working-directory: ${{ runner.temp }}
+        env:
+          DIST: ${{ github.workspace }}/dist
+        run: |
+          wheel=$(ls "$DIST"/*.whl)
+          uv venv -q -p 3.14 clean
+          uv pip install -q -p clean "$wheel"
+          WHEEL="$wheel" clean/bin/python - <<'EOF'
+          from importlib.metadata import version
+          import os
+          from pathlib import Path
+          import datatables_backend
+          where = datatables_backend.__file__
+          assert 'site-packages' in where, where  # the installed wheel, not the checkout
+          stated = version('datatables-backend')
+          assert datatables_backend.__version__ == stated, (datatables_backend.__version__, stated)
+          wheel = Path(os.environ['WHEEL']).name
+          assert wheel == f'datatables_backend-{stated}-py3-none-any.whl', (wheel, stated)
+          print(f'{wheel}: installed, imports from {where}, version {stated}')
+          EOF
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
 
   # Resolves outside uv.lock on purpose: the lowest supported sqlalchemy, pydantic and extras on each Python, with the
   # rest of the dev group resolved to match them. The 3.12 and 3.15 legs also force starlette 0.40.0, the lowest that
@@ -437,8 +489,11 @@ jobs:
   gate:
     if: always()
     needs:
-      [lint, types, tests, pre-commit, secrets, install-isolation, minimum-versions, postgresql, mysql, sqlserver, opensearch]
+      [lint, types, tests, pre-commit, secrets, install-isolation, dist, minimum-versions, postgresql, mysql, sqlserver,
+       opensearch]
     runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.passed.outputs.passed }}
     steps:
       - name: Every needed job succeeded
         env:
@@ -446,3 +501,6 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$RESULTS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
+      # Runs only when the step above succeeded. release.yml publishes only on this output.
+      - id: passed
+        run: echo "passed=true" >> "$GITHUB_OUTPUT"

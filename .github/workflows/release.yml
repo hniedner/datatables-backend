@@ -1,0 +1,78 @@
+name: Release
+
+# Pushing the tag v<version> publishes that version to PyPI by trusted publishing (OIDC: no token is stored). A manual
+# run on main is a rehearsal: everything but `publish`. A manual run on a commit that is not in main fails in
+# `check-tag`.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+# One run per ref, and none is cancelled. The group must differ from the one ci.yml sets, which in a run of this
+# workflow is `Release-<ref>` (the called workflow sees the caller's `github.workflow`): with the same group the run
+# would cancel itself.
+concurrency:
+  group: release-run-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Fails before anything is built unless the tag is `v` plus the version in the source and the commit is on main.
+  # This workflow runs as the tagged commit holds it, so whoever can push a `v*` tag can also tag a commit whose
+  # release.yml lacks these checks: they catch a mistaken tag, not a hostile one. What stops a hostile one is the
+  # `pypi` environment (a required reviewer, deployments from `v*` tags only) and a tag ruleset on `v*`.
+  check-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # every branch, for origin/main below
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: The tag is v<version> (a rehearsal is a manual run on main and has no tag)
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: uv run --no-project --python 3.14 python scripts/check_dist.py tag "$TAG"
+      - name: The commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+  # The whole CI workflow on this commit, `gate` included. Its `dist` job builds, checks and uploads the two files.
+  ci:
+    needs: check-tag
+    permissions:
+      contents: read
+    # zizmor asks for `$/...` here, which actionlint 1.7.12 rejects (rhysd/actionlint#711): the ignore goes when
+    # actionlint accepts it.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+
+  # Runs no code from the repository: it downloads what `dist` uploaded in this run and hands it to PyPI. It publishes
+  # only on the output ci.yml's `gate` sets after seeing every job succeed, so a break anywhere on that path means no
+  # release. The `if:` holds no status function, so the job is also skipped when `ci` did not succeed; whether a failed
+  # job inside the called workflow fails `ci` is not something GitHub's documentation states, hence the output. PyPI
+  # accepts a trusted publisher only from the top-level workflow, which is why this job is here and not in ci.yml.
+  publish:
+    needs: ci
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.ci.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/datatables-backend/
+    permissions:
+      id-token: write # the OIDC token PyPI exchanges for an upload token, and that signs the attestations
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
