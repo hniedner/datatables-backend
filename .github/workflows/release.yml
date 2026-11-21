@@ -52,7 +52,9 @@ jobs:
     permissions:
       contents: read
     # zizmor asks for `$/...` here, which actionlint 1.7.12 rejects (rhysd/actionlint#711): the ignore goes when
-    # actionlint accepts it.
+    # actionlint accepts it. actionlint 1.7.12 also rejects the `cache-mode` key: once it accepts that, a top-level
+    # `cache-mode: none` belongs in this workflow, so that the jobs' tokens allow no cache access at all. Until then
+    # the jobs that build or check a release restore no cache because setup-uv runs with `enable-cache: false`.
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
 
   # Runs no code from the repository: it downloads what `dist` uploaded in this run and hands it to PyPI. It publishes
