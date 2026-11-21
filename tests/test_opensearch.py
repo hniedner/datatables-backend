@@ -111,6 +111,15 @@ def test_the_total_count_keeps_the_base_filter():
     assert client.counts == [{'query': {'bool': {'must': [{'term': {'published': True}}]}}}]
 
 
+async def test_the_async_fetch_answers_a_user_error_too():
+    """SPEC-E1.1 says `fetch` and `fetch_sync`: each has its own place where the mistake becomes an answer, and
+    nothing is sent from either."""
+    client = AsyncClient()
+    response = await table.fetch(request(*NAMES, **criterion('pages', '=', 'abc')), client)
+    assert refused(response, 'invalid_number')
+    assert (client.searches, client.counts) == ([], [])
+
+
 async def test_the_async_client_answers_like_the_sync_one():
     params = request(*NAMES, search={'value': 'x'}, order=[{'column': 1, 'dir': 'desc'}])
     sync_client, async_client = Client(), AsyncClient()
@@ -167,7 +176,8 @@ def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():
 
 
 @pytest.mark.xfail(
-    reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1)',
+    reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1, issue '
+    '#29)',
     strict=True,
     raises=AssertionError,
 )
@@ -179,7 +189,7 @@ def test_a_page_out_of_range_carries_the_real_counts():
 
 @pytest.mark.xfail(
     reason='PRD-C3: a start past the end beyond the result window is refused, not answered with an empty page and '
-    'both counts (SPEC-C3.3)',
+    'both counts (SPEC-C3.3, issue #29)',
     strict=True,
     raises=AssertionError,
 )

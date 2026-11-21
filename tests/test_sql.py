@@ -288,6 +288,7 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
         ('born', 'between', ['1980-01-01', '1994-03-01'], [1, 2]),
         ('born', 'contains', ['1980'], [2]),
         ('born', 'contains', ['2001-12'], [4]),
+        ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -723,7 +724,7 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
 
 @pytest.mark.xfail(
     reason='PRD-F14, PRD-F38: search text of more than 16 words and a SearchBuilder tree more than 8 groups deep are '
-    'not refused yet, so the date or number mistake beside them is the one answered (SPEC-E3.2)',
+    'not refused yet, so the date or number mistake beside them is the one answered (SPEC-E3.2, issue #27)',
     strict=True,
     raises=AssertionError,
 )
