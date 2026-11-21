@@ -21,15 +21,18 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P5.3** [core] `columns[0][columnControl][list][0]=x` → `MalformedRequest`;
   `columns[0][columnControl][search]` with an empty value and logic `contains` parses; with value `x`, or with logic
   `empty` or `notEmpty`, → `MalformedRequest`.
-- **SPEC-P6.1** [core] A JSON body that is a list → `MalformedRequest`; `columns` as text → `MalformedRequest`;
+- **SPEC-P6.1** [core] A decoded JSON list of objects or of numbers (`[{"draw": 1}]`, `[1]`) → `MalformedRequest`
+  (a list of key-value pairs is valid, PRD-P1); `columns` as text → `MalformedRequest`;
   `columns[0][searchable]` as an object → `MalformedRequest`; `columns[0][data]` JSON `null` parses (PRD-P21).
 - **SPEC-P6.2** [core] Flat keys `columns[0][data]` and `columns.0.data` with different values → `MalformedRequest`;
   `columns[0]` and `columns[2]` with no `columns[1]` → `MalformedRequest`.
 - **SPEC-P6.3** [core] A flat value that is a dict, or a flat key that is not text (an int key in the mapping), →
   `MalformedRequest`.
 - **SPEC-P6.4** [core] A SearchBuilder condition `without` or `regex` → `MalformedRequest`.
-- **SPEC-P7.1** [core] Flat keys `columns[01][data]`, `columns[٣][data]` (an Arabic-Indic digit),
-  `columns[1234567890][data]`, `columns[0.x][data]`, `columns[0]x` and `columns[0][data][]x` → `MalformedRequest`.
+- **SPEC-P7.1** [core] On a request whose only column is `columns[0]`, a flat key at the next free index in a bad
+  form, where a lenient parser would read it as column 1, → `MalformedRequest`: `columns[01][data]` and
+  `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]`, `columns[0.x][data]`,
+  `columns[0]x` and `columns[0][data][]x`.
 - **SPEC-P7.2** [core] `columns[0][search][multi_values][]` repeated appends its values; `columns[][data]` (`[]` in
   place of an index) → `MalformedRequest`.
 - **SPEC-P8.1** [core] `start` as the form text `1.5`, `abc` or empty, as the JSON number `1.5`, and `length` as the
@@ -39,9 +42,10 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P10.2** [core] `draw` 2147483647 parses; 2147483648 → `MalformedRequest`.
 - **SPEC-P11.1** [core] A lone surrogate U+D800 in `search[value]` (the JSON escape `\ud800`) or in a column's
   `data` → `MalformedRequest`.
-- **SPEC-P12.1** [core] For `columns[0][searchable]` sent with the value `MARKER_V` under the key text
-  `columns[0][searchable]`, the `MalformedRequest` message names the parameter `columns` and contains neither
-  `MARKER_V` nor the key text `columns[0][searchable]`; an `order` index outside the columns names `order`.
+- **SPEC-P12.1** [core] For `columns[0][searchable]` sent with the value `MARKER_V`, once under the bracket key
+  `columns[0][searchable]` and once under the dotted key `columns.0.searchable`, the `MalformedRequest` message names
+  the parameter `columns` and contains neither `MARKER_V` nor either form of the key; an `order` index outside the
+  columns names `order`.
 - **SPEC-P13.1** [core] `length` 1 and 1000 parse; 0, -1 and 1001 → `MalformedRequest`; with the maximum set to 50,
   51 → `MalformedRequest`.
 - **SPEC-P14.1** [core] `columns[0][searchable]` `"true"` and `"false"` (form and JSON) read as `True` and `False`;
@@ -58,12 +62,12 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P19.1** [core] An empty request, and a DataTables 1.9 request (`sEcho`, `sSearch`, `iDisplayStart`), →
   `MalformedRequest`.
 - **SPEC-P20.1** [core] `columns[0][data]` as the JSON integer 0 parses to a column whose `data` is `"0"`.
-- **SPEC-P20.2** [all] With `Column('0', field='id', type='number')` declared and `columns[0][data]` the JSON integer 0: a column
-  search `3` on it → rows 3.
+- **SPEC-P20.2** [all] With `Column('0', field='id', type='number')` declared and `columns[0][data]` the JSON
+  integer 0: a column search `3` on it → rows 3.
 - **SPEC-P21.1** [all] A nameless column (`data` null, empty `name`) first, with DataTables' default order on column
   0 and a global search `red` → rows 1, 2, 4, no error.
 - **SPEC-P21.2** [all] A column with `data` `function` and an empty `name` is nameless: an order on it is skipped
-  (rows 1, 2, 3, 4); with `Column('function', field='id', type='number')` declared, it is that column: an order desc on it → rows
-  4, 3, 2, 1.
+  (rows 1, 2, 3, 4); with `Column('function', field='id', type='number')` declared, it is that column: an order
+  desc on it → rows 4, 3, 2, 1.
 - **SPEC-P21.3** [all] A column search with value `x` on a nameless column → error_code `invalid_filter`; a
   SearchBuilder criterion with an empty `origData` → error_code `invalid_filter`.

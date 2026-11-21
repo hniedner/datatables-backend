@@ -45,8 +45,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D12.4** [all] Global search `!Alpha` → rows 1, 2, 3, 4 (no other column holds `alpha`, and `!word`
   ignores the hooked column); `!apple` → rows 2, 3, 4.
 - **SPEC-D12.5** [all] On a table whose only searchable column is `secret`, given a row 5 whose `secret` is stored as
-  `enc:` + 20 one-letter words (`a b c ... t`): a global search of those 20 words → rows 5 (no word cap; matched by equality); a
-  global search of 256 code points → `invalid_filter`.
+  `enc:` + 20 one-letter words (`a b c ... t`): a global search of those 20 words → rows 5 (no word cap; matched by
+  equality); a global search of 256 code points → `invalid_filter`.
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
   `invalid_filter`.
 - **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose every other column but

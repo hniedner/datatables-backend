@@ -23,11 +23,11 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   undeclared `extra` → `invalid_date`.
 - **SPEC-E3.4** [SQL] A request holding SearchBuilder `=` `9223372036854775808` on `price` (step 3) and SearchBuilder
   `<` `a` on `name` (step 4) → `invalid_number`.
+- **SPEC-E3.5** [OS] Given rows 5 to 10 besides the fixture, with `max_result_window` 3, `start` 4, `length` 3 (a
+  page PRD-C12 refuses) and SearchBuilder `=` `yes` on `active` → `invalid_filter`, not `page_out_of_range`.
+- **SPEC-E3.6** [OS] Column search `7 8` on `price` → `invalid_number`; `!2024` on `made` → `invalid_date` (step 2).
 - **SPEC-E3.7** [all] A request holding SearchBuilder `=` `9999-12-31` on `made` (step 3) and a column search `yes` on
   `active` (step 4) → `invalid_date`.
-- **SPEC-E3.5** [OS] Given rows 5 to 10 besides the fixture, with `max_result_window` 3, `start` 4, `length` 3 (a page PRD-C12 refuses) and
-  SearchBuilder `=` `yes` on `active` → `invalid_filter`, not `page_out_of_range`.
-- **SPEC-E3.6** [OS] Column search `7 8` on `price` → `invalid_number`; `!2024` on `made` → `invalid_date` (step 2).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value.
 - **SPEC-E4.2** [all] A refusal on an undeclared column `secret_field` answers a text that does not contain
@@ -55,8 +55,8 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   raised.
 - **SPEC-E9.3** [OS] A count answer that does not cover every shard → `PartialResultError` raised.
 - **SPEC-E10.1** [all] For every refusal in the specs, no log record of any level holds the search value or an
-  undeclared column name the client sent: with a marker string in each value and in an undeclared name, the marker appears in no
-  record's message, arguments or extra fields.
+  undeclared column name the client sent: with a marker string in each value and in an undeclared name, the marker
+  appears in no record's message, arguments or extra fields.
 - **SPEC-E11.1** [all] A refusal on the undeclared `secret_field` logs a record that does not name it.
 - **SPEC-E12.1** [all] Every record the library emits comes from the logger `datatables_backend` or a child of it,
   through the standard `logging` module.
@@ -64,7 +64,7 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   the same case twice logs the same event name twice, and two different cases log different event names: a column
   search `x` on the undeclared `extra`, and an order on `secret` marked `orderable: true` (server-unorderable).
 - **SPEC-E13.2** [all] A request whose column 0 is `secret`, marked `orderable: false` (so DataTables' default order
-  on column 0 is skipped: unorderable on both sides), with an idle SearchPanes pane, an idle ColumnControl search, a nameless column, a request-searchable undeclared column and a
-  global search `red` (skipping the boolean `active`, PRD-F44, and on OS the number and date columns, PRD-F32) logs
-  no record.
+  on column 0 is skipped: unorderable on both sides), with an idle SearchPanes pane, an idle ColumnControl search,
+  a nameless column, a request-searchable undeclared column and a global search `red` (skipping the boolean
+  `active`, PRD-F44, and on OS the number and date columns, PRD-F32) logs no record.
 - **SPEC-E13.3** [all] A request holding two mistakes logs one WARNING (for the code answered) and answers no rows.

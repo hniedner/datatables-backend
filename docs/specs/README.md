@@ -13,8 +13,12 @@ second paragraph under it is not read.
 
 - `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text, backticked or not, is a
   cross-reference, written as one id (`PRD-F21`), never a range.
-- Each PRD requirement is a single table line; `scripts/trace_check.py` reads no other form.
-- A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2).
+- Each PRD requirement is a single table line whose cells are set off from their pipes by exactly one space;
+  `scripts/trace_check.py` reads no other form.
+- A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2). A code
+  span stays on one line.
+- A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
+  the stored field renamed ..."). Otherwise it runs on the fixture as below.
 
 `scripts/trace_check.py` (run in CI's lint job) reports, one line each:
 
@@ -27,8 +31,6 @@ second paragraph under it is not read.
 - a statement id defined more than once.
 
 An unreadable PRD or specs directory is a usage error.
-- A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
-  the stored field renamed ..."). Otherwise it runs on the fixture as below.
 
 ## Tags
 
@@ -36,7 +38,8 @@ An unreadable PRD or specs directory is a usage error.
 - `[SQL]`: SQLite (sync and aiosqlite), PostgreSQL, SQL Server and MySQL. A named database (`[SQLite]`,
   `[PostgreSQL]`, ...) narrows it, with any collation or locale the statement needs.
 - `[OS]`: OpenSearch through a recording client (async and sync), which answers from the fixture or as the
-  statement says.
+  statement says. On it a statement checks the request bodies sent and the answer built from the hits given; the
+  row answers are checked on the live cluster (decided below).
 - `[OS container]`: OpenSearch against the live cluster of CI's `opensearch` job (`tests/test_opensearch_live.py`).
 - A list (`[SQLite, PostgreSQL]`) means each backend named; a narrowed tag (`[OS, SQL join]`) means OpenSearch and a
   SQL table over a join. A tag in the middle of a statement applies to the clauses after it.
@@ -52,9 +55,10 @@ An unreadable PRD or specs directory is a usage error.
 - `parses`: `parse_request` returns without raising.
 - `rows 1, 3`: answered, and the page holds exactly those rows, in key order unless the statement orders.
 - `none`: answered with an empty page.
-- `error_code X`, or just the code: returned, not raised, as a response with `error`, `error_code` X, `recordsTotal` 0,
-  `recordsFiltered` 0 and `data` `[]` (decided below). The one exception is `page_out_of_range`, which carries the
-  real counts (PRD-C12).
+- `skipped`: an order entry or a column the request names is answered as if it were absent.
+- `error_code X`, or just the code: returned, not raised, as a response with `error`, `error_code` X,
+  `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]` (decided below). The one exception is `page_out_of_range`,
+  which carries the real counts (PRD-C12).
 - An exception class (`MalformedRequest`, `SchemaError`, `PartialResultError`): raised, from `parse_request`, the
   constructor or `fetch` as the statement says.
 - `HTTP 422`, `HTTP 200`: the status the FastAPI app answers, with the JSON body the statement names.
@@ -99,9 +103,13 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
 - **OQ1** (PRD-F38): the SearchBuilder root group counts as depth 1 (F38.1).
 - **OQ2** (PRD-D1, PRD-R1, PRD-C6): a row carries every declared column, whatever the request lists (D1.1, R7.2).
 - **OQ3** (PRD-A10): `draw` sits at the top level of the 422 body, beside `detail` (A10.1).
-- **User-error counts** (reviewer's decision, 2026-11-20): an answered user error other than `page_out_of_range`
+- **User-error counts** (reviewer's decision, 2026-11-20): a user-error response other than `page_out_of_range`
   carries `recordsTotal` 0 and `recordsFiltered` 0, as today's `DTResponse` defaults give, even when the counts of
   PRD-C11 ran before the refusal (PRD-E7 allows them).
+- **OpenSearch row answers** (reviewer's decision, 2026-11-20): the recording client returns canned hits, so a
+  statement naming rows cannot fail on it, and an emulator would repeat the code's own assumptions. On the recording
+  client, an `[OS]` statement checks the request bodies and the answer built from the hits given. Every `[all]` or
+  `[OS]` statement that names rows is also run against the live cluster in `tests/test_opensearch_live.py`.
 
 ## Open questions
 

@@ -17,7 +17,8 @@ Statements for PRD section 4.7. Form, tags, answers and the `items` fixture: see
   `recordsFiltered`, `data`; of an answered user error, those plus exactly `error` and `error_code`.
 - **SPEC-R6.1** [all] `draw` 41 in the request → `draw` 41 in the answer, for rows and for a user error alike.
 - **SPEC-R7.1** [SQL] Given a fifth row whose `note` is `<b>x</b> & "y"`: its `note` comes back as that text
-  unchanged (no HTML escaping); row 1's NULL `note` is `None`, `made` a `datetime.date`, `price` an `int`.
+  unchanged (no HTML escaping); row 1's NULL `note` is `None`, its `made` equals
+  `datetime.date(2024, 3, 5)` (a date, not a datetime), and its `price` is the `int` 7.
 - **SPEC-R7.2** [OS] Given a fifth document whose `note` is `<b>x</b> & "y"`: its `note` comes back unchanged; each
   row carries every declared column with its value as `_source` holds it, so `made` is the stored string
   `2024-03-05`, and row 1's missing `note` is the key `note` with `None`.

@@ -11,7 +11,8 @@ fetch; the tag names where each is checked (see `README.md`).
   modules (`protocol`, `columns`, `_plan`, `rows`, `cache`) succeeds; with one extra installed, its backend imports
   without the others.
 - **SPEC-Q3.2** [CI install-isolation] With every extra and `greenlet` installed, importing each backend loads no
-  top-level package that another extra requires directly, and importing the SQL backend loads no `sqlalchemy.ext.asyncio`.
+  top-level package that another extra requires directly, and importing the SQL backend loads no
+  `sqlalchemy.ext.asyncio`.
 - **SPEC-Q4.1** [CI tests] The suite passes on each Python of the job's matrix. [review] The wheel requires Python
   `>=3.12`, and the matrix is 3.12, 3.13, 3.14 and 3.15.
 - **SPEC-Q5.1** [CI minimum-versions] Each leg installs its pinned Pydantic, checks the environment with

@@ -14,8 +14,9 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `AsyncOpenSearch` client (OS) answers the base request with rows 1, 2, 3, 4.
 - **SPEC-A5.1** [all] `table.fetch_sync(params, conn)` with a `Session`, a `Connection` (SQL) or an `OpenSearch`
   client (OS) answers the base request with rows 1, 2, 3, 4.
-- **SPEC-A6.1** [SQL] Recording: a request whose user error is found while the page query is built (SearchBuilder
-  `=` `abc` on `price`) runs no statement.
+- **SPEC-A6.1** [SQL] Recording: a request whose user error is found only while the page query is built
+  (SearchBuilder `=` `9223372036854775808` on the `BigInteger` `price`, out of its range) runs no statement, not
+  even a count.
 - **SPEC-A7.1** [SQL] Given a second table `stock` (`id`, `item_id`, `qty`) holding (1, 1, 5) and (2, 3, 0): a table
   over `items` joined to `stock` on `items.id = stock.item_id`, whose columns the join keys as `items_<col>` and
   `stock_<col>`, with every fixture column declared over its join column (`Column('id', field='items_id')`,
@@ -31,9 +32,9 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `application/x-www-form-urlencoded`, is read as JSON: the answer's `draw` is 6.
 - **SPEC-A9.3** [FastAPI] With the base request with `draw` 8 as the query string, a GET with no body and a POST
   with an empty body each answer HTTP 200 with `draw` 8 and rows 1, 2, 3, 4.
-- **SPEC-A10.1** [FastAPI] A malformed request with `draw` 5 → HTTP 422 whose JSON body carries `"draw": 5` as a
-  top-level key beside `detail` (the owner's decision of 2026-11-20); with `draw` `x` → HTTP 422 with no `draw`
-  key.
+- **SPEC-A10.1** [FastAPI] The base request with `draw` 5 and `length` `abc` → HTTP 422 whose JSON body carries
+  `"draw": 5` as a top-level key beside `detail` (the owner's decision of 2026-11-20); the same request with `draw`
+  `x` → HTTP 422 with no `draw` key.
 - **SPEC-A11.1** [FastAPI] SearchBuilder `=` `abc` on `price` → HTTP 200 with `error`, `error_code`
   `invalid_number`, `draw`, `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-A11.2** [FastAPI] Through an app over an OpenSearch table with a recording client (`page_out_of_range`

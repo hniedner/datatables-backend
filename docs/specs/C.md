@@ -32,8 +32,8 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C10.3** [OS container] For every `start` a reversed page can reach, its rows equal those the ordinary way
   gives with a large `max_result_window`.
 - **SPEC-C10.4** [OS] `max_result_window` defaults to 10,000: with no setting and a recording client whose counts
-  answer 20,000, `start` 9990, `length` 10 is sent as an ordinary page (`from` 9990); `start` 9995, `length` 10 (past the
-  window both ways: 10,005 > 10,000 and 20,000 - 9995 > 10,000) → `page_out_of_range`.
+  answer 20,000, `start` 9990, `length` 10 is sent as an ordinary page (`from` 9990); `start` 9995, `length` 10 (past
+  the window both ways: 10,005 > 10,000 and 20,000 - 9995 > 10,000) → `page_out_of_range`.
 - **SPEC-C11.1** [OS] Recording: a `page_out_of_range` answer runs only the count calls, before any page search.
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
@@ -48,12 +48,12 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
   source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
   sent a global search `e` → `recordsTotal` 3 and 1.
-- **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
-  with a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
-  `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
+- **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
+  holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.3** [all] With an app-supplied cache key, two tables given the same key share one total: the second
   answers the first's `recordsTotal` without counting.
+- **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
+  `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C16.1** [all] `TotalCache.clear()` makes the next request count again and see a newly inserted row.
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
 - **SPEC-C17.1** [SQL Server] On a table of rows 1 to 3 with string columns `c1` to `c9`, each holding `r<id>`: a

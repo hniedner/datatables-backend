@@ -61,14 +61,14 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F9.6** [SQLite] Global search `äpfel` → none (SQLite folds ASCII only); `ÄPFEL` → rows 4.
 - **SPEC-F9.7** [PostgreSQL in a UTF-8 non-C locale (`en_US.UTF-8`), SQL Server with a `_CI_` collation, MySQL
   with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run.
+- **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
+  exactly, PRD-D17).
 - **SPEC-F9.9** [OS container] Whole word: global search `äpfel` against row 4's `ÄPFEL`. Open: decided by the live
   run (issue #11); no answer is claimed (OQ4 in `README.md`).
 - **SPEC-F9.10** [OS container] Substring: global search `äpf` against row 4's `ÄPFEL`. Open: decided by the live run
   (issue #11); no answer is claimed (OQ4).
-- **SPEC-F9.11** [OS container] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open: decided by
-  the live run (issue #11); no answer is claimed (OQ4).
-- **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
-  exactly, PRD-D17).
+- **SPEC-F9.11** [OS container] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open:
+  decided by the live run (issue #11); no answer is claimed (OQ4).
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,
@@ -176,7 +176,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F27.6** [all] On `price`: `<` `8` → rows 1; `between` `7` and `8` → rows 1, 3; `!between` `7` and `8` →
   rows 2, 4 (PRD-F37).
 - **SPEC-F28.1** [all] Group OR of `colour = blue` and `price = 7` → rows 1, 3.
-- **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 7` and `price null` → rows 1, 4.
+- **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 17` and `price null` → rows 4
+  (dropping the nested group would give rows 1, 4; OR throughout would give rows 1, 2, 4).
 - **SPEC-F28.3** [all] An empty group adds nothing: alone → rows 1, 2, 3, 4; nested in an AND group with
   `colour = blue` → rows 3; nested in an OR group with `colour = blue` → rows 3 (an empty group read as true would
   give every row).
@@ -220,8 +221,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 
 - **SPEC-F41.1** [all] A request column `extra` (searchable, undeclared) with global search `red` → rows 1, 2, 4.
 - **SPEC-F41.2** [all] With `name` declared unsearchable: global search `apple` → none; a column search `apple` on
-  `name` → error_code `invalid_filter`, whatever the request's `searchable`; a SearchBuilder criterion on `name` → error_code
-  `invalid_filter`.
+  `name` → error_code `invalid_filter`, whatever the request's `searchable`; a SearchBuilder criterion on `name` →
+  error_code `invalid_filter`.
 - **SPEC-F41.3** [all] With `name` marked `searchable: false` in the request: global search `apple` → none; column
   search `apple` on `name` → rows 1.
 - **SPEC-F41.4** [all] A column search with a value, or a non-empty `multi_values` list, on the undeclared `extra` →

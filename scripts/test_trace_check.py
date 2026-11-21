@@ -192,6 +192,7 @@ def test_spec_id_on_a_lazy_line_is_also_reported(tmp_path: Path) -> None:
         '* note naming PRD-F9',
         '+ note naming PRD-F9',
         '1) note naming PRD-F9',
+        '10. note naming PRD-F9',
     ],
 )
 def test_statement_ends_at_a_blank_heading_or_other_item(tmp_path: Path, after: str) -> None:
@@ -228,6 +229,8 @@ def test_indented_statement_is_stray(tmp_path: Path) -> None:
         '| _PRD-F3_ | Text. | Why. | must |',
         '| PRD-F3 Text. Why. must',
         '| PRD-F3',
+        '**PRD-F3** | Text. | Why. | must |',
+        '| PRD-F3 |  Text. | Why. | must |',
     ],
 )
 def test_more_drifted_requirement_rows_fail(tmp_path: Path, row: str) -> None:
@@ -285,6 +288,28 @@ def test_backticked_citation_is_checked(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2** See `PRD-F9`.\n'})
     assert result.returncode == 1
     assert result.stderr == 'SPEC-F1.2 cites PRD-F9, which does not exist\n'
+
+
+def test_statement_with_no_text_is_stray(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2**   \n'})
+    assert result.returncode == 1
+    assert result.stderr == 'F.md:3 holds a SPEC id outside a statement of the expected shape\n'
+
+
+def test_prose_naming_requirements_in_the_prd_is_not_a_row(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD + 'PRD-F1 and PRD-F2 are related.\n')
+    assert result.returncode == 0, result.stderr
+
+
+def test_directory_named_like_markdown_is_skipped(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE, 'x.md/G.md': '- **SPEC-F9.1** Not read.\n'})
+    assert result.returncode == 0, result.stderr
+
+
+def test_tab_indented_continuation_is_read(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One,\n\tsee PRD-F9.\n- **SPEC-F2.1** Two.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'SPEC-F1.1 cites PRD-F9, which does not exist\n'
 
 
 def test_multi_digit_ids_trace(tmp_path: Path) -> None:

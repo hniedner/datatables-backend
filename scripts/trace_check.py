@@ -1,9 +1,9 @@
 """Check that the specs trace to the PRD: standard library only.
 
 A requirement is one PRD table line ``| PRD-X1 | requirement | reason | must |`` (priority ``must``, ``should`` or
-``later``), every cell non-empty. Any line whose first cell starts with ``PRD-`` (decorated, linked or without the
-leading pipe) is a candidate, and one that does not have exactly that shape is a finding, so a drifted row is never
-dropped silently.
+``later``), every cell non-empty and set off from its pipes by exactly one space on each side. Any line whose first
+cell starts with ``PRD-`` (decorated, linked or without the leading pipe) is a candidate, and one that does not have
+exactly that shape is a finding, so a drifted row is never dropped silently.
 
 A spec statement is one paragraph: a list item in a ``*.md`` file directly in the specs directory (not in a
 subdirectory, and not ``README.md``) that starts ``- **SPEC-X1.n** `` followed by text, plus the indented lines that
@@ -12,7 +12,7 @@ unindented line that would continue it is a finding. The statement states requir
 ``PRD-`` id in its text, backticked or not, is a citation; a citation not of the shape ``PRD-X1`` (a range
 ``PRD-F1..F9``, ``PRD-F1a``) is a finding. Statement numbers compare as integers, so ``SPEC-F1.01`` is ``SPEC-F1.1``.
 The text ``SPEC-`` anywhere else is a finding, unless it is in backticks: a statement refers to another as
-`` `SPEC-F1.1` ``.
+`` `SPEC-F1.1` ``. A code span stays on one line; one wrapped across lines is not read as a code span.
 
 Findings, one line each on stderr, exit status 1:
 - a requirement row of the wrong shape, a requirement id defined twice, or no requirement at all;
@@ -38,7 +38,7 @@ import sys
 CANDIDATE = re.compile(r'^\s*(?:\|\s*[*_`~\[]*PRD-|[*_`~\[]*PRD-[^|]*\|)')
 CELL = r' (?:[^|\\\s]|\\.)(?:[^|\\]|\\.)* '
 REQUIREMENT = re.compile(rf'^\| (PRD-[A-Z]+\d+) \|{CELL}\|{CELL}\| (must|should|later) \|$')
-STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (.*)$')
+STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (\S.*)$')
 CONTINUATION = re.compile(r'^\s+\S')
 ENDS_STATEMENT = re.compile(r'^(\s*$|#|[-*+] |\d+[.)] )')
 LOOSE_CITATION = re.compile(r'PRD-[\w.-]*[\w-]')
