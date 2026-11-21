@@ -165,8 +165,45 @@ def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
     """The code of PRD-C12. Its counts and the pages PRD-C10 still serves are pinned below."""
     client = Client()
     response = table.fetch_sync(request(*NAMES, start=9995, length=10), client)
-    assert 'beyond row 10,000' in refused(response, 'page_out_of_range')
+    refused(response, 'page_out_of_range')
     assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ('searched', 'names', 'body', 'code', 'text'),
+    [
+        (
+            table,
+            NAMES,
+            {'column_search': {'body': {'multi_values': ['a']}}},  # `body` is analysed text with no keyword field
+            'invalid_filter',
+            'The column "body" can be searched only for text it contains, not for a list of exact values. Type the '
+            'text to search for instead.',
+        ),
+        (
+            SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')]),
+            ('pages', 'created'),
+            {'search': {'value': 'x'}},
+            'invalid_filter',
+            'No column of this table can be searched from the search box. Clear it and use a column filter instead.',
+        ),
+        (
+            SearchTable('docs', COLUMNS, max_result_window=3),  # the number in the text is the table's own
+            NAMES,
+            {'start': 4, 'length': 3},
+            'page_out_of_range',
+            'This table can be paged through its first 3 rows only. Go back to an earlier page, or narrow the search '
+            'so fewer rows match.',
+        ),
+    ],
+    ids=['exact-values-on-analysed-text', 'no-text-column', 'page'],
+)
+def test_a_user_error_found_while_the_body_is_built_says_what_is_wrong_and_what_to_do(
+    searched: SearchTable, names: tuple[str, ...], body: dict[str, Any], code: str, text: str
+):
+    """SPEC-E4.23, SPEC-E4.15, SPEC-E4.24: the texts of the mistakes only the OpenSearch build finds. Those the plan
+    finds are asserted once, in tests/test_sql.py."""
+    assert refused(searched.fetch_sync(request(*names, **body), Client()), code) == text
 
 
 def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():

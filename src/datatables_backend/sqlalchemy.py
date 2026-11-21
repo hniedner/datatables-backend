@@ -50,7 +50,6 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
 
-from ._plan import OUT_OF_RANGE
 from ._plan import AnyOf
 from ._plan import Contains
 from ._plan import Criterion
@@ -204,7 +203,10 @@ class SQLTable:
                     if search.type == 'boolean':
                         values = [_boolean(column, value) for value in search.values]
                     elif search.type == 'number':
-                        values = [_number(column, parse_number(value)) for value in search.values]
+                        values = [
+                            _number(column, parse_number(value, search.column), search.column)
+                            for value in search.values
+                        ]
                     else:
                         values = list(search.values)
                     conditions.append(in_list(column, values))
@@ -236,7 +238,8 @@ class SQLTable:
         column = self._sql(node.column)
         if node.type == 'number':
             with mistakes.part():
-                return _compare(node.condition, column, [_number(column, value) for value in node.values], column)
+                values = [_number(column, value, node.column) for value in node.values]
+                return _compare(node.condition, column, values, column)
             return None
         if node.type == 'date':
             return _date_criterion(node, column)
@@ -332,8 +335,10 @@ def _is_text(column: ColumnElement[Any]) -> bool:
         return False
 
 
-def _number(column: ColumnElement[Any], value: Any) -> Any:
-    """``value`` checked against the column's integer range (as SQL Server's and PostgreSQL's integers have it)."""
+def _number(column: ColumnElement[Any], value: Any, declared: Column) -> Any:
+    """``value`` checked against the column's integer range (as SQL Server's and PostgreSQL's integers have it): 16
+    bits for a ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``. A column of another type has
+    no range here. The reason names ``declared`` and the bounds, which are the column's, not the user's."""
     sql_type = _sql_type(column)
     if not isinstance(sql_type, Integer) or not isinstance(value, int | float):
         return value
@@ -342,8 +347,13 @@ def _number(column: ColumnElement[Any], value: Any) -> Any:
             return value
         value = int(value)
     bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
-    if not -(2 ** (bits - 1)) <= value < 2 ** (bits - 1):
-        raise mistake('datatables_number_out_of_range', OUT_OF_RANGE)
+    low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    if not low <= value <= high:
+        raise mistake(
+            'datatables_number_out_of_range',
+            f'The filter on "{declared.name}" needs a number between {low} and {high}.',
+            declared,
+        )
     return value
 
 

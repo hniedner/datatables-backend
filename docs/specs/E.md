@@ -34,9 +34,63 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   `price` with the value `abc` and `multi_values` `["x"]` → `invalid_filter` (the reviewer's decision of
   2026-11-21).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
-  `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value.
+  `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value. A limit
+  the server holds (an integer column's bounds, the result window, the year 9999 of the last day there is) is the
+  server's text and may appear, also when the user typed the same digits.
 - **SPEC-E4.2** [all] A refusal on an undeclared column `secret_field` answers a text that does not contain
   `secret_field`. (A declared name such as `price` is the server's own text and may appear.)
+
+Each statement from E4.3 on gives the whole `error` text of one mistake: it names the condition and what to do about
+it, as far as that is known when the mistake is found. A text is changed only together with its statement.
+
+- **SPEC-E4.3** [all] A global search holding a tab (U+0009) →
+  `The search box holds an invisible control character, such as a tab. Delete its text and type it again.`
+- **SPEC-E4.4** [all] A column search on `name` holding a tab, or a SearchBuilder value on `name` holding one →
+  `The filter on "name" holds an invisible control character, such as a tab. Delete its value and type it again.`
+- **SPEC-E4.5** [all] A column search holding a tab on the undeclared `extra` →
+  `A column filter holds an invisible control character, such as a tab. Delete its value and type it again.`
+- **SPEC-E4.6** [all] SearchBuilder `=` `abc` on `price` → `invalid_number` with
+  `The filter on "price" needs one number, written like 42 or -3.5.`
+- **SPEC-E4.7** [all] SearchBuilder `=` `15/07/1980` on `made` → `invalid_date` with
+  `The filter on "made" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.`
+- **SPEC-E4.8** [all] SearchBuilder `contains` `1980-13` on `made` → `invalid_date` with
+  `The filter on "made" needs a year, a month or a day that exists, written as YYYY, YYYY-MM or YYYY-MM-DD, like 2024-03.`
+- **SPEC-E4.9** [SQL] SearchBuilder `=` `9223372036854775808` on `price` → `invalid_number` with
+  `The filter on "price" needs a number between -9223372036854775808 and 9223372036854775807.` The bounds are those
+  of the column's own width: -32768 and 32767 on a 16-bit integer column, -2147483648 and 2147483647 on a 32-bit one.
+- **SPEC-E4.10** [all] SearchBuilder `<` `9999-12-31` on `made` → `invalid_date` with
+  `The filter on "made" reaches the last day of the year 9999, which cannot be searched. Use an earlier date.`
+- **SPEC-E4.11** [all] An order entry on the undeclared `extra`, marked `orderable: true` →
+  `The table was asked to sort by a column the server does not offer. Sort by another column.`
+- **SPEC-E4.12** [all] A column search `x` on the undeclared `extra` →
+  `A filter is on a column the server does not offer. Remove that filter.`
+- **SPEC-E4.13** [all] An order entry on `secret` (server-unorderable), marked `orderable: true` →
+  `The table cannot be sorted by "secret". Sort by another column.`
+- **SPEC-E4.14** [all] With `note` declared unsearchable, a column search `x` on `note` →
+  `The column "note" cannot be filtered. Remove the filter on it.`
+- **SPEC-E4.15** [all] A global search `x` on a request whose only column is `active`, [OS] or on a table declaring
+  only `price` and `made` →
+  `No column of this table can be searched from the search box. Clear it and use a column filter instead.`
+- **SPEC-E4.16** [all] A global search `a.*` with `regex` true →
+  `The search box does not take regular expressions. Search for plain text.`
+- **SPEC-E4.17** [all] A column search `A.+` with `regex` true on `name` →
+  `The filter on "name" does not take regular expressions. Search for plain text without the characters . * + ? [ ] { } ( ) ^ $ |`
+- **SPEC-E4.18** [all] A global search with `multi_values` `["x"]` →
+  `The search box takes one text, not a list of values. Send the text as the search value.`
+- **SPEC-E4.19** [all] A column search on `price` with the value `abc` and `multi_values` `["x"]` →
+  `The filter on "price" holds both a text and a list of values. Send only one of them.`
+- **SPEC-E4.20** [all] SearchBuilder `contains` `3` on `price` →
+  `The condition "contains" cannot be used on "price", which holds numbers. Choose another condition.` A string
+  column `holds text`, a date column `holds dates`, a boolean column `holds true or false`.
+- **SPEC-E4.21** [all] SearchBuilder `=` with no value on `name` → `The filter on "name" needs a value.`;
+  `between` with one value on `price` → `The filter on "price" needs two values.`
+- **SPEC-E4.22** [all] SearchBuilder `=` `yes` on `active` →
+  `The filter on "active" needs true or false (1 or 0 also work).`
+- **SPEC-E4.23** [OS] With `note` declared as analysed text without a keyword field, a column search on `note` with
+  `multi_values` `["a"]` →
+  `The column "note" can be searched only for text it contains, not for a list of exact values. Type the text to search for instead.`
+- **SPEC-E4.24** [OS] With `max_result_window` 3, `start` 4 and `length` 3 → `page_out_of_range` with
+  `This table can be paged through its first 3 rows only. Go back to an earlier page, or narrow the search so fewer rows match.`
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

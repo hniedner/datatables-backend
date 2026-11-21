@@ -253,9 +253,6 @@ class SchemaError(RuntimeError):
     """A declared column does not exist in the source: the server's mistake, not the user's."""
 
 
-# A search, a filter or an order on a name the server did not declare, or an order it does not allow
-NO_USABLE_COLUMN = 'This table cannot be searched or sorted that way.'
-
 _HEAD = re.compile(r'[^.\[\]]*')
 _KEY = re.compile(r'[^.\[\]]+(?:\[[^.\[\]]*\]|\.[^.\[\]]+)*')
 _PART = re.compile(r'\[([^.\[\]]*)\]|\.([^.\[\]]+)')
