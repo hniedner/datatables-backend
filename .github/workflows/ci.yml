@@ -28,6 +28,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run --frozen ruff format --check .
       - run: uv run --frozen ruff check .
+      - run: uv run --frozen python scripts/trace_check.py
 
   types:
     runs-on: ubuntu-latest

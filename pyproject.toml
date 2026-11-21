@@ -72,7 +72,7 @@ path = "src/datatables_backend/__init__.py"
 packages = ["src/datatables_backend"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "scripts"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
@@ -80,7 +80,7 @@ addopts = "-ra --strict-markers"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -91,6 +91,8 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
+"scripts/trace_check.py" = ["T201"]
+"scripts/test_*.py" = ["S101", "S603"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -98,6 +100,7 @@ force-sort-within-sections = true
 known-first-party = ["datatables_backend"]
 
 [tool.basedpyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
+failOnWarnings = true
