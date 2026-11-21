@@ -50,6 +50,9 @@ PAIRS = [
     ('İZMİR', 'izmir'),
 ]
 
+PUNCTUATION = ''.join(char for char in map(chr, range(32, 127)) if not char.isalnum())  # the space included
+DECOYS = ('ÄXZ', 'Z', 'ÄZ', 'Ä', 'ÄÄZ', 'ÄXXZ')  # what an operator left unescaped between Ä and Z could match
+
 client = OpenSearch(hosts=[os.environ['DTB_OPENSEARCH_URL']], timeout=120)
 lines: list[str] = []
 
@@ -204,6 +207,11 @@ def fill() -> int:
             shared = dice.between(1, 254)
             value = longest[:shared] + dice.letters(both, dice.between(1, 255 - shared))
             documents[f'p-{name}-{number}'] = value if number % 2 else value.lower()
+    for char in PUNCTUATION:
+        documents[f'esc-{ord(char)}'] = f'Ä{char}Z'
+    documents['esc-all'] = f'Ä{PUNCTUATION}Z'
+    for decoy in DECOYS:
+        documents[f'decoy-{decoy}'] = decoy
     everything = ASCII + ASCII.lower() + OTHER + OTHER.lower()
     for number in range(1400):
         documents[f'f-{number}'] = dice.letters(everything, dice.between(1, 255))
@@ -350,6 +358,65 @@ def expensive() -> None:
     table(['query', 'answer'], rows)
 
 
+def escaped(value: str) -> str:
+    """A backslash before every ASCII character that is not a letter or a digit."""
+    return ''.join(char if char.isalnum() or not char.isascii() else f'\\{char}' for char in value)
+
+
+def escaping() -> None:
+    say('## 6. A backslash before every ASCII character that is not a letter or a digit (regexp ci, no flags)')
+    say()
+    say('Searched in the stored case, so every leg can find it. Stored: `esc-<code>` holds Ä, the character, Z;')
+    say(f'`esc-all` holds Ä, all {len(PUNCTUATION)} characters, Z; decoys: {", ".join(DECOYS)}.')
+    say()
+    rows: list[list[Any]] = []
+    for char in PUNCTUATION:
+        value = f'Ä{char}Z'
+        rows.append([
+            ord(char), f'`{char}`',
+            ids(regexp(escaped(value), fold=True)),
+            ids(regexp(f'.*{escaped(value)}.*', fold=True)),
+            ids(regexp(value, fold=True)),
+        ])  # fmt: skip
+    table(['code', 'character', 'escaped, whole', 'escaped, substring', 'left unescaped, whole'], rows)
+    everything = f'Ä{PUNCTUATION}Z'
+    say(f'- all at once, escaped, whole: {ids(regexp(escaped(everything), fold=True))}')
+    say(f'- all at once, escaped, substring: {ids(regexp(f".*{escaped(everything)}.*", fold=True))}')
+    say(f'- `Ä.*` escaped, substring: {ids(regexp(f".*{escaped('Ä.*')}.*", fold=True))}')
+    say(f'- pattern length of all at once, whole: {len(escaped(everything))}')
+    say()
+
+
+def regexp_cost() -> None:
+    say('## 7. The regexp form at the caps (cased letters outside ASCII, lower case against stored upper case)')
+    say()
+    longest = target('non-ascii', 255).lower()
+    small = OTHER.lower()
+    values = [longest]
+    for number in range(255):
+        suffix = ''.join(small[(number // len(small) ** place) % len(small)] for place in range(3))
+        values.append(longest[:250] + suffix + small[:2])
+    words = [longest[start : start + 15] for start in range(0, 240, 15)]
+
+    def search(like: Any) -> dict[str, Any]:
+        """16 words over 3 text+keyword columns and a keyword column, as the global search builds it."""
+        clauses: list[dict[str, Any]] = []
+        for word in words:
+            analysed = [{'match': {'v': {'query': word}}}] * 3
+            clauses.append({'bool': {'should': [*analysed, *([like(word)] * 4)], 'minimum_should_match': 1}})
+        return {'bool': {'must': clauses}}
+
+    rows = [
+        ['256 regexp ci, whole value', *run({'bool': {'should': [regexp(v, fold=True) for v in values]}})],
+        ['256 term ci, the same values (as sent today)', *run({'bool': {'should': [term(v) for v in values]}})],
+        ['global search, 16 words, regexp ci .*w.*', *run(search(lambda w: regexp(f'.*{w}.*', fold=True)))],
+        ['global search, 16 words, wildcard ci *w* (as sent today)', *run(search(lambda w: wildcard(f'*{w}*')))],
+    ]
+    table(['shape', *MEASURES], rows)
+    say(f'The 16 words hold {len(" ".join(words))} code points.')
+    say()
+
+
 def main() -> None:
     info: Any = client.info()
     version = info['version']
@@ -375,6 +442,8 @@ def main() -> None:
             pass
         by_construction()
         expensive()
+        escaping()
+        regexp_cost()
     finally:
         client.indices.delete(index=INDEX)
         summary = os.environ.get('GITHUB_STEP_SUMMARY')
