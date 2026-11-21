@@ -1,0 +1,51 @@
+name: Audit
+
+# Checks every package uv.lock pins (all extras and dependency groups) against the OSV advisory database. An advisory
+# appears without any commit here, so the daily run is the trigger that matters; a pull request runs it only when it
+# changes the lock or this file. In a public repository GitHub disables scheduled workflows after 60 days without
+# repository activity, and re-enabling is a manual step.
+#
+# Deliberately not a required check and not part of ci.yml's `gate`: it can turn red with no change in the
+# repository, and the wheel declares ranges, so the lock's versions are not what a user installs.
+#
+# When it fails:
+# - A fixed version exists: merge Dependabot's security update, or run `uv lock --upgrade-package <name>`, by pull
+#   request.
+# - No fixed version exists yet: add the advisory's ID to `ignore-until-fixed` under `[tool.uv.audit]` in
+#   pyproject.toml, with a comment saying why. The audit reports it again once a fix is published.
+# - The advisory does not apply here: add its ID to `ignore` in the same table, with the reason.
+# After a fix, a manual run (workflow_dispatch) shows the result without a commit.
+#
+# `uv audit` is experimental and this job installs the latest uv, so a uv release can change or break the command.
+on:
+  pull_request:
+    paths: [uv.lock, .github/workflows/audit.yml]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      # --locked also fails when uv.lock no longer matches pyproject.toml.
+      - run: uv audit --locked
