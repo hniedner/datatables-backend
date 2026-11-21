@@ -56,10 +56,13 @@ from ._plan import Contains
 from ._plan import Criterion
 from ._plan import DaySpan
 from ._plan import Group
+from ._plan import Mistakes
 from ._plan import Plan
+from ._plan import mistake
 from ._plan import next_day
 from ._plan import parse_number
 from ._plan import plan
+from ._plan import refused
 from .cache import TotalCache
 from .columns import Column
 from .columns import ColumnType
@@ -121,12 +124,13 @@ class SQLTable:
     async def fetch(self, params: DTParams, source: AsyncSource) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
 
-        A filter the user can change answers with ``error_code='invalid_filter'``; any other failure raises.
+        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
+        any statement runs; any other failure raises.
         """
         try:
             statements = self._statements(params, _dialect(source))
-        except InvalidFilter as exc:
-            return DTResponse.invalid_filter(params.draw, str(exc))
+        except InvalidFilter as found:
+            return refused(params, found)
         total = await self._total(source, statements)
         filtered = (await source.execute(statements.filtered)).scalar_one()
         result = await source.execute(statements.page)
@@ -136,8 +140,8 @@ class SQLTable:
         """``fetch`` for a ``Session`` or ``Connection``."""
         try:
             statements = self._statements(params, _dialect(source))
-        except InvalidFilter as exc:
-            return DTResponse.invalid_filter(params.draw, str(exc))
+        except InvalidFilter as found:
+            return refused(params, found)
         total = self._total_sync(source, statements)
         filtered = source.execute(statements.filtered).scalar_one()
         rows = source.execute(statements.page).mappings().all()
@@ -146,8 +150,14 @@ class SQLTable:
     # -- building ---------------------------------------------------------------------------------------------------
 
     def _statements(self, params: DTParams, dialect: Dialect) -> _Statements:
-        """Every statement of the request, built before any runs: a bad filter never leaves a half-run query."""
-        request = plan(params, self.columns, self._type_of)
+        """Every statement of the request, built before any runs: a bad filter never leaves a half-run query.
+
+        Raises:
+            InvalidFilter: the one of the user's mistakes that decides the answer, from the plan or from the
+                conditions built here. It is raised in one place, once every condition is built.
+        """
+        mistakes = Mistakes()
+        request = plan(params, self.columns, self._type_of, mistakes)
         total = select(func.count()).select_from(self.source)
         if self.base_filter is not None:
             total = total.where(self.base_filter)
@@ -156,9 +166,10 @@ class SQLTable:
             stmt = select(*(self._sql(column).label(column.name) for column in self.columns)).select_from(self.source)
             if self.base_filter is not None:
                 stmt = stmt.where(self.base_filter)
-            return stmt.where(*self._conditions(request, in_list))
+            return stmt.where(*self._conditions(request, in_list, mistakes))
 
         filtered_rows = build(_bound_in)
+        mistakes.raise_first()  # from here on the request holds no mistake, so a second build finds none either
         if dialect.name == 'mssql' and _parameter_count(filtered_rows) > MSSQL_PARAMETER_BUDGET:
             filtered_rows = build(_json_in)
         filtered = select(func.count()).select_from(filtered_rows.subquery())
@@ -180,22 +191,29 @@ class SQLTable:
             return 'date'
         return 'string'
 
-    def _conditions(self, request: Plan, in_list: _InList) -> list[ColumnElement[bool]]:
+    def _conditions(self, request: Plan, in_list: _InList, mistakes: Mistakes) -> list[ColumnElement[bool]]:
+        """The request's conditions. One that holds a mistake (a number the column cannot read or hold) is left
+        out, and the mistake kept in ``mistakes``."""
         conditions: list[ColumnElement[bool]] = []
         if request.global_search:
             conditions.append(or_(*(self._contains(search) for search in request.global_search)))
         for search in request.column_searches:
             if isinstance(search, AnyOf):
                 column = self._sql(search.column)
-                if search.type == 'boolean':
-                    values = [_boolean(column, value) for value in search.values]
-                else:
-                    values = [_number(column, parse_number(v)) if search.type == 'number' else v for v in search.values]
-                conditions.append(in_list(column, values))
+                with mistakes.part():
+                    if search.type == 'boolean':
+                        values = [_boolean(column, value) for value in search.values]
+                    elif search.type == 'number':
+                        values = [_number(column, parse_number(value)) for value in search.values]
+                    else:
+                        values = list(search.values)
+                    conditions.append(in_list(column, values))
             else:
                 conditions.append(self._contains(search))
         if request.search_builder is not None:
-            conditions.append(self._node(request.search_builder))
+            built = self._node(request.search_builder, mistakes)
+            if built is not None:
+                conditions.append(built)
         return conditions
 
     def _contains(self, search: Contains) -> ColumnElement[bool]:
@@ -207,13 +225,19 @@ class SQLTable:
             return _day_text(column).ilike(pattern, escape='\\')
         return sql_cast(column, String).ilike(pattern, escape='\\')
 
-    def _node(self, node: Criterion | Group) -> ColumnElement[bool]:
+    def _node(self, node: Criterion | Group, mistakes: Mistakes) -> ColumnElement[bool] | None:
+        """The condition of a criterion or group; None for a criterion that holds a mistake (a number outside the
+        column's range, kept in ``mistakes``) and for a group left with none."""
         if isinstance(node, Group):
-            parts = [self._node(item) for item in node.items]
+            parts = [part for item in node.items if (part := self._node(item, mistakes)) is not None]
+            if not parts:
+                return None
             return and_(*parts) if node.logic == 'AND' else or_(*parts)
         column = self._sql(node.column)
         if node.type == 'number':
-            return _compare(node.condition, column, [_number(column, value) for value in node.values], column)
+            with mistakes.part():
+                return _compare(node.condition, column, [_number(column, value) for value in node.values], column)
+            return None
         if node.type == 'date':
             return _date_criterion(node, column)
         if node.type == 'boolean':
@@ -319,7 +343,7 @@ def _number(column: ColumnElement[Any], value: Any) -> Any:
         value = int(value)
     bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
     if not -(2 ** (bits - 1)) <= value < 2 ** (bits - 1):
-        raise InvalidFilter(OUT_OF_RANGE)
+        raise mistake('datatables_number_out_of_range', OUT_OF_RANGE)
     return value
 
 

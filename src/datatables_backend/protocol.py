@@ -22,6 +22,7 @@ from pydantic import ConfigDict
 from pydantic import Discriminator
 from pydantic import Field
 from pydantic import Tag
+from pydantic import TypeAdapter
 from pydantic import ValidationError
 from pydantic import model_validator
 
@@ -31,6 +32,9 @@ log = logging.getLogger('datatables_backend')
 MAX_PAGE_LENGTH = 1000
 #: DataTables' own counters are 32-bit; a larger paging number is the client's mistake, not an offset to bind.
 MAX_PAGING_NUMBER = 2**31 - 1
+
+#: The codes of a mistake the user can fix; stable, since a frontend maps them to its own messages
+type ErrorCode = Literal['invalid_filter', 'invalid_date', 'invalid_number', 'page_out_of_range']
 
 type Condition = Literal[
     '=',
@@ -163,10 +167,13 @@ def _no_selection(panes: dict[str, Any]) -> dict[str, Any]:
     return panes
 
 
+type Draw = Annotated[int, Field(le=MAX_PAGING_NUMBER)]
+
+
 class DTParams(_Model):
     """A parsed DataTables request."""
 
-    draw: int = 0
+    draw: Draw = 0
     start: int = Field(default=0, ge=0, le=MAX_PAGING_NUMBER)
     length: int = Field(default=10, ge=1, le=MAX_PAGING_NUMBER)
     columns: list[DTColumn] = []
@@ -181,20 +188,20 @@ class DTParams(_Model):
 
 
 class DTResponse(_Model):
-    """The answer DataTables expects. ``error_code`` says which kind of failure ``error`` reports."""
+    """The answer DataTables expects. ``error_code`` says which kind of failure ``error`` reports.
+
+    The library answers a mistake the user can fix with one of four codes: ``invalid_filter``, ``invalid_date`` (a
+    date it cannot read, or the last day there is), ``invalid_number`` (a number it cannot read, or one outside the
+    column's range) and ``page_out_of_range``. ``query_failed`` is only ever set by an app, through
+    ``DTResponse.query_failed``.
+    """
 
     draw: int
     recordsTotal: int = 0
     recordsFiltered: int = 0
     data: list[dict[str, Any]] = []
     error: str | None = None
-    error_code: Literal['invalid_filter', 'query_failed'] | None = None
-    metadata: dict[str, Any] | None = None
-
-    @classmethod
-    def invalid_filter(cls, draw: int, reason: str) -> DTResponse:
-        """The answer to a filter the user can change; ``reason`` is shown to them."""
-        return cls(draw=draw, error=reason, error_code='invalid_filter')
+    error_code: ErrorCode | Literal['query_failed'] | None = None
 
     @classmethod
     def query_failed(cls, draw: int, message: str = 'The table query failed.') -> DTResponse:
@@ -202,16 +209,40 @@ class DTResponse(_Model):
         return cls(draw=draw, error=message, error_code='query_failed')
 
     def to_dict(self) -> dict[str, Any]:
-        """The JSON object DataTables reads; unset ``error``, ``error_code`` and ``metadata`` are left out."""
+        """The JSON object DataTables reads; unset ``error`` and ``error_code`` are left out."""
         return self.model_dump(exclude_none=True)
 
 
 class MalformedRequest(ValueError):
-    """The request is not a DataTables request the library can read. The message names a parameter, never a value."""
+    """The request is not a DataTables request the library can read. The message names a request parameter, never
+    the client's key or value.
+
+    ``draw`` is the request's own when that part of it could be read, so the answer can still be matched to the
+    request; None otherwise. ``parse_request`` logs each one once, under ``event``: ``datatables_request_malformed``,
+    or ``datatables_length_refused`` for a page longer than the caller allows. ``parameter`` is the request parameter
+    the message names, if it names one.
+    """
+
+    draw: int | None = None
+    event: str = 'datatables_request_malformed'
+    parameter: str | None = None
 
 
 class InvalidFilter(ValueError):
-    """The user's filter cannot be answered. The message is written for the user and never quotes what they typed."""
+    """The user's filter cannot be answered. The message is written for the user and never quotes what they typed.
+
+    ``code`` is the answer's ``error_code``, ``step`` its place in the order that decides which of a request's
+    mistakes is answered (lowest first), ``event`` the fixed name it is logged under, and ``column`` the declared
+    name of the column it is about, if the log may name one. The library raises it for the mistakes it knows, each
+    with its event; it is not for an app to raise, so none of the three has a default.
+    """
+
+    def __init__(self, reason: str, *, code: ErrorCode, step: int, event: str, column: str | None = None) -> None:
+        super().__init__(reason)
+        self.code: ErrorCode = code
+        self.step = step
+        self.event = event
+        self.column = column
 
 
 class PartialResultError(RuntimeError):
@@ -257,29 +288,80 @@ def parse_request(
     Raises:
         MalformedRequest: the request holds no DataTables parameter (an empty one, or DataTables 1.9's form), or
             the structure, a request key's shape, a paging number, or the page length is wrong, or a
-            filter the library does not answer is sent. The message names the parameter where it can, and never
-            quotes the request's keys or values.
+            filter the library does not answer is sent, or an ``order`` entry points outside the request's columns.
+            The message names the request parameter where it can, and never quotes the request's keys or values.
+            It carries the request's ``draw`` when that could be read, and is logged once, as a WARNING.
     """
+    if not isinstance(data, Mapping) and not hasattr(data, 'getlist') and isinstance(data, Iterable):
+        data = list(data)  # pairs may be an iterator, and a refusal reads them again for the draw
+    try:
+        try:
+            return _parse(data, max_length)
+        except RecursionError:  # flat keys or a JSON body nested deeper than Python walks: no request has that
+            raise _malformed() from None
+    except MalformedRequest as exc:
+        exc.draw = _draw(data)
+        log.warning(exc.event, extra={'parameter': exc.parameter})
+        raise
+
+
+def _malformed(parameter: str | None = None) -> MalformedRequest:
+    """The refusal that names ``parameter``, a request parameter and so never the client's text, or none."""
+    refusal = MalformedRequest(f'Invalid {parameter} parameter.' if parameter else 'The table request is malformed.')
+    refusal.parameter = parameter
+    return refusal
+
+
+def _parse(data: Mapping[str, Any] | Iterable[tuple[str, Any]], max_length: int) -> DTParams:
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
     if not body.keys() & DTParams.model_fields.keys():  # empty, or another protocol (e.g. DataTables 1.9's sEcho)
-        log.warning('datatables_request_malformed', extra={'parameter': None})
         raise MalformedRequest('The table request holds no DataTables parameter.')
     try:
         json.dumps(body, ensure_ascii=False).encode()
-    except UnicodeEncodeError:  # a lone surrogate: no driver can encode it
-        raise MalformedRequest('The table request is malformed.') from None
-    except (TypeError, ValueError):
-        raise MalformedRequest('The table request is malformed.') from None
+    except (UnicodeEncodeError, TypeError, ValueError):  # a lone surrogate (no driver can encode it), or no JSON
+        raise _malformed() from None
     try:
         params = DTParams.model_validate(body)
     except ValidationError as exc:
-        where = '.'.join(str(part) for part in exc.errors()[0]['loc'])
-        log.warning('datatables_request_malformed', extra={'parameter': where})
-        raise MalformedRequest(f'Invalid {where} parameter.') from None
+        # Only the request parameter: the path below it is the client's own key when it sends dotted keys
+        where = exc.errors()[0]['loc']
+        raise _malformed(str(where[0]) if where else None) from None
+    if any(not 0 <= item.column < len(params.columns) for item in params.order):
+        raise _malformed('order')  # only an integration bug orders by a column the request does not hold
     if params.length > max_length:
-        log.warning('datatables_length_refused', extra={'max_length': max_length})
-        raise MalformedRequest(f'Invalid length parameter: at most {max_length} rows per request.')
+        refusal = MalformedRequest(f'Invalid length parameter: at most {max_length} rows per request.')
+        refusal.parameter, refusal.event = 'length', 'datatables_length_refused'
+        raise refusal
     return params
+
+
+_DRAW: TypeAdapter[int] = TypeAdapter(Draw)
+
+
+def _draw(data: object) -> int | None:
+    """The request's ``draw`` when it alone reads as a valid one, whatever else is wrong with the request."""
+    values: list[Any]
+    if hasattr(data, 'getlist'):
+        values = cast(Any, data).getlist('draw')
+    elif isinstance(data, Mapping):
+        fields = cast(Mapping[Any, Any], data)
+        raw = fields.get('draw')
+        # Among flat keys a list is the values of one key (as urllib's parse_qs gives them)
+        values = cast(list[Any], raw) if isinstance(raw, list) and _is_flat(fields) else [raw]
+    elif isinstance(data, list):
+        values = [pair[1] for pair in cast(list[Any], data) if _is_pair(pair) and pair[0] == 'draw']
+    else:
+        return None
+    if len(values) != 1 or values[0] is None:
+        return None
+    try:
+        return _DRAW.validate_python(values[0])
+    except ValidationError:
+        return None
+
+
+def _is_pair(item: object) -> bool:
+    return isinstance(item, (tuple, list)) and len(cast(Any, item)) == 2
 
 
 def _is_flat(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> bool:
@@ -304,8 +386,7 @@ def _path(key: str) -> list[str] | None:
     if head not in DTParams.model_fields:
         return None
     if not _KEY.fullmatch(key):
-        log.warning('datatables_request_malformed', extra={'parameter': head})
-        raise MalformedRequest(f'Invalid {head} parameter.')
+        raise _malformed(head)
     return [head, *(dotted or bracketed for bracketed, dotted in _PART.findall(key, len(head)))]
 
 
@@ -320,8 +401,10 @@ def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str,
         items = [(key, value) for key in multi for value in multi.getlist(key)]
     elif isinstance(data, Mapping):
         items = cast(Mapping[str, Any], data).items()
-    else:
-        items = data
+    else:  # key-value pairs; a decoded JSON list of anything else, or a value that is no list at all, is refused
+        items = cast(list[Any], data) if isinstance(data, list) else []
+        if not isinstance(data, list) or not all(_is_pair(item) for item in items):
+            raise _malformed()
     root: dict[str, Any] = {}
     for key, raw in items:
         if not isinstance(key, str):
@@ -330,10 +413,10 @@ def _unflatten(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> dict[str,
         if path is None:
             continue
         if isinstance(raw, list) and not raw and not key.endswith('[]'):  # no value for a single-value key
-            raise MalformedRequest(f'Invalid {path[0]} parameter.')
+            raise _malformed(path[0])
         values = cast(list[Any], raw if isinstance(raw, list) else [raw])
         if any(isinstance(value, dict) for value in values):  # an object among flat keys: JSON and form mixed
-            raise MalformedRequest(f'Invalid {path[0]} parameter.')
+            raise _malformed(path[0])
         for value in values:
             _assign(root, path, value)
     return _lists(root)

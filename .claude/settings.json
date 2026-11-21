@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(shasum *)",
+      "Bash(uv run pytest)",
+      "Bash(uv run pytest -q)",
+      "Bash(git check-ignore *)",
+      "Bash(actionlint *)",
+      "Bash(zizmor *)",
+      "Bash(uv run zizmor *)",
+      "Bash(uv pip list *)",
+      "Bash(uv pip check *)",
+      "Bash(uv run ruff check *)",
+      "Bash(uv run ruff format --check *)"
+    ]
+  }
+}

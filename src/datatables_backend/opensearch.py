@@ -26,11 +26,14 @@ from ._plan import Contains
 from ._plan import Criterion
 from ._plan import DaySpan
 from ._plan import Group
+from ._plan import Mistakes
 from ._plan import Plan
 from ._plan import day_span
+from ._plan import mistake
 from ._plan import next_day
 from ._plan import parse_number
 from ._plan import plan
+from ._plan import refused
 from ._text_query import QueryParser
 from .cache import TotalCache
 from .columns import Column
@@ -108,13 +111,13 @@ class SearchTable:
     async def fetch(self, params: DTParams, client: AsyncClient) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
-        A filter the user can change answers with ``error_code='invalid_filter'``; any other failure raises, a partial
-        answer as ``PartialResultError``.
+        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
+        anything is sent; any other failure raises, a partial answer as ``PartialResultError``.
         """
         try:
             request = self._request(params)
-        except InvalidFilter as exc:
-            return DTResponse.invalid_filter(params.draw, str(exc))
+        except InvalidFilter as found:
+            return refused(params, found)
         answer = await client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
         total = self._cached_total(request, filtered)
@@ -127,8 +130,8 @@ class SearchTable:
         """``fetch`` with a sync client (``OpenSearch``)."""
         try:
             request = self._request(params)
-        except InvalidFilter as exc:
-            return DTResponse.invalid_filter(params.draw, str(exc))
+        except InvalidFilter as found:
+            return refused(params, found)
         answer = client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
         total = self._cached_total(request, filtered)
@@ -140,19 +143,33 @@ class SearchTable:
     # -- building ---------------------------------------------------------------------------------------------------
 
     def _request(self, params: DTParams) -> _Request:
-        """Both request bodies, built before either is sent."""
-        if params.start + params.length > self.max_result_window:
-            raise InvalidFilter(f'This table cannot page beyond row {self.max_result_window:,}.')
-        request = plan(params, self.columns, _type_of)
+        """Both request bodies, built before either is sent.
+
+        Raises:
+            InvalidFilter: the one of the user's mistakes that decides the answer, from the plan or from the clauses
+                built here; a page beyond the result window only when the request holds no other. It is raised in
+                one place, once every clause is built.
+        """
+        mistakes = Mistakes()
+        request = plan(params, self.columns, _type_of, mistakes)
         must: list[dict[str, Any]] = [self.base_filter] if self.base_filter else []
         if request.global_search:
             should = [_global_clause(search) for search in request.global_search if search.type == 'string']
-            if not should:  # numbers and dates take no free text; an empty should would match every document
-                raise InvalidFilter(NO_USABLE_COLUMN)
-            must.append(_any(should))
-        must.extend(_column_clause(search) for search in request.column_searches)
+            with mistakes.part():
+                if not should:  # numbers and dates take no free text; an empty should would match every document
+                    raise mistake('datatables_no_searchable_column', NO_USABLE_COLUMN)
+                must.append(_any(should))
+        for column_search in request.column_searches:
+            with mistakes.part():
+                must.append(_column_clause(column_search))
         if request.search_builder is not None:
             must.append(_node(request.search_builder))
+        with mistakes.part():
+            if params.start + params.length > self.max_result_window:
+                raise mistake(
+                    'datatables_page_out_of_range', f'This table cannot page beyond row {self.max_result_window:,}.'
+                )
+        mistakes.raise_first()
         search = {
             'query': {'bool': {'must': must}} if must else {'match_all': {}},
             'from': params.start,
@@ -266,8 +283,8 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
         if search.type == 'number':
             return {'terms': {column.source: [parse_number(str(value)) for value in search.values]}}
         field = column.source if search.type == 'date' else _keyword(column)
-        if field is None:
-            raise InvalidFilter(NO_USABLE_COLUMN)
+        if field is None:  # analysed text holds no whole string to match exactly
+            raise mistake('datatables_search_refused', NO_USABLE_COLUMN, column)
         return {'terms': {field: list(search.values)}}
     match search.type:
         case 'number':
@@ -412,19 +429,25 @@ def partial_answer(answer: object, index: str) -> bool:
     shards = fields.get('_shards')
     shard_fields = cast(Mapping[str, Any], shards) if isinstance(shards, Mapping) else {}
     total = _whole_number(shard_fields.get('total'), 1)
+    successful = _whole_number(shard_fields.get('successful'), 0)
     failed = _whole_number(shard_fields.get('failed'), 0)
     timed_out = fields.get('timed_out')
-    if failed or timed_out is True:
+    # A shard may be missing from the answer without being counted as failed
+    missing = total is not None and successful is not None and successful < total
+    if failed or missing or timed_out is True:
         log.error(
             'opensearch_answer_partial',
-            extra={'index': index, 'timed_out': timed_out is True, 'shards_total': total, 'shards_failed': failed},
+            extra={
+                'index': index,
+                'timed_out': timed_out is True,
+                'shards_total': total,
+                'shards_successful': successful,
+                'shards_failed': failed,
+            },
         )
         return True
-    unreadable = (
-        ['_shards']
-        if not isinstance(shards, Mapping)
-        else [name for name, value in (('_shards.total', total), ('_shards.failed', failed)) if value is None]
-    )
+    counts = (('_shards.total', total), ('_shards.successful', successful), ('_shards.failed', failed))
+    unreadable = ['_shards'] if not isinstance(shards, Mapping) else [name for name, value in counts if value is None]
     if 'timed_out' in fields and not isinstance(timed_out, bool):
         unreadable.append('timed_out')
     if unreadable:

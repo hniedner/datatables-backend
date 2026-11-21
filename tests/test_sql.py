@@ -4,20 +4,26 @@ It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: Pos
 """
 
 from datetime import UTC
+from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 import logging
 import os
 from typing import Any
+import warnings
 
 import pytest
+from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
+from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import cast
+from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -52,8 +58,8 @@ def ids(response: DTResponse) -> list[Any]:
     return [row['id'] for row in response.data]
 
 
-def refused(response: DTResponse) -> str:
-    assert response.error_code == 'invalid_filter'
+def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
+    assert response.error_code == code
     assert response.data == []
     assert response.error is not None
     return response.error
@@ -169,15 +175,9 @@ def test_null_comes_first_in_an_ascending_order(session: Session):
     assert ids(table.fetch_sync(params, session))[0] == 3
 
 
-@pytest.mark.parametrize(
-    'body',
-    [
-        {'order': [{'column': 9, 'dir': 'asc'}]},  # no such request column
-        {'order': [{'column': 6, 'dir': 'asc'}]},  # declared not orderable, whatever the request claims
-    ],
-)
-def test_an_order_the_server_does_not_allow_is_refused(session: Session, body: dict[str, Any]):
-    refused(table.fetch_sync(request(*ALL, **body), session))
+def test_an_order_the_server_does_not_allow_is_refused(session: Session):
+    """`team` is declared not orderable, whatever the request claims."""
+    refused(table.fetch_sync(request(*ALL, order=[{'column': 6, 'dir': 'asc'}]), session))
 
 
 def test_an_order_the_request_marks_unorderable_is_refused(session: Session):
@@ -288,6 +288,7 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
         ('born', 'between', ['1980-01-01', '1994-03-01'], [1, 2]),
         ('born', 'contains', ['1980'], [2]),
         ('born', 'contains', ['2001-12'], [4]),
+        ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -415,8 +416,7 @@ def test_a_value_or_condition_a_boolean_column_does_not_take_is_refused(
     session: Session, caplog: pytest.LogCaptureFixture, condition: str, values: list[str]
 ):
     """SPEC-F43.3, and SPEC-D8.1's `<`: answered as `invalid_filter`, never a database error. For the value `yes`,
-    neither the reason nor a log record holds it. Today these refusals log nothing; the one WARNING of PRD-E13 comes
-    with the error codes."""
+    neither the reason nor the log record of the refusal holds it."""
     with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
         reason = refused(flagged.fetch_sync(request(*FLAGGED, **criterion('active', condition, *values)), session))
     if values == ['yes']:
@@ -432,9 +432,17 @@ def test_the_global_search_skips_a_boolean_column(session: Session):
 
 
 def test_a_skipped_boolean_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
-    """SPEC-E13.2 for the boolean column: a skip the requirements allow is not a refusal."""
+    """SPEC-E13.2, the skips that exist today: the boolean column the global search leaves out, an idle SearchPanes
+    pane and an idle ColumnControl search, which a client sends on every request."""
+    idle = {'columnControl': {'search': {'value': '', 'logic': 'contains'}}}
+    body = {
+        'draw': 1,
+        'search': {'value': 'ann'},
+        'searchPanes': {'name': []},
+        'columns': [{'data': name, **idle} for name in FLAGGED],
+    }
     with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
-        assert ids(flagged.fetch_sync(request(*FLAGGED, search={'value': 'ann'}), session)) == [1, 3]
+        assert ids(flagged.fetch_sync(parse_request(body), session)) == [1, 3]
     assert library_log(caplog) == ''
 
 
@@ -520,12 +528,6 @@ def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
         SQLTable(people, [Column('id'), Column('active', search_value=str.upper)])
 
 
-@pytest.mark.xfail(
-    reason='PRD-E3: the codes invalid_number and invalid_date do not exist yet, so every mistake is invalid_filter '
-    '(SPEC-E3.3, SPEC-E3.7)',
-    strict=True,
-    raises=AssertionError,
-)
 @pytest.mark.parametrize(
     ('column', 'value', 'code'),
     [('age', 'abc', 'invalid_number'), ('born', '9999-12-31', 'invalid_date')],
@@ -579,25 +581,256 @@ def test_the_declared_type_decides_not_the_clients(session: Session):
 
 
 @pytest.mark.parametrize(
-    ('column', 'condition', 'values', 'reason'),
+    ('column', 'condition', 'values', 'code', 'reason'),
     [
-        ('age', '>', ['old'], 'must be a number'),
-        ('age', '>', ['inf'], 'must be a number'),
-        ('age', '>', ['40000'], 'outside the range'),  # a SMALLINT
-        ('born', '=', ['15/07/1980'], 'YYYY-MM-DD'),
-        ('born', '<=', ['9999-12-31'], 'outside the range'),
-        ('born', 'contains', ['1980-13'], 'YYYY, YYYY-MM or YYYY-MM-DD'),
-        ('age', 'between', ['1'], 'needs two values'),
-        ('name', '=', [], 'needs a value'),
-        ('name', '<', ['m'], 'not supported'),
+        ('age', '>', ['old'], 'invalid_number', 'must be a number'),
+        ('age', '>', ['inf'], 'invalid_number', 'must be a number'),
+        ('age', '>', ['40000'], 'invalid_number', 'outside the range'),  # a SMALLINT
+        ('age', 'between', ['old'], 'invalid_number', 'must be a number'),  # the value there is, not the one missing
+        ('born', '=', ['15/07/1980'], 'invalid_date', 'YYYY-MM-DD'),
+        ('born', '<', ['9999-12-31'], 'invalid_date', 'outside the range'),  # SPEC-F24.1: whatever the condition
+        ('born', 'contains', ['9999'], 'invalid_date', 'outside the range'),  # a year that holds the last day
+        ('born', 'contains', ['9999-12'], 'invalid_date', 'outside the range'),  # and so does this month
+        ('born', 'contains', ['1980-13'], 'invalid_date', 'YYYY, YYYY-MM or YYYY-MM-DD'),
+        ('age', 'between', ['1'], 'invalid_filter', 'needs two values'),
+        ('name', '=', [], 'invalid_filter', 'needs a value'),
+        ('name', '<', ['m'], 'invalid_filter', 'not supported'),
+        ('age', 'contains', ['abc'], 'invalid_filter', 'not supported'),  # SPEC-E3.8: the value is never read
     ],
 )
-def test_a_value_the_column_cannot_take_is_refused_without_echoing_it(
-    session: Session, column: str, condition: str, values: list[str], reason: str
+def test_a_value_the_column_cannot_take_is_refused_with_its_code_without_echoing_it(
+    session: Session, column: str, condition: str, values: list[str], *, code: str, reason: str
 ):
-    message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session))
+    """SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-E1.2, SPEC-E3.8: a date mistake, a number mistake and any other each
+    have their code (PRD-E3, steps 2 to 4)."""
+    message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
     assert reason in message
     assert all(value not in message for value in values if len(value) > 2)
+
+
+def test_the_last_month_before_the_last_day_is_answered(session: Session):
+    """The other side of SPEC-F24.1's spans: only one that holds 9999-12-31 is refused."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('born', 'contains', '9999-11')), session)) == []
+
+
+def test_a_user_error_is_an_answer_with_the_draw_and_nothing_else(session: Session):
+    """SPEC-E1.1, SPEC-R5.2, SPEC-R6.1: what a caller sends on for a mistake the user can fix."""
+    response = table.fetch_sync(request(*ALL, draw=7, **criterion('age', '=', 'abc')), session)
+    assert response.to_dict() == {
+        'draw': 7,
+        'recordsTotal': 0,
+        'recordsFiltered': 0,
+        'data': [],
+        'error': 'The filter value must be a number.',
+        'error_code': 'invalid_number',
+    }
+
+
+@pytest.mark.parametrize(
+    ('first', 'second'),
+    [
+        # SPEC-E3.4: step 3 before step 4, though the condition is refused by the plan and the number's range only
+        # later, against the SQL column (`age` is a SMALLINT)
+        (('name', '<', 'a'), ('age', '=', '40000')),
+        # step 2 before step 3: a number of the wrong format before the last day there is
+        (('born', '=', '9999-12-31'), ('age', '=', 'abc')),
+    ],
+    ids=['range-before-condition', 'format-before-range'],
+)
+def test_the_step_of_a_mistake_decides_not_its_place_in_the_request(
+    session: Session, first: tuple[str, str, str], second: tuple[str, str, str]
+):
+    """PRD-E3: in each row the second criterion's mistake is of the lower step, and both rows answer for it."""
+    tree = {
+        'criteria': [
+            {'condition': condition, 'origData': column, 'value': [value]}
+            for column, condition, value in (first, second)
+        ]
+    }
+    refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session), 'invalid_number')
+
+
+@pytest.mark.parametrize('found_in_the_build', ['a list value that is no number', 'a number outside the range'])
+def test_a_mistake_found_while_the_query_is_built_waits_for_an_earlier_step_of_the_plan(
+    session: Session, found_in_the_build: str
+):
+    """PRD-E3 across the two places a mistake is found: one from the build must not be raised on the spot, since the
+    plan may hold one of a lower step. Each row's build mistake alone would answer `invalid_number`."""
+    if found_in_the_build == 'a list value that is no number':  # step 2, beside a control character (step 1)
+        params = request(*ALL, column_search={'age': {'multi_values': ['abc']}}, **criterion('name', '=', 'a\x00b'))
+        expected = 'invalid_filter'
+    else:  # step 3, beside a date of the wrong format (step 2)
+        tree = {
+            'criteria': [
+                {'condition': '=', 'origData': 'age', 'value': ['40000']},
+                {'condition': '=', 'origData': 'born', 'value': ['xx']},
+            ]
+        }
+        params, expected = request(*ALL, searchBuilder=tree), 'invalid_date'
+    refused(table.fetch_sync(params, session), expected)
+
+
+def test_a_group_left_with_no_criterion_by_range_mistakes_is_left_out_whole(session: Session):
+    """A criterion that holds a mistake is left out of what is built. A group whose criteria all are must go with
+    them: an AND or OR of nothing is no condition SQLAlchemy takes without complaint."""
+    tree = {
+        'criteria': [
+            {'condition': '=', 'origData': 'name', 'value': ['Bob']},
+            {
+                'logic': 'OR',
+                'criteria': [
+                    {'condition': '=', 'origData': 'age', 'value': ['40000']},
+                    {'condition': '>', 'origData': 'age', 'value': ['50000']},
+                ],
+            },
+        ]
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session), 'invalid_number')
+
+
+def logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The event of each record, after checking that each is a WARNING of the library's logger (SPEC-E12.1)."""
+    assert all((record.name, record.levelname) == ('datatables_backend', 'WARNING') for record in caplog.records), (
+        caplog.records
+    )
+    return [record.msg for record in caplog.records]
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'search': {'value': 'a\x00b'}},
+        {'search': {'value': 'a\tb'}},  # a control character that is also white space
+        {'search': {'value': 'a\x7fb'}},  # and one above the first 32
+        {'column_search': {'name': {'value': 'a\x00b'}}},
+        {'column_search': {'name': {'value': '^(x|a\x00b)$', 'regex': True}}},
+        # On a number column, where the entry would otherwise be refused as no number, with another code
+        {'column_search': {'age': {'multi_values': ['31', 'a\x00b']}}},
+        criterion('name', '=', 'a\x00b'),
+    ],
+    ids=['global-nul', 'global-tab', 'global-delete', 'column', 'categorical', 'multi_values', 'criterion'],
+)
+def test_a_control_character_is_refused_wherever_a_value_is_read(session: Session, body: dict[str, Any]):
+    """SPEC-F15.1, SPEC-F15.2: a NUL once cut a LIKE pattern short on SQLite and matched the wrong rows."""
+    assert 'control character' in refused(table.fetch_sync(request(*ALL, **body), session))
+
+
+def test_a_line_break_in_a_search_is_not_a_control_character_to_refuse(session: Session):
+    """SPEC-F15.3: LF and CR are what a pasted search holds."""
+    assert ids(table.fetch_sync(request(*ALL, search={'value': 'zz\nzz\r'}), session)) == []
+
+
+def test_a_value_a_condition_does_not_read_is_not_checked(session: Session):
+    """SPEC-F36.2's part of PRD-F15: `null` reads no value, so one holding a NUL cannot be the user's mistake."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('age', 'null', 'a\x00b')), session)) == [3]
+
+
+def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged(
+    session: Session, caplog: pytest.LogCaptureFixture
+):
+    """SPEC-E3.1, SPEC-E13.3: step 1 before step 2, and a request holding two mistakes is logged once, for the one
+    answered. The number mistake is the one found first: its criterion comes before the one holding the NUL."""
+    tree = {
+        'criteria': [
+            {'condition': '=', 'origData': 'age', 'value': ['abc']},
+            {'condition': '=', 'origData': 'name', 'value': ['a\x00b']},
+        ]
+    }
+    with caplog.at_level(logging.DEBUG):
+        assert 'control character' in refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+    assert logged(caplog) == ['datatables_control_character']
+
+
+@pytest.mark.xfail(
+    reason='PRD-F14, PRD-F38: search text of more than 16 words and a SearchBuilder tree more than 8 groups deep are '
+    'not refused yet, so the date or number mistake beside them is the one answered (SPEC-E3.2, issue #27)',
+    strict=True,
+    raises=AssertionError,
+)
+@pytest.mark.parametrize('bound', ['words', 'depth'])
+def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(session: Session, bound: str):
+    """SPEC-E3.2: step 1 before step 2."""
+    if bound == 'words':
+        params = request(*ALL, search={'value': ' '.join(['w'] * 17)}, **criterion('born', '=', '2024-13-01'))
+    else:
+        tree: dict[str, Any] = {'criteria': [{'condition': '=', 'origData': 'age', 'value': ['abc']}]}
+        for _ in range(9):
+            tree = {'criteria': [tree]}
+        params = request(*ALL, searchBuilder=tree)
+    refused(table.fetch_sync(params, session))
+
+
+@pytest.mark.parametrize(
+    ('names', 'body', 'event'),
+    [
+        # A column search with a value, on a name the server did not declare
+        (
+            (*ALL, 'MARKER_NAME'),
+            {'column_search': {'MARKER_NAME': {'value': 'MARKER_VALUE'}}},
+            'datatables_name_not_declared',
+        ),
+        (ALL, criterion('age', '=', 'MARKER_VALUE'), 'datatables_number_unreadable'),
+    ],
+    ids=['undeclared-column', 'number'],
+)
+def test_a_user_error_is_logged_exactly_once_without_what_the_client_sent(
+    session: Session, caplog: pytest.LogCaptureFixture, names: tuple[str, ...], body: dict[str, Any], event: str
+):
+    """SPEC-E13.1, SPEC-E10.1, SPEC-E11.1: one WARNING per refusal, under an event of its own that the same case
+    logs again, and neither the record nor the reason holds the value or the undeclared name."""
+    params = request(*names, **body)
+    with caplog.at_level(logging.DEBUG):
+        first, second = table.fetch_sync(params, session), table.fetch_sync(params, session)
+    assert first.error_code is not None
+    assert first == second
+    assert logged(caplog) == [event, event]
+    assert 'MARKER' not in str(first.error)
+    assert 'MARKER' not in repr([vars(record) for record in caplog.records])
+
+
+async def test_the_async_fetch_answers_and_logs_a_user_error_too(
+    async_session: AsyncSession, caplog: pytest.LogCaptureFixture
+):
+    """SPEC-E1.1 says `fetch` and `fetch_sync`: each has its own place where the mistake becomes an answer."""
+    with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
+        response = await table.fetch(request(*ALL, **criterion('age', '=', 'abc')), async_session)
+    assert refused(response, 'invalid_number')
+    assert logged(caplog) == ['datatables_number_unreadable']
+
+
+def test_a_user_error_runs_no_statement(session: Session):
+    """SPEC-E7.1, SPEC-A6.1: also when the mistake is found only while the query is built (the number's range)."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    refused(table.fetch_sync(request(*ALL, **criterion('age', '=', '40000')), session), 'invalid_number')
+    assert statements == []
+
+
+def test_a_failure_that_is_not_the_users_raises(session: Session):
+    """SPEC-E5.2, SPEC-E8.1: a table the database does not have is the server's failure; it is never answered, as
+    `query_failed` or as an empty page."""
+    missing = Table('dtb_test_tags', MetaData(), SQLColumn('code', String(5), primary_key=True))
+    with pytest.raises(DBAPIError):
+        SQLTable(missing, [Column('code')]).fetch_sync(request('code'), session)
+
+
+def test_row_values_come_back_as_the_database_gives_them(session: Session):
+    """SPEC-R7.1: no HTML escaping and no conversion to text. A date stays a date, a number a number, NULL None."""
+    session.execute(people.update().where(people.c.id == 3).values(name='<b>x</b> & "y"', born=date(2024, 3, 5)))
+    response = table.fetch_sync(request(*ALL, start=2, length=1), session)
+    assert response.data == [
+        {
+            'id': 3,
+            'name': '<b>x</b> & "y"',
+            'email': '',
+            'age': None,
+            'born': date(2024, 3, 5),
+            'seen': None,
+            'team': 'red',
+        }
+    ]
 
 
 def test_many_multi_select_values_still_run(session: Session):
@@ -650,11 +883,6 @@ def test_a_join_works_as_a_source(session: Session):
 
 
 def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Session):
-    from sqlalchemy import Column as SQLColumn
-    from sqlalchemy import MetaData
-    from sqlalchemy import String
-    from sqlalchemy import Table
-
     tags = Table(
         'dtb_test_tags', MetaData(), SQLColumn('code', String(5), primary_key=True), SQLColumn('kind', String(5))
     )
@@ -666,14 +894,16 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
 
 
 def test_a_column_search_with_both_a_value_and_multi_values_is_refused(session: Session):
+    """SPEC-F39.1, and SPEC-E3.8 on a number column: the form is refused, and the value in the list, which is no
+    number, is never read."""
     params = parse_request(
         [
-            ('columns[0][data]', 'name'),
-            ('columns[0][search][value]', 'Ann'),
-            ('columns[0][search][multi_values][]', 'Bob'),
+            ('columns[0][data]', 'age'),
+            ('columns[0][search][value]', 'abc'),
+            ('columns[0][search][multi_values][]', 'x'),
         ]
     )
-    assert refused(table.fetch_sync(params, session))
+    assert 'not both' in refused(table.fetch_sync(params, session))
 
 
 def test_a_global_search_with_multi_values_is_refused(session: Session):

@@ -82,10 +82,17 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   SQL reads the type from the column unless it is declared (a MySQL `TINYINT(1)` read by reflection is a number, so
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
   any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
-- **The user's mistakes come back as a response, not an exception.** An unknown column, a value that is not a number,
-  date or boolean, a condition the column's type does not take, or a regex search is answered with
-  `error_code: "invalid_filter"` and a reason that never quotes the input. Every other failure raises, so the app
-  decides how to report it; `DTResponse.query_failed(draw)` gives the usual shape.
+- **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
+  a reason that never quotes the input: `invalid_number` or `invalid_date` for a value the column cannot read or
+  hold, `page_out_of_range` for an OpenSearch page beyond the result window, and `invalid_filter` for any other (an
+  unknown column, a value that is not a boolean, a control character, a condition the column's type does not take,
+  a regex search). When a request holds several, a control character is answered first, then a number or date
+  mistake, then any other, and the page last. Every other failure raises, so the app decides how to report it;
+  `DTResponse.query_failed(draw)` gives the usual shape.
+- **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
+  `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
+  request's own when that could be read. The FastAPI dependency answers it with 422 and
+  `{"detail": {"message": ..., "draw": ...}}`.
 - **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), and LIKE and wildcard
   characters in search values are escaped.
 
