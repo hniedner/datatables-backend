@@ -59,6 +59,15 @@ dev = [
     "starlette>=1.2",
     "zizmor>=1.32",
 ]
+# The drivers for the container tests (tests/conftest.py, DTB_SQL_URL): one implementation per database for sync and
+# async alike. SQL Server also needs Microsoft's ODBC Driver 18 on the machine.
+containers = [
+    "aiomysql>=0.2",
+    "aioodbc>=0.5",
+    "psycopg[binary]>=3.2",
+    "pymysql>=1.1",
+    "pyodbc>=5.2",
+]
 
 [tool.hatch.version]
 path = "src/datatables_backend/__init__.py"
@@ -86,8 +95,10 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
-"scripts/**" = ["S603", "S607", "T201"]
-"scripts/test_*.py" = ["S101", "PLR2004"]
+"scripts/trace_check.py" = ["T201"]
+"scripts/private_word_scan.py" = ["S603", "S607", "T201"]
+"scripts/test_*.py" = ["S101", "S603"]
+"scripts/test_private_word_scan.py" = ["S607"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -98,6 +109,7 @@ known-first-party = ["datatables_backend"]
 include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
+failOnWarnings = true
 
 [tool.coverage.run]
 # The word-scan tests run the script as a subprocess, as its hooks do; this measures those runs too.

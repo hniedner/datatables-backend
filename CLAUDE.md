@@ -10,27 +10,14 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest`
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
-- `uv run pre-commit install` once per clone (pre-commit, commit-msg, pre-push and post-checkout hooks);
-  `uv run pre-commit run --all-files` runs every hook by hand.
-- `uv run pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
-  --compare-branch=origin/main --fail-under=95` checks the changed lines close to CI (CI compares with the PR base or
-  the push's previous commit).
-
-The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names (one
-word per line). Without it they fail closed ("could not check"), so set it before committing. CI skips them; it has
-no list. `uv run python scripts/private_word_scan.py --history` scans every ref name and tag and every object in the
-repository, reachable or not, since a push can send any object and pre-commit names one pushed ref to the hook. A
-leftover object holding a word (a dropped commit) blocks pushes until `git reflog expire --expire-unreachable=now
---all` and `git gc --prune=now` drop it; `refs/stash` holds a stash, so `git stash drop` it first. Every commit and
-every checkout also fails while a local branch or tag name holds a word, since a push that only adds a ref runs no
-pre-push hook. Not covered: `git branch <name>` or `git tag` followed directly by a push with no commit or checkout
-between, and a push naming a remote ref that no local ref holds with no new commit
-(`git push origin HEAD:refs/heads/<name>`); with a new commit, the pre-push scan reads the remote ref name too. Also
-not covered: the remote names of the other refs in one push, which pre-commit does not pass (their objects are
-scanned). The commit-message scan recognises git's English template only; under another `LC_MESSAGES` it can wrongly
-block a commit, never leak. A known gap of the commit-msg hook: a `-m`/`-F` message that itself holds git's template
-lines (the scissors line with its warning, or the editor hint) is cut or stripped by the scan while git stores it
-whole, so a word after them passes that hook; the pre-push scan reads the stored message and refuses it.
+- Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
+  `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb`,
+  `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and
+  `DTB_SQL_DIALECT` its dialect, and on PostgreSQL `PGTZ` and `TZ` naming zones far from UTC (CI uses
+  `Pacific/Kiritimati` and `America/Adak`), or the timezone test fails; or `uv run pytest
+  tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC Driver 18. The
+  SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test owns the index
+  `dtb-test-docs`: each run drops them first.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and
@@ -61,23 +48,29 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - The core (`protocol`, `columns`, `_plan`, `rows`, `cache`) imports only Pydantic and the standard library. Each
   backend imports only its own extra. `sqlalchemy.ext.asyncio` is imported only under `TYPE_CHECKING`, because it
   needs `greenlet`.
-- Every user mistake is found in `_plan.plan()` or while a backend builds its query, before anything runs. It is
-  raised as `InvalidFilter` and answered as `invalid_filter`. Any other failure raises.
+- Every user mistake is found while parsing, planning (`_plan.plan()`) or building the query, before the page is
+  queried; only the counts of PRD-C11 may run first. It is answered with one of the stable codes of PRD-E2
+  (`invalid_filter`, `invalid_date`, `invalid_number`, `page_out_of_range`), as HTTP 200 in the FastAPI adapter
+  (PRD-A11). A structural error raises `MalformedRequest`, answered 422. Any other failure raises.
 - A message or log line never contains a search value or a name the client sent. A name is logged only when the
   server declared it.
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
-  aiosqlite) and against a recording OpenSearch client. Before relying on a new test, check that it fails when the
-  behaviour is broken.
+  aiosqlite) and against a recording OpenSearch client; CI also runs the SQL tests on PostgreSQL, MySQL and SQL
+  Server (`DTB_SQL_URL`, `DTB_SQL_ASYNC_URL`, `DTB_SQL_DIALECT`) and `tests/test_opensearch_live.py` on OpenSearch
+  (`DTB_OPENSEARCH_URL`). A backend gap the PRD has yet to close is pinned as today's result, or as a `strict=True`
+  xfail naming the expected exception, citing the PRD requirement; nothing is skipped silently. Before relying on a
+  new test, check that it fails when the behaviour is broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
 
-## Status (2026-11-19)
+## Status (2026-11-20)
 
-- **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Pushing and
-  publishing still need the user's explicit OK.
-- **Next: milestone 2.**
-  - Done: GitHub Actions CI in `.github/workflows/ci.yml` covers lint, types, tests on 3.12–3.15, the minimum
-    versions, and an install-isolation job that imports each extra without the others.
-  - Add container tests against PostgreSQL, SQL Server and OpenSearch.
-  - Port the original application's acceptance cases (paths in `CLAUDE.local.md`) as behaviour tests.
+- **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Publishing still
+  needs the user's explicit OK.
+- **PRD draft 2 is approved and merged** (`docs/PRD.md`). The roadmap lives in the GitHub milestones v0.1, v0.2, v0.3
+  and v1.0 and their issues.
+- **Done:** CI (lint, types, tests on 3.12–3.15, minimum versions, install isolation) and container tests on
+  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.9.
+- **Next (v0.2):** specs with a trace check (#9), then the PRD v2 changes test-first (#10–#14) and the acceptance
+  suite (#15, sources in `CLAUDE.local.md`).
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.
