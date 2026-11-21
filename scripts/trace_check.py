@@ -24,7 +24,7 @@ Findings, one line each on stderr, exit status 1:
 
 An unreadable PRD or specs directory is a usage error (exit status 2).
 
-Usage: trace_check.py [--prd docs/PRD.md] [--specs docs/specs]
+Usage: trace_check.py [--prd docs/PRD.md] [--specs spec]
 """
 
 import argparse
@@ -134,7 +134,7 @@ def check(prd_name: str, prd_text: str, files: list[tuple[str, str]]) -> tuple[l
 def main() -> int:
     parser = argparse.ArgumentParser(description='Check that the specs trace to the PRD.')
     parser.add_argument('--prd', type=Path, default=Path('docs/PRD.md'))
-    parser.add_argument('--specs', type=Path, default=Path('docs/specs'))
+    parser.add_argument('--specs', type=Path, default=Path('spec'))
     args = parser.parse_args()
     try:
         prd_text = args.prd.read_text(encoding='utf-8')

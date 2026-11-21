@@ -1,9 +1,23 @@
 # Specs
 
-One file per PRD section (`docs/PRD.md`, section 4): P, D, F, O, C, E, R, A, Q. Each spec statement states one
-observable behaviour, in the form a behavioural test checks it: the request goes through `parse_request`, then
-`fetch` or `fetch_sync`, or through the FastAPI adapter for PRD-A9 to PRD-A11. Section Q is checked in CI or in
-review. This README holds no statements.
+One file per PRD section (`docs/PRD.md`, section 4), named by its topic. The letter in a statement id
+(`SPEC-F9.1`) names the file:
+
+| Letter | File | Topic |
+|---|---|---|
+| P | `parsing.md` | parsing |
+| D | `column-declaration.md` | column declaration |
+| F | `filtering-and-search.md` | filtering and search |
+| O | `ordering.md` | ordering |
+| C | `counts-and-paging.md` | counts and paging |
+| E | `errors.md` | errors |
+| R | `rows-and-response.md` | rows and the response |
+| A | `api.md` | API |
+| Q | `packaging-and-quality.md` | packaging and quality |
+
+Each spec statement states one observable behaviour, in the form a behavioural test checks it: the request goes
+through `parse_request`, then `fetch` or `fetch_sync`, or through the FastAPI adapter for PRD-A9 to PRD-A11. Section
+Q is checked in CI or in review. This README holds no statements.
 
 ## Statement form
 
