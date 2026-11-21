@@ -269,12 +269,13 @@ def _cased_beyond_ascii(value: str) -> bool:
 def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
     that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one whose
-    pattern would be longer than a server allows by default, which the server would refuse. Every ASCII character of
+    pattern would be longer than a server allows by default, which the server would refuse. Every character of
     ``value`` that is not a letter or a digit gets a backslash, which makes it that character and nothing else, so
-    no operator of the syntax can come from a value."""
+    no operator of the syntax can come from a value; nor from a mark outside ASCII that a field's normalizer turns
+    into an ASCII one (a fullwidth bracket), since the server normalizes the pattern."""
     if not _cased_beyond_ascii(value):
         return None
-    literal = ''.join(char if char.isalnum() or not char.isascii() else f'\\{char}' for char in value)
+    literal = ''.join(char if char.isalnum() else f'\\{char}' for char in value)
     pattern = f'{before}{literal}{after}'
     if len(pattern.encode('utf-16-le')) // 2 > MAX_REGEX_LENGTH:
         return None

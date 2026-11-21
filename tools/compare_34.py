@@ -3,6 +3,7 @@ of `main` with the branch's (the job runs it once with each on PYTHONPATH and pr
 
 import os
 import sys
+import time
 from typing import Any
 
 from opensearchpy import OpenSearch
@@ -29,7 +30,6 @@ LONG_S = chr(0x17F) + 'un'  # the long s, which Unicode folds to s
 FOLDED_TO_ASCII = {'id': 'y8', 'title': 'Folded', 'body': 'folded', 'label': [KELVIN, LONG_S]}
 VALUES = [
     'kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S,  # letters outside ASCII whose other case is an ASCII letter
-    'Ä' + '.' * 600, 'ä' + 'b' * 1200,  # values whose pattern would pass the default limit of 1,000
     'apple', 'APPLE', 'pfel', 'PFEL', 'abc', LONGEST, LONGEST.lower(),  # ASCII
     'äpfel', 'ÄPFEL', 'äpf', 'ÄPF', 'bär', 'BÄR', 'Bär', 'straße', 'STRAẞE', 'izmir', 'İZMİR', 'i̇zmi̇r',  # cased
     'ǅungla', 'ǆungla', 'Ǆungla',  # a titlecase letter and its two other cases
@@ -89,6 +89,7 @@ def regex_length(client: OpenSearch) -> None:
 
 
 FULLWIDTH = {'(': 0xFF08, '*': 0xFF0A, '~': 0xFF5E, '?': 0xFF1F, '[': 0xFF3B, '.': 0xFF0E, '|': 0xFF5C}
+FULLWIDTH |= {'(a) as one character': 0x249C, '(1) as one character': 0x2474}
 
 
 def normalizer(client: OpenSearch) -> None:
@@ -103,7 +104,7 @@ def normalizer(client: OpenSearch) -> None:
     body = {'settings': {'number_of_replicas': 0, 'analysis': analysis}, 'mappings': {'properties': fields}}
     client.indices.create(index=name, body=body)
     stored = {f'w{code:04X}': f'Ä{chr(code)}b' for code in FULLWIDTH.values()}
-    stored |= {'dxb': 'Äxb', 'db': 'Äb', 'ddb': 'ÄÄb', 'd': 'Ä', 'b': 'b', 'dxxb': 'Äxxb'}
+    stored |= {'dxb': 'Äxb', 'db': 'Äb', 'ddb': 'ÄÄb', 'd': 'Ä', 'b': 'b', 'dxxb': 'Äxxb', 'dab': 'Äab', 'd1b': 'Ä1b'}
     for key, value in stored.items():
         client.index(index=name, id=key, body={'id': key, 'norm': value, 'plain': value})
     client.indices.refresh(index=name)
@@ -131,6 +132,51 @@ def normalizer(client: OpenSearch) -> None:
                     sys.stderr.write(f'NORM raw regexp {field} fullwidth {ascii_mark} {label} -> {outcome}\n')
     finally:
         client.indices.delete(index=name)
+
+
+def long_values(client: OpenSearch) -> None:
+    """Values far longer than a search text may be, last, since one can exhaust the heap: what the server answers,
+    with its reason, and the heap around it."""
+
+    def heap() -> str:
+        stats: Any = client.nodes.stats(metric='jvm,breaker')
+        node = next(iter(stats['nodes'].values()))
+        used = node['jvm']['mem']['heap_used_in_bytes'] / 1048576
+        return f'{used:.0f} MB, parent breaker tripped {node["breakers"]["parent"]["tripped"]}'
+
+    def send(query: dict[str, Any]) -> str:
+        try:
+            done: Any = client.search(index=INDEX, body={'query': query, 'size': 0})
+        except TransportError as failure:
+            info: Any = failure.info
+            try:
+                cause = info['error']['root_cause'][0]
+                return f'RAISED {failure.status_code} {cause["type"]}: {str(cause["reason"])[:240]}'
+            except (KeyError, IndexError, TypeError):
+                return f'RAISED {failure.status_code} {info!r}'[:320]
+        return f'answered, took {done["took"]} ms'
+
+    field = 'label.keyword'
+    forms = {
+        'term plain': lambda v: {'term': {field: v}},
+        'term ci': lambda v: {'term': {field: {'value': v, 'case_insensitive': True}}},
+        'wildcard ci *v*': lambda v: {'wildcard': {field: {'value': f'*{v}*', 'case_insensitive': True}}},
+        'regexp ci .*v.*': lambda v: {'regexp': {field: {'value': f'.*{v}.*', 'case_insensitive': True}}},
+    }
+    for form, build in forms.items():
+        for length in (255, 600, 1200, 2400):
+            if form.startswith('regexp') and length > 900:
+                continue  # over index.max_regex_length, refused for its length
+            time.sleep(5)  # a rested node: whatever the query before left can be collected
+            before = heap()
+            outcome = send(build('b' * length))
+            after = heap()
+            waited = 0
+            while send({'term': {field: 'apple'}}).startswith('RAISED') and waited < 60:
+                time.sleep(1)
+                waited += 1
+            later = f'a small query then failed for {waited} s' if waited else 'a small query then answered at once'
+            sys.stderr.write(f'LONG {form} | {length} letters -> {outcome} [heap {before} -> {after}; {later}]\n')
 
 
 def main() -> None:
@@ -162,6 +208,8 @@ def main() -> None:
                 bodies['list'] = {'column_search': {'label': {'multi_values': [value, 'ÄPFEL']}}}
                 for kind, body in bodies.items():
                     sys.stdout.write(f'{name} | {kind} | {number} {shown} -> {answer(client, table, body)}\n')
+        if 'main-src' not in str(datatables_backend.__file__):  # raw queries: once is enough
+            long_values(client)
     finally:
         client.indices.delete(index=INDEX)
 

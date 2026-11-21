@@ -389,11 +389,12 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
         ('contains', 'ä.b', '.*ä\\.b.*'),
         ('starts', 'b.ä', 'b\\.ä.*'),  # the letter is not the first character
         ('ends', 'B.Ä', '.*B\\.Ä'),  # nor a small one
+        ('=', f'ä{chr(0xFF08)}', f'ä\\{chr(0xFF08)}'),  # a fullwidth bracket, which a normalizer can make a `(`
     ],
 )
 def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, value: str, pattern: str):
-    """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. The value's dot gets a
-    backslash, and the pattern is open where the condition is."""
+    """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. Every character of the
+    value that is not a letter or a digit gets a backslash, and the pattern is open where the condition is."""
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion('id', condition, value)), client)
     assert query(client) == [{'regexp': {'id': {'value': pattern, 'case_insensitive': True}}}]

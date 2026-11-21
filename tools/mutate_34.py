@@ -13,7 +13,7 @@ import pytest
 from tests.test_opensearch_live import OPERATORS
 from tests.test_opensearch_live import PUNCTUATION
 
-RULE = 'char.isalnum() or not char.isascii()'
+RULE = 'char.isalnum()'
 FUTURE = 'from __future__ import annotations\n'
 
 
