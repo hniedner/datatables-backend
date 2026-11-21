@@ -1,0 +1,123 @@
+# Install with `uv run pre-commit install` (installs the pre-commit, commit-msg, pre-push and post-checkout hooks).
+# Tools that are Python packages run through `uv run --frozen`, so uv.lock pins them.
+default_install_hook_types: [pre-commit, commit-msg, pre-push, post-checkout]
+default_stages: [pre-commit]
+
+repos:
+  # The private-word hooks run first, and each stops the run when it fails (`fail_fast`): other hooks print the paths
+  # they are given (trailing-whitespace's "Fixing <name>"), which would show a word-named file in full.
+  # The word list lives outside the repository (DTB_PRIVATE_WORDS names it); without it the hooks fail closed.
+  # CI has no list and skips these hooks by id.
+  - repo: local
+    hooks:
+      - id: private-words
+        name: private-word scan (files)
+        entry: uv run --frozen python scripts/private_word_scan.py --files # a staged file may be named `--refs`
+        language: system
+        types: [] # the default [file] is ANDed with types_or, and a symlink is tagged `symlink` only
+        types_or: [file, symlink]
+        fail_fast: true
+      - id: private-words-message
+        name: private-word scan (commit message)
+        entry: uv run --frozen python scripts/private_word_scan.py --message
+        language: system
+        stages: [commit-msg]
+        fail_fast: true
+      # A push that only adds a ref (a new branch or tag at an existing commit) brings no commit, so pre-commit runs
+      # no pre-push hook for it. A word in a local ref name, or in an object a tag or a ref to a blob or tree brings
+      # (a wrapped tag, a tagged blob or tree) that no remote-tracking ref holds, fails every commit and every
+      # checkout: `git switch -c NAME` exits non-zero, so `git switch -c NAME && git push` stops before the push. Git
+      # cannot undo the checkout itself. Still unscanned: `git branch NAME` or `git tag` followed straight by a push,
+      # with no commit or checkout between, and a push to a remote ref no local ref holds (`git push origin HEAD:NAME`)
+      # that brings no new commit. With a new commit, the pre-push hook below scans that remote ref name too.
+      - id: private-words-refs
+        name: private-word scan (local refs and what tags bring)
+        entry: uv run --frozen python scripts/private_word_scan.py --refs
+        language: system
+        stages: [pre-commit, post-checkout]
+        always_run: true
+        pass_filenames: false
+        fail_fast: true
+      # Before a push: every ref name and tag, and every object in the repository, reachable or not, since a push can
+      # send any object and pre-commit names one pushed ref to the hook. That covers commits made by a rebase or
+      # cherry-pick, which skip the commit-stage hooks, and merge results, whose files no commit-stage hook scans.
+      # The remote names of the other refs in one push are not passed, so not scanned. A leftover object holding a word
+      # blocks pushes until `git reflog expire --expire-unreachable=now --all` and `git gc --prune=now` drop it.
+      - id: private-words-history
+        name: private-word scan (everything a push publishes)
+        entry: uv run --frozen python scripts/private_word_scan.py --history
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
+        fail_fast: true
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        stages: [pre-commit] # the manifest also lists pre-push
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+        args: [--assume-in-merge] # otherwise it checks only during a merge
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--enforce-all] # otherwise it checks only files being added
+        stages: [pre-commit]
+        exclude: ^uv\.lock$ # generated, and already near the 500 KB limit; it grows with every dependency
+
+  # The gitleaks version is pinned in three places that move together: this rev, and GITLEAKS_VERSION and
+  # GITLEAKS_SHA256 in ci.yml's `secrets` job. This hook scans staged changes only (`--staged`).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --frozen ruff check
+        language: system
+        types_or: [python, pyi]
+      - id: basedpyright
+        name: basedpyright
+        entry: uv run --frozen basedpyright
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+      - id: trace-check
+        name: specs trace to the PRD
+        entry: uv run --frozen python scripts/trace_check.py
+        language: system
+        files: ^docs/(PRD\.md|specs/)
+        pass_filenames: false
+      - id: uv-lock
+        name: uv.lock matches pyproject.toml
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+      - id: actionlint
+        name: actionlint
+        entry: uv run --frozen actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+      - id: zizmor
+        name: zizmor
+        entry: uv run --frozen zizmor --offline # no online audits (those query GitHub), so it runs without a token
+        language: system
+        files: ^\.github/
+        types: [yaml]

@@ -42,18 +42,23 @@ Homepage = "https://github.com/hniedner/datatables-backend"
 
 [dependency-groups]
 dev = [
+    "actionlint-py>=1.7.12",
     "aiosqlite>=0.20",
     "basedpyright>=1.29",
+    "diff-cover>=11",
     "fastapi>=0.133",
     "httpx2>=2.16",
     "opensearch-py[async]>=2.6",
+    "pre-commit>=4.7",
     "pytest>=8.3",
-    "python-multipart>=0.0.9",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
     "ruff>=0.8",
     "sqlalchemy[asyncio]>=2.0.31",
     "starlette>=1.2",
+    "zizmor>=1.32",
 ]
 # The drivers for the container tests (tests/conftest.py, DTB_SQL_URL): one implementation per database for sync and
 # async alike. SQL Server also needs Microsoft's ODBC Driver 18 on the machine.
@@ -92,7 +97,9 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
 "scripts/trace_check.py" = ["T201"]
+"scripts/private_word_scan.py" = ["S603", "S607", "T201"]
 "scripts/test_*.py" = ["S101", "S603"]
+"scripts/test_private_word_scan.py" = ["S607"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -104,3 +111,9 @@ include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 failOnWarnings = true
+
+[tool.coverage.run]
+# The word-scan tests run the script as a subprocess, as its hooks do; this measures those runs too.
+patch = ["subprocess"]
+# The changed-line gate measures the scripts, not their tests.
+omit = ["*/scripts/test_*.py"]  # relative to each measured process's cwd, so a glob, not a path

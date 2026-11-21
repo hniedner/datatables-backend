@@ -1,0 +1,52 @@
+name: Dependency review
+
+# Pull requests only: the ruleset on main admits changes through pull requests alone.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fails a pull request that adds a dependency with a known vulnerability (any severity) or a licence outside the
+  # list, in runtime and development scopes alike. GitHub's dependency graph reads uv.lock, although its docs list only
+  # pip and Poetry for Python: measured 2026-11-19, the repository's SBOM (GET .../dependency-graph/sbom) held 50
+  # packages at the versions uv.lock pins.
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: review
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: low
+          fail-on-scopes: runtime, development
+          allow-licenses: >-
+            MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD, ISC, PSF-2.0, Python-2.0, Python-2.0.1, MPL-2.0,
+            Unlicense
+          # The dependency graph's licence for aiohappyeyeballs and protobuf is wider than the package's own:
+          # aiohappyeyeballs declares PSF-2.0 but is listed with GPL-1.0-or-later from a file scan; protobuf is
+          # BSD-3-Clause with a scancode reference. The action matches these by name only, so the exemption covers
+          # every version; scripts/test_dependency_review_exemptions.py fails when the locked version changes, forcing
+          # a licence re-check of the new one.
+          # psycopg and psycopg-binary are LGPL-3.0-only and test-only: the PostgreSQL driver of the `containers`
+          # dependency group, never a requirement of the wheel. The same test fails if anything the wheel requires
+          # (its dependencies and extras) comes to depend on either.
+          allow-dependencies-licenses: >-
+            pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf, pkg:pypi/psycopg, pkg:pypi/psycopg-binary
+      # The action only lists a dependency whose licence it cannot detect; it fails on forbidden and unresolved
+      # licences alone. Its invalid-license-changes output (empty when no dependency changed) holds them under
+      # `unlicensed`, without the exempted packages above.
+      - name: Fail on a dependency with no detected licence
+        env:
+          CHANGES: ${{ steps.review.outputs.invalid-license-changes }}
+        run: |
+          if [ -z "$CHANGES" ]; then echo 'No dependency changes.'; exit 0; fi
+          jq -r '.unlicensed[] | "\(.name) \(.version): no licence detected"' <<< "$CHANGES"
+          test "$(jq '.unlicensed | length' <<< "$CHANGES")" -eq 0

@@ -50,6 +50,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Only the coverage leg (3.14, as in the two `if:`s below) needs history: diff-cover compares with the base.
+          fetch-depth: ${{ matrix.python == '3.14' && '0' || '1' }}
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python }}
@@ -64,7 +66,59 @@ jobs:
           print('python', version)
           assert version.startswith(os.environ['PY'] + '.'), version
           EOF
-      - run: uv run --frozen pytest
+      - if: matrix.python != '3.14'
+        run: uv run --frozen pytest
+      # One leg (3.14, named in both `if:`s and in fetch-depth above) measures line and branch coverage of the library
+      # and scripts/ (the word scan's subprocess runs included): the total is reported, and the lines this change
+      # touches must be 95 % covered. The change is the pull request against its base, or a push against the commit
+      # before it.
+      - name: Tests with branch coverage, then coverage of the changed lines
+        if: matrix.python == '3.14'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          uv run --frozen pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml --cov-report=term
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo "No previous commit for this push (a new branch): comparing with HEAD~1."
+            BASE=HEAD~1
+          fi
+          uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95
+
+  # Every pre-commit hook on every file, except the private-word scans, whose word list never leaves the owner's
+  # machine. gitleaks' hook scans staged changes only, which here is nothing; the `secrets` job scans the history.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - env:
+          SKIP: private-words,private-words-message,private-words-refs,private-words-history
+        run: uv run --frozen pre-commit run --all-files --show-diff-on-failure
+
+  # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
+  # nothing; this job scans what a push publishes. The release binary is checked against its published SHA-256.
+  # GITLEAKS_VERSION, GITLEAKS_SHA256 and the gitleaks rev in .pre-commit-config.yaml move together.
+  secrets:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: '8.30.1'
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL -o "$archive" "$release/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+      - run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts=--all .'
 
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
   # extra's module must import. With every extra and greenlet installed, importing them must not load a package another
@@ -382,7 +436,8 @@ jobs:
   # if every needed job (every matrix leg included) succeeded.
   gate:
     if: always()
-    needs: [lint, types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver, opensearch]
+    needs:
+      [lint, types, tests, pre-commit, secrets, install-isolation, minimum-versions, postgresql, mysql, sqlserver, opensearch]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded
