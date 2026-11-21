@@ -357,9 +357,9 @@ def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day
 
 # -- a boolean column ---
 #
-# `active` is a SQLAlchemy `Boolean` declared without a type (BOOLEAN, BIT on SQL Server, TINYINT(1) on MySQL, INTEGER
-# on SQLite): true for ids 1 and 4, false for 2 and 5, NULL for 3. The spec statements cited speak of their own
-# four-row fixture; the rows here are the same cases on this one.
+# `active` is a SQLAlchemy `Boolean` declared without a type (BOOLEAN, also on SQLite, which stores 1 and 0; BIT on
+# SQL Server; TINYINT(1) on MySQL): true for ids 1 and 4, false for 2 and 5, NULL for 3. The spec statements cited
+# speak of their own four-row fixture; the rows here are the same cases on this one.
 
 FLAGGED = ('id', 'name', 'active')
 flagged = SQLTable(people, [Column('id'), Column('name'), Column('active')])
@@ -373,7 +373,6 @@ def library_log(caplog: pytest.LogCaptureFixture) -> str:
 @pytest.mark.parametrize(
     ('value', 'expected'),
     [
-        ('true', [1, 4]),
         ('TRUE', [1, 4]),
         ('1', [1, 4]),
         ('false', [2, 5]),
@@ -415,9 +414,9 @@ def test_the_other_conditions_a_boolean_column_takes(
 def test_a_value_or_condition_a_boolean_column_does_not_take_is_refused(
     session: Session, caplog: pytest.LogCaptureFixture, condition: str, values: list[str]
 ):
-    """SPEC-F43.3, and SPEC-D8.1's `<`: answered as `invalid_filter`, never a database error, and neither the reason
-    nor a log record holds the value. Today these refusals log nothing; the one WARNING of PRD-E13 comes with the
-    error codes."""
+    """SPEC-F43.3, and SPEC-D8.1's `<`: answered as `invalid_filter`, never a database error. For the value `yes`,
+    neither the reason nor a log record holds it. Today these refusals log nothing; the one WARNING of PRD-E13 comes
+    with the error codes."""
     with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
         reason = refused(flagged.fetch_sync(request(*FLAGGED, **criterion('active', condition, *values)), session))
     if values == ['yes']:

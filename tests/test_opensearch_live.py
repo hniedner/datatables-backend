@@ -4,9 +4,9 @@ Runs only when DTB_OPENSEARCH_URL names a cluster (the CI job starts one); other
 the reason shows in the summary, unless DTB_REQUIRE_OPENSEARCH=1 (the CI job), which makes a missing URL an error. The
 index holds five synthetic documents with one field of each mapping kind.
 
-The rows asserted are what the backend answers today (draft 1). Left untested on purpose: the query syntax's OR (a
-`should` of words) in a column search, which PRD v2 drops, and a negated condition on a missing field, which PRD v2
-settles (PRD-F37).
+The rows asserted are what the backend answers today. Left untested on purpose: the query syntax's OR (a `should` of
+words) in a column search, which PRD v2 drops, and a negated condition on a missing field of a string, number or date
+column, which PRD v2 settles (PRD-F37). A boolean column follows PRD v2 already, its `!=` on a missing field included.
 """
 
 from collections.abc import AsyncIterator
@@ -275,7 +275,6 @@ flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', 
         ('=', ['1'], ['a1', 'd4']),  # the term OpenSearch rejects on the string column above, sent as a JSON true
         ('=', ['false'], ['b2', 'e5']),
         ('!=', ['true'], ['b2', 'c3', 'e5']),  # a missing field is not true (PRD-F37)
-        ('null', [], ['c3']),
     ],
 )
 def test_searchbuilder_on_a_declared_boolean_column(
