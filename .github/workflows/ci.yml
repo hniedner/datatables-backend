@@ -76,6 +76,24 @@ jobs:
           done
           exit 1
       - run: uv run --frozen pytest -v tests/test_opensearch_live.py
-      - name: Measurements for issue 34 (throwaway)
+      - name: The source of main, to compare with
         if: always()
-        run: uv run --frozen python -m tools.measure_34
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: fa7de309812687aa4c0b8749b638c85e774cc06e
+          path: main-src
+      - name: Answers with main's source and with the branch's, and their diff
+        if: always()
+        run: |
+          PYTHONPATH="$PWD/main-src/src" uv run --frozen python -m tools.compare_34 > "$RUNNER_TEMP/before.txt"
+          uv run --frozen python -m tools.compare_34 > "$RUNNER_TEMP/after.txt"
+          wc -l "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt"
+          echo "--- diff, main (<) against the branch (>):"
+          diff "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt" || true
+          echo "--- end of diff"
+      - name: Each character left unescaped in turn
+        if: always()
+        run: |
+          uv run --frozen python -m tools.mutate_34 "$RUNNER_TEMP/mutated"
+          PYTHONPATH="$RUNNER_TEMP/mutated" uv run --frozen python -m tools.mutate_34
