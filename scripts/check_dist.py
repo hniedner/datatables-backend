@@ -6,13 +6,22 @@ the file the build reads it from.
 ``check_dist.py dist DIR`` passes when DIR holds exactly one sdist and one wheel of that version (and nothing else but
 the ``.gitignore`` that ``uv build`` writes there) and:
 
-- each file's metadata states that version;
+- each file's metadata states that version, and every requirement it states names a package that the committed
+  ``pyproject.toml`` declares as a dependency or under an extra;
 - every sdist member lies under ``datatables_backend-<version>/`` and is ``PKG-INFO`` or a file git tracks, so a
   build in a working checkout cannot ship an untracked file;
 - no sdist member has ``local``, ``.claude`` or ``CLAUDE.local.md`` as any part of its path, at any depth (the three at
   the top of the checkout are untracked today, so the rule above already covers them; they are named for a message
   that says what went wrong);
-- every wheel member lies under ``datatables_backend/`` or ``datatables_backend-<version>.dist-info/``.
+- every sdist member but ``PKG-INFO`` is, byte for byte, the file the commit (``HEAD``) holds;
+- every wheel member lies under ``datatables_backend/`` or ``datatables_backend-<version>.dist-info/``;
+- the wheel's ``datatables_backend/`` holds exactly the files git tracks under ``src/datatables_backend/``, each as
+  the commit holds it;
+- the wheel's dist-info holds nothing but ``METADATA``, ``WHEEL``, ``RECORD`` and ``licenses/LICENSE``, the last as
+  the commit holds ``LICENSE``.
+
+The build writes ``PKG-INFO``, ``METADATA``, ``WHEEL`` and ``RECORD`` itself, so git has nothing to compare them
+with: of their content only the version and the requirement names are checked.
 
 Findings go to stderr, one line each, with exit status 1. Run it from anywhere inside the checkout.
 """
@@ -25,11 +34,13 @@ import re
 import subprocess
 import sys
 import tarfile
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 NAME = 'datatables_backend'
 PRIVATE = ('local', '.claude', 'CLAUDE.local.md')
+GENERATED = ('METADATA', 'WHEEL', 'RECORD')  # the dist-info files the build writes itself
 
 
 def source_version() -> str:
@@ -43,13 +54,39 @@ def tracked_files() -> set[str]:
     return set(listed.stdout.split('\0')) - {''}
 
 
+def committed(path: str) -> bytes | None:
+    """The file as HEAD holds it; None when HEAD holds no such file."""
+    shown = subprocess.run(['git', '-C', str(ROOT), 'show', f'HEAD:{path}'], capture_output=True, check=False)
+    return shown.stdout if shown.returncode == 0 else None
+
+
+def canonical(name: str) -> str:
+    return re.sub(r'[-_.]+', '-', name).lower()
+
+
+def requirement_name(requirement: str) -> str:
+    return canonical(re.split(r'[^A-Za-z0-9._-]', requirement.strip(), maxsplit=1)[0])
+
+
+def declared_requirements() -> set[str]:
+    project = tomllib.loads((committed('pyproject.toml') or b'').decode())['project']  # no such file: a KeyError
+    extras = [r for requirements in project['optional-dependencies'].values() for r in requirements]
+    return {requirement_name(r) for r in [*project['dependencies'], *extras]}
+
+
 def check_tag(tag: str, version: str) -> list[str]:
     return [] if tag == f'v{version}' else [f'the tag {tag} is not v{version}, the version in the source']
 
 
 def check_metadata(what: str, text: str, version: str) -> list[str]:
-    stated = email.message_from_string(text)['Version']
-    return [] if stated == version else [f'{what}: its metadata states version {stated}, not {version}']
+    metadata = email.message_from_string(text)
+    stated = metadata['Version']
+    findings = [] if stated == version else [f'{what}: its metadata states version {stated}, not {version}']
+    required = {requirement_name(r) for r in metadata.get_all('Requires-Dist') or []}
+    return findings + [
+        f'{what}: its metadata requires {name}, which pyproject.toml does not declare'
+        for name in sorted(required - declared_requirements())
+    ]
 
 
 def check_sdist(path: Path, version: str, tracked: set[str]) -> list[str]:
@@ -58,26 +95,44 @@ def check_sdist(path: Path, version: str, tracked: set[str]) -> list[str]:
     with tarfile.open(path) as archive:
         for name in archive.getnames():
             inner = name.removeprefix(prefix)
+            member = archive.extractfile(name)
+            content = member.read() if member else None  # None: not a regular file
             if inner == name:
                 findings.append(f'sdist: {name} is outside {prefix}')
             elif set(PurePosixPath(inner).parts) & set(PRIVATE):
                 findings.append(f'sdist: {inner} is private and must stay out')
             elif inner == 'PKG-INFO':
-                member = archive.extractfile(name)
-                assert member is not None  # noqa: S101  a name that is not a regular file fails loudly
-                findings += check_metadata('sdist', member.read().decode(), version)
+                findings += check_metadata('sdist', (content or b'').decode(), version)
             elif inner not in tracked:
                 findings.append(f'sdist: {inner} is not tracked by git')
+            elif content != committed(inner):
+                findings.append(f'sdist: {inner} is not the file as committed')
         if prefix + 'PKG-INFO' not in archive.getnames():
             findings.append('sdist: no PKG-INFO')
     return findings
 
 
-def check_wheel(path: Path, version: str) -> list[str]:
+def check_wheel(path: Path, version: str, tracked: set[str]) -> list[str]:
     info = f'{NAME}-{version}.dist-info/'
+    findings: list[str] = []
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
-        findings = [f'wheel: {n} is outside {NAME}/ and {info}' for n in names if not n.startswith((f'{NAME}/', info))]
+        for name in names:
+            if name.startswith(f'{NAME}/'):
+                source = f'src/{name}'
+            elif name == f'{info}licenses/LICENSE':
+                source = 'LICENSE'
+            elif name.startswith(info):
+                if name.removeprefix(info) not in GENERATED:
+                    findings.append(f'wheel: {name} is not a file a wheel of this project holds')
+                continue
+            else:
+                findings.append(f'wheel: {name} is outside {NAME}/ and {info}')
+                continue
+            if archive.read(name) != committed(source):
+                findings.append(f'wheel: {name} is not {source} as committed')
+        package = {p.removeprefix('src/') for p in tracked if p.startswith(f'src/{NAME}/')}
+        findings += [f'wheel: {name} is missing' for name in sorted(package - set(names))]
         if info + 'METADATA' in names:
             findings += check_metadata('wheel', archive.read(info + 'METADATA').decode(), version)
         else:
@@ -90,7 +145,7 @@ def check_dist(directory: Path, version: str, tracked: set[str]) -> list[str]:
     found = {path.name for path in directory.iterdir()} - {'.gitignore'}
     if found != {sdist, wheel}:
         return [f'{directory} holds {sorted(found)}, not exactly {sdist} and {wheel}']
-    return check_sdist(directory / sdist, version, tracked) + check_wheel(directory / wheel, version)
+    return check_sdist(directory / sdist, version, tracked) + check_wheel(directory / wheel, version, tracked)
 
 
 def main(argv: list[str] | None = None) -> int:

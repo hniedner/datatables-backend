@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+import subprocess
 import tarfile
 import zipfile
 
@@ -12,28 +13,53 @@ import check_dist
 VERSION = check_dist.source_version()
 SDIST = f'datatables_backend-{VERSION}'
 INFO = f'datatables_backend-{VERSION}.dist-info'
-GOOD_SDIST = {f'{SDIST}/PKG-INFO': f'Name: x\nVersion: {VERSION}\n', f'{SDIST}/pyproject.toml': ''}
-GOOD_WHEEL = {'datatables_backend/__init__.py': '', f'{INFO}/METADATA': f'Name: x\nVersion: {VERSION}\n'}
+METADATA = (
+    f'Name: x\nVersion: {VERSION}\nRequires-Dist: pydantic>=2.10\n'
+    "Requires-Dist: Python_Multipart>=0.0.9; extra == 'fastapi'\n"
+)
 
 
-def write_sdist(path: Path, members: dict[str, str]) -> None:
+def git(*args: str) -> bytes:
+    return subprocess.run(['git', '-C', str(check_dist.ROOT), *args], capture_output=True, check=True).stdout
+
+
+# The artefacts of a clean build, with every file as the commit holds it.
+PACKAGE = git('ls-files', '-z', 'src/datatables_backend').decode().rstrip('\0').split('\0')
+GOOD_SDIST: dict[str, bytes] = {
+    f'{SDIST}/PKG-INFO': METADATA.encode(),
+    f'{SDIST}/pyproject.toml': git('show', 'HEAD:pyproject.toml'),
+}
+GOOD_WHEEL: dict[str, bytes] = {
+    **{path.removeprefix('src/'): git('show', f'HEAD:{path}') for path in PACKAGE},
+    f'{INFO}/METADATA': METADATA.encode(),
+    f'{INFO}/WHEEL': b'',
+    f'{INFO}/RECORD': b'',
+    f'{INFO}/licenses/LICENSE': git('show', 'HEAD:LICENSE'),
+}
+
+
+def write_sdist(path: Path, members: dict[str, bytes]) -> None:
     with tarfile.open(path, 'w:gz') as archive:
-        for name, text in members.items():
+        for name, content in members.items():
             info = tarfile.TarInfo(name)
-            info.size = len(text.encode())
-            archive.addfile(info, io.BytesIO(text.encode()))
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
 
 
-def write_wheel(path: Path, members: dict[str, str]) -> None:
+def write_wheel(path: Path, members: dict[str, bytes]) -> None:
     with zipfile.ZipFile(path, 'w') as archive:
-        for name, text in members.items():
-            archive.writestr(name, text)
+        for name, content in members.items():
+            archive.writestr(name, content)
 
 
-def build(directory: Path, sdist: dict[str, str] = GOOD_SDIST, wheel: dict[str, str] = GOOD_WHEEL) -> Path:
+def build(directory: Path, sdist: dict[str, bytes] = GOOD_SDIST, wheel: dict[str, bytes] = GOOD_WHEEL) -> Path:
     write_sdist(directory / f'{SDIST}.tar.gz', sdist)
     write_wheel(directory / f'datatables_backend-{VERSION}-py3-none-any.whl', wheel)
     return directory
+
+
+def without(members: dict[str, bytes], name: str) -> dict[str, bytes]:
+    return {key: content for key, content in members.items() if key != name}
 
 
 def test_tag_of_the_source_version_passes(capsys: pytest.CaptureFixture[str]) -> None:
@@ -68,26 +94,79 @@ def test_clean_artefacts_pass(tmp_path: Path, capsys: pytest.CaptureFixture[str]
 def test_sdist_member_that_must_stay_out_fails(
     member: str, finding: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    build(tmp_path, sdist={**GOOD_SDIST, f'{SDIST}/{member}': ''})
+    build(tmp_path, sdist={**GOOD_SDIST, f'{SDIST}/{member}': b''})
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == f'sdist: {finding}\n'
 
 
 def test_sdist_member_outside_its_directory_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    build(tmp_path, sdist={**GOOD_SDIST, 'pyproject.toml': ''})
+    build(tmp_path, sdist={**GOOD_SDIST, 'pyproject.toml': b''})
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == f'sdist: pyproject.toml is outside {SDIST}/\n'
 
 
+def test_sdist_member_that_differs_from_the_commit_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    changed = GOOD_SDIST[f'{SDIST}/pyproject.toml'] + b'# added by the build\n'
+    build(tmp_path, sdist={**GOOD_SDIST, f'{SDIST}/pyproject.toml': changed})
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == 'sdist: pyproject.toml is not the file as committed\n'
+
+
 def test_wheel_member_outside_the_package_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    build(tmp_path, wheel={**GOOD_WHEEL, 'tests/__init__.py': ''})
+    build(tmp_path, wheel={**GOOD_WHEEL, 'tests/__init__.py': b''})
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == f'wheel: tests/__init__.py is outside datatables_backend/ and {INFO}/\n'
 
 
+@pytest.mark.parametrize(
+    ('member', 'source'),
+    [
+        ('datatables_backend/cache.py', 'src/datatables_backend/cache.py'),
+        ('datatables_backend/added.py', 'src/datatables_backend/added.py'),  # the commit holds no such file
+        (f'{INFO}/licenses/LICENSE', 'LICENSE'),
+    ],
+)
+def test_wheel_member_that_differs_from_the_commit_fails(
+    member: str, source: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    build(tmp_path, wheel={**GOOD_WHEEL, member: GOOD_WHEEL.get(member, b'') + b'# added by the build\n'})
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == f'wheel: {member} is not {source} as committed\n'
+
+
+def test_wheel_without_a_file_of_the_package_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    build(tmp_path, wheel=without(GOOD_WHEEL, 'datatables_backend/cache.py'))
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == 'wheel: datatables_backend/cache.py is missing\n'
+
+
+def test_wheel_with_another_file_in_its_dist_info_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    build(tmp_path, wheel={**GOOD_WHEEL, f'{INFO}/entry_points.txt': b'[console_scripts]\nx = y:z\n'})
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == f'wheel: {INFO}/entry_points.txt is not a file a wheel of this project holds\n'
+
+
+def test_requirement_that_pyproject_does_not_declare_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    added = (METADATA + 'Requires-Dist: Added.Package>=1\n').encode()
+    build(
+        tmp_path,
+        sdist={**GOOD_SDIST, f'{SDIST}/PKG-INFO': added},
+        wheel={**GOOD_WHEEL, f'{INFO}/METADATA': added},
+    )
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == (
+        'sdist: its metadata requires added-package, which pyproject.toml does not declare\n'
+        'wheel: its metadata requires added-package, which pyproject.toml does not declare\n'
+    )
+
+
 def test_metadata_of_another_version_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    other = 'Name: x\nVersion: 9.9.9\n'
-    build(tmp_path, sdist={f'{SDIST}/PKG-INFO': other}, wheel={f'{INFO}/METADATA': other})
+    other = b'Name: x\nVersion: 9.9.9\n'
+    build(
+        tmp_path,
+        sdist={**GOOD_SDIST, f'{SDIST}/PKG-INFO': other},
+        wheel={**GOOD_WHEEL, f'{INFO}/METADATA': other},
+    )
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == (
         f'sdist: its metadata states version 9.9.9, not {VERSION}\n'
@@ -96,7 +175,11 @@ def test_metadata_of_another_version_fails(tmp_path: Path, capsys: pytest.Captur
 
 
 def test_missing_metadata_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    build(tmp_path, sdist={f'{SDIST}/pyproject.toml': ''}, wheel={'datatables_backend/__init__.py': ''})
+    build(
+        tmp_path,
+        sdist=without(GOOD_SDIST, f'{SDIST}/PKG-INFO'),
+        wheel=without(GOOD_WHEEL, f'{INFO}/METADATA'),
+    )
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == 'sdist: no PKG-INFO\nwheel: no METADATA\n'
 
