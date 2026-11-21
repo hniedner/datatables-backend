@@ -15,6 +15,8 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
   --compare-branch=origin/main --fail-under=95` checks the changed lines close to CI (CI's 3.14 leg compares with the
   PR base or the push's previous commit).
+- `uv audit --locked` checks every package in `uv.lock` against the OSV advisory database, as the `Audit` workflow
+  does daily; its header in `.github/workflows/audit.yml` says how a finding is dealt with.
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
   `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb`,
   `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and
