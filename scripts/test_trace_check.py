@@ -1,5 +1,6 @@
 """The trace check passes a complete trace and fails on every kind of break, with one line per finding."""
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -182,7 +183,17 @@ def test_spec_id_on_a_lazy_line_is_also_reported(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize('after', ['   ', '# Heading naming PRD-F9', '1. note naming PRD-F9'])
+@pytest.mark.parametrize(
+    'after',
+    [
+        '   ',
+        '# Heading naming PRD-F9',
+        '1. note naming PRD-F9',
+        '* note naming PRD-F9',
+        '+ note naming PRD-F9',
+        '1) note naming PRD-F9',
+    ],
+)
 def test_statement_ends_at_a_blank_heading_or_other_item(tmp_path: Path, after: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE + after + '\nProse naming PRD-F9.\n'})
     assert result.returncode == 0, result.stderr
@@ -214,6 +225,9 @@ def test_indented_statement_is_stray(tmp_path: Path) -> None:
         '| PRD-F | Text. | Why. | must |',
         'PRD-F3 | Text. | Why. | must |',
         '| [PRD-F3](#f3) | Text. | Why. | must |',
+        '| _PRD-F3_ | Text. | Why. | must |',
+        '| PRD-F3 Text. Why. must',
+        '| PRD-F3',
     ],
 )
 def test_more_drifted_requirement_rows_fail(tmp_path: Path, row: str) -> None:
@@ -265,3 +279,35 @@ def test_readme_is_not_read(tmp_path: Path) -> None:
     result = run(tmp_path, {'F.md': '- **SPEC-F1.1** One.\n', 'README.md': '- **SPEC-F2.1** Example.\n'})
     assert result.returncode == 1
     assert result.stderr == 'PRD-F2 has no spec statement\n'
+
+
+def test_backticked_citation_is_checked(tmp_path: Path) -> None:
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F1.2** See `PRD-F9`.\n'})
+    assert result.returncode == 1
+    assert result.stderr == 'SPEC-F1.2 cites PRD-F9, which does not exist\n'
+
+
+def test_multi_digit_ids_trace(tmp_path: Path) -> None:
+    prd = PRD + '| PRD-F12 | Twelve. | Why. | must |\n'
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-F12.1** Twelve, see PRD-F12.\n'}, prd=prd)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, 'geteuid') or os.geteuid() == 0, reason='root reads any directory')
+def test_unreadable_specs_directory_is_a_usage_error(tmp_path: Path) -> None:
+    specs = tmp_path / 'specs'
+    specs.mkdir()
+    (specs / 'F.md').write_text(COMPLETE, encoding='utf-8')
+    (tmp_path / 'PRD.md').write_text(PRD, encoding='utf-8')
+    specs.chmod(0)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), '--prd', str(tmp_path / 'PRD.md'), '--specs', str(specs)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        specs.chmod(0o755)
+    assert result.returncode == 2
+    assert 'cannot read the input' in result.stderr

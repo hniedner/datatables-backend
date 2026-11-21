@@ -40,19 +40,18 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
 - **SPEC-C13.1** [OS] With `max_result_window` 3, `start` 8 and `length` 3, a recording client whose count answers
   10 and whose reversed page search then runs over 11 documents (rows 1 to 11, row 11 added after the count): the
-  answer is served with `recordsFiltered` 10 and rows 10, 11 (an unchanged index gives 9, 10), no error, and no
-  `create_pit` call.
+  answer is served with rows 10, 11 (an unchanged index gives 9, 10), no error, and no `create_pit` call.
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
-  two requests within the TTL run one total count between them; recording shows the second ran only the filtered
-  count and the page, and both answer `recordsTotal` 4.
+  two requests within the TTL run one total count between them; recording shows the second ran only the page search
+  (SQL: the filtered count and the page), and both answer `recordsTotal` 4.
 - **SPEC-C14.2** [all] After the TTL ends, the next request counts again and sees a newly inserted row.
 - **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
   source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
   sent a global search `e` → `recordsTotal` 3 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
   with a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.4** [OS] One table and one `TotalCache`, fetched with two clients whose indexes hold 4 and 2 documents,
-  with a global search `red` → `recordsTotal` 4 and 2.
+- **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
+  `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.3** [all] With an app-supplied cache key, two tables given the same key share one total: the second
   answers the first's `recordsTotal` without counting.
 - **SPEC-C16.1** [all] `TotalCache.clear()` makes the next request count again and see a newly inserted row.

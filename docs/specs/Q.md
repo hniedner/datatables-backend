@@ -3,7 +3,7 @@
 Statements for PRD section 4.9. These are checked on the built package, in CI or in review rather than through a
 fetch; the tag names where each is checked (see `README.md`).
 
-- **SPEC-Q1.1** [CI install-isolation] The built wheel's metadata `Name` is `datatables-backend`, and
+- **SPEC-Q1.1** [CI install-isolation] The built wheel's normalized distribution name is `datatables-backend`, and
   `import datatables_backend` works in an environment holding only that wheel and its core dependencies.
 - **SPEC-Q2.1** [CI install-isolation] The wheel's metadata declares the extras `sqlalchemy`, `opensearch` and
   `fastapi`, and no other (the job asserts its matrix equals core plus the declared extras).
@@ -26,11 +26,11 @@ fetch; the tag names where each is checked (see `README.md`).
 - **SPEC-Q9.1** [CI minimum-versions] Each leg prints the installed versions it tested. [review] The job has one leg
   per supported Python.
 - **SPEC-Q10.1** [review] The wheel holds `datatables_backend/py.typed`; CI's types and lint jobs run `basedpyright`
-  and `ruff` and fail on any finding.
+  and `ruff` and fail on any error or warning.
 - **SPEC-Q11.1** [review] The behaviour tests call only the public API (`parse_request`, `fetch`, `fetch_sync`, the
-  FastAPI dependency); they run on SQLite sync and aiosqlite by default and on PostgreSQL, SQL Server, MySQL and
-  OpenSearch in the container jobs, where none is skipped.
+  FastAPI dependency); by default they run on SQLite sync and aiosqlite and on OpenSearch through the recording
+  client, and on PostgreSQL, SQL Server, MySQL and OpenSearch in the container jobs, where none is skipped.
 - **SPEC-Q12.1** [CI gate] The `gate` check fails unless every job it needs succeeded. [review] It needs lint,
-  types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver and opensearch, and it is the one
-  required check on `main`.
+  types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver and opensearch, and it is the only
+  required status check on `main`.
 - **SPEC-Q13.1** [review] The wheel's metadata `License-Expression` is `MIT` and the wheel ships `LICENSE`.

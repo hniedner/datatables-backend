@@ -6,16 +6,17 @@ leading pipe) is a candidate, and one that does not have exactly that shape is a
 dropped silently.
 
 A spec statement is one paragraph: a list item in a ``*.md`` file directly in the specs directory (not in a
-subdirectory, and not ``README.md``), starting ``- **SPEC-X1.n**``, plus the indented lines that follow it. It ends at
-a blank line, a heading or another list item; a second paragraph is not read, and an unindented line that would
-continue it is a finding. The statement states requirement PRD-X1, and every other ``PRD-`` id in its text is a
-citation; a citation not of the shape ``PRD-X1`` (a range ``PRD-F1..F9``, ``PRD-F1a``) is a finding. Statement numbers
-compare as integers, so ``SPEC-F1.01`` is ``SPEC-F1.1``. A ``SPEC-`` id anywhere else is a finding, unless it is in
-backticks: a statement refers to another as `` `SPEC-F1.1` ``.
+subdirectory, and not ``README.md``) that starts ``- **SPEC-X1.n** `` followed by text, plus the indented lines that
+follow it. It ends at a blank line, a heading or another unindented list item; a second paragraph is not read, and an
+unindented line that would continue it is a finding. The statement states requirement PRD-X1, and every other
+``PRD-`` id in its text, backticked or not, is a citation; a citation not of the shape ``PRD-X1`` (a range
+``PRD-F1..F9``, ``PRD-F1a``) is a finding. Statement numbers compare as integers, so ``SPEC-F1.01`` is ``SPEC-F1.1``.
+The text ``SPEC-`` anywhere else is a finding, unless it is in backticks: a statement refers to another as
+`` `SPEC-F1.1` ``.
 
 Findings, one line each on stderr, exit status 1:
 - a requirement row of the wrong shape, a requirement id defined twice, or no requirement at all;
-- no statement at all, a ``SPEC-`` id outside backticks anywhere but a statement's start, or an unindented line
+- no statement at all, the text ``SPEC-`` outside backticks anywhere but a statement's start, or an unindented line
   right after a statement;
 - a *must* or *should* requirement with no statement (a *later* one needs none);
 - a statement that states or cites a requirement id the PRD does not hold, or cites a malformed ``PRD-`` id;
@@ -34,7 +35,7 @@ from pathlib import Path
 import re
 import sys
 
-CANDIDATE = re.compile(r'^\s*\|?\s*[*_`~\[]*PRD-[^|]*\|')
+CANDIDATE = re.compile(r'^\s*(?:\|\s*[*_`~\[]*PRD-|[*_`~\[]*PRD-[^|]*\|)')
 CELL = r' (?:[^|\\\s]|\\.)(?:[^|\\]|\\.)* '
 REQUIREMENT = re.compile(rf'^\| (PRD-[A-Z]+\d+) \|{CELL}\|{CELL}\| (must|should|later) \|$')
 STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (.*)$')
@@ -141,8 +142,8 @@ def main() -> int:
             parser.error(f'{args.specs} is not a directory')
         files = [
             (path.name, path.read_text(encoding='utf-8'))
-            for path in sorted(args.specs.glob('*.md'))
-            if path.name != 'README.md'
+            for path in sorted(args.specs.iterdir())
+            if path.suffix == '.md' and path.name != 'README.md' and path.is_file()
         ]
     except (OSError, UnicodeDecodeError) as error:
         parser.error(f'cannot read the input: {error}')

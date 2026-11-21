@@ -22,15 +22,16 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   `invalid_number` (step 2 before step 4); holding `=` `2024-13-01` on `made` and a column search `x` on the
   undeclared `extra` → `invalid_date`.
 - **SPEC-E3.4** [SQL] A request holding SearchBuilder `=` `9223372036854775808` on `price` (step 3) and SearchBuilder
-  `<` `a` on `name` (step 4) → `invalid_number`; SearchBuilder `=` `9999-12-31` on `made` and a column search `yes`
-  on `active` → `invalid_date`.
+  `<` `a` on `name` (step 4) → `invalid_number`.
+- **SPEC-E3.7** [all] A request holding SearchBuilder `=` `9999-12-31` on `made` (step 3) and a column search `yes` on
+  `active` (step 4) → `invalid_date`.
 - **SPEC-E3.5** [OS] Given rows 5 to 10 besides the fixture, with `max_result_window` 3, `start` 4, `length` 3 (a page PRD-C12 refuses) and
   SearchBuilder `=` `yes` on `active` → `invalid_filter`, not `page_out_of_range`.
 - **SPEC-E3.6** [OS] Column search `7 8` on `price` → `invalid_number`; `!2024` on `made` → `invalid_date` (step 2).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value.
-- **SPEC-E4.2** [all] A refusal on the declared column `price` may name `price`; a refusal on an undeclared column
-  `secret_field` answers a text that does not contain `secret_field`.
+- **SPEC-E4.2** [all] A refusal on an undeclared column `secret_field` answers a text that does not contain
+  `secret_field`. (A declared name such as `price` is the server's own text and may appear.)
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

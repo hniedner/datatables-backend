@@ -92,8 +92,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-F13.3** [all] On a table whose every column is declared unsearchable, an empty global search → rows 1, 2,
   3, 4 (nothing is asked).
-- **SPEC-F14.1** [all] A global search of 255 code points is answered; 256 → error_code `invalid_filter`. A
-  supplementary-plane character counts as one code point.
+- **SPEC-F14.1** [all] A global search of one word of 255 code points is answered; 256 → error_code
+  `invalid_filter`. The same holds for a word of 255 supplementary-plane characters (each one code point) and 256 of
+  them.
 - **SPEC-F14.2** [all] A global search of 16 words is answered; 17 → error_code `invalid_filter`; the same for a
   column search on `name`.
 - **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 15 words plus a
@@ -133,7 +134,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.2** [all] SearchBuilder on `at`: `=` `2024-03-05` → rows 1; `=` `2024-03-06` → rows 2 (UTC days, though
   the two instants are an hour apart).
 - **SPEC-F21.3** [PostgreSQL] With the session `TimeZone` set to `America/Los_Angeles`, F21.2 holds unchanged.
-- **SPEC-F21.4** [SQL] On a naive datetime column holding `2024-03-05T10:00`, `=` `2024-03-05` matches that row.
+- **SPEC-F21.4** [SQL] With `at` redeclared as a naive `DateTime` and row 1 storing `2024-03-05T10:00`:
+  SearchBuilder `=` `2024-03-05` on `at` → rows 1.
 - **SPEC-F21.5** [all] Categorical `^(2024-03-05)$` and `multi_values` `["2024-03-05"]` on `made` → rows 1; on `at`
   `["2024-03-06"]` → rows 2.
 - **SPEC-F21.6** [all] `multi_values` `["2024-13-01"]` or `["05.03.2024"]` on `made` → error_code `invalid_date`.
@@ -155,8 +157,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
 - **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc`, `NaN`, `inf`, `-Infinity` or `1e999` → error_code
   `invalid_number`.
-- **SPEC-F25.2** [SQL] On a 64-bit integer column, `=` `9223372036854775808` → error_code `invalid_number`;
-  `9223372036854775807` is answered. On a 16-bit column, `32768` → `invalid_number`.
+- **SPEC-F25.2** [SQL] On `price` (a `BigInteger`), `=` `9223372036854775808` → error_code `invalid_number`;
+  `9223372036854775807` is answered. With `price` redeclared as a `SmallInteger`, `=` `32768` → `invalid_number`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 
@@ -166,8 +168,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-F27.2** [all] On `price` (number), `contains`, `!contains`, `starts`, `!starts`, `ends` and `!ends` →
   error_code `invalid_filter`.
-- **SPEC-F27.3** [all] On `made` (date), `starts` and `ends` → error_code `invalid_filter`; `contains` is answered
-  (PRD-F22).
+- **SPEC-F27.3** [all] On `made` (date), `starts` and `ends` → error_code `invalid_filter`; `contains` `2024` →
+  rows 1, 2 (PRD-F22).
 - **SPEC-F27.4** [all] The criterion's `type` is ignored: `<` `8` on `price` sent with `type: "string"` → rows 1
   (honouring the client's type would refuse `<` with `invalid_filter`).
 - **SPEC-F27.5** [all] SearchBuilder condition `without` → `MalformedRequest` (PRD-P6).
@@ -206,7 +208,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   error_code `invalid_filter`.
 - **SPEC-F38.2** [all] 64 criteria in all are answered; 65 → error_code `invalid_filter`.
 - **SPEC-F38.3** [all] A categorical filter or `multi_values` list of 256 values is answered; 257 → error_code
-  `invalid_filter`.
+  `invalid_filter`. A categorical regex of 256 values is longer than 255 code points; that is intended, since its
+  values are exact values, not search text (PRD-F7), and PRD-F38 allows 256 of them.
 - **SPEC-F38.4** [all] A tree 10,000 groups deep → error_code `invalid_filter`, with no `RecursionError`.
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
   `invalid_filter`.
@@ -216,8 +219,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 ## Searchable, timezone text, booleans
 
 - **SPEC-F41.1** [all] A request column `extra` (searchable, undeclared) with global search `red` → rows 1, 2, 4.
-- **SPEC-F41.2** [all] With `name` declared unsearchable: global search `apple` → none; a column search on `name` →
-  error_code `invalid_filter`, whatever the request's `searchable`; a SearchBuilder criterion on `name` → error_code
+- **SPEC-F41.2** [all] With `name` declared unsearchable: global search `apple` → none; a column search `apple` on
+  `name` → error_code `invalid_filter`, whatever the request's `searchable`; a SearchBuilder criterion on `name` → error_code
   `invalid_filter`.
 - **SPEC-F41.3** [all] With `name` marked `searchable: false` in the request: global search `apple` → none; column
   search `apple` on `name` → rows 1.

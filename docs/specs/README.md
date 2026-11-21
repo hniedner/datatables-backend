@@ -8,16 +8,25 @@ review. This README holds no statements.
 ## Statement form
 
 A statement is one paragraph: a list item that starts `- **SPEC-X1.n** [tag]`, followed by the input and the
-expected answer, wrapped onto indented lines. It ends at a blank line, a heading or the next list item; a second
-paragraph under it is not read. An unindented line right after a statement is a finding.
+expected answer, wrapped onto indented lines. It ends at a blank line, a heading or another unindented list item; a
+second paragraph under it is not read.
 
-- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text is a cross-reference, written as
-  one id (`PRD-F21`), never a range.
+- `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text, backticked or not, is a
+  cross-reference, written as one id (`PRD-F21`), never a range.
 - Each PRD requirement is a single table line; `scripts/trace_check.py` reads no other form.
-- A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2); a
-  `SPEC-` id outside backticks anywhere but a statement's start is a finding.
-- `scripts/trace_check.py` (run in CI's lint job) checks that every *must* and *should* requirement has a statement,
-  that every cited id exists and is well formed, and that no statement id is used twice.
+- A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2).
+
+`scripts/trace_check.py` (run in CI's lint job) reports, one line each:
+
+- a PRD line whose first cell starts with `PRD-` but is not a requirement row of the expected shape, a requirement
+  id defined twice, or no requirement at all;
+- no statement at all, the text `SPEC-` outside backticks anywhere but a statement's start, or an unindented line
+  right after a statement;
+- a *must* or *should* requirement with no statement (a *later* one needs none);
+- a statement that states or cites a requirement id the PRD does not hold, or cites a malformed `PRD-` id;
+- a statement id defined more than once.
+
+An unreadable PRD or specs directory is a usage error.
 - A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
   the stored field renamed ..."). Otherwise it runs on the fixture as below.
 
@@ -38,9 +47,12 @@ paragraph under it is not read. An unindented line right after a statement is a 
 
 ## Answers
 
-- `rows 1, 3`: the page holds exactly those rows, in key order unless the statement orders.
-- `none`: an empty page, no error.
-- `error_code X`, or just the code: answered (not raised) with `error`, `error_code` X, `recordsTotal` 0,
+- `answered`: `fetch` returns a response with no `error_code`; its rows are checked only when the statement names
+  them.
+- `parses`: `parse_request` returns without raising.
+- `rows 1, 3`: answered, and the page holds exactly those rows, in key order unless the statement orders.
+- `none`: answered with an empty page.
+- `error_code X`, or just the code: returned, not raised, as a response with `error`, `error_code` X, `recordsTotal` 0,
   `recordsFiltered` 0 and `data` `[]` (decided below). The one exception is `page_out_of_range`, which carries the
   real counts (PRD-C12).
 - An exception class (`MalformedRequest`, `SchemaError`, `PartialResultError`): raised, from `parse_request`, the

@@ -5,7 +5,8 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
 - **SPEC-A1.1** [all] One table answers request X (global search `red`), then request Y (column search `blue` on
   `colour`, order `price` desc), then X again: the two answers to X are equal (no state from Y leaks).
 - **SPEC-A2.1** [all] One table object answers 100 requests in turn and 20 concurrent async requests, each answer
-  equal to that of a freshly built table for the same request.
+  equal to that of a freshly built table for the same request. On SQL each request runs on its own
+  `AsyncConnection`; on OS all share one `AsyncOpenSearch` client.
 - **SPEC-A3.1** [all] `SQLTable(source, columns)` and the OpenSearch table (index name, columns, key) take no
   connection or client: they construct with no database or cluster reachable, and the first call a recording
   connection or client sees is made inside `fetch` or `fetch_sync`.
@@ -16,14 +17,16 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
 - **SPEC-A6.1** [SQL] Recording: a request whose user error is found while the page query is built (SearchBuilder
   `=` `abc` on `price`) runs no statement.
 - **SPEC-A7.1** [SQL] Given a second table `stock` (`id`, `item_id`, `qty`) holding (1, 1, 5) and (2, 3, 0): a table
-  over `items` joined to `stock` on `items.id = stock.item_id`, whose join columns are labelled `items_id` and
-  `stock_id`, with the client name `id` declared as `Column('id', field='items_id')` and `stock_id` declared as the
-  key, answers two rows carrying `id` 1 and 3; a table over the subquery of `items` where `price > 7` answers rows
+  over `items` joined to `stock` on `items.id = stock.item_id`, whose columns the join keys as `items_<col>` and
+  `stock_<col>`, with every fixture column declared over its join column (`Column('id', field='items_id')`,
+  `Column('name', field='items_name')`, ...) and `stock_id` declared as the key, answers two rows carrying `id` 1
+  and 3; a table over the subquery of `items` where `price > 7` answers rows
   2, 3.
 - **SPEC-A8.1** [OS] Every body a recording client receives is a plain `dict` of JSON values. [review] No query DSL
   is imported: no `opensearchpy.helpers` query or search classes, no `opensearch_dsl`.
-- **SPEC-A9.1** [FastAPI] A POST with a form body holding `draw=5` and a query string holding `_` and `draw=99` reads
-  the body only: the answer's `draw` is 5.
+- **SPEC-A9.1** [FastAPI] A POST whose form body is the base request with `draw` 5, and whose query string holds
+  `_`, `draw=99` and `search[value]=zzz`, reads the body only: the answer's `draw` is 5 and its rows are 1, 2, 3, 4
+  (a merge would apply `zzz` and empty the page).
 - **SPEC-A9.2** [FastAPI] A POST whose body is the JSON object of the base request with `draw` 6, sent as
   `application/x-www-form-urlencoded`, is read as JSON: the answer's `draw` is 6.
 - **SPEC-A9.3** [FastAPI] With the base request with `draw` 8 as the query string, a GET with no body and a POST

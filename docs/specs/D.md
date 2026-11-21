@@ -28,7 +28,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D8.2** [MySQL] Given a table `flags` (`id`, `flag TINYINT(1)`) holding (1, 1) and (2, 0), reflected: with
   `flag` declared without a type it is a number, so SearchBuilder `<` `1` → rows 2; with `flag` declared boolean,
   `=` `true` → rows 1.
-- **SPEC-D8.3** [OS] A column without a declared type is a string: SearchBuilder `<` on it → `invalid_filter`.
+- **SPEC-D8.3** [OS] `price` (mapped `long`) declared without a type is a string: SearchBuilder `<` `8` on it →
+  `invalid_filter` (inferring the type from the mapping would answer rows 1).
 - **SPEC-D9.1** [all] A column search on `secret` with `Alpha` calls the hook once with `Alpha` and matches the stored
   `enc:Alpha` → rows 1.
 - **SPEC-D10.1** [SQLite] A column declared as the expression `lower(colour)` is ordered by it: order asc → rows 3,
@@ -44,7 +45,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D12.4** [all] Global search `!Alpha` → rows 1, 2, 3, 4 (no other column holds `alpha`, and `!word`
   ignores the hooked column); `!apple` → rows 2, 3, 4.
 - **SPEC-D12.5** [all] On a table whose only searchable column is `secret`, given a row 5 whose `secret` is stored as
-  `enc:` + a text of 20 words: a global search of those 20 words → rows 5 (no word cap; matched by equality); a
+  `enc:` + 20 one-letter words (`a b c ... t`): a global search of those 20 words → rows 5 (no word cap; matched by equality); a
   global search of 256 code points → `invalid_filter`.
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
   `invalid_filter`.
