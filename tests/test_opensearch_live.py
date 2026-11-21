@@ -16,6 +16,7 @@ from typing import Any
 
 from opensearchpy import AsyncOpenSearch
 from opensearchpy import OpenSearch
+from opensearchpy.exceptions import ConnectionError as NoConnection
 from opensearchpy.exceptions import RequestError
 import pytest
 
@@ -32,6 +33,23 @@ if os.environ.get('DTB_REQUIRE_OPENSEARCH') == '1' and not URL:  # the CI job: a
     raise RuntimeError('DTB_REQUIRE_OPENSEARCH is set, but DTB_OPENSEARCH_URL is not')
 pytestmark = pytest.mark.skipif(not URL, reason='DTB_OPENSEARCH_URL is not set')
 
+
+def server_version() -> tuple[int, int]:
+    """The server's major and minor version, asked once while the module is read: what a case-insensitive `regexp`
+    folds depends on it (PRD-F9), so some expected rows do."""
+    probe = OpenSearch(hosts=[URL])
+    try:
+        major, minor = probe.info()['version']['number'].split('.')[:2]
+    except NoConnection:
+        raise RuntimeError('No OpenSearch server answers at the address DTB_OPENSEARCH_URL names') from None
+    finally:
+        probe.close()
+    return int(major), int(minor)
+
+
+# From OpenSearch 3.1 on, a case-insensitive `regexp` folds letters outside ASCII; 3.0 and 2.19 fold ASCII only.
+FOLDS_BEYOND_ASCII = bool(URL) and server_version() >= (3, 1)
+
 INDEX = 'dtb-test-docs'  # owned by this module: deleted and recreated on every run
 KEYWORD_TEXT = {'type': 'text', 'fields': {'keyword': {'type': 'keyword'}}}  # what dynamic mapping gives a string
 MAPPING = {
@@ -47,14 +65,22 @@ MAPPING = {
     }
 }
 LONGEST = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:255]  # as many code points as PRD-F14 lets a search text hold
+LONGEST_BEYOND_ASCII = ('ÄÖÜÉÈÊÀÂÎÔÛÇÑÅØÆ' * 16)[:255]  # the same length in cased letters outside ASCII
+LONGEST_PATTERN = 'Ä' + '.' * 254  # the value whose regular expression is the longest: a backslash before each dot
+# The ASCII characters that mean something else in a regular expression when no backslash precedes them (measured on
+# 3.10.0 and 2.19.7; `~` on 2.19.7 only). a1 holds each between Ä and Z, and b2 what each would match as an operator.
+OPERATORS = '"#&()*+.<?@[\\{|~'
+PUNCTUATION = ''.join(char for char in map(chr, range(32, 127)) if not char.isalnum())  # the space included
+ESCAPED = [*(f'Ä{char}Z' for char in OPERATORS), f'Ä{PUNCTUATION}Z', 'Ä.*Q']
+DECOYS = ['ÄXZ', 'Z', 'ÄZ', 'Ä', 'ÄÄZ']
 DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
-     'meta': {'author': 'Ann'}, 'active': True},
+     'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}, 'active': False},
+     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOYS},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
-     'meta': {'author': 'Cy'}, 'active': True},
+     'meta': {'author': 'Cy'}, 'active': True, 'label': [LONGEST_BEYOND_ASCII, LONGEST_PATTERN]},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
      'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL'},
 ]  # fmt: skip
@@ -253,17 +279,19 @@ labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('l
     ('body', 'expected'),
     [
         ({'search': {'value': 'äpfel'}}, ['e5']),  # SPEC-F9.9: a whole word, which the analysed text folds
-        ({'search': {'value': 'äpf'}}, []),  # SPEC-F9.10: a substring is a wildcard on the whole string
-        ({'search': {'value': 'ÄPF'}}, ['e5']),  # and is found in its own case
-        (criterion('label', '=', 'äpfel'), []),  # SPEC-F9.11: the term query
+        ({'search': {'value': 'äpf'}}, ['e5'] if FOLDS_BEYOND_ASCII else []),  # SPEC-F9.10: a substring
+        ({'search': {'value': 'ÄPF'}}, ['e5']),  # and is found in its own case on every server
+        (criterion('label', '=', 'äpfel'), ['e5'] if FOLDS_BEYOND_ASCII else []),  # SPEC-F9.11: an exact match
         (criterion('label', '=', 'ÄPFEL'), ['e5']),
     ],
 )
-def test_a_letter_outside_ascii_is_folded_only_in_a_whole_word(
+def test_a_letter_outside_ascii_is_folded_from_opensearch_3_1_on(
     client: OpenSearch, body: dict[str, Any], expected: list[str]
 ):
-    """PRD-F9, measured on 3.10.0 and on 2.19.7: on a `term` and a `wildcard` query `case_insensitive` folds ASCII
-    letters only, so a substring and an exact match in another case miss `ÄPFEL`. A row turning red means the cluster folds differently, and PRD-F9 says so no longer."""
+    """PRD-F9: a substring and an exact match in another case find `ÄPFEL` from OpenSearch 3.1 on, whose
+    case-insensitive `regexp` folds letters outside ASCII (measured on 3.1.0 to 3.10.0); on 3.0 and 2.19 it folds
+    ASCII letters only (measured on 3.0.0 and 2.19.7), and they miss it. A row turning red means the server folds
+    differently, and PRD-F9 says so no longer."""
     assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == expected
 
 
@@ -281,6 +309,36 @@ def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, con
     folding at that length."""
     params = request(*LABEL_NAMES, **criterion('label', condition, LONGEST.lower()))
     assert found(whole_label.fetch_sync(params, client)) == ['c3']
+
+
+@pytest.mark.parametrize(('condition', 'value'), [('=', LONGEST_BEYOND_ASCII), ('contains', LONGEST_PATTERN)])
+def test_the_longest_regular_expression_is_answered(client: OpenSearch, condition: str, value: str):
+    """PRD-F14, PRD-F9: a value with a cased letter outside ASCII is a `regexp` query. The rows are its two extremes:
+    255 letters that each fold, and the longest pattern a value can make, 514 characters (a backslash before each of
+    254 dots, open at both ends), against the 1,000 a server allows by default (`index.max_regex_length`). Searched
+    in the stored case, so every server finds it. A row turns red when a server refuses or fails either."""
+    params = request(*LABEL_NAMES, **criterion('label', condition, value))
+    assert found(whole_label.fetch_sync(params, client)) == ['d4']
+
+
+@pytest.mark.parametrize('operator', OPERATORS)
+def test_a_character_of_the_regular_expression_syntax_in_a_value_is_that_character(client: OpenSearch, operator: str):
+    """SPEC-F9.16: a1 holds Ä, the character, Z. Without its backslash the character is an operator: the server
+    rejects the pattern, finds nothing, or finds what b2 holds (for `~` on OpenSearch 2.19 only; from 3.1 on a bare
+    `~` is that character)."""
+    params = request(*LABEL_NAMES, **criterion('label', '=', f'Ä{operator}Z'))
+    assert found(whole_label.fetch_sync(params, client)) == ['a1']
+
+
+@pytest.mark.parametrize(
+    ('condition', 'value'), [('=', f'Ä{PUNCTUATION}Z'), ('contains', f'Ä{PUNCTUATION}'), ('contains', 'Ä.*')]
+)
+def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch, condition: str, value: str):
+    """SPEC-F9.16: every ASCII character that is not a letter or a digit, the space included, in one value: a row
+    turns red when a server rejects or misreads a backslash before any of them. `Ä.*` is found only where those
+    three characters stand; read as a pattern it would find every label that holds an Ä."""
+    params = request(*LABEL_NAMES, **criterion('label', condition, value))
+    assert found(whole_label.fetch_sync(params, client)) == ['a1']
 
 
 @pytest.mark.xfail(

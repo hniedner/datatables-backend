@@ -255,14 +255,36 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
+def _cased_beyond_ascii(value: str) -> bool:
+    """Whether ``value`` holds a letter outside ASCII that has another case. On a ``term`` and a ``wildcard`` query
+    OpenSearch's ``case_insensitive`` folds ASCII letters only; on a ``regexp`` query it folds such a letter too,
+    from OpenSearch 3.1 on (PRD-F9). Every other value is answered alike by both, so it keeps its query."""
+    return any(not char.isascii() and (char.lower() != char or char.upper() != char) for char in value)
+
+
+def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any]:
+    """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``. Every ASCII
+    character of ``value`` that is not a letter or a digit gets a backslash, which makes it that character and
+    nothing else, so no operator of the syntax can come from a value."""
+    literal = ''.join(char if char.isalnum() or not char.isascii() else f'\\{char}' for char in value)
+    return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
+
+
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:
     """The whole string equals ``value``, in any case where the column folds."""
-    if _folds(column):
-        return {'term': {field: {'value': value, 'case_insensitive': True}}}
-    return {'term': {field: value}}
+    if not _folds(column):
+        return {'term': {field: value}}
+    if _cased_beyond_ascii(value):
+        return _regexp(field, '', value, '')
+    return {'term': {field: {'value': value, 'case_insensitive': True}}}
 
 
-def _wildcard(field: str, pattern: str) -> dict[str, Any]:
+def _part(column: Column, field: str, value: str, *, start: bool = False, end: bool = False) -> dict[str, Any]:
+    """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A hooked column's
+    value is what its hook made of the text, and is sent as before."""
+    if column.search_value is None and _cased_beyond_ascii(value):
+        return _regexp(field, '' if start else '.*', value, '' if end else '.*')
+    pattern = f'{"" if start else "*"}{escape_wildcard(value)}{"" if end else "*"}'
     return {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
 
 
@@ -281,7 +303,7 @@ def _string_contains(column: Column, value: str, *, parse: bool) -> dict[str, An
     )
     if keyword is None:
         return text_match
-    wildcard = _wildcard(keyword, f'*{escape_wildcard(value)}*')
+    wildcard = _part(column, keyword, value)
     if _kind(column) == 'keyword':
         return wildcard
     return _any([text_match, wildcard])
@@ -402,9 +424,8 @@ def _string_criterion(node: Criterion) -> dict[str, Any]:
         case 'contains':
             clause = _string_contains(column, value, parse=True)
         case 'starts' | 'ends' if keyword is not None:
-            escaped = escape_wildcard(value)
-            pattern = f'{escaped}*' if node.condition.lstrip('!') == 'starts' else f'*{escaped}'
-            clause = _wildcard(keyword, pattern)
+            starts = node.condition.lstrip('!') == 'starts'
+            clause = _part(column, keyword, value, start=starts, end=not starts)
         case _:  # starts or ends on analysed text: it has no whole string to anchor on, so it reads as contains
             clause = _string_contains(column, value, parse=True)
     return _not(clause) if negated else clause

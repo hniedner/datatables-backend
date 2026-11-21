@@ -382,6 +382,46 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
     ]
 
 
+@pytest.mark.parametrize(
+    ('condition', 'pattern'),
+    [('=', 'ä\\.b'), ('contains', '.*ä\\.b.*'), ('starts', 'ä\\.b.*'), ('ends', '.*ä\\.b')],
+)
+def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, pattern: str):
+    """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. The value is `ä.b`: its
+    dot gets a backslash, and the pattern is open where the condition is."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', condition, 'ä.b')), client)
+    assert query(client) == [{'regexp': {'id': {'value': pattern, 'case_insensitive': True}}}]
+
+
+def test_a_value_outside_ascii_without_case_keeps_its_query():
+    """SPEC-F9.14: a script without case has nothing to fold, so the value is sent as before."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', '=', '日本.')), client)
+    assert query(client) == [{'term': {'id': {'value': '日本.', 'case_insensitive': True}}}]
+
+
+@pytest.mark.parametrize(
+    ('unfolded', 'condition', 'clause'),
+    [
+        (Column('secret', fold_case=False), '=', {'term': {'secret.keyword': 'ä'}}),  # PRD-D21
+        (
+            Column('secret', search_value=str.upper),  # PRD-D18: what the hook made of the text
+            'starts',
+            {'wildcard': {'secret.keyword': {'value': 'Ä*', 'case_insensitive': True}}},
+        ),
+    ],
+)
+def test_a_cased_letter_outside_ascii_changes_nothing_on_a_column_the_library_does_not_fold(
+    unfolded: Column, condition: str, clause: dict[str, Any]
+):
+    """SPEC-F9.15: the regexp is for the library's own fold; these columns are sent as before."""
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    client = Client()
+    plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)
+    assert client.searches[-1]['query']['bool']['must'] == [clause]
+
+
 # -- SearchBuilder ---
 
 
