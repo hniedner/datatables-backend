@@ -356,6 +356,13 @@ def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_
     ]
 
 
+def test_a_list_on_a_date_column_stays_one_terms_query():
+    """A day has no case: no `case_insensitive` term reaches a date field."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16']}}), client)
+    assert query(client) == [{'terms': {'created': ['2026-07-16']}}]
+
+
 @pytest.mark.parametrize(
     'unfolded',
     [

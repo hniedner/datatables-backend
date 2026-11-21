@@ -24,10 +24,12 @@ from sqlalchemy import Table
 from sqlalchemy import cast
 from sqlalchemy import event
 from sqlalchemy import func
+from sqlalchemy import literal_column
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from sqlalchemy.types import TypeDecorator
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
@@ -258,35 +260,42 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
 #
 # The spec statements cited speak of their own four-row fixture; the rows here are the same cases on this table.
 
-CASED = ('id', 'kind', 'secret', 'size')
+CASED = ('id', 'kind', 'wrapped', 'secret', 'size', 'plain')
 #: A collation that tells `red` from `RED`, where the database's default does not. PostgreSQL's and SQLite's do.
 CASE_SENSITIVE = {'mysql': 'utf8mb4_bin', 'mssql': 'Latin1_General_CS_AS'}
 
 
+class Wrapped(TypeDecorator[str]):
+    """Text behind a type of the app's own, as an app declares one to convert values."""
+
+    impl = String
+    cache_ok = True
+
+
 @pytest.fixture
 def cased(session: Session) -> SQLTable:
-    """A table whose text columns are case-sensitive on every database: `kind` holds `red` in two cases, `secret` is
-    stored transformed (a search-value hook prefixes `enc:`), and `size` is an enum (a native type on PostgreSQL)."""
+    """A table whose text columns are case-sensitive on every database: `kind` holds `red` in two cases, `wrapped`
+    the same values behind a `TypeDecorator`, `secret` is stored transformed (a search-value hook prefixes `enc:`),
+    and `size` is an enum (a native type on PostgreSQL)."""
     collation = CASE_SENSITIVE.get(session.get_bind().dialect.name)
     tags = Table(
         'dtb_test_tags',
         MetaData(),
         SQLColumn('id', Integer, primary_key=True, autoincrement=False),
         SQLColumn('kind', String(20, collation=collation)),
+        SQLColumn('wrapped', Wrapped(20, collation=collation)),
         SQLColumn('secret', String(20, collation=collation)),
         SQLColumn('size', Enum('Small', 'LARGE', name='dtb_test_size'), nullable=True),
     )
     tags.create(session.connection())
-    session.execute(
-        tags.insert(),
-        [
-            {'id': 1, 'kind': 'red', 'secret': 'enc:Alpha', 'size': 'Small'},
-            {'id': 2, 'kind': 'reddish', 'secret': 'enc:Beta', 'size': 'LARGE'},
-            {'id': 3, 'kind': 'blue', 'secret': 'enc:Gamma', 'size': None},
-            {'id': 4, 'kind': 'RED', 'secret': 'enc:Delta', 'size': 'Small'},
-            {'id': 5, 'kind': 'ÄPFEL', 'secret': 'enc:Eta', 'size': 'LARGE'},
-        ],
-    )
+    rows = [
+        {'id': 1, 'kind': 'red', 'secret': 'enc:Alpha', 'size': 'Small'},
+        {'id': 2, 'kind': 'reddish', 'secret': 'enc:Beta', 'size': 'LARGE'},
+        {'id': 3, 'kind': 'blue', 'secret': 'enc:Gamma', 'size': None},
+        {'id': 4, 'kind': 'RED', 'secret': 'enc:Delta', 'size': 'Small'},
+        {'id': 5, 'kind': 'ÄPFEL', 'secret': 'enc:Eta', 'size': 'LARGE'},
+    ]
+    session.execute(tags.insert(), [{**row, 'wrapped': row['kind']} for row in rows])
     same_case = session.execute(select(func.count()).select_from(tags).where(tags.c.kind == 'RED')).scalar_one()
     assert same_case == 1, (
         'The column `kind` is not case-sensitive in this database, so the tests of this fixture would pass on it '
@@ -297,6 +306,7 @@ def cased(session: Session) -> SQLTable:
         [
             Column('id'),
             Column('kind'),
+            Column('wrapped'),
             Column('secret', search_value=lambda text: f'enc:{text}'),
             Column('size'),
             Column('plain', field='kind', fold_case=False),  # the same stored values, compared as sent (PRD-D21)
@@ -312,6 +322,10 @@ def cased(session: Session) -> SQLTable:
         ({'column_search': {'kind': {'multi_values': ['rEd', 'BLUE']}}}, [1, 3, 4]),  # SPEC-F9.3
         # The database folds both sides: SQLite's lower() leaves `Ä` alone, where Python's would make it `ä`
         (criterion('kind', '=', 'ÄPFEL'), [5]),
+        ({'column_search': {'kind': {'multi_values': ['ÄPFEL']}}}, [5]),
+        # A type of the app's own over text is a string column like any other, for `=` and for a list
+        (criterion('wrapped', '=', 'Red'), [1, 4]),
+        ({'column_search': {'wrapped': {'multi_values': ['rEd']}}}, [1, 4]),
     ],
 )
 def test_an_exact_match_on_a_string_column_ignores_case(
@@ -320,6 +334,14 @@ def test_an_exact_match_on_a_string_column_ignores_case(
     """PRD-F9, also under a case-sensitive collation (SPEC-F9.5). A categorical filter is the same list as
     `multi_values` once the request is read."""
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
+
+
+def test_an_exact_match_on_a_column_declared_as_an_expression_ignores_case(session: Session, cased: SQLTable):
+    """PRD-F9 with PRD-D10: a column whose SQL type the library cannot tell is declared a string, and is folded as
+    one: `upper(kind)` is `RED` for rows 1 and 4."""
+    shouted = select(cased.source.c.id, literal_column('upper(kind)').label('up')).subquery()
+    table = SQLTable(shouted, [Column('id'), Column('up')])
+    assert ids(table.fetch_sync(request('id', 'up', **criterion('up', '=', 'rEd')), session)) == [1, 4]
 
 
 @pytest.mark.parametrize(
@@ -331,9 +353,18 @@ def test_an_exact_match_on_a_hooked_column_adds_no_folding(session: Session, cas
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == []
 
 
-def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sent(session: Session, cased: SQLTable):
-    """SPEC-D21.1: `Red` is neither `red` nor `RED` to a case-sensitive collation; with the fold it finds both."""
-    assert ids(cased.fetch_sync(request(*CASED, **criterion('plain', '=', 'Red')), session)) == []
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        (criterion('plain', '=', 'Red'), []),  # with the fold: rows 1 and 4
+        ({'column_search': {'plain': {'multi_values': ['RED']}}}, [4]),  # with the fold: rows 1 and 4
+    ],
+)
+def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sent(
+    session: Session, cased: SQLTable, body: dict[str, Any], expected: list[int]
+):
+    """SPEC-D21.1: a case-sensitive collation tells `Red`, `red` and `RED` apart."""
+    assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
 @pytest.mark.xfail(
@@ -355,6 +386,20 @@ def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable)
     values = [f'n{index}' for index in range(3000)] + ['rEd']
     params = request(*CASED, column_search={'kind': {'multi_values': values}})
     assert ids(cased.fetch_sync(params, session)) == [1, 4]
+
+
+@pytest.mark.skipif(
+    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
+    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
+)
+@pytest.mark.parametrize(('value', 'expected'), [('rEd', []), ('RED', [4])])
+def test_a_list_sent_as_json_on_a_column_without_the_fold_follows_its_collation(
+    session: Session, cased: SQLTable, value: str, expected: list[int]
+):
+    """The JSON list casts each value without a collation; the column's own, case-sensitive here, still compares."""
+    values = [f'n{index}' for index in range(3000)] + [value]
+    params = request(*CASED, column_search={'plain': {'multi_values': values}})
+    assert ids(cased.fetch_sync(params, session)) == expected
 
 
 @pytest.mark.skipif(

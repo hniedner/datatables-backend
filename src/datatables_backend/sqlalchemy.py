@@ -208,7 +208,7 @@ class SQLTable:
                         values = [_number(column, number, search.column, listed=True) for number in numbers]
                     else:
                         values = list(search.values)
-                    fold = search.type == 'string' and _folds(search.column, column)
+                    fold = search.type == 'string' and _folds(search.column)
                     conditions.append(in_list(column, values, fold))
             else:
                 conditions.append(self._contains(search))
@@ -221,11 +221,9 @@ class SQLTable:
     def _contains(self, search: Contains) -> ColumnElement[bool]:
         column = self._sql(search.column)
         pattern = f'%{escape_like(str(search.value))}%'
-        if _is_text(column):
-            return column.ilike(pattern, escape='\\')
         if isinstance(_sql_type(column), Date | DateTime):
             return _day_text(column).ilike(pattern, escape='\\')
-        return sql_cast(column, String).ilike(pattern, escape='\\')
+        return _text(column).ilike(pattern, escape='\\')
 
     def _node(self, node: Criterion | Group, mistakes: Mistakes) -> ColumnElement[bool] | None:
         """The condition of a criterion or group; None for a criterion that holds a mistake (a number outside the
@@ -246,7 +244,7 @@ class SQLTable:
             return _date_criterion(node, column)
         if node.type == 'boolean':
             return _boolean_criterion(node, column)
-        return _string_criterion(node, column, fold=_folds(node.column, column))
+        return _string_criterion(node, column, fold=_folds(node.column))
 
     def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
         """The user's order, then the primary key, so the same rows come in the same order and a tie never splits
@@ -416,18 +414,26 @@ def _compare(
             raise AssertionError(condition)
 
 
-def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
-    """Whether an exact match on the column ignores case: it holds text, it is not declared ``fold_case=False``, and
-    no hook transforms what is searched for. Otherwise the comparison is sent plain, and the column's collation
-    decides (PRD-D21, PRD-F9)."""
-    folded = declared.fold_case and declared.search_value is None
-    return folded and (_is_text(column) or isinstance(_sql_type(column), Enum))
+def _folds(declared: Column) -> bool:
+    """Whether an exact match on a string column ignores case: it is not declared ``fold_case=False``, and no hook
+    transforms what is searched for. Otherwise the comparison is sent plain, and the column's collation decides
+    (PRD-D21, PRD-F9)."""
+    return declared.fold_case and declared.search_value is None
+
+
+def _text(column: ColumnElement[Any]) -> ColumnElement[Any]:
+    """The column as text, for a search or a fold: itself when its SQL type is a ``String`` (seen through a
+    ``TypeDecorator``), else cast. An ``Enum`` is cast too (PostgreSQL has no text functions for a native enum
+    type), and so is a type the library cannot tell, such as an expression's."""
+    sql_type = _sql_type(column)
+    if isinstance(sql_type, String) and not isinstance(sql_type, Enum):
+        return column
+    return sql_cast(column, String)
 
 
 def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
-    """The column in lower case, as the database folds it, so that a case-sensitive collation matches too. An
-    ``Enum`` is cast to text first: PostgreSQL has no ``lower()`` for a native enum type."""
-    return func.lower(sql_cast(column, String) if isinstance(_sql_type(column), Enum) else column)
+    """The column in lower case, as the database folds it, so that a case-sensitive collation matches too."""
+    return func.lower(_text(column))
 
 
 def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool) -> ColumnElement[bool]:
@@ -439,13 +445,12 @@ def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool
         left, right = (_lower(column), func.lower(value)) if fold else (column, value)
         return left == right if node.condition == '=' else left != right
     escaped = escape_like(str(value))
-    target = column if _is_text(column) else sql_cast(column, String)
     pattern = {
         'contains': f'%{escaped}%',
         'starts': f'{escaped}%',
         'ends': f'%{escaped}',
     }[node.condition.lstrip('!')]
-    match = target.ilike(pattern, escape='\\')
+    match = _text(column).ilike(pattern, escape='\\')
     return not_(match) if node.condition.startswith('!') else match
 
 
