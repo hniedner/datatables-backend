@@ -338,7 +338,7 @@ def _criterion(
     if kind == 'string':
         values = tuple(hooked(column, text) for text in texts)
     elif kind == 'number':
-        values = tuple(parse_number(text, column) for text in texts)
+        values = tuple(parse_number(text, column, listed=needed == 2) for text in texts)
     elif kind == 'boolean':
         values = tuple(parse_boolean(text, column) for text in texts)
     elif condition in ('contains', '!contains'):
@@ -356,8 +356,8 @@ def _criterion(
 
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point, else a ``float``. ``listed`` says the text is one of a list of values, where the reason must not ask
-    for one number."""
+    point, else a ``float``. ``listed`` says the text is one of several values (a list, or the two of a
+    ``between``), where the reason must not ask for one number."""
     stripped = text.strip()
     if stripped.lstrip('+-').isdigit():
         return int(stripped)
@@ -423,9 +423,13 @@ def next_day(day: date) -> date:
 def day_span(text: str, column: Column) -> DaySpan:
     """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day.
     A span that holds the last day there is, is refused as that day is."""
-    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', text.strip())
+    value = text.strip()
+    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', value)
     try:
-        start = date(int(form[1]), int(form[2] or 1), int(form[3] or 1)) if form else None
+        if form and form[3]:  # a full day is read as ``parse_day`` reads it, so `contains` and `=` take the same
+            start = date.fromisoformat(value)
+        else:
+            start = date(int(form[1]), int(form[2] or 1), 1) if form else None
     except ValueError:  # the year 0000, or a month or a day that does not exist
         start = None
     if form is None or start is None:

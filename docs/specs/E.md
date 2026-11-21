@@ -96,9 +96,14 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `The column "note" can be searched only for text it contains, not for a list of exact values. Type the text to search for instead.`
 - **SPEC-E4.24** [OS] With `max_result_window` 3, `start` 4 and `length` 3 → `page_out_of_range` with
   `This table can be paged through its first 3 rows only. Go back to an earlier page, or narrow the search so fewer rows match.`
-- **SPEC-E4.25** [all] A column search on `price` with `multi_values` `["7", "abc"]` → `invalid_number` with
-  `Each value in the filter on "price" must be a number, written like 42 or -3.5.` (a list is not told to hold one
-  number, as E4.6 tells a single value).
+- **SPEC-E4.25** [all] A column search on `price` with `multi_values` `["7", "abc"]`, or SearchBuilder `between` `1`
+  and `abc` on `price` → `invalid_number` with
+  `Each value in the filter on "price" must be a number, written like 42 or -3.5.` (several values are not told to
+  be one number, as E4.6 tells a single value; [OS] a column search `7 8` on `price` is a single value and answers
+  E4.6's text).
+- **SPEC-E4.26** [SQL] A column search on `price` with `multi_values` `["7", "9223372036854775808"]`, or SearchBuilder
+  `between` `1` and `9223372036854775808` on `price` → `invalid_number` with
+  `Each value in the filter on "price" must be a number between -9223372036854775808 and 9223372036854775807.`
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

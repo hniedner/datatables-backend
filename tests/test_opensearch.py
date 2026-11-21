@@ -188,6 +188,13 @@ def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
             'Each value in the filter on "pages" must be a number, written like 42 or -3.5.',
         ),
         (
+            table,
+            NAMES,
+            {'column_search': {'pages': {'value': '7 8'}}},  # one value, read where the body is built: not a list
+            'invalid_number',
+            'The filter on "pages" needs one number, written like 42 or -3.5.',
+        ),
+        (
             SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')]),
             ('pages', 'created'),
             {'search': {'value': 'x'}},
@@ -203,12 +210,12 @@ def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
             'so fewer rows match.',
         ),
     ],
-    ids=['exact-values-on-analysed-text', 'list-on-a-number-column', 'no-text-column', 'page'],
+    ids=['exact-values-on-analysed-text', 'list-on-a-number-column', 'one-value', 'no-text-column', 'page'],
 )
 def test_a_user_error_found_while_the_body_is_built_says_what_is_wrong_and_what_to_do(
     searched: SearchTable, names: tuple[str, ...], body: dict[str, Any], code: str, text: str
 ):
-    """SPEC-E4.23, SPEC-E4.25, SPEC-E4.15, SPEC-E4.24: the texts of the mistakes only the OpenSearch build finds. Those the plan
+    """SPEC-E4.23, SPEC-E4.25, SPEC-E4.6, SPEC-E4.15, SPEC-E4.24: the texts of the mistakes only the OpenSearch build finds. Those the plan
     finds are asserted once, in tests/test_sql.py."""
     assert refused(searched.fetch_sync(request(*names, **body), Client()), code) == text
 

@@ -280,6 +280,7 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
         ('born', 'contains', ['1980'], [2]),
         ('born', 'contains', ['2001-12'], [4]),
         ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
+        ('born', 'contains', ['1980-07-14'], []),  # SPEC-F22.1: and of no more, so the day before Bob's holds nobody
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -571,6 +572,9 @@ def test_the_declared_type_decides_not_the_clients(session: Session):
     refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
 
 
+FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the digits U+FF10 to U+FF19
+
+
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [
@@ -578,6 +582,11 @@ def test_the_declared_type_decides_not_the_clients(session: Session):
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
+        ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
+        ('born', 'contains', ['2024-03-00'], 'invalid_date'),  # nor a day 00 as the first
+        ('born', 'contains', ['0000'], 'invalid_date'),  # nor the year 0000 as the year 1
+        # A full day in full-width digits: `contains` reads a day as `=` does, which takes ASCII digits only
+        ('born', 'contains', ['2024-03-05'.translate(FULL_WIDTH)], 'invalid_date'),
         ('age', 'contains', ['abc'], 'invalid_filter'),  # SPEC-E3.8: the value is never read
     ],
 )
@@ -691,6 +700,12 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         ),
         (
             WORDED,
+            criterion('age', 'between', '1', 'abc'),  # a `between` reads two values, so it is not told to hold one
+            'invalid_number',
+            'Each value in the filter on "age" must be a number, written like 42 or -3.5.',
+        ),
+        (
+            WORDED,
             criterion('born', '=', '15/07/1980'),
             'invalid_date',
             'The filter on "born" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
@@ -716,6 +731,19 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             criterion('big', '=', '9223372036854775808'),
             'invalid_number',
             'The filter on "big" needs a number between -9223372036854775808 and 9223372036854775807.',
+        ),
+        # SPEC-E4.26: the list form of the range text, for a list of values and for the two of a `between`
+        (
+            WORDED,
+            {'column_search': {'age': {'multi_values': ['7', '70000']}}},
+            'invalid_number',
+            'Each value in the filter on "age" must be a number between -32768 and 32767.',
+        ),
+        (
+            WORDED,
+            criterion('age', 'between', '1', '70000'),
+            'invalid_number',
+            'Each value in the filter on "age" must be a number between -32768 and 32767.',
         ),
         # SPEC-E4.10, SPEC-F24.1: the last day itself, and a year that holds it
         (WORDED, criterion('born', '<', '9999-12-31'), 'invalid_date', LAST_DAY),
@@ -827,7 +855,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25: each mistake has a text of its own, which names the condition and the
+    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 and SPEC-E4.26: each mistake has a text of its own, which names the condition and the
     fix, and a column only by the name the server declared. A text is asserted here and nowhere else. The rows are
     also the proof of their codes: SPEC-E1.2, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text

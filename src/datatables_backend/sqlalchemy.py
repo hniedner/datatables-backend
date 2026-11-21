@@ -203,10 +203,8 @@ class SQLTable:
                     if search.type == 'boolean':
                         values = [_boolean(column, value) for value in search.values]
                     elif search.type == 'number':
-                        values = [
-                            _number(column, parse_number(value, search.column, listed=True), search.column)
-                            for value in search.values
-                        ]
+                        numbers = [parse_number(value, search.column, listed=True) for value in search.values]
+                        values = [_number(column, number, search.column, listed=True) for number in numbers]
                     else:
                         values = list(search.values)
                     conditions.append(in_list(column, values))
@@ -238,7 +236,8 @@ class SQLTable:
         column = self._sql(node.column)
         if node.type == 'number':
             with mistakes.part():
-                values = [_number(column, value, node.column) for value in node.values]
+                several = node.condition in ('between', '!between')
+                values = [_number(column, value, node.column, listed=several) for value in node.values]
                 return _compare(node.condition, column, values, column)
             return None
         if node.type == 'date':
@@ -335,10 +334,11 @@ def _is_text(column: ColumnElement[Any]) -> bool:
         return False
 
 
-def _number(column: ColumnElement[Any], value: Any, declared: Column) -> Any:
+def _number(column: ColumnElement[Any], value: Any, declared: Column, *, listed: bool) -> Any:
     """``value`` checked against the column's integer range (as SQL Server's and PostgreSQL's integers have it): 16
     bits for a ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``. A column of another type has
-    no range here. The reason names ``declared`` and the bounds, which are the column's, not the user's."""
+    no range here. The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed``
+    says the value is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
     if not isinstance(sql_type, Integer) or not isinstance(value, int | float):
         return value
@@ -349,11 +349,12 @@ def _number(column: ColumnElement[Any], value: Any, declared: Column) -> Any:
     bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
     low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
     if not low <= value <= high:
-        raise mistake(
-            'datatables_number_out_of_range',
-            f'The filter on "{declared.name}" needs a number between {low} and {high}.',
-            declared,
+        needed = (
+            f'Each value in the filter on "{declared.name}" must be a number'
+            if listed
+            else f'The filter on "{declared.name}" needs a number'
         )
+        raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
     return value
 
 
