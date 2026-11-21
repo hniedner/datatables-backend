@@ -249,9 +249,10 @@ def _not(clause: dict[str, Any]) -> dict[str, Any]:
 
 
 def _folds(column: Column) -> bool:
-    """Whether an exact match on a string column ignores case: not when a hook transforms what is searched for, since
-    the stored value is then compared as it is."""
-    return column.search_value is None
+    """Whether an exact match on a string column ignores case: not when it is declared ``fold_case=False`` or a hook
+    transforms what is searched for. The query is then sent plain, and the field's mapping decides (PRD-D21,
+    PRD-F9)."""
+    return column.fold_case and column.search_value is None
 
 
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:

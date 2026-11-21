@@ -293,7 +293,14 @@ def cased(session: Session) -> SQLTable:
         'without the library folding anything.'
     )
     return SQLTable(
-        tags, [Column('id'), Column('kind'), Column('secret', search_value=lambda text: f'enc:{text}'), Column('size')]
+        tags,
+        [
+            Column('id'),
+            Column('kind'),
+            Column('secret', search_value=lambda text: f'enc:{text}'),
+            Column('size'),
+            Column('plain', field='kind', fold_case=False),  # the same stored values, compared as sent (PRD-D21)
+        ],
     )
 
 
@@ -322,6 +329,11 @@ def test_an_exact_match_on_a_hooked_column_adds_no_folding(session: Session, cas
     """PRD-F9, PRD-D15, PRD-D18: the stored `enc:Alpha` is not what `alpha` transforms to, and the column's own
     collation, case-sensitive here, is all that compares them."""
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == []
+
+
+def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sent(session: Session, cased: SQLTable):
+    """SPEC-D21.1: `Red` is neither `red` nor `RED` to a case-sensitive collation; with the fold it finds both."""
+    assert ids(cased.fetch_sync(request(*CASED, **criterion('plain', '=', 'Red')), session)) == []
 
 
 @pytest.mark.xfail(

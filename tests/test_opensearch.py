@@ -356,12 +356,19 @@ def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_
     ]
 
 
-def test_an_exact_match_on_a_hooked_column_is_sent_as_stored():
-    """PRD-F9, PRD-D15, PRD-D18: the transformed value, with no `case_insensitive`."""
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=str.upper)])
+@pytest.mark.parametrize(
+    'unfolded',
+    [
+        Column('secret', search_value=str.upper),  # PRD-F9, PRD-D15, PRD-D18: the transformed value, as stored
+        Column('secret', fold_case=False),  # SPEC-D21.2: the value as sent
+    ],
+)
+def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfolded: Column):
+    """A `term` without `case_insensitive`, and a list as one `terms` query: the field's mapping decides."""
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
     client = Client()
-    hooked.fetch_sync(request('id', 'secret', **criterion('secret', '=', 'a')), client)
-    hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'multi_values': ['a', 'b']}}), client)
+    plain.fetch_sync(request('id', 'secret', **criterion('secret', '=', 'A')), client)
+    plain.fetch_sync(request('id', 'secret', column_search={'secret': {'multi_values': ['A', 'B']}}), client)
     assert [search['query']['bool']['must'] for search in client.searches] == [
         [{'term': {'secret.keyword': 'A'}}],
         [{'terms': {'secret.keyword': ['A', 'B']}}],

@@ -417,9 +417,11 @@ def _compare(
 
 
 def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
-    """Whether an exact match on the column ignores case: it holds text, and no hook transforms what is searched
-    for (a hooked column is compared as the database compares the stored value, with nothing added here)."""
-    return declared.search_value is None and (_is_text(column) or isinstance(_sql_type(column), Enum))
+    """Whether an exact match on the column ignores case: it holds text, it is not declared ``fold_case=False``, and
+    no hook transforms what is searched for. Otherwise the comparison is sent plain, and the column's collation
+    decides (PRD-D21, PRD-F9)."""
+    folded = declared.fold_case and declared.search_value is None
+    return folded and (_is_text(column) or isinstance(_sql_type(column), Enum))
 
 
 def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:

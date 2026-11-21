@@ -76,3 +76,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D19.2** [OS] On a text-only `name`: a global search `apple`, a column search `apple`, and `null`/`!null` are
   answered.
 - **SPEC-D20.1** [OS] Declaring a hook on a text-only column → `SchemaError` at construction.
+- **SPEC-D21.1** [SQLite, PostgreSQL] With `colour` declared `fold_case=False`: SearchBuilder `=` `Red` → none; `=`
+  `red` → rows 1; `multi_values` `["RED"]` → rows 4.
+- **SPEC-D21.2** [OS] With `colour` declared `fold_case=False`: SearchBuilder `=` `Red` sends a `term` query without
+  `case_insensitive`, and `multi_values` `["red", "blue"]` one `terms` query.
+- **SPEC-D21.3** [all] With `colour` declared `fold_case=False`: SearchBuilder `contains` `RED` → rows 1, 2, 4 (a
+  search still ignores case, PRD-F9).
