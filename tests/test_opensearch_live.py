@@ -78,10 +78,11 @@ LONGEST_PATTERN = chr(0x10400) + chr(0x1F600) * 254
 # Every ASCII character a value may hold that is not a letter or a digit: line feed and carriage return, the two
 # control characters PRD-F15 lets through, then the space and the punctuation.
 PUNCTUATION = '\n\r' + ''.join(char for char in map(chr, range(32, 127)) if not char.isalnum())
-# Sixteen of them are operators of a regular expression without a backslash (measured on 3.10.0 and 2.19.7). The row
-# with all of PUNCTUATION turns red when one of twelve loses its backslash, the DOTTED row for `.`, and for these
-# three a row of their own: a1 holds each between Ä and Z, and b2 a value that `@` (any string) and, on OpenSearch
-# 2.19 only, `~` (not what follows) match as operators; a bare `\` the server rejects.
+# Without a backslash, sixteen of them are operators of a regular expression on 2.19.7 and fifteen on 3.0.0 to
+# 3.10.0, where a bare `~` is that character (measured). The row with all of PUNCTUATION turns red when one of
+# twelve loses its backslash, the DOTTED row for `.`, and for these three a row of their own: a1 holds each between
+# Ä and Z, and b2 a value that `@` (any string) and, on OpenSearch 2.19 only, `~` (not what follows) match as
+# operators; a bare `\` the server rejects.
 OPERATORS = '@\\~'
 ESCAPED = [*(f'Ä{char}Z' for char in OPERATORS), f'Ä{PUNCTUATION}Z']
 DECOY = 'ÄXZ'
@@ -141,8 +142,8 @@ def found(response: DTResponse) -> list[str]:
 
 
 def test_the_cluster_is_the_one_asked_for(client: OpenSearch):
-    """DTB_OPENSEARCH_VERSION (the CI job sets it for each leg) names the server the run must be on: an image pinned
-    by digest runs that digest, whatever version its tag says."""
+    """SPEC-Q14.1: DTB_OPENSEARCH_VERSION (the CI job sets it for each leg) names the server the run must be on: an
+    image pinned by digest runs that digest, whatever version its tag says."""
     version = client.info()['version']
     assert version['distribution'] == 'opensearch'
     assert version['number'] == os.environ.get('DTB_OPENSEARCH_VERSION', version['number'])
@@ -290,7 +291,9 @@ labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('l
 @pytest.mark.parametrize(
     ('body', 'expected'),
     [
-        ({'search': {'value': 'äpfel'}}, ['e5']),  # SPEC-F9.9: a whole word, which the analysed text folds
+        # SPEC-F9.9: a whole word, which the analysed text folds. Only the legs before 3.1 prove that fold: from 3.1
+        # on the `regexp` on the whole string finds the row as well.
+        ({'search': {'value': 'äpfel'}}, ['e5']),
         ({'search': {'value': 'äpf'}}, ['e5'] if FOLDS_BEYOND_ASCII else []),  # SPEC-F9.10: a substring
         ({'search': {'value': 'ÄPF'}}, ['e5']),  # and is found in its own case on every server
         (criterion('label', '=', 'äpfel'), ['e5'] if FOLDS_BEYOND_ASCII else []),  # SPEC-F9.11: an exact match
@@ -336,9 +339,10 @@ def test_a_regular_expression_of_255_code_points_is_answered(client: OpenSearch,
     """PRD-F14, PRD-F9 (SPEC-F9.17): a value with a cased letter outside ASCII is a `regexp` query, up to 255 code
     points; each row is that long, as a substring, open at both ends. One letter repeated is the text a server
     refuses earliest of those measured (at 400 letters, where it answers 500 of the alphabet in turn). The dots
-    make a pattern of 514 UTF-16 units, and the row also turns red when a dot loses its backslash. The longest pattern is 768 units, against the 1,000 a server allows by default
-    (`index.max_regex_length`, which counts UTF-16 units). Searched in the stored case, so every server finds it. A
-    row turns red when a server refuses or fails such a query."""
+    make a pattern of 514 UTF-16 units, and the row also turns red when a dot loses its backslash. The longest
+    pattern is 768 units, against the 1,000 a server allows by default (`index.max_regex_length`, which counts
+    UTF-16 units). Searched in the stored case, so every server finds it. A row turns red when a server refuses or
+    fails such a query."""
     params = request(*LABEL_NAMES, **criterion('label', 'contains', value))
     assert found(whole_label.fetch_sync(params, client)) == ['d4']
 
@@ -353,7 +357,8 @@ def test_a_character_of_the_regular_expression_syntax_in_a_value_is_that_charact
 
 def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch):
     """SPEC-F9.16: every ASCII character that is not a letter or a digit, in one value. It turns red when a server
-    rejects or misreads a backslash before any of them, or when one of twelve operators has lost its backslash:
+    rejects or misreads a backslash before a punctuation mark, or the line feed, carriage return or space that are
+    sent without one, or when one of twelve operators has lost its backslash:
     `"`, `#`, `&`, `(`, `)`, `*`, `+`, `<`, `?`, `[`, `{` and the vertical bar. A bare `.` is caught by the row of
     dots above, and `@`, `\\` and `~` by the rows before this one."""
     params = request(*LABEL_NAMES, **criterion('label', '=', f'Ä{PUNCTUATION}Z'))
@@ -362,8 +367,8 @@ def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch):
 
 @pytest.mark.xfail(
     reason='PRD-F38, issue #27: a list is not capped at 256 values yet, and a string list is one term query for each '
-    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", what 3.10.0 and 2.19.7 answer) the '
-    'search fails where a `terms` query answered',
+    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", what 3.10.0 and 2.19.7 '
+    'answer) the search fails where a `terms` query answered',
     strict=True,
     raises=RequestError,
 )
