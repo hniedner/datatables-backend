@@ -7,8 +7,8 @@
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold and
-  for OpenSearch's ASCII-only fold, with lines in section 5). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. A
-  requirement now changes only by the owner.
+  for OpenSearch's ASCII-only fold, with lines in section 5). It replaces draft 1 (R1 to R9); section 10 maps
+  every draft-1 item to its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED

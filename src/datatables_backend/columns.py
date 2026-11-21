@@ -29,7 +29,9 @@ class Column:
         fold_case: Whether an exact match on a string column (SearchBuilder's ``=`` and ``!=``, a multi-select, a
             ``multi_values`` list) ignores case. ``False`` sends a plain comparison, which a plain index on the
             column can serve and which matches case as the column's collation or the field's mapping decides.
-            Searches ignore case either way, and a column of another type does not read it.
+            Searches ignore case either way, and a column of another type does not read it. On a SQL column whose
+            SQLAlchemy type converts values (a ``TypeDecorator``), the value goes through that conversion either way,
+            and with the fold case is then ignored on the stored value; a search looks at the stored text.
     """
 
     name: str

@@ -50,6 +50,7 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
+from sqlalchemy.types import TypeDecorator
 
 from ._plan import AnyOf
 from ._plan import Contains
@@ -422,11 +423,11 @@ def _folds(declared: Column) -> bool:
 
 
 def _text(column: ColumnElement[Any]) -> ColumnElement[Any]:
-    """The column as text, for a search or a fold: itself when its SQL type is a ``String`` (seen through a
-    ``TypeDecorator``), else cast. An ``Enum`` is cast too (PostgreSQL has no text functions for a native enum
-    type), and so is a type the library cannot tell, such as an expression's."""
-    sql_type = _sql_type(column)
-    if isinstance(sql_type, String) and not isinstance(sql_type, Enum):
+    """The column's stored text, for a search or a fold: itself when its SQL type is a plain ``String``, else cast.
+    The cast keeps a ``TypeDecorator`` from converting a search pattern as if it were a value, gives PostgreSQL's
+    native enum type the text functions it lacks, and covers a type the library cannot tell, such as an
+    expression's."""
+    if isinstance(column.type, String) and not isinstance(column.type, Enum):
         return column
     return sql_cast(column, String)
 
@@ -436,13 +437,21 @@ def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
     return func.lower(_text(column))
 
 
+def _lowered(column: ColumnElement[Any], value: Any) -> ColumnElement[Any]:
+    """A value to compare with ``_lower(column)``, folded by the database too: Python lowers letters that SQLite's
+    ``lower()`` leaves alone. A ``TypeDecorator`` converts the value first, as it does in a plain comparison, so
+    what matched as sent still matches; its result is cast to text, whatever type it stores."""
+    if isinstance(column.type, TypeDecorator):
+        return func.lower(sql_cast(bindparam(None, value, type_=column.type), String))
+    return func.lower(value)
+
+
 def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool) -> ColumnElement[bool]:
     if node.condition in ('null', '!null'):
         return _empty(column) if node.condition == 'null' else not_(_empty(column))
     value = node.values[0]
     if node.condition in ('=', '!='):
-        # The value is folded by the database too: Python lowers letters that SQLite's lower() leaves alone
-        left, right = (_lower(column), func.lower(value)) if fold else (column, value)
+        left, right = (_lower(column), _lowered(column, value)) if fold else (column, value)
         return left == right if node.condition == '=' else left != right
     escaped = escape_like(str(value))
     pattern = {
@@ -537,7 +546,7 @@ type _InList = Callable[[ColumnElement[Any], Sequence[Any], bool], ColumnElement
 
 def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:
     if fold:
-        return _lower(column).in_([func.lower(value) for value in values])
+        return _lower(column).in_([_lowered(column, value) for value in values])
     return column.in_(values)
 
 
@@ -597,7 +606,7 @@ def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw:
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 @compiles(_JsonValuesIn, 'mssql')
 def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
-    column_type = element.column.type
+    column_type = _sql_type(element.column)  # the type a TypeDecorator wraps: the values are cast as it stores them
     if isinstance(column_type, String):
         column_type = column_type.copy()
         column_type.length = None  # a longer value must not be cut down to one that matches
