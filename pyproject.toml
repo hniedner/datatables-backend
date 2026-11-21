@@ -73,6 +73,11 @@ containers = [
 [tool.hatch.version]
 path = "src/datatables_backend/__init__.py"
 
+# Without a list the sdist takes every file .gitignore does not exclude, tracked or not. scripts/check_dist.py checks
+# the built sdist.
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/LICENSE", "/pyproject.toml"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/datatables_backend"]
 
@@ -98,6 +103,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
 "scripts/trace_check.py" = ["T201"]
 "scripts/private_word_scan.py" = ["S603", "S607", "T201"]
+"scripts/check_dist.py" = ["S603", "S607", "T201"]
 "scripts/test_*.py" = ["S101", "S603"]
 "scripts/test_private_word_scan.py" = ["S607"]
 
