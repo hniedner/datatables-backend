@@ -44,7 +44,9 @@ _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
     'string': _STRING_CONDITIONS,
     'number': _NUMBER_CONDITIONS,
     'date': _DATE_CONDITIONS,
+    'boolean': frozenset({'=', '!=', 'null', '!null'}),
 }
+_BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
 
 
@@ -67,7 +69,8 @@ class Contains:
 
 @dataclass(frozen=True)
 class AnyOf:
-    """A multi-select: the column equals one of ``values``."""
+    """A multi-select: the column equals one of ``values``. On a boolean column they are ``bool``, each at most once,
+    and a plain column search is one too, since a boolean has no text to contain anything."""
 
     column: Column
     type: ColumnType
@@ -77,7 +80,7 @@ class AnyOf:
 @dataclass(frozen=True)
 class Criterion:
     """A SearchBuilder condition. ``values`` are parsed for the column's type: text (after the hook), numbers
-    (``int`` or ``float``), dates, or one ``DaySpan`` for a date "contains"."""
+    (``int`` or ``float``), dates, one ``DaySpan`` for a date "contains", or a ``bool``."""
 
     column: Column
     type: ColumnType
@@ -156,7 +159,8 @@ def plan(params: DTParams, columns: Sequence[Column], type_of: Callable[[Column]
         for requested in params.columns:
             if requested.searchable and requested.key:
                 column = lookup(requested.key)
-                if column.searchable:
+                # A boolean column takes no part: "true" as search text is nothing a user reads in the cell
+                if column.searchable and type_of(column) != 'boolean':
                     global_search.append(Contains(column, type_of(column), hooked(column, params.search.value)))
         if not global_search:
             raise InvalidFilter(NO_USABLE_COLUMN)
@@ -203,6 +207,8 @@ def _criterion(
         values = tuple(hooked(column, text) for text in texts)
     elif kind == 'number':
         values = tuple(parse_number(text) for text in texts)
+    elif kind == 'boolean':
+        values = tuple(parse_boolean(text) for text in texts)
     elif condition in ('contains', '!contains'):
         values = (day_span(texts[0]),)
     else:
@@ -222,6 +228,14 @@ def parse_number(text: str) -> int | float:
     if not math.isfinite(number):
         raise InvalidFilter('The filter value must be a number.')
     return number
+
+
+def parse_boolean(text: str) -> bool:
+    """The boolean ``text`` names: ``true`` or ``false`` in any case, or ``1`` or ``0``."""
+    value = _BOOLEANS.get(text.strip().lower())
+    if value is None:
+        raise InvalidFilter('The filter value must be true or false.')
+    return value
 
 
 def parse_day(text: str) -> date:
@@ -268,17 +282,25 @@ def _overflow() -> date:
 def _column_search(
     search: Search, column: Column, kind: ColumnType, hooked: Callable[[Column, str], Any]
 ) -> Contains | AnyOf:
-    """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains."""
+    """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains.
+    On a boolean column a plain value is an exact value too."""
     if search.multi_values and search.value:
         raise InvalidFilter(VALUE_AND_VALUES)
+    texts: Sequence[str]
     if search.multi_values:
-        return AnyOf(column, kind, tuple(hooked(column, v) for v in search.multi_values))
-    if search.regex:
+        texts = search.multi_values
+    elif search.regex:
         alternatives = _alternatives(search.value)
         if alternatives is None:
             raise InvalidFilter(REGEX_REFUSED)
-        return AnyOf(column, kind, tuple(hooked(column, v) for v in alternatives))
-    return Contains(column, kind, hooked(column, search.value))
+        texts = alternatives
+    elif kind == 'boolean':
+        texts = [search.value]
+    else:
+        return Contains(column, kind, hooked(column, search.value))
+    if kind == 'boolean':
+        return AnyOf(column, kind, tuple(dict.fromkeys(parse_boolean(text) for text in texts)))
+    return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 
 def _alternatives(pattern: str) -> list[str] | None:

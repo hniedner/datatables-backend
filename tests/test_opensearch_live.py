@@ -264,6 +264,74 @@ def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, va
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == expected
 
 
+# The column declared boolean (PRD-D8): `active` is true for a1 and d4, false for b2 and e5, missing in c3. The spec
+# statements cited speak of their own four-row fixture; the rows here are the same cases on this index.
+
+FLAG_NAMES = ('id', 'active')
+flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', type='boolean')])
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('=', ['true'], ['a1', 'd4']),
+        ('=', ['TRUE'], ['a1', 'd4']),
+        ('=', ['True'], ['a1', 'd4']),
+        ('=', ['1'], ['a1', 'd4']),
+        ('=', ['false'], ['b2', 'e5']),
+        ('=', ['0'], ['b2', 'e5']),
+        ('=', [' true '], ['a1', 'd4']),  # SPEC-F43.4
+        ('!=', ['true'], ['b2', 'c3', 'e5']),  # a missing field is not true (PRD-F37)
+        ('null', [], ['c3']),
+        ('!null', [], ['a1', 'b2', 'd4', 'e5']),
+    ],
+)
+def test_searchbuilder_on_a_declared_boolean_column(
+    client: OpenSearch, condition: str, values: list[str], expected: list[str]
+):
+    """SPEC-F43.1, SPEC-F43.2, SPEC-F43.4."""
+    params = request(*FLAG_NAMES, **criterion('active', condition, *values))
+    assert found(flags.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize(('condition', 'value'), [('=', 'yes'), ('=', '2'), ('=', 'abc'), ('contains', 'true')])
+def test_a_declared_boolean_column_refuses_what_opensearch_would_reject(client: OpenSearch, condition: str, value: str):
+    """SPEC-F43.3: answered as `invalid_filter`; the same values raise `RequestError` on the string columns above."""
+    response = flags.fetch_sync(request(*FLAG_NAMES, **criterion('active', condition, value)), client)
+    assert (response.error_code, response.data) == ('invalid_filter', [])
+
+
+@pytest.mark.parametrize(
+    ('search', 'expected'),
+    [
+        ({'value': 'true'}, ['a1', 'd4']),
+        ({'value': '0'}, ['b2', 'e5']),
+        ({'value': '^(true|0)$', 'regex': True}, ['a1', 'b2', 'd4', 'e5']),
+        ({'multi_values': ['TRUE', '1']}, ['a1', 'd4']),
+    ],
+)
+def test_a_column_search_on_a_declared_boolean_column(client: OpenSearch, search: dict[str, Any], expected: list[str]):
+    """SPEC-F44.2, SPEC-F44.3."""
+    params = request(*FLAG_NAMES)
+    params.columns[1].search = params.columns[1].search.model_copy(update=search)
+    assert found(flags.fetch_sync(params, client)) == expected
+
+
+def test_the_global_search_skips_a_declared_boolean_column(client: OpenSearch):
+    """SPEC-F44.1: no id holds `true`, and `active` takes no part."""
+    assert found(flags.fetch_sync(request(*FLAG_NAMES, search={'value': 'true'}), client)) == []
+
+
+@pytest.mark.parametrize(
+    ('direction', 'expected'), [('asc', ['b2', 'e5', 'a1', 'd4']), ('desc', ['a1', 'd4', 'b2', 'e5'])]
+)
+def test_false_sorts_before_true(client: OpenSearch, direction: str, expected: list[str]):
+    """The boolean part of SPEC-O2.3, SPEC-O8.1 and SPEC-O8.2, measured: `active`, then `id` ascending, over the
+    documents that have the field. Where a missing value goes and which way the key runs are PRD-O2's and PRD-O3's."""
+    params = request(*FLAG_NAMES, order=[{'column': 1, 'dir': direction}, {'column': 0, 'dir': 'asc'}])
+    assert [row for row in ids(flags.fetch_sync(params, client)) if row != 'c3'] == expected
+
+
 def test_searchbuilder_groups_nest(client: OpenSearch):
     tree = {'logic': 'OR', 'criteria': [
         {'logic': 'AND', 'criteria': [

@@ -172,8 +172,8 @@ class SQLTable:
         if column.type is not None:
             return column.type
         sql_type = _sql_type(self._sql(column))
-        if isinstance(sql_type, Boolean):
-            return 'string'
+        if isinstance(sql_type, Boolean):  # SQL Server's BIT too; a reflected MySQL TINYINT(1) is an Integer
+            return 'boolean'
         if isinstance(sql_type, Integer | Numeric | Float):
             return 'number'
         if isinstance(sql_type, Date | DateTime):
@@ -187,7 +187,10 @@ class SQLTable:
         for search in request.column_searches:
             if isinstance(search, AnyOf):
                 column = self._sql(search.column)
-                values = [_number(column, parse_number(v)) if search.type == 'number' else v for v in search.values]
+                if search.type == 'boolean':
+                    values = [_boolean(column, value) for value in search.values]
+                else:
+                    values = [_number(column, parse_number(v)) if search.type == 'number' else v for v in search.values]
                 conditions.append(in_list(column, values))
             else:
                 conditions.append(self._contains(search))
@@ -213,6 +216,8 @@ class SQLTable:
             return _compare(node.condition, column, [_number(column, value) for value in node.values], column)
         if node.type == 'date':
             return _date_criterion(node, column)
+        if node.type == 'boolean':
+            return _boolean_criterion(node, column)
         return _string_criterion(node, column)
 
     def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
@@ -316,6 +321,23 @@ def _number(column: ColumnElement[Any], value: Any) -> Any:
     if not -(2 ** (bits - 1)) <= value < 2 ** (bits - 1):
         raise InvalidFilter(OUT_OF_RANGE)
     return value
+
+
+def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
+    """``value`` as the column holds it: 1 or 0 for a number column declared boolean (a MySQL ``TINYINT(1)``)."""
+    return value if isinstance(_sql_type(column), Boolean) else int(value)
+
+
+def _boolean_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElement[bool]:
+    match node.condition:
+        case 'null':
+            return column.is_(None)
+        case '!null':
+            return column.is_not(None)
+        case '=':
+            return column == _boolean(column, node.values[0])
+        case _:  # '!=', the only other condition the plan admits: NULL is not the value either
+            return or_(column != _boolean(column, node.values[0]), column.is_(None))
 
 
 def _empty(column: ColumnElement[Any]) -> ColumnElement[bool]:

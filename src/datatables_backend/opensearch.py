@@ -261,6 +261,8 @@ def _global_clause(search: Contains) -> dict[str, Any]:
 def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
     column = search.column
     if isinstance(search, AnyOf):
+        if search.type == 'boolean':
+            return {'terms': {column.source: list(search.values)}}
         if search.type == 'number':
             return {'terms': {column.source: [parse_number(str(value)) for value in search.values]}}
         field = column.source if search.type == 'date' else _keyword(column)
@@ -273,7 +275,7 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
         case 'date':
             span = day_span(str(search.value))
             return _days(column.source, span.start.isoformat(), span.end.isoformat())
-        case 'string':
+        case _:  # a string: the plan makes a boolean column's search an AnyOf
             return _string_contains(column, str(search.value), parse=True)
 
 
@@ -295,6 +297,9 @@ def _node(node: Criterion | Group) -> dict[str, Any]:
             return _number_criterion(node)
         case 'date':
             return _date_criterion(node)
+        case 'boolean':  # '=' or '!=': a must_not keeps a document without the field
+            term = {'term': {node.column.source: node.values[0]}}
+            return term if node.condition == '=' else _not(term)
         case 'string':
             return _string_criterion(node)
 
