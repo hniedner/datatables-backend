@@ -92,6 +92,9 @@ jobs:
           echo "--- diff, main (<) against the branch (>):"
           diff "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt" || true
           echo "--- end of diff"
+          echo "--- values 0 to 5 (letters that fold to ASCII), with the branch's source:"
+          grep -E " \| [0-5] " "$RUNNER_TEMP/after.txt" || true
+          echo "--- end of values 0 to 5"
       - name: Each character left unescaped in turn
         if: always()
         run: |

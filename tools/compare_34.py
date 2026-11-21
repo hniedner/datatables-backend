@@ -24,7 +24,11 @@ from datatables_backend.opensearch import SearchTable
 
 INDEX = 'dtb-compare-34'
 EXTRA = {'id': 'x9', 'title': 'Extra', 'body': 'extra', 'label': ['日本語', 'STRAẞE', 'İZMİR', 'ǅungla', 'bär', 'Bär']}
+KELVIN = chr(0x212A) + 'elvin'  # the Kelvin sign, which Unicode folds to k
+LONG_S = chr(0x17F) + 'un'  # the long s, which Unicode folds to s
+FOLDED_TO_ASCII = {'id': 'y8', 'title': 'Folded', 'body': 'folded', 'label': [KELVIN, LONG_S]}
 VALUES = [
+    'kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S,  # letters outside ASCII whose other case is an ASCII letter
     'apple', 'APPLE', 'pfel', 'PFEL', 'abc', LONGEST, LONGEST.lower(),  # ASCII
     'äpfel', 'ÄPFEL', 'äpf', 'ÄPF', 'bär', 'BÄR', 'Bär', 'straße', 'STRAẞE', 'izmir', 'İZMİR', 'i̇zmi̇r',  # cased
     'ǅungla', 'ǆungla', 'Ǆungla',  # a titlecase letter and its two other cases
@@ -62,10 +66,19 @@ def main() -> None:
     if client.indices.exists(index=INDEX):
         client.indices.delete(index=INDEX)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
-    for number, document in enumerate([*DOCUMENTS, EXTRA], 1):
+    for number, document in enumerate([*DOCUMENTS, EXTRA, FOLDED_TO_ASCII], 1):
         client.index(index=INDEX, id=str(number), body=document)
     client.indices.refresh(index=INDEX)
     try:
+        for value in ('kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S):  # what the server itself folds, sent raw
+            forms = {
+                'term ci': {'term': {'label.keyword': {'value': value, 'case_insensitive': True}}},
+                'regexp ci': {'regexp': {'label.keyword': {'value': value, 'case_insensitive': True}}},
+            }
+            for form, query in forms.items():
+                hits: Any = client.search(index=INDEX, body={'query': query, '_source': ['id']})
+                found = sorted(hit['_source']['id'] for hit in hits['hits']['hits'])
+                sys.stderr.write(f'RAW {form} {value!a} -> {" ".join(found) or "-"}\n')
         for name, table in TABLES.items():
             for number, value in enumerate(VALUES):
                 shown = value if len(value) < 40 else f'{value[:12]}...({len(value)})'
