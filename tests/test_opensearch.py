@@ -385,13 +385,14 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
 @pytest.mark.parametrize(
     ('condition', 'value', 'pattern'),
     [
-        ('=', 'ä.b', 'ä\\.b'),
         ('contains', 'ä.b', '.*ä\\.b.*'),
         ('starts', 'b.ä', 'b\\.ä.*'),  # the letter is not the first character
         ('ends', 'B.Ä', '.*B\\.Ä'),  # nor a small one
         ('=', f'ä{chr(0xFF08)}', f'ä\\{chr(0xFF08)}'),  # a fullwidth bracket, which a normalizer can make a `(`
         ('=', chr(0x24D3), chr(0x24D3)),  # a circled d, cased and no letter: a normalizer can make it `d`, and `\d`
-        ('=', 'ä ', 'ä '),  # a space: a normalizer that trims would leave its backslash at the end of the pattern
+        # Whitespace, here a space and an ideographic space: a normalizer that trims would leave a backslash at the
+        # end of the pattern
+        ('=', f'ä {chr(0x3000)}', f'ä {chr(0x3000)}'),
     ],
 )
 def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, value: str, pattern: str):
@@ -404,7 +405,7 @@ def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condi
 
 
 def test_a_negated_starts_is_anchored_at_the_start():
-    """SPEC-F37.1: `!starts` is the query of `starts` in a `must_not`, open at its end and not at its start."""
+    """SPEC-F9.13: `!starts` is the query of `starts` in a `must_not`, open at its end and not at its start."""
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion('id', '!starts', 'ä')), client)
     assert query(client) == [{'bool': {'must_not': [{'regexp': {'id': {'value': 'ä.*', 'case_insensitive': True}}}]}}]

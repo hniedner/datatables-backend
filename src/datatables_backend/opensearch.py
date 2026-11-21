@@ -278,9 +278,10 @@ def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] |
     255 code points, beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most
     768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
 
-    A character of ``value`` gets a backslash, which makes it that character and nothing else, also when it is
-    outside ASCII: the server runs the pattern through the field's normalizer, which can make an ASCII bracket of a
-    fullwidth one. Three kinds of character get none:
+    A character of ``value`` gets a backslash, also when it is outside ASCII: the server runs the pattern through
+    the field's normalizer, which can make an ASCII bracket of a fullwidth one. The backslash makes it that
+    character and nothing else, except where a normalizer turns one character into several (PRD section 5 states
+    that limit). Three kinds of character get none:
 
     - an alphanumeric one, which is no operator of the syntax;
     - a cased one that is not alphanumeric (a circled letter): a normalizer can make it an ASCII letter, and a

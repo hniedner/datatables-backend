@@ -291,8 +291,8 @@ labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('l
 @pytest.mark.parametrize(
     ('body', 'expected'),
     [
-        # SPEC-F9.9: a whole word, which the analysed text folds. Only the legs before 3.1 prove that fold: from 3.1
-        # on the `regexp` on the whole string finds the row as well.
+        # SPEC-F9.9: a whole word, which the analysed text folds. Only a server before 3.1 proves that fold (in CI
+        # the 2.19 leg): from 3.1 on the `regexp` on the whole string finds the row as well.
         ({'search': {'value': 'äpfel'}}, ['e5']),
         ({'search': {'value': 'äpf'}}, ['e5'] if FOLDS_BEYOND_ASCII else []),  # SPEC-F9.10: a substring
         ({'search': {'value': 'ÄPF'}}, ['e5']),  # and is found in its own case on every server
@@ -320,7 +320,7 @@ whole_label = SearchTable(
 def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, condition: str):
     """PRD-F14, PRD-F9 (SPEC-F9.17): a measurement of the server, not of the `regexp` form: what it does with the
     longest text of ASCII letters a search may hold, as a case-insensitive `term` (`=`) and a case-insensitive
-    `wildcard` (`contains`; `starts` and `ends` are the same query). OpenSearch's documentation warns that on 2.x
+    `wildcard` (`contains`; `starts` and `ends` are the same kind of query). OpenSearch's documentation warns that on 2.x
     and earlier the cost of a case-insensitive query can grow exponentially with the number of characters. A row
     turns red when a server refuses or fails such a query at 255 letters, or stops folding at that length."""
     params = request(*LABEL_NAMES, **criterion('label', condition, LONGEST.lower()))
