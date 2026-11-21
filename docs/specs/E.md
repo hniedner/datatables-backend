@@ -13,7 +13,7 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   `invalid_date`, `invalid_number`, `page_out_of_range`; it never answers another code (`query_failed` is the app's,
   PRD-E5).
 - **SPEC-E2.2** [all] The four codes are stable: each case in P, D, F, O and C that names a code answers that code.
-  [review] The four are listed in the documentation of `DTResponse.error_code`.
+  [review] The four are listed in the docstring of `DTResponse`.
 - **SPEC-E3.1** [all] A request holding both a U+0000 in the global search and `=` `abc` on `price` → `invalid_filter`
   (step 1 before step 2).
 - **SPEC-E3.2** [all] A request holding a 17-word global search and `=` `2024-13-01` on `made` → `invalid_filter`;

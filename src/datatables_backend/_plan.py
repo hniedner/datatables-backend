@@ -279,7 +279,9 @@ def _criterion(
     """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
     the condition reads; a name that is not declared; a condition the column's type does not take, reported without
     the value being read (so ``contains`` with ``abc`` on a number column is no number mistake); a value of the
-    wrong format or range, among the values there are; a value that is missing."""
+    wrong format, or a date out of range, among the values there are; a value that is missing. A whole number outside
+    the range of its SQL column is found only later, when the query is built, so within one criterion a missing
+    value is reported before it."""
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]

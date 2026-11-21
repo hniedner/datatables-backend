@@ -180,8 +180,8 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     """PRD-E3 across the two places a mistake is found: one from the build must not be raised on the spot, since the
     plan may hold one of a lower step."""
     if found_in_the_build == 'a column search that is no number':  # step 2, beside a control character (step 1)
-        searched, params = table, request(*NAMES, **criterion('title', '=', 'a\x00b'))
-        params.columns[3].search.value = 'abc'
+        searched = table
+        params = request(*NAMES, column_search={'pages': {'value': 'abc'}}, **criterion('title', '=', 'a\x00b'))
         expected = 'invalid_filter'
     else:  # step 4: only a number and a date column, which take no free text; beside a date of the wrong format
         searched = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
@@ -217,35 +217,36 @@ def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
 @pytest.mark.parametrize(
     ('column', 'value', 'code'),
     [
-        (3, '7 8', 'invalid_number'),  # several words
-        (3, '!7', 'invalid_number'),
-        (4, '!2024', 'invalid_date'),
-        (4, '2024-13', 'invalid_date'),
+        ('pages', '7 8', 'invalid_number'),  # several words
+        ('pages', '!7', 'invalid_number'),
+        ('created', '!2024', 'invalid_date'),
+        ('created', '2024-13', 'invalid_date'),
     ],
 )
-def test_a_column_search_a_number_or_date_column_cannot_read_has_its_code(column: int, value: str, code: str):
+def test_a_column_search_a_number_or_date_column_cannot_read_has_its_code(column: str, value: str, code: str):
     """SPEC-E3.6, SPEC-F33.2, SPEC-F34.2: these are found only while the request body is built, and nothing is
     sent."""
-    client, params = Client(), request(*NAMES)
-    params.columns[column].search.value = value
-    refused(table.fetch_sync(params, client), code)
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, column_search={column: {'value': value}}), client), code)
     assert (client.searches, client.counts) == ([], [])
 
 
 @pytest.mark.parametrize(
-    ('column', 'event'),
-    [(3, 'datatables_number_unreadable'), (2, 'datatables_search_refused')],
+    ('column', 'code', 'event'),
+    [
+        ('pages', 'invalid_number', 'datatables_number_unreadable'),
+        ('body', 'invalid_filter', 'datatables_search_refused'),
+    ],
     ids=['number', 'exact-match-on-analysed-text'],
 )
 def test_a_mistake_found_while_the_body_is_built_is_logged_once(
-    caplog: pytest.LogCaptureFixture, column: int, event: str
+    caplog: pytest.LogCaptureFixture, column: str, code: str, event: str
 ):
     """SPEC-E13.1 for the refusals of this backend's own: a value its number column cannot read, and a list of
     exact values on analysed text, which has no whole string to match. The value is in no record."""
-    client, params = Client(), request(*NAMES)
-    params.columns[column].search.multi_values = ['MARKER']
+    params = request(*NAMES, column_search={column: {'multi_values': ['MARKER']}})
     with caplog.at_level(logging.DEBUG):
-        refused(table.fetch_sync(params, client), 'invalid_number' if column == 3 else 'invalid_filter')
+        refused(table.fetch_sync(params, Client()), code)
     assert [(record.name, record.levelname, record.msg) for record in caplog.records] == [
         ('datatables_backend', 'WARNING', event)
     ]
