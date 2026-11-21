@@ -6,6 +6,8 @@ the file the build reads it from.
 ``check_dist.py dist DIR`` passes when DIR holds exactly one sdist and one wheel of that version (and nothing else but
 the ``.gitignore`` that ``uv build`` writes there) and:
 
+- no member name appears more than once in the sdist or in the wheel (reading a member by name returns its last
+  copy, and which copy an installer keeps depends on its reader);
 - each file's metadata states that version, and every requirement it states names a package that the committed
   ``pyproject.toml`` declares as a dependency or under an extra;
 - every sdist member lies under ``datatables_backend-<version>/`` and is ``PKG-INFO`` or a file git tracks, so a
@@ -27,6 +29,7 @@ Findings go to stderr, one line each, with exit status 1. Run it from anywhere i
 """
 
 import argparse
+from collections import Counter
 import email
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -41,6 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 NAME = 'datatables_backend'
 PRIVATE = ('local', '.claude', 'CLAUDE.local.md')
 GENERATED = ('METADATA', 'WHEEL', 'RECORD')  # the dist-info files the build writes itself
+TWICE = 'appears more than once'
 
 
 def source_version() -> str:
@@ -58,6 +62,10 @@ def committed(path: str) -> bytes | None:
     """The file as HEAD holds it; None when HEAD holds no such file."""
     shown = subprocess.run(['git', '-C', str(ROOT), 'show', f'HEAD:{path}'], capture_output=True, check=False)
     return shown.stdout if shown.returncode == 0 else None
+
+
+def repeated(names: list[str]) -> list[str]:
+    return sorted(name for name, count in Counter(names).items() if count > 1)
 
 
 def canonical(name: str) -> str:
@@ -91,9 +99,9 @@ def check_metadata(what: str, text: str, version: str) -> list[str]:
 
 def check_sdist(path: Path, version: str, tracked: set[str]) -> list[str]:
     prefix = f'{NAME}-{version}/'
-    findings: list[str] = []
     with tarfile.open(path) as archive:
-        for name in archive.getnames():
+        findings = [f'sdist: {name.removeprefix(prefix)} {TWICE}' for name in repeated(archive.getnames())]
+        for name in dict.fromkeys(archive.getnames()):
             inner = name.removeprefix(prefix)
             member = archive.extractfile(name)
             content = member.read() if member else None  # None: not a regular file
@@ -114,10 +122,10 @@ def check_sdist(path: Path, version: str, tracked: set[str]) -> list[str]:
 
 def check_wheel(path: Path, version: str, tracked: set[str]) -> list[str]:
     info = f'{NAME}-{version}.dist-info/'
-    findings: list[str] = []
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
-        for name in names:
+        findings = [f'wheel: {name} {TWICE}' for name in repeated(names)]
+        for name in dict.fromkeys(names):
             if name.startswith(f'{NAME}/'):
                 source = f'src/{name}'
             elif name == f'{info}licenses/LICENSE':

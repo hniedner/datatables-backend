@@ -38,21 +38,28 @@ GOOD_WHEEL: dict[str, bytes] = {
 }
 
 
-def write_sdist(path: Path, members: dict[str, bytes]) -> None:
+Members = dict[str, bytes] | list[tuple[str, bytes]]  # a list can hold one name twice
+
+
+def pairs(members: Members) -> list[tuple[str, bytes]]:
+    return list(members.items()) if isinstance(members, dict) else members
+
+
+def write_sdist(path: Path, members: Members) -> None:
     with tarfile.open(path, 'w:gz') as archive:
-        for name, content in members.items():
+        for name, content in pairs(members):
             info = tarfile.TarInfo(name)
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
 
 
-def write_wheel(path: Path, members: dict[str, bytes]) -> None:
+def write_wheel(path: Path, members: Members) -> None:
     with zipfile.ZipFile(path, 'w') as archive:
-        for name, content in members.items():
+        for name, content in pairs(members):
             archive.writestr(name, content)
 
 
-def build(directory: Path, sdist: dict[str, bytes] = GOOD_SDIST, wheel: dict[str, bytes] = GOOD_WHEEL) -> Path:
+def build(directory: Path, sdist: Members = GOOD_SDIST, wheel: Members = GOOD_WHEEL) -> Path:
     write_sdist(directory / f'{SDIST}.tar.gz', sdist)
     write_wheel(directory / f'datatables_backend-{VERSION}-py3-none-any.whl', wheel)
     return directory
@@ -110,6 +117,22 @@ def test_sdist_member_that_differs_from_the_commit_fails(tmp_path: Path, capsys:
     build(tmp_path, sdist={**GOOD_SDIST, f'{SDIST}/pyproject.toml': changed})
     assert check_dist.main(['dist', str(tmp_path)]) == 1
     assert capsys.readouterr().err == 'sdist: pyproject.toml is not the file as committed\n'
+
+
+def test_sdist_member_that_appears_twice_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The altered copy comes first and the committed one last: reading the member by name returns the last.
+    name = f'{SDIST}/pyproject.toml'
+    build(tmp_path, sdist=[(name, GOOD_SDIST[name] + b'# added by the build\n'), *GOOD_SDIST.items()])
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == 'sdist: pyproject.toml appears more than once\n'
+
+
+def test_wheel_member_that_appears_twice_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    name = 'datatables_backend/cache.py'
+    with pytest.warns(UserWarning, match='Duplicate name'):  # zipfile's own warning when it writes one
+        build(tmp_path, wheel=[(name, GOOD_WHEEL[name] + b'# added by the build\n'), *GOOD_WHEEL.items()])
+    assert check_dist.main(['dist', str(tmp_path)]) == 1
+    assert capsys.readouterr().err == f'wheel: {name} appears more than once\n'
 
 
 def test_wheel_member_outside_the_package_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
