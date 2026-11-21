@@ -116,6 +116,11 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
   client, an `[OS]` statement checks the request bodies and the answer built from the hits given. Every `[all]` or
   `[OS]` statement that names rows is also run against the live cluster in `tests/test_opensearch_live.py`. A
   statement whose hits are scripted is checked on the recording client only.
+- **Sort direction** (reviewer's decision, 2026-11-20): `order[i][dir]` must be exactly `asc` or `desc`; anything
+  else is `MalformedRequest`, a structural error, since DataTables and SvelteDT send only those words (P6.5).
+- **Empty global regex** (reviewer's decision, 2026-11-20): an empty global search with `search[regex]` true is
+  idle, since the flag has nothing to apply to (PRD-F6) and a regex-configured client sends it on every request
+  (F18.3).
 
 ## Open questions
 

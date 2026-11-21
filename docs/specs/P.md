@@ -29,6 +29,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P6.3** [core] A flat value that is a dict, or a flat key that is not text (an int key in the mapping), →
   `MalformedRequest`.
 - **SPEC-P6.4** [core] A SearchBuilder condition `without` or `regex` → `MalformedRequest`.
+- **SPEC-P6.5** [core] `order[0][dir]` other than exactly `asc` or `desc` (`up`, `ASC`, or empty) →
+  `MalformedRequest` (the reviewer's decision of 2026-11-20 in `README.md`).
 - **SPEC-P7.1** [core] On a request whose only column is `columns[0]`, a flat key at the next free index in a bad
   form, where a lenient parser would read it as column 1, → `MalformedRequest`: `columns[01][data]` and
   `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]` (10 digits),
