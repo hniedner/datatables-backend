@@ -82,6 +82,9 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   SQL reads the type from the column unless it is declared (a MySQL `TINYINT(1)` read by reflection is a number, so
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
   any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
+- **Text matches in any case.** A search, and an exact match on a string column (SearchBuilder's `=` and `!=`, a
+  multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation;
+  SQLite folds ASCII letters only. A column with a `search_value` hook is compared as stored, with no fold added.
 - **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
   an `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a
   column only by its declared name. The codes are `invalid_character` for a control character such as a tab, which

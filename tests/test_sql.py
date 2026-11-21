@@ -16,6 +16,7 @@ import warnings
 import pytest
 from sqlalchemy import BigInteger
 from sqlalchemy import Column as SQLColumn
+from sqlalchemy import Enum
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
 from sqlalchemy import String
@@ -251,6 +252,107 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
     params = request('id', 'secret')
     params.columns[1].search.multi_values = ['4']
     assert ids(hooked.fetch_sync(params, session)) == [4]
+
+
+# -- exact matches in any case (PRD-F9) ---
+#
+# The spec statements cited speak of their own four-row fixture; the rows here are the same cases on this table.
+
+CASED = ('id', 'kind', 'secret', 'size')
+#: A collation that tells `red` from `RED`, where the database's default does not. PostgreSQL's and SQLite's do.
+CASE_SENSITIVE = {'mysql': 'utf8mb4_bin', 'mssql': 'Latin1_General_CS_AS'}
+
+
+@pytest.fixture
+def cased(session: Session) -> SQLTable:
+    """A table whose text columns are case-sensitive on every database: `kind` holds `red` in two cases, `secret` is
+    stored transformed (a search-value hook prefixes `enc:`), and `size` is an enum (a native type on PostgreSQL)."""
+    collation = CASE_SENSITIVE.get(session.get_bind().dialect.name)
+    tags = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('kind', String(20, collation=collation)),
+        SQLColumn('secret', String(20, collation=collation)),
+        SQLColumn('size', Enum('Small', 'LARGE', name='dtb_test_size'), nullable=True),
+    )
+    tags.create(session.connection())
+    session.execute(
+        tags.insert(),
+        [
+            {'id': 1, 'kind': 'red', 'secret': 'enc:Alpha', 'size': 'Small'},
+            {'id': 2, 'kind': 'reddish', 'secret': 'enc:Beta', 'size': 'LARGE'},
+            {'id': 3, 'kind': 'blue', 'secret': 'enc:Gamma', 'size': None},
+            {'id': 4, 'kind': 'RED', 'secret': 'enc:Delta', 'size': 'Small'},
+            {'id': 5, 'kind': 'ÄPFEL', 'secret': 'enc:Eta', 'size': 'LARGE'},
+        ],
+    )
+    same_case = session.execute(select(func.count()).select_from(tags).where(tags.c.kind == 'RED')).scalar_one()
+    assert same_case == 1, (
+        'The column `kind` is not case-sensitive in this database, so the tests of this fixture would pass on it '
+        'without the library folding anything.'
+    )
+    return SQLTable(
+        tags, [Column('id'), Column('kind'), Column('secret', search_value=lambda text: f'enc:{text}'), Column('size')]
+    )
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        (criterion('kind', '=', 'Red'), [1, 4]),  # SPEC-F9.2
+        (criterion('kind', '!=', 'Red'), [2, 3, 5]),
+        ({'column_search': {'kind': {'multi_values': ['rEd', 'BLUE']}}}, [1, 3, 4]),  # SPEC-F9.3
+        # The database folds both sides: SQLite's lower() leaves `Ä` alone, where Python's would make it `ä`
+        (criterion('kind', '=', 'ÄPFEL'), [5]),
+    ],
+)
+def test_an_exact_match_on_a_string_column_ignores_case(
+    session: Session, cased: SQLTable, body: dict[str, Any], expected: list[int]
+):
+    """PRD-F9, also under a case-sensitive collation (SPEC-F9.5). A categorical filter is the same list as
+    `multi_values` once the request is read."""
+    assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
+
+
+@pytest.mark.parametrize(
+    'body', [criterion('secret', '=', 'alpha'), {'column_search': {'secret': {'multi_values': ['alpha']}}}]
+)
+def test_an_exact_match_on_a_hooked_column_adds_no_folding(session: Session, cased: SQLTable, body: dict[str, Any]):
+    """PRD-F9, PRD-D15, PRD-D18: the stored `enc:Alpha` is not what `alpha` transforms to, and the column's own
+    collation, case-sensitive here, is all that compares them."""
+    assert ids(cased.fetch_sync(request(*CASED, **body), session)) == []
+
+
+@pytest.mark.xfail(
+    reason='PRD-D17 (SPEC-F9.8), issue #28: a column search on a hooked column is still a substring search in any '
+    'case over the transformed text, not an equality',
+    strict=True,
+    raises=AssertionError,
+)
+def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, cased: SQLTable):
+    params = request(*CASED, column_search={'secret': {'value': 'alpha'}})
+    assert ids(cased.fetch_sync(params, session)) == []
+
+
+@pytest.mark.skipif(
+    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
+    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
+)
+def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable):
+    values = [f'n{index}' for index in range(3000)] + ['rEd']
+    params = request(*CASED, column_search={'kind': {'multi_values': values}})
+    assert ids(cased.fetch_sync(params, session)) == [1, 4]
+
+
+@pytest.mark.skipif(
+    os.environ.get('DTB_SQL_DIALECT') != 'postgresql',
+    reason='only PostgreSQL stores an Enum as a type of its own, which has no lower(); on the other databases it is '
+    'text and this repeats the list above',
+)
+def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: SQLTable):
+    params = request(*CASED, column_search={'size': {'multi_values': ['small']}})
+    assert ids(cased.fetch_sync(params, session)) == [1, 4]
 
 
 # -- SearchBuilder ---

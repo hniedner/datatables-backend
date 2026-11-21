@@ -24,6 +24,7 @@ from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import Date
 from sqlalchemy import DateTime
+from sqlalchemy import Enum
 from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import Numeric
@@ -207,7 +208,8 @@ class SQLTable:
                         values = [_number(column, number, search.column, listed=True) for number in numbers]
                     else:
                         values = list(search.values)
-                    conditions.append(in_list(column, values))
+                    fold = search.type == 'string' and _folds(search.column, column)
+                    conditions.append(in_list(column, values, fold))
             else:
                 conditions.append(self._contains(search))
         if request.search_builder is not None:
@@ -244,7 +246,7 @@ class SQLTable:
             return _date_criterion(node, column)
         if node.type == 'boolean':
             return _boolean_criterion(node, column)
-        return _string_criterion(node, column)
+        return _string_criterion(node, column, fold=_folds(node.column, column))
 
     def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
         """The user's order, then the primary key, so the same rows come in the same order and a tie never splits
@@ -414,12 +416,26 @@ def _compare(
             raise AssertionError(condition)
 
 
-def _string_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElement[bool]:
+def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
+    """Whether an exact match on the column ignores case: it holds text, and no hook transforms what is searched
+    for (a hooked column is compared as the database compares the stored value, with nothing added here)."""
+    return declared.search_value is None and (_is_text(column) or isinstance(_sql_type(column), Enum))
+
+
+def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
+    """The column in lower case, as the database folds it, so that a case-sensitive collation matches too. An
+    ``Enum`` is cast to text first: PostgreSQL has no ``lower()`` for a native enum type."""
+    return func.lower(sql_cast(column, String) if isinstance(_sql_type(column), Enum) else column)
+
+
+def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool) -> ColumnElement[bool]:
     if node.condition in ('null', '!null'):
         return _empty(column) if node.condition == 'null' else not_(_empty(column))
     value = node.values[0]
     if node.condition in ('=', '!='):
-        return column == value if node.condition == '=' else column != value
+        # The value is folded by the database too: Python lowers letters that SQLite's lower() leaves alone
+        left, right = (_lower(column), func.lower(value)) if fold else (column, value)
+        return left == right if node.condition == '=' else left != right
     escaped = escape_like(str(value))
     target = column if _is_text(column) else sql_cast(column, String)
     pattern = {
@@ -508,15 +524,19 @@ def _day_text_mysql(element: _day_text, compiler: SQLCompiler, **kw: Any) -> str
 
 # -- IN lists within SQL Server's parameter limit ---------------------------------------------------------------------
 
-type _InList = Callable[[ColumnElement[Any], Sequence[Any]], ColumnElement[bool]]
+#: An IN list over a column and its values; the flag says whether both sides are compared in lower case.
+type _InList = Callable[[ColumnElement[Any], Sequence[Any], bool], ColumnElement[bool]]
 
 
-def _bound_in(column: ColumnElement[Any], values: Sequence[Any]) -> ColumnElement[bool]:
+def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:
+    if fold:
+        return _lower(column).in_([func.lower(value) for value in values])
     return column.in_(values)
 
 
-def _json_in(column: ColumnElement[Any], values: Sequence[Any]) -> ColumnElement[bool]:
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()))
+# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
+def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
+    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()), fold)
 
 
 def _parameter_count(stmt: Select[Any]) -> int:
@@ -530,20 +550,26 @@ def _parameter_count(stmt: Select[Any]) -> int:
 
 
 class _JsonValuesIn(ColumnElement[bool]):
-    """``column IN (<the values of one bound JSON array>)``, expanded by the database (``OPENJSON``, ``json_each``)."""
+    """``column IN (<the values of one bound JSON array>)``, expanded by the database (``OPENJSON``, ``json_each``).
+    With ``fold``, SQL Server compares the column and each value in lower case."""
 
     __visit_name__ = 'json_values_in'
     inherit_cache = True
     _traverse_internals = [  # noqa: RUF012
         ('column', InternalTraversal.dp_clauseelement),
         ('parameter', InternalTraversal.dp_clauseelement),
+        ('fold', InternalTraversal.dp_boolean),
     ]
     type = Boolean()
     _is_implicitly_boolean = True
 
-    def __init__(self, column: ColumnElement[Any], parameter: BindParameter[str]) -> None:
+    # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
+    def __init__(  # pragma: no cover
+        self, column: ColumnElement[Any], parameter: BindParameter[str], fold: bool
+    ) -> None:
         self.column = column
         self.parameter = parameter
+        self.fold = fold
 
 
 @compiles(_JsonValuesIn)
@@ -561,13 +587,17 @@ def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw:
     return f'{column} IN (SELECT {value} FROM json_each({parameter}))'  # noqa: S608
 
 
+# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 @compiles(_JsonValuesIn, 'mssql')
-def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:
+def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
     column_type = element.column.type
     if isinstance(column_type, String):
         column_type = column_type.copy()
         column_type.length = None  # a longer value must not be cut down to one that matches
     # TRY_CAST: a value that does not convert matches nothing, as a mismatched bound parameter would
     value = f'TRY_CAST(value AS {compiler.dialect.type_compiler_instance.process(column_type)})'
-    column, parameter = compiler.process(element.column, **kw), compiler.process(element.parameter, **kw)
+    target = element.column
+    if element.fold:
+        target, value = _lower(target), f'lower({value})'
+    column, parameter = compiler.process(target, **kw), compiler.process(element.parameter, **kw)
     return f'{column} IN (SELECT {value} FROM OPENJSON(CAST({parameter} AS NVARCHAR(max))))'  # noqa: S608

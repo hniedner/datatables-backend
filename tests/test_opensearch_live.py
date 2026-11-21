@@ -43,6 +43,7 @@ MAPPING = {
         'created': {'type': 'date', 'format': 'strict_date'},
         'meta': {'properties': {'author': KEYWORD_TEXT}},
         'active': {'type': 'boolean'},
+        'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
     }
 }
 DOCUMENTS: list[dict[str, Any]] = [
@@ -54,7 +55,7 @@ DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
      'meta': {'author': 'Cy'}, 'active': True},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
-     'meta': {'author': 'Dee'}, 'active': False},
+     'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL'},
 ]  # fmt: skip
 COLUMNS = [
     IndexColumn('id', text='keyword'),
@@ -223,6 +224,44 @@ def test_searchbuilder_conditions(
     client: OpenSearch, column: str, condition: str, values: list[str], expected: list[str]
 ):
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
+
+
+# -- exact matches in any case (PRD-F9) ---
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        (criterion('title', '=', 'apple PIE'), ['a1']),  # SPEC-F9.2
+        ({'column_search': {'title': {'multi_values': ['APPLE PIE', 'date LOAF']}}}, ['a1', 'e5']),  # SPEC-F9.3
+    ],
+)
+def test_an_exact_match_on_a_string_column_ignores_case(client: OpenSearch, body: dict[str, Any], expected: list[str]):
+    assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected
+
+
+LABEL_NAMES = ('id', 'label')
+labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label')])  # e5 holds `ÄPFEL`
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'search': {'value': 'äpfel'}},  # SPEC-F9.9: a whole word, which the analysed text answers
+        {'search': {'value': 'äpf'}},  # SPEC-F9.10: a substring, which only the wildcard on the whole string answers
+        criterion('label', '=', 'äpfel'),  # SPEC-F9.11: the term query
+    ],
+)
+def test_a_letter_outside_ascii_is_matched_in_any_case(client: OpenSearch, body: dict[str, Any]):
+    """What the cluster makes of `case_insensitive` beyond ASCII (PRD-F9)."""
+    assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == ['e5']
+
+
+def test_a_long_list_of_exact_values_is_answered(client: OpenSearch):
+    """1,100 values are 1,100 term queries in one `bool`, where a `terms` query took 65,536."""
+    values = [f'n{index}' for index in range(1099)] + ['APPLE PIE']
+    params = request(*NAMES, column_search={'title': {'multi_values': values}})
+    assert found(table.fetch_sync(params, client)) == ['a1']
 
 
 # The two tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared
