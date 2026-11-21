@@ -68,9 +68,10 @@ jobs:
           EOF
       - if: matrix.python != '3.14'
         run: uv run --frozen pytest
-      # One leg (3.14, named in both `if:`s and in fetch-depth above) measures line and branch coverage of the library and scripts/ (the word scan's subprocess runs
-      # included): the total is reported, and the lines this change touches must be 95 % covered. The change is the
-      # pull request against its base, or a push against the commit before it.
+      # One leg (3.14, named in both `if:`s and in fetch-depth above) measures line and branch coverage of the library
+      # and scripts/ (the word scan's subprocess runs included): the total is reported, and the lines this change
+      # touches must be 95 % covered. The change is the pull request against its base, or a push against the commit
+      # before it.
       - name: Tests with branch coverage, then coverage of the changed lines
         if: matrix.python == '3.14'
         env:

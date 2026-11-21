@@ -10,6 +10,11 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv run pytest`
 - `uv run ruff format . && uv run ruff check .`
 - `uv run basedpyright`
+- `uv run pre-commit install` once per clone (it installs the pre-commit, commit-msg, pre-push and post-checkout
+  hooks); `uv run pre-commit run --all-files` runs every hook by hand.
+- `uv run pytest --cov=datatables_backend --cov=scripts --cov-branch --cov-report=xml && uv run diff-cover coverage.xml
+  --compare-branch=origin/main --fail-under=95` checks the changed lines close to CI (CI's 3.14 leg compares with the
+  PR base or the push's previous commit).
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
   `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb`,
   `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and
@@ -18,6 +23,13 @@ requirements and milestones. Notes about the application this was derived from l
   tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC Driver 18. The
   SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test owns the index
   `dtb-test-docs`: each run drops them first.
+
+The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names. Without
+it they fail closed ("could not check"), so set it before committing; never read or print the list. CI skips them, and
+nothing scans what is authored on GitHub itself. A commit or checkout fails while a local ref name holds a word, and a
+push fails while any object in the repository does, reachable or not: drop a leftover with `git stash drop`, then
+`git reflog expire --expire-unreachable=now --all` and `git gc --prune=now`. `scripts/private_word_scan.py`'s
+docstring lists what the scans read and what they do not cover.
 
 The supported range is Python 3.12+ (tested on 3.12–3.15), Pydantic 2.10+ (2.12+ on 3.14 and 2.14+ on 3.15, the first
 with a wheel for each), SQLAlchemy 2.0.31+ (2.0.30 fails to import on 3.13), opensearch-py 2.6+, FastAPI 0.133+ and

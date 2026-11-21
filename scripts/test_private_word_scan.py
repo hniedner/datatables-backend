@@ -962,19 +962,45 @@ def test_a_word_named_staged_file_shows_in_no_other_hook_s_output(repo: Path, wo
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold(), result.stdout
 
 
+FULLWIDTH = ''.join(chr(ord(letter) + 0xFEE0) for letter in WORD)
+
+
 @pytest.mark.parametrize(
     ('listed', 'planted'),
     [
         (NON_ASCII, unicodedata.normalize('NFD', NON_ASCII)),  # `ü` as `u` and a combining diaeresis
-        (WORD, ''.join(chr(ord(letter) + 0xFEE0) for letter in WORD)),  # fullwidth letters
+        (WORD, FULLWIDTH),
+        (WORD, f'{WORD}̂'),  # a combining circumflex that composes with the last `h` into `ĥ`
+        (unicodedata.normalize('NFD', NON_ASCII), NON_ASCII),  # the variant spelling in the list
+        (FULLWIDTH, WORD),
     ],
-    ids=['NFD', 'fullwidth'],
+    ids=['NFD', 'fullwidth', 'combining mark after the word', 'NFD in the list', 'fullwidth in the list'],
 )
 def test_a_canonically_equal_spelling_is_found(tmp_path: Path, listed: str, planted: str):
     listed_words = write(tmp_path / 'listed.txt', f'{listed}\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {planted} here\n')), words=listed_words)
     assert result.returncode == 1, result.stderr
     assert 'private word #1' in result.stderr
+
+
+def test_a_decomposed_word_in_a_path_part_is_redacted(tmp_path: Path, non_ascii_words: Path):
+    decomposed = unicodedata.normalize('NFD', NON_ASCII)
+    planted = write(tmp_path / f'{decomposed}.txt', 'clean\n')
+    result = scan(str(planted), words=non_ascii_words)
+    assert result.returncode == 1, result.stderr
+    assert '/*** (path): private word #1' in result.stderr
+    shown = unicodedata.normalize('NFC', result.stdout + result.stderr).casefold()
+    assert NON_ASCII.casefold() not in shown, result.stderr
+
+
+def test_a_gitlink_path_is_found_by_the_history_scan(repo: Path, words: Path):
+    head = git(repo, 'rev-parse', 'HEAD').strip()
+    git(repo, 'update-index', '--add', '--cacheinfo', f'160000,{head},{WORD}')
+    git(repo, 'commit', '-q', '-m', 'Clean')
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert '(path): private word #3' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
 @pytest.mark.parametrize('target', ['tree', 'commit'])
@@ -1018,8 +1044,13 @@ def test_an_unreadable_word_list_has_its_own_message(tmp_path: Path, words: Path
 def test_a_plain_install_creates_every_hook_the_config_names(tmp_path: Path):
     scratch = tmp_path / 'scratch'
     scratch.mkdir()
-    git(scratch, 'init', '-q')
+    isolated = {'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull}  # no global `core.hooksPath`
+    git(scratch, 'init', '-q', env=isolated)
     shutil.copy(SCRIPT.parent.parent / '.pre-commit-config.yaml', scratch)
-    subprocess.run([sys.executable, '-m', 'pre_commit', 'install'], cwd=scratch, check=True, capture_output=True)
+    result = subprocess.run(
+        [sys.executable, '-m', 'pre_commit', 'install'],
+        cwd=scratch, env={**os.environ, **isolated}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stdout + result.stderr
     installed = {path.name for path in (scratch / '.git' / 'hooks').iterdir() if not path.name.endswith('.sample')}
     assert installed >= {'pre-commit', 'commit-msg', 'pre-push', 'post-checkout'}

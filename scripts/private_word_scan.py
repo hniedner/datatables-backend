@@ -1,7 +1,7 @@
 """Refuse words that must never become public, in file paths, file contents, commit messages and git history.
 
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
-word per line, matched as a substring after both sides are folded (NFKC, casefold, NFKC), so case and canonically or
+word per line, matched as a substring after both sides are folded (NFKD, casefold, NFKD), so case and canonically or
 compatibly equal spellings do not matter; blank lines and lines starting with ``#`` are skipped. The
 list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
 path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
@@ -43,10 +43,10 @@ Not covered: ``git branch NAME`` or ``git tag`` followed directly by a push with
 push naming a remote ref that no local ref holds (``git push origin HEAD:refs/heads/NAME``) that brings no new commit,
 since no hook runs for either; and the remote names of the other refs in one push, which pre-commit does not pass to
 the hook (their objects are still scanned). Also not covered: escaped forms of a word (JSON ``\\uXXXX``, URL encoding,
-HTML entities); words inside compressed containers (zip-based office files, PDF streams, ``.gz``); a gitlink path,
-since the commit-stage hooks filter submodules out (``.gitmodules`` itself is scanned); the Turkish dotted and dotless
-I, which casefolding does not equate with ``i``; and anything authored on GitHub itself or pushed from a clone without
-the hooks, since no server-side scan exists.
+HTML entities); words inside compressed containers (zip-based office files, PDF streams, ``.gz``); a gitlink path
+at commit time, since the commit-stage hooks filter submodules out (``.gitmodules`` itself is scanned; the pre-push
+history scan finds the path); the Turkish dotted and dotless I, which casefolding does not equate with ``i``; and
+anything authored on GitHub itself or pushed from a clone without the hooks, since no server-side scan exists.
 
 The commit message is cut and stripped only where git's own commit template shows git will, and only in English: git
 must run with an English ``LC_MESSAGES`` for its template lines to be recognised. Under another locale the scan reads
@@ -141,9 +141,10 @@ def content_hits(data: bytes, words: Words) -> list[int]:
 
 
 def fold(text: str) -> str:
-    """Text in the one form words are compared in: NFKC, casefolded, then NFKC again, since casefolding can undo the
-    normal form. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal."""
-    return unicodedata.normalize('NFKC', unicodedata.normalize('NFKC', text).casefold())
+    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since casefolding can undo the
+    normal form. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal,
+    and the form is decomposed so that a combining mark after a word cannot merge with its last letter."""
+    return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
 
 
 def hits(text: str, words: Words) -> list[int]:
