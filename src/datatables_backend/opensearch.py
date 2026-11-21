@@ -257,13 +257,13 @@ def _folds(column: Column) -> bool:
 
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:
     """The whole string equals ``value``, in any case where the column folds."""
-    if _folds(column):
-        return {'term': {field: {'value': value, 'case_insensitive': True}}}
+    if _folds(column):  # MUTATION for the red proof: the folding branch sends the plain query too
+        return {'term': {field: {'value': value}}}
     return {'term': {field: value}}
 
 
 def _wildcard(field: str, pattern: str) -> dict[str, Any]:
-    return {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+    return {'wildcard': {field: {'value': pattern}}}  # MUTATION for the red proof
 
 
 def escape_wildcard(value: str) -> str:

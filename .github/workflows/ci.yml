@@ -484,9 +484,9 @@ jobs:
       matrix:
         include:
           - version: '3.10.0'
-            image: opensearchproject/opensearch:3.10.0@sha256:02d6d6e40c820ae08233b60540aa5d3d9364d64e2dc724e38d6c8c794879b2a0
+            image: opensearchproject/opensearch:3.10.0@sha256:d89333b6bd4a13b9a95aef7f373c0a6e73440f59bc0d8d1460f9b347289ed0ef
           - version: '2.19.7'
-            image: opensearchproject/opensearch:2.19.7@sha256:d89333b6bd4a13b9a95aef7f373c0a6e73440f59bc0d8d1460f9b347289ed0ef
+            image: opensearchproject/opensearch:2.19.7@sha256:02d6d6e40c820ae08233b60540aa5d3d9364d64e2dc724e38d6c8c794879b2a0
     services:
       opensearch:
         image: ${{ matrix.image }}
@@ -517,10 +517,6 @@ jobs:
           exit 1
       # -v: the log names each test and its outcome on this leg's server.
       - run: uv run --frozen pytest -v tests/test_opensearch_live.py
-      - name: Measurements for issue 34 (throwaway)
-        if: always()
-        run: uv run --frozen python -m tools.measure_34
-
   # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
   # if every needed job (every matrix leg included) succeeded.
   gate:
