@@ -248,6 +248,20 @@ def _not(clause: dict[str, Any]) -> dict[str, Any]:
     return {'bool': {'must_not': [clause]}}
 
 
+def _folds(column: Column) -> bool:
+    """Whether an exact match on a string column ignores case: not when it is declared ``fold_case=False`` or a hook
+    transforms what is searched for. The query is then sent plain, and the field's mapping decides (PRD-D21,
+    PRD-F9)."""
+    return column.fold_case and column.search_value is None
+
+
+def _term(column: Column, field: str, value: str) -> dict[str, Any]:
+    """The whole string equals ``value``, in any case where the column folds."""
+    if _folds(column):
+        return {'term': {field: {'value': value, 'case_insensitive': True}}}
+    return {'term': {field: value}}
+
+
 def _wildcard(field: str, pattern: str) -> dict[str, Any]:
     return {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
 
@@ -294,7 +308,10 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
                 'values. Type the text to search for instead.',
                 column,
             )
-        return {'terms': {field: list(search.values)}}
+        if search.type == 'date' or not _folds(column):
+            return {'terms': {field: list(search.values)}}
+        # A terms query takes no case_insensitive, so a list of strings is one term query for each value
+        return _any([_term(column, field, str(value)) for value in search.values])
     match search.type:
         case 'number':
             return {'term': {column.source: parse_number(str(search.value), column)}}
@@ -381,7 +398,7 @@ def _string_criterion(node: Criterion) -> dict[str, Any]:
     negated = node.condition.startswith('!')
     match node.condition.lstrip('!'):
         case '=':
-            clause = {'term': {keyword: value}} if keyword else {'match_phrase': {column.source: value}}
+            clause = _term(column, keyword, value) if keyword else {'match_phrase': {column.source: value}}
         case 'contains':
             clause = _string_contains(column, value, parse=True)
         case 'starts' | 'ends' if keyword is not None:

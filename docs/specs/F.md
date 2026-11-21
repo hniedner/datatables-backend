@@ -61,14 +61,17 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F9.6** [SQLite] Global search `äpfel` → none (SQLite folds ASCII only); `ÄPFEL` → rows 4.
 - **SPEC-F9.7** [PostgreSQL in a UTF-8 non-C locale (`en_US.UTF-8`), SQL Server with a `_CI_` collation, MySQL
   with `utf8mb4_0900_ai_ci`] Global search `äpfel` → rows 4. A claim for the container run.
-- **SPEC-F9.8** [all] Column search on `secret` with `alpha` → none; with `Alpha` → rows 1 (a hooked column compares
-  exactly, PRD-D17).
-- **SPEC-F9.9** [OS container] Whole word: global search `äpfel` against row 4's `ÄPFEL`. Open: decided by the live
-  run (issue #11); no answer is claimed (OQ4 in `README.md`).
-- **SPEC-F9.10** [OS container] Substring: global search `äpf` against row 4's `ÄPFEL`. Open: decided by the live run
-  (issue #11); no answer is claimed (OQ4).
-- **SPEC-F9.11** [OS container] Exact match: SearchBuilder `=` `äpfel` on `name` against row 4's `ÄPFEL`. Open:
-  decided by the live run (issue #11); no answer is claimed (OQ4).
+- **SPEC-F9.8** [SQLite, PostgreSQL, MySQL with `utf8mb4_bin`, SQL Server with a `_CS_` collation, OS] Column search
+  on `secret` with `alpha` → none; with `Alpha` → rows 1 (the library adds no folding on a hooked column, so its
+  case-sensitive collation compares, PRD-D17).
+- **SPEC-F9.9** [OS container] Global search `äpfel` → rows 4: a whole word, which the analysed text of `name`
+  folds (OQ4 in `README.md`).
+- **SPEC-F9.10** [OS container] Global search `äpf` → none; `ÄPF` → rows 4: a substring is matched on the whole
+  string, where OpenSearch folds ASCII letters only (OQ4).
+- **SPEC-F9.11** [OS container] SearchBuilder `=` `äpfel` on `name` → none; `=` `ÄPFEL` → rows 4: an exact match
+  folds ASCII letters only on OpenSearch (OQ4).
+- **SPEC-F9.12** [SQLite, PostgreSQL] Given `colour` declared as the expression `upper(colour)`: with a string
+  type, SearchBuilder `=` `rEd` → rows 1, 4; without a type, `=` `rEd` → none and `=` `RED` → rows 1, 4.
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,

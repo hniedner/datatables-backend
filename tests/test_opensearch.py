@@ -339,12 +339,47 @@ def test_column_searches_follow_the_columns_type():
     assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
 
 
-def test_a_multi_select_is_a_terms_query_on_the_whole_string():
-    client, params = Client(), request(*NAMES)
-    params.columns[1].search.value = 'a|b'
-    params.columns[1].search.regex = True
-    table.fetch_sync(params, client)
-    assert query(client) == [{'terms': {'title.keyword': ['a', 'b']}}]
+def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_string():
+    """PRD-F9 (SPEC-F9.3): a `terms` query takes no `case_insensitive`."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={'title': {'value': 'a|b', 'regex': True}}), client)
+    assert query(client) == [
+        {
+            'bool': {
+                'should': [
+                    {'term': {'title.keyword': {'value': 'a', 'case_insensitive': True}}},
+                    {'term': {'title.keyword': {'value': 'b', 'case_insensitive': True}}},
+                ],
+                'minimum_should_match': 1,
+            }
+        }
+    ]
+
+
+def test_a_list_on_a_date_column_stays_one_terms_query():
+    """A day has no case: no `case_insensitive` term reaches a date field."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16']}}), client)
+    assert query(client) == [{'terms': {'created': ['2026-07-16']}}]
+
+
+@pytest.mark.parametrize(
+    'unfolded',
+    [
+        Column('secret', search_value=str.upper),  # PRD-F9, PRD-D15, PRD-D18: the transformed value, as stored
+        Column('secret', fold_case=False),  # SPEC-D21.2: the value as sent
+    ],
+)
+def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfolded: Column):
+    """A `term` without `case_insensitive`, and a list as one `terms` query: the field's mapping decides."""
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    client = Client()
+    plain.fetch_sync(request('id', 'secret', **criterion('secret', '=', 'A')), client)
+    plain.fetch_sync(request('id', 'secret', column_search={'secret': {'multi_values': ['A', 'B']}}), client)
+    assert [search['query']['bool']['must'] for search in client.searches] == [
+        [{'term': {'secret.keyword': 'A'}}],
+        [{'terms': {'secret.keyword': ['A', 'B']}}],
+    ]
 
 
 # -- SearchBuilder ---
@@ -353,8 +388,8 @@ def test_a_multi_select_is_a_terms_query_on_the_whole_string():
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'clause'),
     [
-        ('id', '=', ['A1'], {'term': {'id': 'A1'}}),
-        ('title', '!=', ['T'], {'bool': {'must_not': [{'term': {'title.keyword': 'T'}}]}}),
+        ('id', '=', ['A1'], {'term': {'id': {'value': 'A1', 'case_insensitive': True}}}),  # SPEC-F9.2
+        ('title', '!=', ['T'], {'bool': {'must_not': [{'term': {'title.keyword': {'value': 'T', 'case_insensitive': True}}}]}}),
         ('body', '=', ['x y'], {'match_phrase': {'body': 'x y'}}),
         ('title', 'starts', ['a?'], {'wildcard': {'title.keyword': {'value': 'a\\?*', 'case_insensitive': True}}}),
         ('id', '!ends', ['z'], {'bool': {'must_not': [{'wildcard': {'id': {'value': '*z', 'case_insensitive': True}}}]}}),
@@ -381,9 +416,8 @@ def test_searchbuilder_or_groups_need_one_match():
         {'logic': 'AND', 'criteria': []},
     ]}  # fmt: skip
     table.fetch_sync(request(*NAMES, searchBuilder=tree), client)
-    assert query(client) == [
-        {'bool': {'should': [{'term': {'id': 'a'}}, {'term': {'id': 'b'}}], 'minimum_should_match': 1}}
-    ]
+    terms = [{'term': {'id': {'value': value, 'case_insensitive': True}}} for value in ('a', 'b')]
+    assert query(client) == [{'bool': {'should': terms, 'minimum_should_match': 1}}]
 
 
 def test_an_undeclared_field_is_refused_before_anything_is_sent():

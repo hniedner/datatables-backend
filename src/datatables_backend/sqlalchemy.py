@@ -24,11 +24,14 @@ from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import Date
 from sqlalchemy import DateTime
+from sqlalchemy import Enum
 from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import Numeric
 from sqlalchemy import SmallInteger
 from sqlalchemy import String
+from sqlalchemy import Unicode
+from sqlalchemy import UnicodeText
 from sqlalchemy import and_
 from sqlalchemy import bindparam
 from sqlalchemy import cast as sql_cast
@@ -207,7 +210,8 @@ class SQLTable:
                         values = [_number(column, number, search.column, listed=True) for number in numbers]
                     else:
                         values = list(search.values)
-                    conditions.append(in_list(column, values))
+                    fold = search.type == 'string' and _folds(search.column, column)
+                    conditions.append(in_list(column, values, fold))
             else:
                 conditions.append(self._contains(search))
         if request.search_builder is not None:
@@ -219,11 +223,9 @@ class SQLTable:
     def _contains(self, search: Contains) -> ColumnElement[bool]:
         column = self._sql(search.column)
         pattern = f'%{escape_like(str(search.value))}%'
-        if _is_text(column):
-            return column.ilike(pattern, escape='\\')
         if isinstance(_sql_type(column), Date | DateTime):
             return _day_text(column).ilike(pattern, escape='\\')
-        return sql_cast(column, String).ilike(pattern, escape='\\')
+        return _text(column).ilike(pattern, escape='\\')
 
     def _node(self, node: Criterion | Group, mistakes: Mistakes) -> ColumnElement[bool] | None:
         """The condition of a criterion or group; None for a criterion that holds a mistake (a number outside the
@@ -244,7 +246,7 @@ class SQLTable:
             return _date_criterion(node, column)
         if node.type == 'boolean':
             return _boolean_criterion(node, column)
-        return _string_criterion(node, column)
+        return _string_criterion(node, column, fold=_folds(node.column, column))
 
     def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
         """The user's order, then the primary key, so the same rows come in the same order and a tie never splits
@@ -414,20 +416,45 @@ def _compare(
             raise AssertionError(condition)
 
 
-def _string_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElement[bool]:
+def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
+    """Whether an exact match on a string column ignores case: its own SQL type is a string type (``String`` and
+    its family, an ``Enum`` among them), it is not declared ``fold_case=False``, and no hook transforms what is
+    searched for. Otherwise the comparison is sent plain, and the column's collation decides (PRD-D21, PRD-F9).
+
+    A column with a type of its own (a ``TypeDecorator``, SQLAlchemy's ``Uuid``) is never folded: such a type
+    converts values and compares them in its own way, which a fold would bypass. Neither is an expression declared
+    without a type, which the library cannot know to be text, nor a column of another type declared a string."""
+    return declared.fold_case and declared.search_value is None and isinstance(column.type, String)
+
+
+def _text(column: ColumnElement[Any]) -> ColumnElement[Any]:
+    """The column as text, for a search or a fold: itself when it holds text, else cast. An ``Enum`` is cast too:
+    PostgreSQL stores one as a type of its own, which has no text functions."""
+    if _is_text(column) and not isinstance(column.type, Enum):
+        return column
+    return sql_cast(column, String)
+
+
+def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
+    """The column in lower case, as the database folds it, so that a case-sensitive collation matches too."""
+    return func.lower(_text(column))
+
+
+def _string_criterion(node: Criterion, column: ColumnElement[Any], *, fold: bool) -> ColumnElement[bool]:
     if node.condition in ('null', '!null'):
         return _empty(column) if node.condition == 'null' else not_(_empty(column))
     value = node.values[0]
     if node.condition in ('=', '!='):
-        return column == value if node.condition == '=' else column != value
+        # The value is folded by the database too: Python lowers letters that SQLite's lower() leaves alone
+        left, right = (_lower(column), func.lower(value)) if fold else (column, value)
+        return left == right if node.condition == '=' else left != right
     escaped = escape_like(str(value))
-    target = column if _is_text(column) else sql_cast(column, String)
     pattern = {
         'contains': f'%{escaped}%',
         'starts': f'{escaped}%',
         'ends': f'%{escaped}',
     }[node.condition.lstrip('!')]
-    match = target.ilike(pattern, escape='\\')
+    match = _text(column).ilike(pattern, escape='\\')
     return not_(match) if node.condition.startswith('!') else match
 
 
@@ -508,15 +535,19 @@ def _day_text_mysql(element: _day_text, compiler: SQLCompiler, **kw: Any) -> str
 
 # -- IN lists within SQL Server's parameter limit ---------------------------------------------------------------------
 
-type _InList = Callable[[ColumnElement[Any], Sequence[Any]], ColumnElement[bool]]
+#: An IN list over a column and its values; the flag says whether both sides are compared in lower case.
+type _InList = Callable[[ColumnElement[Any], Sequence[Any], bool], ColumnElement[bool]]
 
 
-def _bound_in(column: ColumnElement[Any], values: Sequence[Any]) -> ColumnElement[bool]:
+def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:
+    if fold:
+        return _lower(column).in_([func.lower(value) for value in values])
     return column.in_(values)
 
 
-def _json_in(column: ColumnElement[Any], values: Sequence[Any]) -> ColumnElement[bool]:
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()))
+# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
+def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
+    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()), fold)
 
 
 def _parameter_count(stmt: Select[Any]) -> int:
@@ -530,20 +561,26 @@ def _parameter_count(stmt: Select[Any]) -> int:
 
 
 class _JsonValuesIn(ColumnElement[bool]):
-    """``column IN (<the values of one bound JSON array>)``, expanded by the database (``OPENJSON``, ``json_each``)."""
+    """``column IN (<the values of one bound JSON array>)``, expanded by the database (``OPENJSON``, ``json_each``).
+    With ``fold``, SQL Server compares the column and each value in lower case."""
 
     __visit_name__ = 'json_values_in'
     inherit_cache = True
     _traverse_internals = [  # noqa: RUF012
         ('column', InternalTraversal.dp_clauseelement),
         ('parameter', InternalTraversal.dp_clauseelement),
+        ('fold', InternalTraversal.dp_boolean),
     ]
     type = Boolean()
     _is_implicitly_boolean = True
 
-    def __init__(self, column: ColumnElement[Any], parameter: BindParameter[str]) -> None:
+    # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
+    def __init__(  # pragma: no cover
+        self, column: ColumnElement[Any], parameter: BindParameter[str], fold: bool
+    ) -> None:
         self.column = column
         self.parameter = parameter
+        self.fold = fold
 
 
 @compiles(_JsonValuesIn)
@@ -561,13 +598,20 @@ def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw:
     return f'{column} IN (SELECT {value} FROM json_each({parameter}))'  # noqa: S608
 
 
+# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 @compiles(_JsonValuesIn, 'mssql')
-def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:
-    column_type = element.column.type
+def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
+    column_type = _sql_type(element.column)  # the type a TypeDecorator wraps says what kind of value is stored
     if isinstance(column_type, String):
-        column_type = column_type.copy()
-        column_type.length = None  # a longer value must not be cut down to one that matches
+        # No length, so a longer value is not cut down to one that matches (a bare CHAR is 30 characters), and no
+        # COLLATE, which a cast does not take: the column's own collation still compares
+        cast_as = 'NVARCHAR(max)' if isinstance(column_type, Unicode | UnicodeText) else 'VARCHAR(max)'
+    else:
+        cast_as = compiler.dialect.type_compiler_instance.process(column_type)
     # TRY_CAST: a value that does not convert matches nothing, as a mismatched bound parameter would
-    value = f'TRY_CAST(value AS {compiler.dialect.type_compiler_instance.process(column_type)})'
-    column, parameter = compiler.process(element.column, **kw), compiler.process(element.parameter, **kw)
+    value = f'TRY_CAST(value AS {cast_as})'
+    target = element.column
+    if element.fold:
+        target, value = _lower(target), f'lower({value})'
+    column, parameter = compiler.process(target, **kw), compiler.process(element.parameter, **kw)
     return f'{column} IN (SELECT {value} FROM OPENJSON(CAST({parameter} AS NVARCHAR(max))))'  # noqa: S608
