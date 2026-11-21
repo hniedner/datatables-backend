@@ -65,16 +65,22 @@ MAPPING = {
     }
 }
 LONGEST = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:255]  # as many code points as PRD-F14 lets a search text hold
-LONGEST_BEYOND_ASCII = 'Ä' * 255  # the same length in one cased letter outside ASCII, the hardest text for a pattern
-# A value whose regular expression is long, 514 UTF-16 units as a server counts them: a letter outside the BMP, which
-# counts as two, and a backslash before each of 254 dots.
-LONGEST_PATTERN = chr(0x10400) + '.' * 254
+# Three values of 255 code points with a cased letter outside ASCII, each a `regexp` query. One letter repeated is
+# the text the length was measured with: as a substring a server answers 300 of them and refuses 400, as a
+# `wildcard` and as a `regexp` (measured with `b` and with `ä` on 3.10.0 and 2.19.7).
+REPEATED_LETTER = 'Ä' * 255
+# A letter outside the BMP, which a server counts as two, and 254 dots, each behind a backslash: 514 UTF-16 units.
+DOTTED = chr(0x10400) + '.' * 254
+# The longest pattern a value can make, 768 UTF-16 units: that letter and 254 marks outside the BMP (an emoji),
+# each two units behind a backslash, open at both ends.
+LONGEST_PATTERN = chr(0x10400) + chr(0x1F600) * 254
 # Every ASCII character a value may hold that is not a letter or a digit: line feed and carriage return, the two
 # control characters PRD-F15 lets through, then the space and the punctuation.
 PUNCTUATION = '\n\r' + ''.join(char for char in map(chr, range(32, 127)) if not char.isalnum())
-# Of the characters that are operators of a regular expression without a backslash (measured on 3.10.0 and 2.19.7),
-# the three whose missing backslash the row with all of PUNCTUATION does not show. a1 holds each between Ä and Z,
-# and b2 a value that `@` (any string) and, on OpenSearch 2.19 only, `~` (not what follows) match as operators.
+# Sixteen of them are operators of a regular expression without a backslash (measured on 3.10.0 and 2.19.7). The row
+# with all of PUNCTUATION turns red when one of twelve loses its backslash, the DOTTED row for `.`, and for these
+# three a row of their own: a1 holds each between Ä and Z, and b2 a value that `@` (any string) and, on OpenSearch
+# 2.19 only, `~` (not what follows) match as operators; a bare `\` the server rejects.
 OPERATORS = '@\\~'
 ESCAPED = [*(f'Ä{char}Z' for char in OPERATORS), f'Ä{PUNCTUATION}Z']
 DECOY = 'ÄXZ'
@@ -85,7 +91,7 @@ DOCUMENTS: list[dict[str, Any]] = [
      'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
-     'meta': {'author': 'Cy'}, 'active': True, 'label': [LONGEST_BEYOND_ASCII, LONGEST_PATTERN, 'bär']},
+     'meta': {'author': 'Cy'}, 'active': True, 'label': [REPEATED_LETTER, DOTTED, LONGEST_PATTERN, 'bär']},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
      'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL'},
 ]  # fmt: skip
@@ -317,15 +323,21 @@ def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, con
     assert found(whole_label.fetch_sync(params, client)) == ['c3']
 
 
-@pytest.mark.parametrize('value', [LONGEST_BEYOND_ASCII, LONGEST_PATTERN])
-def test_the_longest_regular_expression_is_answered(client: OpenSearch, value: str):
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param(REPEATED_LETTER, id='one-letter-repeated'),
+        pytest.param(DOTTED, id='dots'),
+        pytest.param(LONGEST_PATTERN, id='longest-pattern'),
+    ],
+)
+def test_a_regular_expression_of_255_code_points_is_answered(client: OpenSearch, value: str):
     """PRD-F14, PRD-F9 (SPEC-F9.17): a value with a cased letter outside ASCII is a `regexp` query, up to 255 code
-    points; both rows are that long, as a substring, open at both ends. The first is one folding letter repeated,
-    the text a server finds hardest to turn into an automaton (600 such letters it refuses). The second is a
-    pattern of 514 UTF-16 units, which is what a server counts (two for the letter, a backslash before each of 254
-    dots), against the 1,000 it allows by default (`index.max_regex_length`); it also turns red when a dot loses
-    its backslash. Searched in the stored case, so every server finds it. A row turns red when a server refuses or
-    fails such a query."""
+    points; each row is that long, as a substring, open at both ends. One letter repeated is the text a server
+    was seen to refuse for its length (at 400 letters). The dots make a pattern of 514 UTF-16 units, and the row
+    also turns red when a dot loses its backslash. The longest pattern is 768 units, against the 1,000 a server allows by default
+    (`index.max_regex_length`, which counts UTF-16 units). Searched in the stored case, so every server finds it. A
+    row turns red when a server refuses or fails such a query."""
     params = request(*LABEL_NAMES, **criterion('label', 'contains', value))
     assert found(whole_label.fetch_sync(params, client)) == ['d4']
 
@@ -340,7 +352,9 @@ def test_a_character_of_the_regular_expression_syntax_in_a_value_is_that_charact
 
 def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch):
     """SPEC-F9.16: every ASCII character that is not a letter or a digit, in one value. It turns red when a server
-    rejects or misreads a backslash before any of them, or when one that is an operator has lost its backslash."""
+    rejects or misreads a backslash before any of them, or when one of twelve operators has lost its backslash:
+    `"`, `#`, `&`, `(`, `)`, `*`, `+`, `<`, `?`, `[`, `{` and the vertical bar. A bare `.` is caught by the row of
+    dots above, and `@`, `\\` and `~` by the rows before this one."""
     params = request(*LABEL_NAMES, **criterion('label', '=', f'Ä{PUNCTUATION}Z'))
     assert found(whole_label.fetch_sync(params, client)) == ['a1']
 

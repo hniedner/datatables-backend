@@ -11,12 +11,13 @@ from opensearchpy.exceptions import TransportError
 from tests.conftest import criterion
 from tests.conftest import request
 from tests.test_opensearch_live import DOCUMENTS
+from tests.test_opensearch_live import DOTTED
 from tests.test_opensearch_live import LONGEST
-from tests.test_opensearch_live import LONGEST_BEYOND_ASCII
 from tests.test_opensearch_live import LONGEST_PATTERN
 from tests.test_opensearch_live import MAPPING
 from tests.test_opensearch_live import OPERATORS
 from tests.test_opensearch_live import PUNCTUATION
+from tests.test_opensearch_live import REPEATED_LETTER
 
 import datatables_backend
 from datatables_backend import Column
@@ -28,6 +29,12 @@ EXTRA = {'id': 'x9', 'title': 'Extra', 'body': 'extra', 'label': ['日本語', '
 KELVIN = chr(0x212A) + 'elvin'  # the Kelvin sign, which Unicode folds to k
 LONG_S = chr(0x17F) + 'un'  # the long s, which Unicode folds to s
 FOLDED_TO_ASCII = {'id': 'y8', 'title': 'Folded', 'body': 'folded', 'label': [KELVIN, LONG_S]}
+# Cased characters that are no letters to Python: three circled letters and the combining iota subscript.
+CIRCLED = {'circled d': 0x24D3, 'circled S': 0x24C8, 'circled a': 0x24D0, 'iota subscript': 0x345}
+CIRCLED_STORED = {
+    'id': 'z7', 'title': 'Circled', 'body': 'circled',
+    'label': [*(chr(code) for code in CIRCLED.values()), *(f'Ä{chr(code)}b' for code in CIRCLED.values())],
+}  # fmt: skip
 VALUES = [
     'kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S,  # letters outside ASCII whose other case is an ASCII letter
     'Ä' * 256, 'ä' * 256,  # one letter more than the longest value sent as a regexp
@@ -36,7 +43,8 @@ VALUES = [
     'ǅungla', 'ǆungla', 'Ǆungla',  # a titlecase letter and its two other cases
     '日本語', '日本', '本',  # no case
     'äXz', 'ÄxZ', 'äz', 'ÄZ', 'ä', 'Ä', 'z',  # mixed, and the decoys
-    LONGEST_BEYOND_ASCII, LONGEST_BEYOND_ASCII.lower(), LONGEST_PATTERN, LONGEST_PATTERN.lower(),
+    REPEATED_LETTER, REPEATED_LETTER.lower(), DOTTED, DOTTED.lower(), LONGEST_PATTERN, LONGEST_PATTERN.lower(),
+    *(chr(code) for code in CIRCLED.values()), *(f'Ä{chr(code)}b' for code in CIRCLED.values()),
     f'Ä{PUNCTUATION}Z', f'ä{PUNCTUATION}z', f'Ä{PUNCTUATION}', 'Ä.*', 'ä.*', '.*', 'a.*',
     *(f'Ä{char}Z' for char in OPERATORS), *(f'ä{char}z' for char in OPERATORS), *(f'a{char}z' for char in OPERATORS),
 ]  # fmt: skip
@@ -91,6 +99,7 @@ def regex_length(client: OpenSearch) -> None:
 
 FULLWIDTH = {'(': 0xFF08, '*': 0xFF0A, '~': 0xFF5E, '?': 0xFF1F, '[': 0xFF3B, '.': 0xFF0E, '|': 0xFF5C}
 FULLWIDTH |= {'(a) as one character': 0x249C, '(1) as one character': 0x2474}
+FULLWIDTH |= CIRCLED
 
 
 def normalizer(client: OpenSearch) -> None:
@@ -106,6 +115,7 @@ def normalizer(client: OpenSearch) -> None:
     client.indices.create(index=name, body=body)
     stored = {f'w{code:04X}': f'Ä{chr(code)}b' for code in FULLWIDTH.values()}
     stored |= {'dxb': 'Äxb', 'db': 'Äb', 'ddb': 'ÄÄb', 'd': 'Ä', 'b': 'b', 'dxxb': 'Äxxb', 'dab': 'Äab', 'd1b': 'Ä1b'}
+    stored |= {'dspb': 'Ä b', 'd_b': 'Ä_b', 'ddd': 'Ädb', 'dsb': 'ÄSb'}  # what `\d`, `\s`, `\w`, `\S` would match
     for key, value in stored.items():
         client.index(index=name, id=key, body={'id': key, 'norm': value, 'plain': value})
     client.indices.refresh(index=name)
@@ -164,11 +174,11 @@ def long_values(client: OpenSearch) -> None:
         'regexp ci v': lambda v: {'regexp': {field: {'value': v, 'case_insensitive': True}}},
     }
     for form, build in forms.items():
-        for letter in ('b', 'ä'):
-            for length in (255, 256, 300, 400, 500):
+        for letter in ('b', 'ä', 'abcdefghijklmnopqrstuvwxyz', chr(0x3B8)):  # theta has three case forms
+            for length in (255, 300, 400, 500):
                 time.sleep(2)  # a rested node: whatever the query before left can be collected
                 before = heap()
-                outcome = send(build(letter * length))
+                outcome = send(build((letter * length)[:length]))
                 sys.stderr.write(f'LONG {form} | {length} x {letter} -> {outcome} [heap {before} -> {heap()}]\n')
 
 
@@ -179,7 +189,7 @@ def main() -> None:
     if client.indices.exists(index=INDEX):
         client.indices.delete(index=INDEX)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
-    for number, document in enumerate([*DOCUMENTS, EXTRA, FOLDED_TO_ASCII], 1):
+    for number, document in enumerate([*DOCUMENTS, EXTRA, FOLDED_TO_ASCII, CIRCLED_STORED], 1):
         client.index(index=INDEX, id=str(number), body=document)
     client.indices.refresh(index=INDEX)
     try:

@@ -38,7 +38,7 @@ def prepare(root: Path) -> None:
 
 def run() -> None:
     sys.stdout.write(f'source: {sys.modules["datatables_backend.opensearch"].__file__}\n')
-    tests = 'syntax_in_a_value or punctuation_in_a_value or longest_regular_expression'
+    tests = 'syntax_in_a_value or punctuation_in_a_value or regular_expression_of_255'
     arguments = ['tests/test_opensearch_live.py', '-q', '--tb=no', '--no-header', '-p', 'no:cacheprovider', '-k', tests]
     rows: list[str] = []
     for char in ['', *PUNCTUATION]:

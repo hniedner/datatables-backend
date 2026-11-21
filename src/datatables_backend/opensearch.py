@@ -255,28 +255,38 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
-MAX_REGEXP_VALUE = 255  # code points: PRD-F14's longest search text, and the longest value measured as a regexp
+# Code points: PRD-F14's longest search text, and the longest value measured as a regexp on every server.
+MAX_REGEXP_VALUE = 255
+
+
+def _cased(char: str) -> bool:
+    """Whether ``char`` has another case, as this interpreter's Unicode tables have it."""
+    return char.lower() != char or char.upper() != char
 
 
 def _cased_beyond_ascii(value: str) -> bool:
-    """Whether ``value`` holds a character outside ASCII that has another case, as this interpreter's Unicode tables
-    have it. On a ``term`` and a ``wildcard`` query OpenSearch's ``case_insensitive`` folds ASCII letters only; on a
-    ``regexp`` query it folds such a character too, from OpenSearch 3.1 on (PRD-F9). Every other value keeps the
-    query it had, by decision: a ``regexp`` would fold a few characters more for it (the Kelvin sign to ``k``)."""
-    return any(not char.isascii() and (char.lower() != char or char.upper() != char) for char in value)
+    """Whether ``value`` holds a character outside ASCII that has another case. On a ``term`` and a ``wildcard``
+    query OpenSearch's ``case_insensitive`` folds ASCII letters only; on a ``regexp`` query it folds such a
+    character too, from OpenSearch 3.1 on (PRD-F9). Every other value keeps the query it had, by decision: a
+    ``regexp`` would fold a few characters more for it (the Kelvin sign to ``k``)."""
+    return any(not char.isascii() and _cased(char) for char in value)
 
 
 def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
     that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one longer than
-    any measured as a ``regexp``, which a server may refuse where it answered the other query (its pattern is then
-    at most 768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``). Every character of
-    ``value`` that is not a letter or a digit gets a backslash, which makes it that character and nothing else, so
-    no operator of the syntax can come from a value; nor from a mark outside ASCII that a field's normalizer turns
-    into an ASCII one (a fullwidth bracket), since the server normalizes the pattern."""
+    any measured as a ``regexp`` on every server, which a server may refuse where it answered the other query (its
+    pattern is then at most 768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
+
+    Every character of ``value`` that is neither a letter or a digit nor cased gets a backslash, which makes it
+    that character and nothing else, so no operator of the syntax can come from a value. The server runs the
+    pattern through the field's normalizer, so the rule reaches beyond ASCII in both directions: a fullwidth
+    bracket gets its backslash, since a normalizer can make it an ASCII bracket; a cased character that is not a
+    letter to Python (a circled letter) gets none, since a normalizer can make it an ASCII letter, and a backslash
+    before a letter is a class of the syntax or an error."""
     if len(value) > MAX_REGEXP_VALUE or not _cased_beyond_ascii(value):
         return None
-    literal = ''.join(char if char.isalnum() else f'\\{char}' for char in value)
+    literal = ''.join(char if char.isalnum() or _cased(char) else f'\\{char}' for char in value)
     return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
 
 

@@ -390,11 +390,13 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
         ('starts', 'b.ä', 'b\\.ä.*'),  # the letter is not the first character
         ('ends', 'B.Ä', '.*B\\.Ä'),  # nor a small one
         ('=', f'ä{chr(0xFF08)}', f'ä\\{chr(0xFF08)}'),  # a fullwidth bracket, which a normalizer can make a `(`
+        ('=', chr(0x24D3), chr(0x24D3)),  # a circled d, cased and no letter: a normalizer can make it `d`, and `\d`
     ],
 )
 def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, value: str, pattern: str):
     """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. Every character of the
-    value that is not a letter or a digit gets a backslash, and the pattern is open where the condition is."""
+    value that is neither a letter or a digit nor cased gets a backslash, and the pattern is open where the
+    condition is."""
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion('id', condition, value)), client)
     assert query(client) == [{'regexp': {'id': {'value': pattern, 'case_insensitive': True}}}]
@@ -413,14 +415,15 @@ def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
 
 def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
     """SPEC-F9.18: a value of up to 255 code points, the longest a search text may be (PRD-F14) and the longest
-    measured as a `regexp`, is one; a longer value is the `term` it was before. The letter here is outside the BMP,
-    so the length is counted in code points."""
+    measured as a `regexp` on every server, is one; a longer value is the `term` it was before. The letter here is
+    outside the BMP and the rest are dots, each of which gets a backslash: the length is the value's, in code
+    points, not the pattern's."""
     deseret, client = chr(0x10400), Client()
-    for letters in (254, 255):
-        table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + 'a' * letters)), client)
+    for dots in (254, 255):
+        table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * dots)), client)
     fits, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert fits == {'regexp': {'id': {'value': deseret + 'a' * 254, 'case_insensitive': True}}}
-    assert too_long == {'term': {'id': {'value': deseret + 'a' * 255, 'case_insensitive': True}}}
+    assert fits == {'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}
+    assert too_long == {'term': {'id': {'value': deseret + '.' * 255, 'case_insensitive': True}}}
 
 
 def test_a_value_outside_ascii_without_case_keeps_its_query():
