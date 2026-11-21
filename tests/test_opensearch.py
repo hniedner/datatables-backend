@@ -411,16 +411,16 @@ def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
     ]
 
 
-def test_a_value_whose_pattern_would_pass_the_servers_default_limit_keeps_its_query():
-    """SPEC-F9.18: a server refuses a pattern longer than `index.max_regex_length`, 1,000 by default, counted in
-    UTF-16 units, so a longer one is not sent. The letter here is outside the BMP and counts as two: with 998 more
-    letters the pattern is 1,000 units and is sent, with 999 the value is the `term` it was before."""
+def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
+    """SPEC-F9.18: a value of up to 255 code points, the longest a search text may be (PRD-F14) and the longest
+    measured as a `regexp`, is one; a longer value is the `term` it was before. The letter here is outside the BMP,
+    so the length is counted in code points."""
     deseret, client = chr(0x10400), Client()
-    for letters in (998, 999):
+    for letters in (254, 255):
         table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + 'a' * letters)), client)
     fits, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert fits == {'regexp': {'id': {'value': deseret + 'a' * 998, 'case_insensitive': True}}}
-    assert too_long == {'term': {'id': {'value': deseret + 'a' * 999, 'case_insensitive': True}}}
+    assert fits == {'regexp': {'id': {'value': deseret + 'a' * 254, 'case_insensitive': True}}}
+    assert too_long == {'term': {'id': {'value': deseret + 'a' * 255, 'case_insensitive': True}}}
 
 
 def test_a_value_outside_ascii_without_case_keeps_its_query():
