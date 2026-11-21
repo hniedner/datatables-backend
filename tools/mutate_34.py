@@ -46,7 +46,7 @@ def run() -> None:
         failures = Failures()
         pytest.main(arguments, plugins=[failures])
         mark = ' (has its own row)' if char and char in OPERATORS else ''
-        label = f'{ord(char)} `{char}`{mark}' if char else 'none (control)'
+        label = f'{ord(char)} {char!r}{mark}' if char else 'none (control)'
         rows.append(f'UNESCAPED {label} -> {"; ".join(failures.names) or "nothing fails"}')
     sys.stdout.write('\n'.join(rows) + '\n')
 

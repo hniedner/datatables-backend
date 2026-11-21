@@ -29,6 +29,7 @@ LONG_S = chr(0x17F) + 'un'  # the long s, which Unicode folds to s
 FOLDED_TO_ASCII = {'id': 'y8', 'title': 'Folded', 'body': 'folded', 'label': [KELVIN, LONG_S]}
 VALUES = [
     'kelvin', 'KELVIN', KELVIN, 'sun', 'SUN', LONG_S,  # letters outside ASCII whose other case is an ASCII letter
+    'Ä' + '.' * 600, 'ä' + 'b' * 1200,  # values whose pattern would pass the default limit of 1,000
     'apple', 'APPLE', 'pfel', 'PFEL', 'abc', LONGEST, LONGEST.lower(),  # ASCII
     'äpfel', 'ÄPFEL', 'äpf', 'ÄPF', 'bär', 'BÄR', 'Bär', 'straße', 'STRAẞE', 'izmir', 'İZMİR', 'i̇zmi̇r',  # cased
     'ǅungla', 'ǆungla', 'Ǆungla',  # a titlecase letter and its two other cases
@@ -87,10 +88,55 @@ def regex_length(client: OpenSearch) -> None:
         client.indices.delete(index=name)
 
 
+FULLWIDTH = {'(': 0xFF08, '*': 0xFF0A, '~': 0xFF5E, '?': 0xFF1F, '[': 0xFF3B, '.': 0xFF0E, '|': 0xFF5C}
+
+
+def normalizer(client: OpenSearch) -> None:
+    """A keyword field with an `asciifolding` normalizer, which turns a fullwidth punctuation mark into its ASCII
+    one: what the library's queries find there, next to the same values on a plain keyword field."""
+    name = 'dtb-norm-34'
+    if client.indices.exists(index=name):
+        client.indices.delete(index=name)
+    analysis = {'normalizer': {'folded': {'type': 'custom', 'filter': ['asciifolding']}}}
+    fields = {'id': {'type': 'keyword'}, 'norm': {'type': 'keyword', 'normalizer': 'folded'}}
+    fields['plain'] = {'type': 'keyword'}
+    body = {'settings': {'number_of_replicas': 0, 'analysis': analysis}, 'mappings': {'properties': fields}}
+    client.indices.create(index=name, body=body)
+    stored = {f'w{code:04X}': f'Ä{chr(code)}b' for code in FULLWIDTH.values()}
+    stored |= {'dxb': 'Äxb', 'db': 'Äb', 'ddb': 'ÄÄb', 'd': 'Ä', 'b': 'b', 'dxxb': 'Äxxb'}
+    for key, value in stored.items():
+        client.index(index=name, id=key, body={'id': key, 'norm': value, 'plain': value})
+    client.indices.refresh(index=name)
+    try:
+        for field in ('norm', 'plain'):
+            table = SearchTable(name, [IndexColumn('id', text='keyword'), IndexColumn(field, text='keyword')])
+            for ascii_mark, code in FULLWIDTH.items():
+                value = f'Ä{chr(code)}b'
+                for condition in ('=', 'contains'):
+                    try:
+                        response = table.fetch_sync(request('id', field, **criterion(field, condition, value)), client)
+                        outcome = ' '.join(sorted(str(row['id']) for row in response.data)) or '-'
+                    except TransportError as failure:
+                        info: Any = failure.info
+                        outcome = f'RAISED {str(info["error"]["root_cause"][0]["reason"])[:110]}'
+                    sys.stderr.write(f'NORM library {field} {condition} fullwidth {ascii_mark} -> {outcome}\n')
+                for label, pattern in (('bare', value), ('with a backslash', f'Ä\\{chr(code)}b')):
+                    query = {'regexp': {field: {'value': pattern, 'case_insensitive': True}}}
+                    try:
+                        hits: Any = client.search(index=name, body={'query': query, '_source': False})
+                        outcome = ' '.join(sorted(hit['_id'] for hit in hits['hits']['hits'])) or '-'
+                    except TransportError as failure:
+                        info = failure.info
+                        outcome = f'RAISED {str(info["error"]["root_cause"][0]["reason"])[:110]}'
+                    sys.stderr.write(f'NORM raw regexp {field} fullwidth {ascii_mark} {label} -> {outcome}\n')
+    finally:
+        client.indices.delete(index=name)
+
+
 def main() -> None:
     sys.stderr.write(f'source: {datatables_backend.__file__}\n')
     client = OpenSearch(hosts=[os.environ['DTB_OPENSEARCH_URL']], timeout=120)
-    regex_length(client)
+    normalizer(client)
     if client.indices.exists(index=INDEX):
         client.indices.delete(index=INDEX)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
