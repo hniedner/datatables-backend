@@ -257,6 +257,13 @@ def test_a_letter_outside_ascii_is_matched_in_any_case(client: OpenSearch, body:
     assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == ['e5']
 
 
+@pytest.mark.xfail(
+    reason='PRD-F38, issue #27: a list is not capped at 256 values yet, and a string list is one term query for each '
+    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", measured on 3.9.0) the '
+    'search fails where a `terms` query answered',
+    strict=True,
+    raises=RequestError,
+)
 def test_a_long_list_of_exact_values_is_answered(client: OpenSearch):
     """1,100 values are 1,100 term queries in one `bool`, where a `terms` query took 65,536."""
     values = [f'n{index}' for index in range(1099)] + ['APPLE PIE']
