@@ -84,7 +84,9 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
 - **Text matches in any case.** A search, and an exact match on a string column (SearchBuilder's `=` and `!=`, a
   multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation;
-  SQLite folds ASCII letters only. An exact match folds case by default, which a plain index on the column cannot
+  **Two exceptions, for letters outside ASCII:** SQLite folds ASCII letters only, and so does OpenSearch for a
+  substring and for an exact match (`äpf` and `=` `äpfel` do not find `ÄPFEL`; the whole word `äpfel` does, on an
+  analysed field). The library asks for no change to a schema or mapping to do more. An exact match folds case by default, which a plain index on the column cannot
   serve: declare an indexed column with `fold_case=False`, and its exact matches are sent plain and follow the
   column's collation or the field's mapping. A column with a `search_value` hook is compared that way too.
 - **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and

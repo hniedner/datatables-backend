@@ -245,16 +245,21 @@ labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('l
 
 
 @pytest.mark.parametrize(
-    'body',
+    ('body', 'expected'),
     [
-        {'search': {'value': 'äpfel'}},  # SPEC-F9.9: a whole word, which the analysed text answers
-        {'search': {'value': 'äpf'}},  # SPEC-F9.10: a substring, which only the wildcard on the whole string answers
-        criterion('label', '=', 'äpfel'),  # SPEC-F9.11: the term query
+        ({'search': {'value': 'äpfel'}}, ['e5']),  # SPEC-F9.9: a whole word, which the analysed text folds
+        ({'search': {'value': 'äpf'}}, []),  # SPEC-F9.10: a substring is a wildcard on the whole string
+        ({'search': {'value': 'ÄPF'}}, ['e5']),  # and is found in its own case
+        (criterion('label', '=', 'äpfel'), []),  # SPEC-F9.11: the term query
+        (criterion('label', '=', 'ÄPFEL'), ['e5']),
     ],
 )
-def test_a_letter_outside_ascii_is_matched_in_any_case(client: OpenSearch, body: dict[str, Any]):
-    """What the cluster makes of `case_insensitive` beyond ASCII (PRD-F9)."""
-    assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == ['e5']
+def test_a_letter_outside_ascii_is_folded_only_in_a_whole_word(
+    client: OpenSearch, body: dict[str, Any], expected: list[str]
+):
+    """PRD-F9, measured on 3.9.0: `case_insensitive` folds ASCII letters only, so a substring and an exact match in
+    another case miss `ÄPFEL`. A row turning red means the cluster folds differently, and PRD-F9 says so no longer."""
+    assert found(labelled.fetch_sync(request(*LABEL_NAMES, **body), client)) == expected
 
 
 @pytest.mark.xfail(

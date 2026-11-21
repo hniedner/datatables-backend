@@ -127,11 +127,13 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
 - **Declared key** (reviewer's decision, 2026-11-20): when a table declares a unique key, that key is the
   tie-breaker of PRD-O3, even when SQLAlchemy reports a primary key for the source, since PRD-O3 asks for a
   tie-breaker on a unique key and a join's reduced SQLAlchemy primary key need not be unique (O3.5).
+- **OQ4** (PRD-F9; measured on OpenSearch 3.9.0 and decided by the owner on 2026-11-21): non-ASCII case folding on
+  OpenSearch. A string `contains` on a `text+keyword` column is a `match` on the analysed text or a
+  `case_insensitive` wildcard on the keyword field, and an exact match is a `case_insensitive` term. The standard
+  analyser folds a whole word, non-ASCII letters included (F9.9); `case_insensitive` folds ASCII letters only, so
+  a substring (F9.10) and an exact match (F9.11) in another case do not find a non-ASCII letter. The library states
+  this and asks for no normalizer in the consumer's mapping.
 
 ## Open questions
 
-- **OQ4** (PRD-F9): non-ASCII case folding on OpenSearch. A string `contains` on a `text+keyword` column is a
-  `match` on the analysed text or a `case_insensitive` wildcard on the keyword field. The standard analyser lowercases
-  whole words, which should fold non-ASCII. Substrings and exact matches depend on what `case_insensitive` does with
-  non-ASCII. F9.9 (whole word), F9.10 (substring) and F9.11 (exact `=`) claim no answer; the live run of issue #11
-  (`tests/test_opensearch_live.py`) decides them.
+None.
