@@ -69,8 +69,8 @@ class Contains:
 
 @dataclass(frozen=True)
 class AnyOf:
-    """A multi-select: the column equals one of ``values``. On a boolean column they are ``bool``, each at most once,
-    and a plain column search is one too, since a boolean has no text to contain anything."""
+    """A multi-select: the column equals one of ``values``. On a boolean column they are ``bool``, and a plain column
+    search is one too, since a boolean has no text to contain anything."""
 
     column: Column
     type: ColumnType
@@ -299,7 +299,7 @@ def _column_search(
     else:
         return Contains(column, kind, hooked(column, search.value))
     if kind == 'boolean':
-        return AnyOf(column, kind, tuple(dict.fromkeys(parse_boolean(text) for text in texts)))
+        return AnyOf(column, kind, tuple(parse_boolean(text) for text in texts))
     return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 

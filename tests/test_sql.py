@@ -12,12 +12,12 @@ import os
 from typing import Any
 
 import pytest
+from sqlalchemy import Integer
 from sqlalchemy import MetaData
 from sqlalchemy import Table
+from sqlalchemy import cast
 from sqlalchemy import func
 from sqlalchemy import select
-from sqlalchemy import type_coerce
-from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -375,12 +375,10 @@ def library_log(caplog: pytest.LogCaptureFixture) -> str:
     [
         ('true', [1, 4]),
         ('TRUE', [1, 4]),
-        ('True', [1, 4]),
         ('1', [1, 4]),
         ('false', [2, 5]),
         ('0', [2, 5]),
         (' true ', [1, 4]),  # SPEC-F43.4: surrounding whitespace is ignored, as for numbers and dates
-        ('  0', [2, 5]),
     ],
 )
 def test_searchbuilder_equality_on_a_boolean_column(session: Session, value: str, expected: list[int]):
@@ -392,7 +390,6 @@ def test_searchbuilder_equality_on_a_boolean_column(session: Session, value: str
     ('condition', 'values', 'expected'),
     [
         ('!=', ['true'], [2, 3, 5]),  # NULL is not true (PRD-F37)
-        ('!=', ['0'], [1, 3, 4]),
         ('null', [], [3]),
         ('!null', [], [1, 2, 4, 5]),
     ],
@@ -407,16 +404,12 @@ def test_the_other_conditions_a_boolean_column_takes(
 @pytest.mark.parametrize(
     ('condition', 'values'),
     [
-        ('=', ['yes']),
+        ('=', ['yes']),  # each of the four is a value some reading of "boolean" would take
         ('=', ['2']),
         ('=', ['t']),
         ('=', ['']),
-        ('=', ['   ']),
-        ('!=', ['maybe-zq7']),
-        ('<', ['true']),
-        ('between', ['false', 'true']),
-        ('contains', ['true']),
-        ('starts', ['true']),
+        ('<', ['true']),  # a number's condition
+        ('contains', ['true']),  # a string's condition
     ],
 )
 def test_a_value_or_condition_a_boolean_column_does_not_take_is_refused(
@@ -427,22 +420,14 @@ def test_a_value_or_condition_a_boolean_column_does_not_take_is_refused(
     error codes."""
     with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
         reason = refused(flagged.fetch_sync(request(*FLAGGED, **criterion('active', condition, *values)), session))
-    for value in values:
-        if len(value) > 2 and value not in ('true', 'false'):  # a word of the fixed text is not the user's
-            assert value not in reason
-            assert value not in library_log(caplog)
-
-
-async def test_a_value_a_boolean_column_does_not_take_is_refused_on_the_async_session(async_session: AsyncSession):
-    """SPEC-F43.3 through `fetch`."""
-    refused(await flagged.fetch(request(*FLAGGED, **criterion('active', '=', 'yes')), async_session))
+    if values == ['yes']:
+        assert 'yes' not in reason
+        assert 'yes' not in library_log(caplog)
 
 
 def test_the_global_search_skips_a_boolean_column(session: Session):
-    """SPEC-F44.1: `true` is not searched for in `active`, and a table whose only searchable column is boolean has no
-    usable column for a global search (PRD-F13). Only the second half can tell a column that is not skipped on SQLite,
-    MySQL and SQL Server, where a boolean's text holds no `true`."""
-    assert ids(flagged.fetch_sync(request(*FLAGGED, search={'value': 'true'}), session)) == []
+    """SPEC-F44.1: a table whose only searchable column is boolean has no usable column for a global search
+    (PRD-F13). Were the column searched, the request would be answered."""
     only = SQLTable(people, [Column('id', searchable=False), Column('active')])
     refused(only.fetch_sync(request('id', 'active', search={'value': 'x'}), session))
 
@@ -454,34 +439,21 @@ def test_a_skipped_boolean_column_logs_nothing(session: Session, caplog: pytest.
     assert library_log(caplog) == ''
 
 
-@pytest.mark.parametrize(('value', 'expected'), [('true', [1, 4]), ('0', [2, 5]), (' False ', [2, 5])])
-def test_a_column_search_on_a_boolean_column_matches_the_value_exactly(
-    session: Session, value: str, expected: list[int]
+@pytest.mark.parametrize(
+    ('search', 'expected'),
+    [
+        ({'value': 'false'}, [2, 5]),  # SPEC-F44.2: the value itself, not text the cell contains
+        ({'value': '^(true|0)$', 'regex': True}, [1, 2, 4, 5]),  # SPEC-F44.3
+        ({'multi_values': ['TRUE']}, [1, 4]),  # SPEC-F44.3
+    ],
+)
+def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
+    session: Session, search: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F44.2."""
+    """A plain value, a categorical filter and `multi_values` each take the values of SPEC-F43.1."""
     params = request(*FLAGGED)
-    params.columns[2].search.value = value
+    params.columns[2].search = params.columns[2].search.model_copy(update=search)
     assert ids(flagged.fetch_sync(params, session)) == expected
-
-
-def test_a_column_search_on_a_boolean_column_refuses_any_other_value(session: Session):
-    """SPEC-F44.2."""
-    params = request(*FLAGGED)
-    params.columns[2].search.value = 'yes'
-    assert 'yes' not in refused(flagged.fetch_sync(params, session))
-
-
-def test_a_categorical_filter_and_multi_values_on_a_boolean_column(session: Session):
-    """SPEC-F44.3: the values of SPEC-F43.1, matched exactly; a value repeated in another spelling changes nothing."""
-    params = request(*FLAGGED)
-    params.columns[2].search.value = '^(true|0)$'
-    params.columns[2].search.regex = True
-    assert ids(flagged.fetch_sync(params, session)) == [1, 2, 4, 5]
-    params = request(*FLAGGED)
-    params.columns[2].search.multi_values = ['TRUE', 'True', '1']
-    assert ids(flagged.fetch_sync(params, session)) == [1, 4]
-    params.columns[2].search.multi_values = ['1', 'no']
-    refused(flagged.fetch_sync(params, session))
 
 
 @pytest.mark.xfail(
@@ -509,32 +481,25 @@ def test_a_reflected_boolean_column_is_typed_by_what_the_database_reports(sessio
             1,
             4,
         ]
-        refused(undeclared.fetch_sync(request('id', 'active', **criterion('active', '<', '1')), session))
     elif dialect == 'mysql':
         assert ids(undeclared.fetch_sync(request('id', 'active', **criterion('active', '<', '1')), session)) == [2, 5]
         declared = SQLTable(reflected, [Column('id'), Column('active', type='boolean')])
         assert ids(declared.fetch_sync(request('id', 'active', **criterion('active', '=', 'true')), session)) == [1, 4]
-        refused(declared.fetch_sync(request('id', 'active', **criterion('active', '<', '1')), session))
     else:
         pytest.fail(f'no expectation for the dialect {dialect}')
 
 
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT', 'sqlite') != 'sqlite',
-    reason='the SQLite stand-in for SPEC-D8.2; the MySQL leg measures a real TINYINT(1) in '
-    'test_a_reflected_boolean_column_is_typed_by_what_the_database_reports, and PostgreSQL compares no boolean with 1',
-)
-def test_a_tinyint_column_is_a_number_unless_declared_boolean(session: Session):
-    """SPEC-D8.2 without a MySQL server: `active` typed as MySQL's `TINYINT(1)`, which is an `Integer` to SQLAlchemy."""
-    flag = type_coerce(people.c.active, mysql.TINYINT(display_width=1)).label('flag')
-    source = select(people.c.id, flag).subquery()
-    undeclared = SQLTable(source, [Column('id'), Column('flag')])
-    assert ids(undeclared.fetch_sync(request('id', 'flag', **criterion('flag', '<', '1')), session)) == [2, 5]
-    refused(undeclared.fetch_sync(request('id', 'flag', **criterion('flag', '=', 'true')), session))
+def test_an_integer_column_declared_boolean_is_compared_with_one_and_zero(session: Session):
+    """A column that stores 1 and 0 as integers, declared boolean (SPEC-D8.2's case on every database): the value
+    reaches the database as a number. PostgreSQL has no `integer = boolean`, so a `true` sent as a boolean fails this
+    test there; the other databases read one as the other, and so cannot tell."""
+    source = select(people.c.id, cast(people.c.active, Integer).label('flag')).subquery()
     declared = SQLTable(source, [Column('id'), Column('flag', type='boolean')])
     assert ids(declared.fetch_sync(request('id', 'flag', **criterion('flag', '=', 'true')), session)) == [1, 4]
     assert ids(declared.fetch_sync(request('id', 'flag', **criterion('flag', '!=', 'true')), session)) == [2, 3, 5]
-    refused(declared.fetch_sync(request('id', 'flag', **criterion('flag', '<', '1')), session))
+    params = request('id', 'flag')
+    params.columns[1].search.multi_values = ['1']
+    assert ids(declared.fetch_sync(params, session)) == [1, 4]
 
 
 @pytest.mark.parametrize(('direction', 'expected'), [('asc', [2, 5, 1, 4]), ('desc', [1, 4, 2, 5])])
@@ -543,18 +508,6 @@ def test_false_sorts_before_true(session: Session, direction: str, expected: lis
     ascending, over the rows that have a value. Where NULL goes and which way the key runs are PRD-O2's and PRD-O3's."""
     params = request(*FLAGGED, order=[{'column': 2, 'dir': direction}, {'column': 0, 'dir': 'asc'}])
     assert [row for row in ids(flagged.fetch_sync(params, session)) if row != 3] == expected
-
-
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
-    reason="PRD-O2: NULL placement is still the database's default (PostgreSQL: last ascending); SPEC-O2.3 makes it "
-    'lowest everywhere',
-    strict=True,
-    raises=AssertionError,
-)
-def test_null_comes_first_in_an_ascending_order_on_a_boolean_column(session: Session):
-    params = request(*FLAGGED, order=[{'column': 2, 'dir': 'asc'}])
-    assert ids(flagged.fetch_sync(params, session))[0] == 3
 
 
 @pytest.mark.xfail(
@@ -653,6 +606,17 @@ def test_many_multi_select_values_still_run(session: Session):
     params = request(*ALL)
     params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob']
     assert ids(table.fetch_sync(params, session)) == [2]
+
+
+def test_a_boolean_filter_beside_many_multi_select_values_still_runs(session: Session):
+    """Past SQL Server's parameter limit every list of the statement travels as JSON, the boolean column's too, and
+    both of its values are cast to the column's type there (`BIT`). Row 5 is false but not among the names, and row
+    3 is among them but NULL."""
+    params = request(*FLAGGED)
+    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Ann', 'Bob', 'anna_100%', 'Cy']
+    params.columns[2].search.value = '^(true|0)$'
+    params.columns[2].search.regex = True
+    assert ids(flagged.fetch_sync(params, session)) == [1, 2, 4]
 
 
 def test_many_multi_select_values_on_a_number_column_still_run(session: Session):

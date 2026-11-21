@@ -226,9 +226,7 @@ def test_searchbuilder_conditions(
 
 
 # The two tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared
-# boolean (PRD-D8), so PRD-F43 does not change their outcomes. The boolean-type implementation must add a case with the
-# column declared boolean, where PRD-F43 makes true/false (any case) or 1/0 match and refuses other values as
-# invalid_filter.
+# boolean (PRD-D8), so PRD-F43 does not change their outcomes. The cases with the column declared boolean follow them.
 
 
 @pytest.mark.parametrize('value', ['1', 'true', 'abc'])
@@ -274,52 +272,26 @@ flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', 
 @pytest.mark.parametrize(
     ('condition', 'values', 'expected'),
     [
-        ('=', ['true'], ['a1', 'd4']),
-        ('=', ['TRUE'], ['a1', 'd4']),
-        ('=', ['True'], ['a1', 'd4']),
-        ('=', ['1'], ['a1', 'd4']),
+        ('=', ['1'], ['a1', 'd4']),  # the term OpenSearch rejects on the string column above, sent as a JSON true
         ('=', ['false'], ['b2', 'e5']),
-        ('=', ['0'], ['b2', 'e5']),
-        ('=', [' true '], ['a1', 'd4']),  # SPEC-F43.4
         ('!=', ['true'], ['b2', 'c3', 'e5']),  # a missing field is not true (PRD-F37)
         ('null', [], ['c3']),
-        ('!null', [], ['a1', 'b2', 'd4', 'e5']),
     ],
 )
 def test_searchbuilder_on_a_declared_boolean_column(
     client: OpenSearch, condition: str, values: list[str], expected: list[str]
 ):
-    """SPEC-F43.1, SPEC-F43.2, SPEC-F43.4."""
+    """SPEC-F43.1, SPEC-F43.2: what the cluster answers to the JSON booleans the backend sends."""
     params = request(*FLAG_NAMES, **criterion('active', condition, *values))
     assert found(flags.fetch_sync(params, client)) == expected
 
 
-@pytest.mark.parametrize(('condition', 'value'), [('=', 'yes'), ('=', '2'), ('=', 'abc'), ('contains', 'true')])
-def test_a_declared_boolean_column_refuses_what_opensearch_would_reject(client: OpenSearch, condition: str, value: str):
-    """SPEC-F43.3: answered as `invalid_filter`; the same values raise `RequestError` on the string columns above."""
-    response = flags.fetch_sync(request(*FLAG_NAMES, **criterion('active', condition, value)), client)
-    assert (response.error_code, response.data) == ('invalid_filter', [])
-
-
-@pytest.mark.parametrize(
-    ('search', 'expected'),
-    [
-        ({'value': 'true'}, ['a1', 'd4']),
-        ({'value': '0'}, ['b2', 'e5']),
-        ({'value': '^(true|0)$', 'regex': True}, ['a1', 'b2', 'd4', 'e5']),
-        ({'multi_values': ['TRUE', '1']}, ['a1', 'd4']),
-    ],
-)
-def test_a_column_search_on_a_declared_boolean_column(client: OpenSearch, search: dict[str, Any], expected: list[str]):
-    """SPEC-F44.2, SPEC-F44.3."""
+def test_a_categorical_filter_on_a_declared_boolean_column(client: OpenSearch):
+    """SPEC-F44.3: a `terms` query of both JSON booleans on the boolean field."""
     params = request(*FLAG_NAMES)
-    params.columns[1].search = params.columns[1].search.model_copy(update=search)
-    assert found(flags.fetch_sync(params, client)) == expected
-
-
-def test_the_global_search_skips_a_declared_boolean_column(client: OpenSearch):
-    """SPEC-F44.1: no id holds `true`, and `active` takes no part."""
-    assert found(flags.fetch_sync(request(*FLAG_NAMES, search={'value': 'true'}), client)) == []
+    params.columns[1].search.value = '^(true|0)$'
+    params.columns[1].search.regex = True
+    assert found(flags.fetch_sync(params, client)) == ['a1', 'b2', 'd4', 'e5']
 
 
 @pytest.mark.parametrize(

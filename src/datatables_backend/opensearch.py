@@ -275,8 +275,10 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
         case 'date':
             span = day_span(str(search.value))
             return _days(column.source, span.start.isoformat(), span.end.isoformat())
-        case _:  # a string: the plan makes a boolean column's search an AnyOf
+        case 'string':
             return _string_contains(column, str(search.value), parse=True)
+        case 'boolean':  # pragma: no cover - unreachable: the plan makes a boolean column's search an AnyOf
+            raise AssertionError(search.type)
 
 
 def _days(field: str, start: str | None, end: str | None) -> dict[str, Any]:

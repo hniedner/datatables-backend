@@ -324,7 +324,8 @@ def _number(column: ColumnElement[Any], value: Any) -> Any:
 
 
 def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
-    """``value`` as the column holds it: 1 or 0 for a number column declared boolean (a MySQL ``TINYINT(1)``)."""
+    """``value`` as the column holds it: 1 or 0 for a number column declared boolean (a MySQL ``TINYINT(1)``), which
+    PostgreSQL does not compare with a boolean."""
     return value if isinstance(_sql_type(column), Boolean) else int(value)
 
 
@@ -336,8 +337,10 @@ def _boolean_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnEle
             return column.is_not(None)
         case '=':
             return column == _boolean(column, node.values[0])
-        case _:  # '!=', the only other condition the plan admits: NULL is not the value either
+        case '!=':  # NULL is not the value either
             return or_(column != _boolean(column, node.values[0]), column.is_(None))
+        case _:  # pragma: no cover - unreachable: the plan admits no other condition for a boolean
+            raise AssertionError(node.condition)
 
 
 def _empty(column: ColumnElement[Any]) -> ColumnElement[bool]:
