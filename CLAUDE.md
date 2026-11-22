@@ -82,7 +82,7 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - A decision that is not a requirement, and the measurements behind a requirement, go to
   `docs/decisions/NNN-title.md`; the PRD's rationale stays short and points there.
 
-## Status (2026-11-21)
+## Status (2026-11-22)
 
 - **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Publishing still
   needs the user's explicit OK.
@@ -90,7 +90,9 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
   and v1.0 and their issues.
 - **Done:** CI (lint, types, tests on 3.12–3.15, minimum versions, install isolation) and container tests on
   PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.10 and 2.19.
-- **Next (v0.2):** the PRD's layout (#39), then the PRD v2 changes test-first (#12, #14, #26–#29) and the
-  acceptance suite (#15, sources in `CLAUDE.local.md`).
+- **Done in v0.2:** the PRD's layout, one section per requirement (#39), and how a day and a number are written,
+  the UTC day of a timezone-aware column and lists on a date column (#12, PRD revision 26).
+- **Next (v0.2):** the remaining PRD v2 changes test-first (#14, then #26–#29) and the acceptance suite (#15,
+  sources in `CLAUDE.local.md`).
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.
