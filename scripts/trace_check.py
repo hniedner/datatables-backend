@@ -51,7 +51,7 @@ HEADING_LINE = re.compile(r'^\s*#')
 HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
 SECTION = re.compile(
     r'(?:(?!- \*\*(?:Reason|Priority):\*\*).+\n)+'
-    r'- \*\*Reason:\*\* .+\n(?: +.+\n)*'
+    r'- \*\*Reason:\*\* .+\n(?: +\S.*\n)*'  # \S: a line's spaces match in one way only, or matching is exponential
     r'- \*\*Priority:\*\* (must|should|later)\n'
 )
 STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (\S.*)$')
