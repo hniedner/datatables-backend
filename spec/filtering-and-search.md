@@ -124,6 +124,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `a?b` row.
 - **SPEC-F11.5** [all] Global search `ple` → rows 1 (a word matches as a substring).
 - **SPEC-F11.6** [OS] On a text-only `name` column: column search `red` → rows 1, not row 2 (`reddish`).
+- **SPEC-F11.7** [OS] Given rows whose text is `a`, `b`, `a-b`, `b a` and `a b`, on a text column and on a
+  text+keyword column: column search `a-b`, and SearchBuilder `contains` `a-b`, → the `a-b` and `a b` rows (a phrase of
+  the word's tokens, not `a` alone); `!a-b` → the other three.
 
 ## Combining and refusing
 
