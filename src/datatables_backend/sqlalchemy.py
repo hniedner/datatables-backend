@@ -408,7 +408,7 @@ def _is_text(column: ColumnElement[Any]) -> bool:
         return False
 
 
-def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: Dialect, *, listed: bool) -> Any:
+def _number(column: ColumnElement[Any], value: int | float, declared: Column, dialect: Dialect, *, listed: bool) -> Any:
     """``value`` as the column compares it, by the type the column stores (PRD-F25).
 
     An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
@@ -428,8 +428,6 @@ def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: D
     sql_type = _sql_type(column)
     if isinstance(sql_type, Integer) and isinstance(value, float) and value.is_integer():
         value = int(value)
-    if not isinstance(value, int | float):  # what a hook made of the text
-        return value
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
         if listed
