@@ -1216,8 +1216,8 @@ Logging uses the standard `logging` module under the logger `datatables_backend`
 Each refusal, a `MalformedRequest` raised or a user error answered (PRD-E1), logs exactly one WARNING with a fixed event
 name per case, holding no client text and only server-declared names (PRD-E10, PRD-E11). A skip the requirements allow
 logs nothing: an idle column or filter (PRD-P5), a column the global search leaves out (PRD-F32, PRD-F41, PRD-F44), an
-order entry skipped (PRD-O1, PRD-O8), a nameless column (PRD-P21). No answer is partial: a request is answered in full or
-refused.
+order entry skipped (PRD-O1, PRD-O8), a nameless column (PRD-P21). No answer is partial: a request is answered in full
+or refused.
 
 - **Reason:** An operator sees every refusal once and can count them by event; an allowed skip is normal traffic
   (DataTables sends its default order and idle searches on every request), and logging it would bury the refusals.

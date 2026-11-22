@@ -328,9 +328,10 @@ def test_a_name_must_be_a_declared_name_exactly(session: Session, name: str):
 
 
 def test_a_columns_name_decides_before_its_data(session: Session):
-    """SPEC-P15.2: `data` says where the page reads the cell; the server matches `name` when there is one."""
-    params = request(*ALL, flags={'id': {'name': 'age'}}, order=[{'column': 0, 'dir': 'desc'}])
-    assert ids(table.fetch_sync(params, session)) == [5, 2, 4, 1, 3]
+    """SPEC-P15.2: `data` says where the page reads the cell; the server matches `name` when there is one. Ordered
+    by `id`, which the column's `data` names, the rows would come 1 to 5."""
+    params = request(*ALL, flags={'id': {'name': 'age'}}, order=[{'column': 0, 'dir': 'asc'}])
+    assert ids(table.fetch_sync(params, session)) == [3, 1, 4, 2, 5]
 
 
 def test_the_global_search_leaves_out_a_column_the_server_did_not_declare(session: Session):
