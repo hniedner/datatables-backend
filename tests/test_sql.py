@@ -1867,9 +1867,8 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
         (nested(9, 'name'), False),
         (flat(64, 'name'), True),
         (flat(65, 'name'), False),
-        (nested(200, 'name'), False),  # `RecursionError` in `fetch_sync` before the bounds
     ],
-    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'depth-200'],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65'],
 )
 def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(
     session: Session, tree: dict[str, Any], *, answered: bool

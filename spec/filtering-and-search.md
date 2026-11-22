@@ -327,7 +327,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   with spaces only (PRD-F6), does not.
 - **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
   database or the cluster exactly what it asks when the column is named once.
-- **SPEC-F38.8** [SQL] A SearchBuilder tree of every depth from 100 to 299 groups, each group holding a criterion and
+- **SPEC-F38.8** [all] A SearchBuilder tree of every depth from 100 to 299 groups, each group holding a criterion and
   the next group, is refused with error_code `invalid_filter` or with `MalformedRequest`, and no depth raises another
   exception, `RecursionError` included. The depth where one becomes the other is the parser's and is not pinned.
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code

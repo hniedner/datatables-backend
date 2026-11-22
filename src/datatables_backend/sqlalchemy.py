@@ -34,6 +34,7 @@ from sqlalchemy import Table
 from sqlalchemy import and_
 from sqlalchemy import cast as sql_cast
 from sqlalchemy import func
+from sqlalchemy import literal
 from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy import select
@@ -400,10 +401,9 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
     is a fair question, and they answer it.
 
     A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
-    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly (on SQLite, which binds no ``Decimal``
-    and compares a ``Numeric`` as a float, as the nearest float); to a column that stores text as its digits, since
-    text is compared with text; to any other column (a ``Float``, an expression without a type) as the nearest
-    float, which holds a whole number of up to 308 digits.
+    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to a column that stores text as
+    its digits, since text is compared with text; to any other column (a ``Float``, an expression without a type)
+    as the nearest float, which holds a whole number of up to 308 digits.
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
@@ -434,7 +434,7 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
         )
     if isinstance(value, float) or -(2**63) <= value < 2**63:
         return value
-    if exact and dialect.name != 'sqlite':  # SQLite binds no Decimal, and compares a Numeric as a float anyway
+    if exact:
         return Decimal(value)
     if isinstance(sql_type, String):
         return str(value)
@@ -536,6 +536,10 @@ def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], dialect:
     parts: list[ColumnElement[bool]] = []
     if node.type == 'date' and not isinstance(_sql_type(column), Date):
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
+    elif node.type == 'number' and values:
+        # Each number is bound as the column's own type. SQLAlchemy would type it by its Python type: the first
+        # entry of `1, 18446744073709551616` made every entry an INTEGER on PostgreSQL, and SQLite binds no Decimal
+        parts.append(column.in_([literal(value, column.type) for value in values]))
     elif values:
         if node.type == 'string' and _folds(node.column, column):
             parts.append(_lower(column).in_([func.lower(value) for value in values]))

@@ -13,6 +13,7 @@ import pytest
 from datatables_backend import Column
 from datatables_backend import DTParams
 from datatables_backend import DTResponse
+from datatables_backend import MalformedRequest
 from datatables_backend import PartialResultError
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
@@ -619,14 +620,25 @@ def answered_or_refused(params: DTParams, *, answered: bool) -> None:
         (nested(9, 'title'), False),
         (flat(64, 'title'), True),
         (flat(65, 'title'), False),
-        (nested(200, 'title'), False),
     ],
-    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'depth-200'],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65'],
 )
 def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(tree: dict[str, Any], *, answered: bool):
-    """SPEC-F38.1, SPEC-F38.2 on OpenSearch, which the 200 groups did not crash before the bounds: the plan is
-    shared, and the request is still refused, not sent."""
+    """SPEC-F38.1, SPEC-F38.2: a tree past a bound is refused, and nothing is sent."""
     answered_or_refused(request(*NAMES, searchBuilder=tree), answered=answered)
+
+
+def test_a_tree_near_the_parsers_limit_is_refused_and_never_crashes():
+    """SPEC-F38.8 on OpenSearch, which answered a tree 200 groups deep before the bounds (SQL raised
+    `RecursionError`): each depth is refused as `invalid_filter` or as `MalformedRequest`, nothing is sent."""
+    client = Client()
+    for depth in range(100, 300):
+        try:
+            params = request(*NAMES, searchBuilder=nested(depth, 'title'))
+        except MalformedRequest:
+            continue
+        refused(table.fetch_sync(params, client))
+    assert client.searches == []
 
 
 @pytest.mark.parametrize('form', ['multi_values', 'regex'])
