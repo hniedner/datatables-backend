@@ -3,6 +3,7 @@
 It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: PostgreSQL, MySQL, SQL Server).
 """
 
+from collections.abc import Callable
 from datetime import UTC
 from datetime import date
 from datetime import datetime
@@ -28,6 +29,7 @@ from sqlalchemy import Numeric
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import Uuid
+from sqlalchemy import and_
 from sqlalchemy import cast
 from sqlalchemy import event
 from sqlalchemy import func
@@ -38,7 +40,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.compiler import SQLCompiler
+from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.types import TypeEngine
 
@@ -168,6 +173,55 @@ def test_the_total_is_cached_until_the_ttl(session: Session):
     assert (response.recordsTotal, response.recordsFiltered) == (5, 4)  # the cached total, the live filtered count
     cache.clear()
     assert cached.fetch_sync(request(*ALL), session).recordsTotal == 4
+
+
+def _scoped_by_base_filter(team: str, cache: TotalCache) -> SQLTable:
+    return SQLTable(people, [Column('id'), Column('name')], base_filter=people.c.team == team, total_cache=cache)
+
+
+def _scoped_in_a_subquery(team: str, cache: TotalCache) -> SQLTable:
+    scoped = select(people).where(people.c.team == team).subquery('scoped')
+    return SQLTable(scoped, [Column('id'), Column('name')], total_cache=cache)
+
+
+def _scoped_in_a_join(team: str, cache: TotalCache) -> SQLTable:
+    other = people.alias('other')
+    joined = people.join(other, and_(other.c.id == people.c.id, other.c.team == team))
+    columns = [Column('id', field='dtb_test_people_id'), Column('name', field='dtb_test_people_name')]
+    return SQLTable(joined, columns, total_cache=cache)
+
+
+@pytest.mark.parametrize('scoped', [_scoped_by_base_filter, _scoped_in_a_subquery, _scoped_in_a_join])
+def test_two_scopes_that_differ_only_in_a_bound_value_never_share_a_total(
+    scoped: Callable[[str, TotalCache], SQLTable], session: Session
+):
+    """SPEC-C15.1, SPEC-C15.5, SPEC-C15.6: one cache, and the team `red` (rows 1 and 3) then `green` (row 4). A key
+    that leaves out a bound value, of the base filter or of the source, shows `green` the total of `red`."""
+    cache, params = TotalCache(ttl=60), request('id', 'name', search={'value': 'e'})
+    totals = [scoped(team, cache).fetch_sync(params, session).recordsTotal for team in ('red', 'green')]
+    assert totals == [2, 1]
+
+
+class _every_row(ColumnElement[bool]):  # noqa: N801
+    """A condition with a handler for each database the tests run on and none for SQLAlchemy's default dialect, as
+    an application's own construct or MySQL's ``MATCH`` has."""
+
+    inherit_cache = True
+
+
+@compiles(_every_row, 'sqlite')
+@compiles(_every_row, 'postgresql')
+@compiles(_every_row, 'mysql')
+@compiles(_every_row, 'mariadb')
+@compiles(_every_row, 'mssql')
+def _every_row_sql(element: _every_row, compiler: SQLCompiler, **kw: Any) -> str:
+    return '1 = 1'
+
+
+def test_a_base_filter_only_its_database_can_compile_works_with_a_cache(session: Session):
+    """SPEC-C15.7: a cache key compiled for another dialect than the session's raises on every request."""
+    cached = SQLTable(people, COLUMNS, base_filter=_every_row(), total_cache=TotalCache(ttl=60))
+    assert cached.fetch_sync(request(*ALL), session).recordsTotal == 5
 
 
 # -- ordering ---
