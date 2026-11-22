@@ -198,8 +198,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F22.3** [all] SearchBuilder `contains` `2024-03-06` on `at` → rows 2 (UTC span).
 - **SPEC-F22.4** [OS] Column search on `made` with `2024-12` → rows 2.
 - **SPEC-F22.5** [all] SearchBuilder `contains` on `made` reads `2024-03-05 10:00:00` as `=` reads it, the day
-  `2024-03-05`, and a year with white space around it as the year; `2024` in digits outside ASCII → error_code
-  `invalid_date`.
+  `2024-03-05`, and a year with white space around it as the year; `2024` in digits outside ASCII, and
+  `2024-03-05xyz` → error_code `invalid_date`.
 - **SPEC-F23.1** [SQL] Global search `17` → rows 2; column search `7` on `price` → rows 1, 2.
 - **SPEC-F23.2** [SQL] Column search `2024-12` on `made` → rows 2; `03-05` → rows 1 (date text is `YYYY-MM-DD`).
 - **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` and `at` text).
@@ -210,6 +210,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   error_code `invalid_number`. So does a whole number of 5,000 digits: it is no failed request.
 - **SPEC-F25.2** [SQL] On `price` (a `BigInteger`), `=` `9223372036854775808` → error_code `invalid_number`;
   `9223372036854775807` is answered. With `price` redeclared as a `SmallInteger`, `=` `32768` → `invalid_number`.
+  Given a row whose `price` is -9223372036854775807: `=` `-9223372036854775807` → that row (a whole number is
+  compared as the integer written, not as a float, which would hold -9223372036854775808).
 - **SPEC-F25.3** [all] SearchBuilder `=` on `price` reads `+7`, `7.`, `.7E+1` and `7` with white space around it as
   the number 7. With `1_000`, a second sign (`--7.5`), or `7` in a digit outside ASCII (the full-width `７`,
   U+FF17) → error_code `invalid_number`.

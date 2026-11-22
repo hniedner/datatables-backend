@@ -860,6 +860,7 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
         ('born', '=', ['1980-07-15T10'], 'invalid_date'),  # an hour is no time of day
         ('born', '=', ['1980-07-15T' + '10:00'.translate(FULL_WIDTH)], 'invalid_date'),  # the time in other digits
         ('born', 'contains', ['1980'.translate(FULL_WIDTH)], 'invalid_date'),  # SPEC-F22.5: a year in other digits
+        ('born', 'contains', ['1980-07-15xyz'], 'invalid_date'),  # and a day as `=` reads it, to its end
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
         ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
@@ -877,6 +878,15 @@ def test_a_value_the_column_cannot_take_is_refused_with_its_code_without_echoing
     and the text never holds the value."""
     message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
     assert all(value not in message for value in values)
+
+
+def test_a_whole_number_is_compared_as_the_integer_it_writes(session: Session):
+    """SPEC-F25.2: a whole number written without a point, signed or not, reaches the query as an integer. Read as
+    a float, which holds 53 bits, -9223372036854775807 is -9223372036854775808: in the column's range, and no row."""
+    source = select(people.c.id, (cast(people.c.id, BigInteger) - 9223372036854775807 - 1).label('big')).subquery()
+    wide = SQLTable(source, [Column('id'), Column('big')])
+    params = request('id', 'big', **criterion('big', '=', '-9223372036854775807'))
+    assert ids(wide.fetch_sync(params, session)) == [1]
 
 
 def test_the_last_month_before_the_last_day_is_answered(session: Session):
