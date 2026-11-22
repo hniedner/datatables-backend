@@ -51,10 +51,10 @@ does, on all twelve servers (run 44942700768).
 ## The backslash rule
 
 A character of the value gets a backslash, which makes it that character and nothing else, unless a normalizer
-turns one character into several (see "What a normalizer breaks"). The server runs a
-pattern through a keyword field's normalizer, so the rule reaches beyond ASCII: behind its backslash a fullwidth
-mark that an `asciifolding` normalizer turns into an ASCII one stays that character (2.19.7 and 3.10.0, run
-44945819109: the fullwidth forms of `( * ~ ? [ . |` are found exactly by `=` and by `contains`).
+turns one character into several (see "What a normalizer breaks"). The server runs a pattern through a keyword
+field's normalizer, so the rule reaches beyond ASCII: behind its backslash a fullwidth mark that an `asciifolding`
+normalizer turns into an ASCII one stays that character (2.19.7 and 3.10.0, run 44945819109: the fullwidth forms of
+`( * ~ ? [ . |` are found exactly by `=` and by `contains`).
 
 Three kinds of character get no backslash:
 
