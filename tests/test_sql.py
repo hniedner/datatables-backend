@@ -1206,7 +1206,6 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
     [
         ('age', '>', ['1e999'], 'invalid_number'),  # SPEC-F25.1: written as a number, and no column holds infinity
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
-        ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
         # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
         ('age', '=', ['3_1'], 'invalid_number'),
         ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
@@ -1694,15 +1693,6 @@ def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value:
         assert ids(response) == []
 
 
-def test_a_whole_number_too_large_for_a_float_is_refused_with_the_digits_it_may_have(session: Session):
-    """SPEC-F25.4 and the text of SPEC-E4.30, asserted here only: a float holds every whole number of up to 308
-    digits, so one of 308 is answered and one of 309 is the user's mistake."""
-    numbers = wide(session)
-    assert ids(numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 308)), session)) == []
-    response = numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 309)), session)
-    assert refused(response, 'invalid_number') == 'The filter on "ratio" needs a number of at most 308 digits.'
-
-
 def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
     """SPEC-F25.7: a list entry is sent to a decimal column as a single value is. SQLite binds no `Decimal` and
     raised `ProgrammingError` for the entry; it compares a `Numeric` as a float, so it gets the nearest float."""
@@ -1836,17 +1826,22 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
     assert logged(caplog) == ['datatables_control_character']
 
 
-@pytest.mark.parametrize('bound', ['words', 'depth'])
+@pytest.mark.parametrize('bound', ['words', 'length', 'depth'])
 def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(session: Session, bound: str):
-    """SPEC-E3.2: step 1 before step 2."""
+    """SPEC-E3.2: step 1 before step 2, each bound with its own code."""
+    code = 'invalid_filter'
     if bound == 'words':
+        code = 'too_many_words'
         params = request(*ALL, search={'value': ' '.join(['w'] * 17)}, **criterion('born', '=', '2024-13-01'))
+    elif bound == 'length':
+        code = 'value_too_long'
+        params = request(*ALL, search={'value': 'w' * 256}, **criterion('born', '=', '2024-13-01'))
     else:
         tree: dict[str, Any] = {'criteria': [{'condition': '=', 'origData': 'age', 'value': ['abc']}]}
         for _ in range(9):
             tree = {'criteria': [tree]}
         params = request(*ALL, searchBuilder=tree)
-    refused(table.fetch_sync(params, session))
+    refused(table.fetch_sync(params, session), code)
 
 
 @pytest.mark.parametrize(
@@ -2138,3 +2133,71 @@ def test_a_form_encoded_multi_values_list_is_read(session: Session):
     read as no list, this global search would be idle and answered."""
     params = parse_request([('columns[0][data]', 'name'), ('search[multi_values][]', 'Bob')])
     refused(table.fetch_sync(params, session))
+
+
+# -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
+
+SEVENTEEN = ' '.join(['w'] * 17)
+OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
+    ({'column_search': {'name': {'value': 'a' * 256}}}, 'value_too_long'),
+    ({'column_search': {'name': {'value': SEVENTEEN}}}, 'too_many_words'),
+    ({'column_search': {'age': {'value': '1' * 256}}}, 'value_too_long'),  # SQL searches a number's text
+    ({'column_search': {'name': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'born': {'multi_values': ['2024-01-01', '1' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'name': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
+    (criterion('name', '=', 'a' * 256), 'value_too_long'),
+    (criterion('name', 'contains', 'a' * 256), 'value_too_long'),
+    (criterion('name', 'starts', 'a' * 256), 'value_too_long'),
+    (criterion('age', '=', '1' * 256), 'value_too_long'),
+    (criterion('age', '=', '9' * 4301), 'value_too_long'),  # more digits than Python converts to an integer
+    (criterion('age', '=', '0' * 5000), 'value_too_long'),
+    (criterion('age', 'between', '1', '2' * 256), 'value_too_long'),
+    (criterion('born', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
+    (criterion('born', 'contains', '2024' + ' ' * 252), 'value_too_long'),
+    (criterion('active', '=', 'true' + ' ' * 252), 'value_too_long'),
+    # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
+    (criterion('age', '=', 'x' * 300), 'value_too_long'),  # no number, and too long
+    (criterion('born', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
+    ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
+    ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
+    ({'column_search': {'name': {'value': 'a' * 256, 'multi_values': ['x']}}}, 'value_too_long'),
+    ({'search': {'value': 'a' * 256 + '\x00'}}, 'invalid_character'),
+    ({'search': {'value': ' '.join(['abcdefghij'] * 30)}}, 'value_too_long'),  # 30 words too, and the length first
+    (
+        {'search': {'value': SEVENTEEN}, 'column_search': {'name': {'value': 'a' * 256}}},
+        'too_many_words',
+    ),  # reading order
+    ({'search': {'value': 'a' * 256}, **criterion('age', '=', 'abc')}, 'value_too_long'),
+]
+
+
+@pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
+def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
+    session: Session, body: dict[str, Any], code: str
+):
+    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.3, SPEC-E3.2): the same refusal for every kind of value and part of the
+    request, with a text that holds none of what was sent."""
+    names = (*ALL, 'extra') if 'extra' in str(body) else ALL
+    message = refused(table.fetch_sync(request(*names, **body), session), code)
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'www', 'abc', '111'))
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'column_search': {'name': {'multi_values': ['a', 'b' * 255]}}},
+        {'column_search': {'name': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('name', 'contains', 'a' * 255),
+        criterion('age', '=', '0' * 255),  # 255 digits, a number the column holds
+        criterion('age', 'null', '1' * 300),  # a value the condition does not read is not measured
+    ],
+)
+def test_a_value_within_the_bounds_is_answered(session: Session, body: dict[str, Any]):
+    """PRD-F14: the bound is at 255 code points, not below."""
+    assert table.fetch_sync(request(*ALL, **body), session).error is None
+
+
+def test_a_surplus_value_is_not_measured_and_stays_the_mistake_it_is(session: Session):
+    """PRD-F14, PRD-F36: only the values a condition reads are measured."""
+    refused(table.fetch_sync(request(*ALL, **criterion('name', '=', 'Bob', 'a' * 300)), session))

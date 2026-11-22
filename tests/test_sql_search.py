@@ -52,8 +52,8 @@ def ids(response: DTResponse) -> list[int]:
     return [row['id'] for row in response.data]
 
 
-def refused(response: DTResponse) -> str:
-    assert response.error_code == 'invalid_filter'
+def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
+    assert response.error_code == code
     assert response.error is not None
     return response.error
 
@@ -200,7 +200,7 @@ def test_text_with_no_word_adds_nothing_to_a_hooked_column_either(session: Sessi
     assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **glob('!x')), session)) == [1, 2, 3, 4, 5]
 
 
-# -- the bounds of search text (PRD-F14), enforced as invalid_filter until #69 gives its two codes ---
+# -- the bounds of search text (PRD-F14), each with its own code (PRD-E2) ---
 
 EMOJI = chr(0x1F600)
 TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hooked': (only_hooked, ('id', 'secret'))}
@@ -239,7 +239,7 @@ def test_search_text_is_bound_in_code_points_and_words(
     if bound is None:
         assert response.error is None
     else:
-        message = refused(response)
+        message = refused(response, 'value_too_long' if bound == '255' else 'too_many_words')
         assert bound in message
         assert 'q0' not in message
         assert 'aaa' not in message

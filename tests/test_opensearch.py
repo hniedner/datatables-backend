@@ -591,17 +591,14 @@ def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
     ]
 
 
-def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
-    """SPEC-F9.18: a value of up to 255 code points, the longest a search text may be (PRD-F14) and the longest
-    measured as a `regexp` on every server, is one; a longer value is the `term` it was before. The letter here is
-    outside the BMP and the rest are dots, each of which gets a backslash: the length is the value's, in code
-    points, not the pattern's."""
+def test_the_longest_value_a_request_may_hold_is_a_regexp():
+    """SPEC-F9.18: a value of 255 code points, the longest any value may be (PRD-F14) and the longest measured as a
+    `regexp` on every server, is one. The letter here is outside the BMP and the rest are dots, each of which gets
+    a backslash: the length is the value's, in code points, not the pattern's. A longer value never gets here: it is
+    refused as `value_too_long`."""
     deseret, client = chr(0x10400), Client()
-    for dots in (254, 255):
-        table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * dots)), client)
-    fits, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert fits == {'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}
-    assert too_long == {'term': {'id': {'value': deseret + '.' * 255, 'case_insensitive': True}}}
+    table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * 254)), client)
+    assert query(client) == [{'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}]
 
 
 FULLWIDTH_MARKS = [chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)]  # the fullwidth asterisk, question mark and backslash
@@ -617,15 +614,11 @@ def test_a_search_for_a_fullwidth_mark_is_a_regexp_with_the_mark_behind_a_backsl
     assert query(client) == [{'regexp': {'id': {'value': f'.*a\\{mark}b.*', 'case_insensitive': True}}}]
 
 
-def test_a_fullwidth_mark_changes_no_exact_match_and_no_value_too_long_for_a_regexp():
-    """SPEC-F9.19: an exact match is a `term`, which the server compares as a whole, so it stays one; and a search
-    of more than 255 code points keeps its `wildcard`, as SPEC-F9.18 has it for every value."""
+def test_a_fullwidth_mark_changes_no_exact_match():
+    """SPEC-F9.19: an exact match is a `term`, which the server compares as a whole, so it stays one."""
     client, mark = Client(), FULLWIDTH_MARKS[0]
     table.fetch_sync(request(*NAMES, **criterion('id', '=', f'a{mark}b')), client)
-    table.fetch_sync(request(*NAMES, **criterion('id', 'contains', mark + 'a' * 255)), client)
-    exact, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert exact == {'term': {'id': {'value': f'a{mark}b', 'case_insensitive': True}}}
-    assert too_long == {'wildcard': {'id': {'value': f'*{mark}{"a" * 255}*', 'case_insensitive': True}}}
+    assert query(client) == [{'term': {'id': {'value': f'a{mark}b', 'case_insensitive': True}}}]
 
 
 def test_a_value_outside_ascii_without_case_keeps_its_query():
@@ -910,3 +903,60 @@ def test_the_largest_request_the_bounds_allow_is_this_many_clauses():
     client = Client()
     SearchTable('docs', columns).fetch_sync(largest_search_request(), client)
     assert tally(client.searches[0]['query']) == (4672, 6834, 256)
+
+
+# -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
+
+SEVENTEEN = ' '.join(['w'] * 17)
+OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
+    ({'search': {'value': 'a' * 256}}, 'value_too_long'),
+    ({'search': {'value': SEVENTEEN}}, 'too_many_words'),
+    ({'column_search': {'title': {'value': 'a' * 256}}}, 'value_too_long'),
+    ({'column_search': {'title': {'value': SEVENTEEN}}}, 'too_many_words'),
+    ({'column_search': {'pages': {'value': '1' * 256}}}, 'value_too_long'),
+    ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
+    (criterion('title', 'contains', 'a' * 256), 'value_too_long'),
+    (criterion('pages', '=', '1' * 256), 'value_too_long'),
+    (criterion('pages', '=', '0' * 5000), 'value_too_long'),  # which Python would not convert to an integer
+    (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
+    (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
+    # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
+    (criterion('pages', '=', 'x' * 300), 'value_too_long'),
+    (criterion('created', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
+    ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
+    ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
+    ({'search': {'value': 'a' * 256 + '\x00'}}, 'invalid_character'),
+    ({'search': {'value': ' '.join(['abcdefghij'] * 30)}}, 'value_too_long'),  # 30 words too, and the length first
+    ({'search': {'value': SEVENTEEN}, 'column_search': {'title': {'value': 'a' * 256}}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256}, **criterion('pages', '=', 'abc')}, 'value_too_long'),
+]
+
+
+@pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
+def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(body: dict[str, Any], code: str):
+    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.3, SPEC-E3.2): the same refusal for every kind of value and part of the
+    request, answered before the server is asked, with a text that holds none of what was sent."""
+    client = Client()
+    names = (*NAMES, 'extra') if 'extra' in str(body) else NAMES
+    message = refused(table.fetch_sync(request(*names, **body), client), code)
+    assert client.searches == []
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'www', 'abc'))
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'search': {'value': 'a' * 255}},
+        {'search': {'value': ' '.join(['w'] * 16)}},
+        {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}},
+        {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('title', 'contains', 'a' * 255),
+        criterion('pages', '=', '1' * 255),
+        criterion('pages', 'null', '1' * 300),  # a value the condition does not read is not measured
+    ],
+)
+def test_a_value_within_the_bounds_is_answered(body: dict[str, Any]):
+    """PRD-F14: the bound is at 255 code points and 16 words, not below."""
+    assert table.fetch_sync(request(*NAMES, **body), Client()).error is None
