@@ -952,8 +952,7 @@ SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
         ('email', {'value': '^$', 'regex': True}, [2, 3]),
         ('email', {'value': '|', 'regex': True}, [2, 3]),
         ('email', {'multi_values': ['', 'ann@example.org']}, [1, 2, 3]),  # SPEC-F20.2
-        ('email', {'multi_values': [' ']}, []),  # on a string column white space is a value, which no row holds
-        ('age', {'multi_values': [' ', '31']}, [1, 3, 4]),  # on any other type it holds nothing (PRD-F33)
+        ('age', {'multi_values': [' ', '31']}, [1, 3, 4]),  # white space holds nothing either (PRD-F33)
         ('active', {'multi_values': ['', '1']}, [1, 3, 4]),  # SPEC-F44.3
     ],
 )
@@ -964,6 +963,16 @@ def test_an_empty_alternative_or_entry_matches_the_rows_without_a_value(
     test_a_list_on_a_date_column_matches_each_entry_as_a_day."""
     params = request(*EVERY_TYPE, column_search={column: search})
     assert ids(every_type.fetch_sync(params, session)) == expected
+
+
+def test_white_space_is_a_value_on_a_string_column(session: Session):
+    """PRD-F20, PRD-F7: an exact value is never rewritten, so an entry of one space is that value, not an empty
+    entry, which would find row 2's NULL too. No row holds a space. SQL Server compares strings without their
+    trailing spaces (MEASURED on the `sqlserver` leg, run 45044380547), so there the space equals the `''` of
+    row 3."""
+    params = request(*EVERY_TYPE, column_search={'email': {'multi_values': [' ']}})
+    found = [3] if session.get_bind().dialect.name == 'mssql' else []
+    assert ids(every_type.fetch_sync(params, session)) == found
 
 
 @pytest.mark.parametrize('pattern', ['^red|blue$', r'r\ed', r'\d'])
