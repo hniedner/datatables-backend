@@ -604,8 +604,8 @@ def _parameter_count(stmt: Select[Any]) -> int:
 
 
 class _JsonValuesIn(ColumnElement[bool]):
-    """``column IN (<the values of one bound JSON array>)``, expanded by the database (``OPENJSON``, ``json_each``).
-    With ``fold``, SQL Server compares the column and each value in lower case."""
+    """``column IN (<the values of one bound JSON array>)``, expanded by SQL Server (``OPENJSON``), the only database
+    it is built for. With ``fold``, the column and each value are compared in lower case."""
 
     __visit_name__ = 'json_values_in'
     inherit_cache = True
@@ -632,13 +632,6 @@ def _compile_json_in(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -
     if isinstance(compiler, StrSQLCompiler):  # str(statement): a placeholder, never the values
         return f'{column} IN (<values of the JSON array {parameter}>)'
     raise CompileError(f'A filter on this many values is not supported on {compiler.dialect.name}')
-
-
-@compiles(_JsonValuesIn, 'sqlite')
-def _compile_json_in_sqlite(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:
-    value = 'CAST(value AS TEXT)' if isinstance(element.column.type, String) else 'value'
-    column, parameter = compiler.process(element.column, **kw), compiler.process(element.parameter, **kw)
-    return f'{column} IN (SELECT {value} FROM json_each({parameter}))'  # noqa: S608
 
 
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
