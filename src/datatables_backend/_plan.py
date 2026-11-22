@@ -58,10 +58,19 @@ MAX_CRITERIA = 64  # in the whole tree
 MAX_LIST_VALUES = 256  # in one categorical filter or `multi_values` list
 MAX_VALUES = 512  # in all the lists of one request
 MAX_COLUMN_SEARCHES = 64  # column searches that hold a value
+# The bounds of search text (PRD-F14), until #69 gives them their own codes
+MAX_SEARCH_LENGTH = 255  # code points of the raw text
+MAX_SEARCH_WORDS = 16  # counted after the split; a word that reduces to nothing is not counted
 SEARCH_DEPTH = f'The search builder nests more than {MAX_DEPTH} groups. Nest at most {MAX_DEPTH} groups.'
 SEARCH_CRITERIA = f'The search builder holds more than {MAX_CRITERIA} criteria. Use at most {MAX_CRITERIA} criteria.'
 TOO_MANY_VALUES = f'The filters hold more than {MAX_VALUES} values in all. Remove some values.'
 TOO_MANY_COLUMN_SEARCHES = f'The request searches more than {MAX_COLUMN_SEARCHES} columns. Clear some column searches.'
+SEARCH_TOO_LONG = (
+    f'The search text holds more than {MAX_SEARCH_LENGTH} characters. Shorten it to at most {MAX_SEARCH_LENGTH}.'
+)
+SEARCH_TOO_MANY_WORDS = (
+    f'The search text holds more than {MAX_SEARCH_WORDS} words. Search for at most {MAX_SEARCH_WORDS} words.'
+)
 SORT_NOT_OFFERED = 'The table was asked to sort by a column the server does not offer. Sort by another column.'
 FILTER_NOT_OFFERED = 'A filter is on a column the server does not offer. Remove that filter.'
 _HOLDS: Mapping[ColumnType, str] = {
@@ -82,6 +91,8 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_list_too_long': ('invalid_filter', 1),
     'datatables_too_many_values': ('invalid_filter', 1),
     'datatables_too_many_column_searches': ('invalid_filter', 1),
+    'datatables_search_too_long': ('invalid_filter', 1),
+    'datatables_search_too_many_words': ('invalid_filter', 1),
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),
@@ -154,6 +165,9 @@ _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
 _REGEX_ESCAPED = frozenset('/.*+?|()[]{}\\$^-')
 #: What counts as a space in search text (PRD-F6, PRD-F7): U+0020, LF, CR, U+2028 and U+2029
 _SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
+_AS_SPACE = str.maketrans(dict.fromkeys(_SPACES, ' '))
+#: DataTables' smart-search split (3.1.5 ``dataTables.mjs``, :5924): a phrase is read where a word begins
+_SPLIT = re.compile(r'!?["\u201C][^"\u201D]+["\u201D]|[^ ]+')
 # How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
@@ -250,7 +264,7 @@ class Empty:
 class Not:
     """A negative condition: every row ``node`` does not match. Each backend compiles it in one place."""
 
-    node: Equals | Part | Range | Empty
+    node: Contains | Equals | Part | Range | Empty
 
     @property
     def column(self) -> Column:
@@ -282,10 +296,11 @@ class Order:
 
 @dataclass(frozen=True)
 class Plan:
-    """What one request asks for. ``global_search`` is joined by OR; everything else by AND."""
+    """What one request asks for: the global search and the column searches (PRD-F1, PRD-F2), whose words are nodes of
+    their own, and the SearchBuilder tree, all joined by AND."""
 
-    global_search: tuple[Contains, ...]
-    column_searches: tuple[Filter, ...]
+    global_search: Filter | Group | None
+    column_searches: tuple[Filter | Group, ...]
     search_builder: Filter | Group | None
     order: tuple[Order, ...]
 
@@ -331,36 +346,11 @@ def plan(
             if all(entry.column.source != earlier.column.source for earlier in order):
                 order.append(entry)
 
-    global_search: list[Contains] = []
+    global_search: Filter | Group | None = None
     with mistakes.part():
-        if _control_character([params.search.value]):
-            raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
-        if params.search.multi_values:  # refused as a form, so its entries are never read
-            raise mistake('datatables_values_refused', SEARCH_VALUES)
-        if params.search.value.strip(_SPACES):  # text of spaces only adds nothing (PRD-F6)
-            if params.search.regex:
-                raise mistake('datatables_regex_refused', SEARCH_REGEX)
-            found: list[Contains] = []
-            covered: set[str] = set()  # a column the request names again is searched once (PRD-F38)
-            for requested in params.columns:
-                # A column the server did not declare takes no part, like one that only renders: refusing it would
-                # fail every search of a table that shows such a column
-                column = declared.get(requested.key) if requested.searchable else None
-                # Nor does a column the backend cannot search for text: a boolean on every backend ("true" as search
-                # text is nothing a user reads in the cell), a number or a date on OpenSearch
-                if (
-                    column is not None
-                    and column.searchable
-                    and (able := describe(column)).searched
-                    and column.name not in covered
-                ):
-                    covered.add(column.name)
-                    found.append(Contains(column, able.type, hooked(column, params.search.value)))
-            if not found:
-                raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
-            global_search = found  # only once the whole search stands
+        global_search = _global_search(params, declared, describe, hooked)
 
-    column_searches: list[Filter] = []
+    column_searches: list[Filter | Group] = []
     listed = 0
     for requested in _searched(params, mistakes):
         search = requested.search
@@ -368,7 +358,8 @@ def plan(
             listed = _within_the_lists(search, declared.get(requested.key), listed)
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
             column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
-            column_searches.append(_column_search(search, column, describe(column), hooked))
+            if (built := _column_search(search, column, describe(column), hooked)) is not None:
+                column_searches.append(built)
 
     def node(item: SearchGroup | SearchCriterion) -> Filter | Group | None:
         if isinstance(item, SearchCriterion):
@@ -385,7 +376,97 @@ def plan(
         with mistakes.part():
             _within_the_bounds(params.searchBuilder)  # before `node` recurses into it
             search_builder = node(params.searchBuilder)
-    return Plan(tuple(global_search), tuple(column_searches), search_builder, tuple(order))
+    return Plan(global_search, tuple(column_searches), search_builder, tuple(order))
+
+
+def _global_search(
+    params: DTParams,
+    declared: Mapping[str, Column],
+    describe: Callable[[Column], Capabilities],
+    hooked: Callable[[Column, str], Any],
+) -> Filter | Group | None:
+    """The global search: every word found in some searchable column, none for text with no word. Raises the
+    user's mistakes."""
+    text = params.search.value
+    if _control_character([text]):
+        raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
+    if params.search.multi_values:  # refused as a form, so its entries are never read
+        raise mistake('datatables_values_refused', SEARCH_VALUES)
+    _within_the_length(text)
+    searched_words = _words(text)
+    if not searched_words:  # text with no word adds nothing (PRD-F6)
+        return None
+    if params.search.regex:
+        raise mistake('datatables_regex_refused', SEARCH_REGEX)
+    found: list[tuple[Column, ColumnType]] = []
+    covered: set[str] = set()  # a column the request names again is searched once (PRD-F38)
+    for requested in params.columns:
+        # A column the server did not declare takes no part, like one that only renders: refusing it would
+        # fail every search of a table that shows such a column
+        column = declared.get(requested.key) if requested.searchable else None
+        # Nor does a column the backend cannot search for text: a boolean on every backend ("true" as search
+        # text is nothing a user reads in the cell), a number or a date on OpenSearch
+        if (
+            column is not None
+            and column.searchable
+            and (able := describe(column)).searched
+            and column.name not in covered
+        ):
+            covered.add(column.name)
+            found.append((column, able.type))
+    if not found:
+        raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
+    plain: list[tuple[Column, ColumnType]] = [(column, kind) for column, kind in found if column.search_value is None]
+    alternatives: list[Filter | Group] = []
+    if plain:  # the cap is lifted where every searchable column is hooked (PRD-D12)
+        _within_the_words(searched_words)
+        alternatives.append(_all('AND', [_word(plain, word, negated) for word, negated in searched_words]))
+    # A hooked column is matched for the whole text until PRD-D12 turns it into an equality (#28)
+    alternatives.extend(Contains(column, kind, hooked(column, text)) for column, kind in found if column.search_value)
+    return _all('OR', alternatives)
+
+
+def _words(text: str) -> list[tuple[str, bool]]:
+    """The words of search text and whether each is negated, as DataTables' smart search reads them (PRD-F3 to
+    PRD-F7, PRD-F35): a phrase is read only where a word begins, a negated word keeps its quotes unless a matching
+    pair encloses it, and a word that reduces to nothing is dropped."""
+    found: list[tuple[str, bool]] = []
+    for token in _SPLIT.findall(text.translate(_AS_SPACE)):
+        negated = token.startswith('!')
+        word = token[1:] if negated else token
+        for opening, closing in (('"', '"'), ('“', '”')):
+            if len(word) >= 2 and word.startswith(opening) and word.endswith(closing):
+                word = word[1:-1]
+                break
+        if negated:
+            # DataTables measures the word escaped for a regular expression, so `!-` excludes and `!x` does not
+            if len(word) + sum(char in _REGEX_ESCAPED for char in word) > 1:
+                found.append((word, True))
+        elif word := word.replace('"', ''):
+            found.append((word, False))
+    return found
+
+
+def _word(columns: Sequence[tuple[Column, ColumnType]], word: str, negated: bool) -> Filter | Group:
+    """One word of the global search: found in some column, or, negated, in none of them."""
+    if negated:
+        return _all('AND', [Not(Contains(column, kind, word)) for column, kind in columns])
+    return _all('OR', [Contains(column, kind, word) for column, kind in columns])
+
+
+def _all(logic: Literal['AND', 'OR'], items: Sequence[Filter | Group]) -> Filter | Group:
+    """``items`` joined by ``logic``; one item stands for itself."""
+    return items[0] if len(items) == 1 else Group(logic, tuple(items))
+
+
+def _within_the_length(text: str, column: Column | None = None) -> None:
+    if len(text) > MAX_SEARCH_LENGTH:
+        raise mistake('datatables_search_too_long', SEARCH_TOO_LONG, column)
+
+
+def _within_the_words(words: Sequence[tuple[str, bool]], column: Column | None = None) -> None:
+    if len(words) > MAX_SEARCH_WORDS:
+        raise mistake('datatables_search_too_many_words', SEARCH_TOO_MANY_WORDS, column)
 
 
 def _is_search(search: Search) -> bool:
@@ -735,8 +816,11 @@ def _day_span(text: str, column: Column) -> tuple[date, date]:
     return start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1)
 
 
-def _column_search(search: Search, column: Column, able: Capabilities, hooked: Callable[[Column, str], Any]) -> Filter:
-    """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains.
+def _column_search(
+    search: Search, column: Column, able: Capabilities, hooked: Callable[[Column, str], Any]
+) -> Filter | Group | None:
+    """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or the words of its text
+    that the column must hold, which is nothing when the text has none.
     On a boolean column a plain value is an exact value too, and so is one on a number or date column where the
     backend has no text of it to search in: one number, or the span a year, a month or a day names. On a date
     column each entry of a list is a day, and the column's ``search_value`` hook is not applied to it, as it is not
@@ -749,6 +833,8 @@ def _column_search(search: Search, column: Column, able: Capabilities, hooked: C
             f'The filter on "{column.name}" holds both text and a list of values. Send only one of them.',
             column,
         )
+    if not (search.multi_values or search.regex):
+        _within_the_length(search.value, column)
     texts: Sequence[str]
     if search.multi_values:
         texts = search.multi_values
@@ -770,7 +856,13 @@ def _column_search(search: Search, column: Column, able: Capabilities, hooked: C
         start, end = _day_span(str(hooked(column, search.value)), column)
         return Range(column, kind, Bound(start, True), Bound(end, False))
     else:
-        return Contains(column, kind, hooked(column, search.value))
+        searched_words = _words(search.value)
+        if not searched_words:
+            return None
+        if column.search_value:  # matched for the whole text, with no word cap, until PRD-D17 (#28)
+            return Contains(column, kind, hooked(column, search.value))
+        _within_the_words(searched_words, column)
+        return _all('AND', [_word([(column, kind)], word, negated) for word, negated in searched_words])
     # An entry that holds nothing is no value: it matches a row without one (PRD-F17, PRD-F20), and no hook is
     # given it (PRD-D16). A string column takes an entry of white space as that exact value; on any other type
     # it holds nothing either

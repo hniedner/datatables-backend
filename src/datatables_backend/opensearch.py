@@ -162,8 +162,8 @@ class SearchTable:
         mistakes = Mistakes()
         request = plan(params, self.columns, _describe, mistakes)
         must: list[dict[str, Any]] = [self.base_filter] if self.base_filter else []
-        if request.global_search:
-            must.append(_any([_global_clause(search) for search in request.global_search]))
+        if request.global_search is not None:
+            must.append(_compile(request.global_search))
         for column_search in request.column_searches:
             with mistakes.part():
                 must.append(_compile(column_search))
@@ -361,10 +361,6 @@ def _string_contains(column: Column, value: str, *, parse: bool) -> dict[str, An
     return _any([text_match, wildcard])
 
 
-def _global_clause(search: Contains) -> dict[str, Any]:
-    return _string_contains(search.column, str(search.value), parse=False)
-
-
 def _compile(node: Filter | Group) -> dict[str, Any]:
     """The clause of one node of the plan."""
     if isinstance(node, Group):
@@ -378,8 +374,8 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             return _not(_compile(node.node))
         case Empty():
             return _not({'exists': {'field': field}})
-        case Contains():
-            return _string_contains(column, str(node.value), parse=True)
+        case Contains():  # one word: the query syntax is no part of a search (PRD-F8)
+            return _string_contains(column, str(node.value), parse=False)
         case Range():
             bounds: dict[str, Any] = {}
             if node.lower is not None:

@@ -211,9 +211,8 @@ class SQLTable:
         """The request's conditions. One that holds a mistake (a number the column cannot hold) is left out, and
         the mistake kept in ``mistakes``."""
         conditions: list[ColumnElement[bool]] = []
-        if request.global_search:
-            conditions.append(or_(*(self._contains(search) for search in request.global_search)))
-        filters: list[Filter | Group] = list(request.column_searches)
+        filters: list[Filter | Group] = [] if request.global_search is None else [request.global_search]
+        filters.extend(request.column_searches)
         if request.search_builder is not None:
             filters.append(request.search_builder)
         for node in filters:

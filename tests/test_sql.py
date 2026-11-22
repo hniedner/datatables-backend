@@ -1832,21 +1832,7 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
     assert logged(caplog) == ['datatables_control_character']
 
 
-@pytest.mark.parametrize(
-    'bound',
-    [
-        pytest.param(
-            'words',
-            marks=pytest.mark.xfail(
-                reason='PRD-F14: search text of more than 16 words is not refused yet, so the date mistake beside it '
-                'is the one answered (SPEC-E3.2, issue #69)',
-                strict=True,
-                raises=AssertionError,
-            ),
-        ),
-        'depth',
-    ],
-)
+@pytest.mark.parametrize('bound', ['words', 'depth'])
 def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(session: Session, bound: str):
     """SPEC-E3.2: step 1 before step 2."""
     if bound == 'words':

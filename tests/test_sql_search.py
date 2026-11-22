@@ -203,7 +203,7 @@ TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hook
     [
         ('all', glob(words(16)), None),
         ('all', glob(words(17)), '16'),
-        ('all', glob(f'{words(16)} !x "" " !""'), None),  # tokens that reduce to no word are not counted
+        ('all', glob(f'{words(16)} !x "" !"" "'), None),  # tokens that reduce to no word are not counted
         ('all', glob(f'{words(15)} "a b"'), None),  # a phrase is one word
         ('all', glob(f'{words(16)} "a b"'), '16'),
         ('all', column(words(16), 'name'), None),
