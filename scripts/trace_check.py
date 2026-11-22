@@ -1,9 +1,19 @@
 """Check that the specs trace to the PRD: standard library only.
 
-A requirement is one PRD table line ``| PRD-X1 | requirement | reason | must |`` (priority ``must``, ``should`` or
-``later``), every cell non-empty and set off from its pipes by exactly one space on each side. Any line whose first
-cell starts with ``PRD-`` (decorated, linked or without the leading pipe) is a candidate, and one that does not have
-exactly that shape is a finding, so a drifted row is never dropped silently.
+A requirement is one PRD section. Its heading is exactly ``#### PRD-X1``, from the line's first column, and the
+section runs to the next heading line. It holds the requirement's text, which is one or more lines that do not start
+with the Reason or the Priority label (so several paragraphs, a list or a quote are text), then one list item
+``- **Reason:** text`` whose further lines are indented by spaces, then as its last line ``- **Priority:** must`` (or
+``should`` or ``later``). Blank lines are not counted.
+
+A heading line is any line whose first character after white space is ``#``. The rule is by line, not by Markdown:
+a ``#`` line inside a code fence, or a wrapped line of text that starts with ``#``, is a heading line too, so no
+line of a requirement's section, its reason's further lines included, has ``#`` as its first character after white
+space. A heading line that holds ``PRD-`` and is not a requirement's heading
+(another level, indented, with more text) is a finding, so a heading names a requirement id only when it is that
+requirement's own. A table line whose first cell starts with ``PRD-``, decorated or linked, which was the layout
+before the sections, is a finding too. A requirement written in neither form (a bold line, a list item) is not seen;
+it surfaces only when a statement states it.
 
 A spec statement is one paragraph: a list item in a ``*.md`` file directly in the specs directory (not in a
 subdirectory, and not ``README.md``) that starts ``- **SPEC-X1.n** `` followed by text, plus the indented lines that
@@ -15,7 +25,8 @@ The text ``SPEC-`` anywhere else is a finding, unless it is in backticks: a stat
 `` `SPEC-F1.1` ``. A code span stays on one line; one wrapped across lines is not read as a code span.
 
 Findings, one line each on stderr, exit status 1:
-- a requirement row of the wrong shape, a requirement id defined twice, or no requirement at all;
+- a requirement heading or section of the wrong shape, a requirement in table form, a requirement id defined twice,
+  or no requirement at all;
 - no statement at all, the text ``SPEC-`` outside backticks anywhere but a statement's start, or an unindented line
   right after a statement;
 - a *must* or *should* requirement with no statement (a *later* one needs none);
@@ -31,13 +42,19 @@ import argparse
 from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field
+from itertools import takewhile
 from pathlib import Path
 import re
 import sys
 
-CANDIDATE = re.compile(r'^\s*(?:\|\s*[*_`~\[]*PRD-|[*_`~\[]*PRD-[^|]*\|)')
-CELL = r' (?:[^|\\\s]|\\.)(?:(?:[^|\\]|\\.)*(?:[^|\\\s]|\\.))? '
-REQUIREMENT = re.compile(rf'^\| (PRD-[A-Z]+\d+) \|{CELL}\|{CELL}\| (must|should|later) \|$')
+TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
+HEADING_LINE = re.compile(r'^\s*#')
+HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
+SECTION = re.compile(
+    r'(?:(?!- \*\*(?:Reason|Priority):\*\*).+\n)+'
+    r'- \*\*Reason:\*\* .+\n(?: +\S.*\n)*'  # \S: a line's spaces match in one way only, or matching is exponential
+    r'- \*\*Priority:\*\* (must|should|later)\n'
+)
 STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (\S.*)$')
 CONTINUATION = re.compile(r'^\s+\S')
 ENDS_STATEMENT = re.compile(r'^(\s*$|#|[-*+] |\d+[.)] )')
@@ -55,14 +72,24 @@ class Statement:
 
 
 def requirements(name: str, text: str) -> tuple[list[tuple[str, str]], list[str]]:
-    """The requirement rows as (id, priority), and the findings on the PRD's rows."""
+    """The requirements as (id, priority), and the findings on the PRD's sections."""
     rows: list[tuple[str, str]] = []
     findings: list[str] = []
-    for number, line in enumerate(text.splitlines(), 1):
-        if match := REQUIREMENT.match(line.rstrip()):
-            rows.append((match[1], match[2]))
-        elif CANDIDATE.match(line):
-            findings.append(f'{name}:{number} is not a requirement row of the expected shape')
+    lines = [line.rstrip() for line in text.splitlines()]
+    for number, line in enumerate(lines, 1):
+        if TABLE_ROW.match(line):
+            findings.append(f'{name}:{number} is a requirement row, not a section')
+        if not HEADING_LINE.match(line) or 'PRD-' not in line:
+            continue
+        heading = HEADING.match(line)
+        if not heading:
+            findings.append(f'{name}:{number} is not a requirement heading of the expected shape')
+            continue
+        below = takewhile(lambda after: not HEADING_LINE.match(after), lines[number:])
+        if section := SECTION.fullmatch(''.join(f'{part}\n' for part in below if part)):
+            rows.append((heading[1], section[1]))
+        else:
+            findings.append(f'{name}:{number} is not a requirement section of the expected shape')
     return rows, findings
 
 
