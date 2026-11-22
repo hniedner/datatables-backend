@@ -288,7 +288,9 @@ def test_searchbuilder_contains_with_padding_finds_the_text_inside_it(client: Op
 
 @pytest.mark.parametrize(
     ('column', 'expected'),
-    [('only_text', []), ('both', ['p4', 'p5'])],  # INFERRED, to be measured: no token matches; `* *` finds a space
+    # Main answered every row on both (run 45075131757); the target: analysed text holds no space, the wildcard `* *`
+    # finds the rows holding one, as SQL's substring does
+    [('only_text', []), ('both', ['p4', 'p5'])],
 )
 def test_searchbuilder_contains_of_one_space(client: OpenSearch, column: str, expected: list[str]):
     """SPEC-F11.7 on a blank value sent as typed (#68): the phrase has no token, the wildcard `* *` is a space."""

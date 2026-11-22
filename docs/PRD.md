@@ -595,7 +595,9 @@ column's database collation.
 #### PRD-F11
 
 A word matches as a substring, except on a text-only OpenSearch column, where it is an analysed match (`red` does not
-find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped.
+find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped. On
+analysed text a word, and a SearchBuilder `contains` value, matches as a phrase of its tokens, so `foo-bar` finds
+`foo bar` but not `foo` alone.
 
 - **Reason:** A user's `%` or `*` is text, never a pattern; wildcard injection is a known failure.
 - **Priority:** must
@@ -1574,7 +1576,7 @@ where a database decides. Each difference is stated here; every other answer is 
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
 | A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
-| On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
+| On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`) and, where the analyser splits it, a phrase of its tokens (`foo-bar` finds `foo bar` but not `foo` alone); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
 | On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number and refuses a whole number of 400 digits in the same way. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
 | On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
 | A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
