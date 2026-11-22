@@ -1,8 +1,9 @@
 # 004: Numbers and the empty string on the SQL servers
 
 This is the record of one measurement made for issue #14 on 2026-11-22: what PostgreSQL, MySQL and SQL Server
-answer to a whole number beyond 64 bits, to a number wider than a `Numeric` column, and to the empty string
-compared with a column that is no plain string. PRD-F25 and PRD-F26 rest on it. The requirements are in
+answer to a whole number outside the signed 64-bit range, to a number wider than a `Numeric` column, and to the
+empty string compared with a column that is no plain string; and, from the pull request's own runs, what they do
+with trailing spaces. PRD-F25 and PRD-F26 rest on it. The requirements are in
 `docs/PRD.md`. Nothing here is a requirement.
 
 ## How it was measured
@@ -18,7 +19,7 @@ The table held a `Numeric(30, 0)`, a `Numeric` without a precision, a `Float`, a
 refuses any other text, SQLAlchemy's `Uuid`, an `Enum` (a native type on PostgreSQL and MySQL) and a BIGINT,
 unsigned on MySQL. Not measured: MariaDB, other drivers, and a decimal with a fraction.
 
-## A whole number beyond 64 bits
+## A whole number outside the signed 64-bit range
 
 SQLAlchemy binds a Python `int` as an integer, whatever the column is.
 
@@ -48,9 +49,10 @@ SQL Server's decimal type holds 38 digits at most, and its driver refuses to bin
 declared `Numeric(30, 0)` and on the one without a precision alike. PostgreSQL and MySQL take a number of any of
 these widths and compare it.
 
-What follows from it (PRD-F25): a whole number with more digits than the column's precision less its scale is
-refused as out of range on every database, since the column cannot hold it; on SQL Server the bound is never more
-than 38, whatever the column declares; a `Numeric` column without a declared precision has no bound elsewhere.
+What follows from it (PRD-F25): on SQL Server a number of more than 38 digits before the decimal point is refused
+as out of range, whatever the column declares. No other database is bounded: a first version also refused a
+number wider than the column's declared precision, on every database, and the review took that out, because it
+refused a fair question (`< 1000` on a `Numeric(5, 2)`) that all of them answer.
 
 ## An unsigned integer on MySQL
 
@@ -78,3 +80,21 @@ behind a `TypeDecorator`; an enum only when `''` is one of its values; any other
 
 A list with an empty entry, as the library now sends it (the values in an `IN`, then `OR column IS NULL`, and
 `OR column = ''` where the column stores text), was answered by all three servers on each of these columns.
+
+## Trailing spaces
+
+Found on the pull request's own runs, not by the script above. The request was a `multi_values` list of one space
+on a `VARCHAR` column that holds `''` in one row and NULL in another, sent as the plain condition
+`column IN (' ')`.
+
+| Run | PostgreSQL 18.7 | MySQL 8.4.13 (default collation, `utf8mb4_0900_ai_ci`) | SQL Server 2022 | SQLite |
+|---|---|---|---|---|
+| 45044380547, the test expecting no row | no row | no row | the row holding `''` (the test failed) | no row |
+| 45044615959, the test expecting that row on SQL Server | no row | no row | the row holding `''` | no row |
+
+So SQL Server compares strings without their trailing spaces: one space equals the empty string, as `'a '` equals
+`'a'`. That is its rule for every comparison of strings, and the library does not change it. MySQL documents the
+same for its PAD SPACE collations (`utf8mb4_general_ci`, `utf8mb4_unicode_ci` and the other collations older than
+8.0's); that was not run.
+
+What follows from it (PRD-F20, PRD-F26): nothing in the code. PRD section 5 and `docs/databases.md` state it.

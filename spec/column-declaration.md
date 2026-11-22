@@ -71,10 +71,12 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `=` `Alpha` → rows 1; `!=` `Alpha` → rows 2, 3, 4, 5, 6 (PRD-F37); `null` → rows 5, 6 on SQL and rows 5 on OS;
   `!null` → rows 1, 2, 3, 4 on SQL and rows 1, 2, 3, 4, 6 on OS.
 - **SPEC-D18.2** [all] SearchBuilder `contains`, `starts`, `ends` and their negations on `secret` → `invalid_filter`.
-- **SPEC-D19.1** [OS] On a text-only `name`: a categorical filter, a `multi_values` list, and SearchBuilder `=`,
-  `!=`, `starts`, `!starts`, `ends`, `!ends`, `contains`, `!contains` → `invalid_filter`.
+- **SPEC-D19.1** [OS] On a text-only `name`: a categorical filter, a `multi_values` list that holds a value, and
+  SearchBuilder `=`, `!=`, `starts`, `!starts`, `ends`, `!ends`, `contains`, `!contains` → `invalid_filter`.
 - **SPEC-D19.2** [OS] On a text-only `name`: a global search `apple`, a column search `apple`, and `null`/`!null` are
   answered.
+- **SPEC-D19.3** [OS] On a text-only `name`: `multi_values` `[""]`, a list of only an empty entry, is answered
+  with the rows whose `name` is missing; it means empty and matches no value exactly (PRD-F20).
 - **SPEC-D20.1** [OS] Declaring a hook on a text-only column → `SchemaError` at construction.
 - **SPEC-D21.1** [SQLite, PostgreSQL] With `colour` declared `fold_case=False`: SearchBuilder `=` `Red` → none; `=`
   `red` → rows 1; `multi_values` `["RED"]` → rows 4.

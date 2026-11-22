@@ -110,9 +110,9 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 
 ## What the server decides
 
-The library sends every database the same request and does not work around a database's own rules. Where such a
-rule changes what a user sees (trailing spaces on SQL Server, SQLite's inexact decimals, a number outside an
-OpenSearch field's range), [docs/databases.md](docs/databases.md) says so, engine by engine.
+The library does not change how a database compares values. Where a database's own rule changes what a user sees
+(trailing spaces on SQL Server and under a MySQL PAD SPACE collation, SQLite's inexact decimals), and where the
+library itself has a limit on one engine, [docs/databases.md](docs/databases.md) says so, engine by engine.
 
 - **Only declared columns can be used.** The request can search, filter and sort only on the columns the server
   declares. A filter or a sort on any other name is refused. A column the page only renders (one without a name, or

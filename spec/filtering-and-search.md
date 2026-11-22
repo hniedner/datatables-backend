@@ -36,8 +36,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   column search on `name` and as a column search on `note`, → rows 1, 2, 3, 4, with no error (on `note`, an empty
   word kept as a condition would drop row 1's NULL).
 - **SPEC-F6.3** [all] A value made of U+0020, LF, CR, U+2028 and U+2029 and nothing else, as the global search and as
-  a column search on `active`, → rows 1, 2, 3, 4. With `regex: true` as a column search on `colour` → none (the
-  spaces are a categorical value, which no row holds). [OS] As a column search on `price` it adds no clause.
+  a column search on `active`, → rows 1, 2, 3, 4.
+- **SPEC-F6.4** [all] With `regex: true`, the value of F6.3 is a categorical value: as a column search on `colour`
+  → none (the exact value, which no row holds); on `price` → rows 4 (on a column that is no string it holds
+  nothing, so it means empty).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
@@ -152,7 +154,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F17.3** [all] With `regex: true`: `^()$` on `note`, a group holding only the empty alternative, → rows 1, 2
   on SQL (NULL, `''`) and rows 1 on OS (missing).
 - **SPEC-F17.4** [all] With `regex: true` on `note`: `^$` and a bare `|` → rows 1, 2 on SQL and rows 1 on OS, as F17.3
-  gives; `^(x_y|)$`, `^(x_y||red)$` and `x_y|` → rows 1, 2, 3 on SQL and rows 1, 3 on OS, as F17.1 gives.
+  gives; `x_y|` and `^(x_y||zzz)$` → rows 1, 2, 3 on SQL and rows 1, 3 on OS, as F17.1 gives.
 - **SPEC-F18.1** [all] With `regex: true`, each of `^a|b$`, `a.b`, `a*`, `(a)`, `[ab]`, `a{2}`, `\d`, `\w`, `\n`,
   `a+`, `a?` and `^(a|b)` → error_code `invalid_filter`.
 - **SPEC-F18.2** [all] A global search with `search[regex]` true and a value holding at least one word, `red` or
@@ -170,9 +172,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F20.2** [all] `multi_values` `["", "x_y"]` on `note` → rows 1, 3 on OS; rows 1, 2, 3 on SQL.
 - **SPEC-F20.3** [all] A column search on `colour` with an empty value and an empty `multi_values` list is idle →
   rows 1, 2, 3, 4.
-- **SPEC-F20.4** [all] `multi_values` `[" "]` on `note` → never row 1: on a string column a space is a value, not an
-  empty entry. [SQLite, PostgreSQL, MySQL] → none. [SQL Server] → rows 2, whose `''` SQL Server compares equal to a
-  space (PRD section 5).
+- **SPEC-F20.4** [SQL] `multi_values` `[" "]` on `note` → never row 1: on a string column a space is a value, not an
+  empty entry. [SQLite, PostgreSQL] and [MySQL, default collation] → none. [SQL Server] → row 2, whose `''` SQL
+  Server compares equal to a space (PRD section 5).
 
 ## Dates
 
@@ -225,25 +227,31 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.3** [all] SearchBuilder `=` on `price` reads `+7`, `7.`, `.7E+1` and `7` with white space around it as
   the number 7. With `1_000`, a second sign (`--7.5`), or `7` in a digit outside ASCII (the full-width `７`,
   U+FF17) → error_code `invalid_number`.
-- **SPEC-F25.4** [SQL] With `price` redeclared as a `Float`, given a row whose `price` is 18446744073709551616
-  (2^64): `=` `18446744073709551616`, and that number as a `multi_values` entry, → that row. The same with `price`
-  an expression without a SQL type, declared a number. `=` with a whole number of 400 digits → error_code
-  `invalid_number`.
+- **SPEC-F25.4** [SQL] A whole number outside the signed 64-bit range. With `price` redeclared as a `Float`, given
+  a row whose `price` is 18446744073709551616 (2^64): `=` `18446744073709551616`, and that number as a
+  `multi_values` entry, → that row; `=` `9223372036854775808` (2^63) → none; `=` with a whole number of 308
+  digits → none, and of 309 digits → error_code `invalid_number`. With `price` an expression without a SQL type,
+  declared a number: `=` `18446744073709551616` → that row. With `price` a string column declared a number that
+  holds the text `18446744073709551616`: `=` `18446744073709551616` → that row (text is compared with the digits).
 - **SPEC-F25.5** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
-  18446744073709551616: `=` `18446744073709551616` → that row; `=` with a whole number of 31 digits → error_code
-  `invalid_number`. `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite] → that row (PRD
-  section 5). With `price` a `Numeric` without a precision, `=` with a whole number of 39 digits [SQLite,
-  PostgreSQL, MySQL] → none; [SQL Server] → error_code `invalid_number`.
+  18446744073709551616: `=` `18446744073709551616` → that row; `<` with a whole number of 31 digits → that row (the
+  declared precision bounds nothing). `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite]
+  → that row (PRD section 5). `=` with a whole number of 39 digits, and `=` `1e39`, [SQLite, PostgreSQL, MySQL] →
+  none; [SQL Server] → error_code `invalid_number`. [SQL Server] `multi_values` of 3,000 numbers and
+  `18446744073709551616`, long enough to be sent as JSON, → that row.
 - **SPEC-F25.6** [SQL] With `price` redeclared as MySQL's unsigned `BIGINT`: `=` `-1` → error_code `invalid_number`.
   [MySQL] Given a row whose `price` is 18446744073709551615: `=` `18446744073709551615` → that row.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
-  `TypeDecorator` over a string type, also one that refuses to convert `''`; `note` declared a date; an expression
+  `TypeDecorator` over a string type, also one over another `TypeDecorator`; `note` declared a date; an expression
   without a SQL type, declared a string; an `Enum` column that names `''` as a value. It finds the NULL rows only on:
-  the same expression declared a date; an `Enum` column without `''` among its values; a `Uuid` column.
+  the same expression declared a date; an `Enum` column without `''` among its values; a `Uuid` column; a column
+  behind a `TypeDecorator` that stores a UUID as `CHAR(32)` and on PostgreSQL as its `UUID` type (SQLAlchemy's
+  GUID recipe), which holds no `''`.
 - **SPEC-F26.4** [SQL] `multi_values` `[""]` on a `Uuid` column, and on a column behind a `TypeDecorator` that
-  refuses to convert `''`, → the rows holding NULL (the entry is never sent as a value).
+  refuses to convert `''`, → the rows holding NULL (and `''` where the stored type is text); the entry is never
+  sent as a value.
 
 ## SearchBuilder
 
