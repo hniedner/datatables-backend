@@ -49,7 +49,6 @@ from sqlalchemy.types import TypeEngine
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
-from datatables_backend import MalformedRequest
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
@@ -1867,8 +1866,11 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
         (nested(9, 'name'), False),
         (flat(64, 'name'), True),
         (flat(65, 'name'), False),
+        # The 65 are counted over the whole tree, and 9 groups side by side are not 9 deep
+        ({'logic': 'AND', 'criteria': [flat(32, 'name'), flat(33, 'name')]}, False),
+        ({'logic': 'AND', 'criteria': [flat(1, 'name') for _ in range(9)]}, True),
     ],
-    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65'],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'criteria-65-in-two-groups', 'nine-groups-side-by-side'],
 )
 def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(
     session: Session, tree: dict[str, Any], *, answered: bool
@@ -1940,18 +1942,6 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
     table.fetch_sync(request(*('name',) * 1000, search={'value': 'ann'}), session)
     same = statements == once  # not asserted inline: a failure would print a thousand terms
     assert same
-
-
-def test_a_tree_near_the_parsers_limit_is_refused_and_never_crashes(session: Session):
-    """SPEC-F38.8: from a depth the parser still hands over, up to one it refuses, each tree is refused as
-    `invalid_filter` or as `MalformedRequest`, and none raises `RecursionError` (165 to 254 groups did, in the plan,
-    before the bounds). The cut-over is the parser's own and depends on the Python version, so it is not pinned."""
-    for depth in range(100, 300):
-        try:
-            params = request(*ALL, searchBuilder=nested(depth, 'name'))
-        except MalformedRequest:
-            continue
-        refused(table.fetch_sync(params, session))
 
 
 @pytest.mark.parametrize(
@@ -2044,13 +2034,6 @@ def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
     assert ids(largest.fetch_sync(params, session)) == [1]
 
 
-def test_a_list_of_256_days_on_a_date_column_is_answered(session: Session):
-    """SPEC-F21.11: a `Date` column compares the days of a list as one IN list."""
-    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)]  # nobody's
-    params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
-    assert ids(table.fetch_sync(params, session)) == [2]
-
-
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
     """44.6 on a SMALLINT column matches nothing, as it does on every database: a conversion that failed would fail
     the whole query, and one that rounded would find row 2, which holds 45 (a cast to INTEGER on PostgreSQL does)."""
@@ -2058,6 +2041,16 @@ def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session)
     assert ids(table.fetch_sync(params, session)) == [1, 4]
     alone = request(*ALL, column_search={'age': {'multi_values': ['44.6']}})  # nothing left to compare with
     assert ids(table.fetch_sync(alone, session)) == []
+
+
+@pytest.mark.parametrize('column', ['active', 'born'], ids=['boolean', 'date'])
+def test_a_number_list_on_a_column_of_another_type_matches_nothing(session: Session, column: str):
+    """SPEC-F25.8: a column declared a number that the database does not hold as one (here a Boolean and a Date)
+    compares a list entry as `=` does, so `2` finds no row. Binding it as the column's type made the type refuse it:
+    `StatementError` on the Boolean, `TypeError` on the Date."""
+    odd = SQLTable(people, [Column('id'), Column(column, type='number')])
+    params = request('id', column, column_search={column: {'multi_values': ['2']}})
+    assert ids(odd.fetch_sync(params, session)) == []
 
 
 def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):

@@ -120,6 +120,19 @@ filter, and it sees nothing else.
   server.
 - **Requirement:** PRD-C15.
 
+### A request at the bounds can pass the cluster's clause limit
+
+This is a limit of the library, not of OpenSearch: the bounds of PRD-F38 do not count clauses.
+
+- **What you see:** OpenSearch refuses a query with more than 1,024 clauses by default
+  (`indices.query.bool.max_clause_count`). A request within every bound can still pass it: two lists of 256 values, 64
+  criteria of three words each and 62 column searches of three words each make about 1,029 by the reviewer's count. The
+  request fails as a server failure.
+- **Example:** two `multi_values` lists of 256 strings, with a column search of three words on 62 more columns.
+- **How it is known:** counted from the query the library builds; not run on a cluster. Raise the cluster's limit, or
+  report a need for lower bounds.
+- **Requirement:** PRD-F38.
+
 ### A number outside the range of its field fails the request
 
 This is a limit of the library, not of OpenSearch, which says clearly what it refuses. Issue #47 holds the
