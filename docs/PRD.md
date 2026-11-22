@@ -3,14 +3,15 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 24 of 2026-11-21 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 25 of 2026-11-21 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
   the SQL column types it folds and for OpenSearch's ASCII-only fold, with lines in section 5; revision 24 changes
   PRD-F9 for OpenSearch, which folds letters outside ASCII from 3.1 on, and adds PRD-Q14 for the supported
-  OpenSearch servers, with lines in section 5). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item
-  to its place here. A requirement now changes only by the owner.
+  OpenSearch servers, with lines in section 5; revision 25 is revision 24 in a new layout, one section per
+  requirement, no requirement changed). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its
+  place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
