@@ -193,7 +193,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   database error, in each of: `=`, `!=`, `<`, `<=`, `>`, `>=` with `9999-12-31`; `between` and `!between` with
   `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
 - **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc`, `NaN`, `inf`, `-Infinity` or `1e999` → error_code
-  `invalid_number`.
+  `invalid_number`. So do `²` (U+00B2, a digit that is no decimal digit) and a whole number of 5,000 digits: neither
+  is a failed request.
 - **SPEC-F25.2** [SQL] On `price` (a `BigInteger`), `=` `9223372036854775808` → error_code `invalid_number`;
   `9223372036854775807` is answered. With `price` redeclared as a `SmallInteger`, `=` `32768` → `invalid_number`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.

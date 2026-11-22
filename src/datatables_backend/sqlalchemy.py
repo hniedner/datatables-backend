@@ -39,6 +39,7 @@ from sqlalchemy import func
 from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy import select
+from sqlalchemy.dialects.mssql import DATETIMEOFFSET
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import CompileError
@@ -62,6 +63,7 @@ from ._plan import Mistakes
 from ._plan import Plan
 from ._plan import mistake
 from ._plan import next_day
+from ._plan import on_day
 from ._plan import parse_number
 from ._plan import plan
 from ._plan import refused
@@ -202,6 +204,11 @@ class SQLTable:
         for search in request.column_searches:
             if isinstance(search, AnyOf):
                 column = self._sql(search.column)
+                if search.type == 'date':  # each entry as its own criterion: `=` for a day, "empty" for none
+                    conditions.append(
+                        or_(*(_date_criterion(on_day(search.column, day), column) for day in search.values))
+                    )
+                    continue
                 with mistakes.part():
                     if search.type == 'boolean':
                         values = [_boolean(column, value) for value in search.values]
@@ -223,8 +230,9 @@ class SQLTable:
     def _contains(self, search: Contains) -> ColumnElement[bool]:
         column = self._sql(search.column)
         pattern = f'%{escape_like(str(search.value))}%'
-        if isinstance(_sql_type(column), Date | DateTime):
-            return _day_text(column).ilike(pattern, escape='\\')
+        sql_type = _sql_type(column)
+        if isinstance(sql_type, Date | DateTime):
+            return _day_text(_utc(column) if _aware(sql_type) else column).ilike(pattern, escape='\\')
         return _text(column).ilike(pattern, escape='\\')
 
     def _node(self, node: Criterion | Group, mistakes: Mistakes) -> ColumnElement[bool] | None:
@@ -462,7 +470,7 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
     """Dates compare by day, whether the column holds dates or datetimes; a negated condition leaves out NULL."""
     sql_type = _sql_type(column)
     with_time = isinstance(sql_type, DateTime)
-    aware = with_time and bool(getattr(sql_type, 'timezone', False))
+    aware = _aware(sql_type)
 
     def at(day: date) -> date | datetime:
         if not with_time:
@@ -498,6 +506,38 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
             return inside if node.condition == 'between' else not_(inside)
         case _:  # the plan admits no other condition for a date
             raise AssertionError(node.condition)
+
+
+def _aware(sql_type: Any) -> bool:
+    """Whether a column of this type carries a time zone (PRD-F21): a ``DateTime(timezone=True)``, or SQL Server's
+    own ``DATETIMEOFFSET``, which a reflected table has and which does not set that flag."""
+    return isinstance(sql_type, DATETIMEOFFSET) or (
+        isinstance(sql_type, DateTime) and bool(getattr(sql_type, 'timezone', False))
+    )
+
+
+class _utc(FunctionElement[datetime]):  # noqa: N801
+    """A timezone-aware column as its UTC time, where the database would otherwise give its day in another zone
+    (PRD-F42): PostgreSQL in the session's, SQL Server in the offset the value was stored with. Elsewhere it is the
+    column itself: MySQL and SQLite store no offset."""
+
+    type = DateTime()
+    inherit_cache = True
+
+
+@compiles(_utc)
+def _utc_default(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+    return compiler.process(element.clauses, **kw)
+
+
+@compiles(_utc, 'postgresql')
+def _utc_postgresql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+    return f"({compiler.process(element.clauses, **kw)} AT TIME ZONE 'UTC')"
+
+
+@compiles(_utc, 'mssql')
+def _utc_mssql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+    return f"SWITCHOFFSET({compiler.process(element.clauses, **kw)}, '+00:00')"
 
 
 class _day_text(FunctionElement[str]):  # noqa: N801

@@ -356,11 +356,22 @@ def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_
     ]
 
 
-def test_a_list_on_a_date_column_stays_one_terms_query():
-    """A day has no case: no `case_insensitive` term reaches a date field."""
+def test_a_list_on_a_date_column_is_a_day_range_for_each_entry():
+    """SPEC-F21.5, SPEC-F21.7: an entry is the day `=` matches, not a term (an instant on a date-time field), and an
+    empty entry a missing field."""
     client = Client()
-    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16']}}), client)
-    assert query(client) == [{'terms': {'created': ['2026-07-16']}}]
+    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16', '']}}), client)
+    assert query(client) == [
+        {
+            'bool': {
+                'should': [
+                    {'range': {'created': {'gte': '2026-07-16', 'lt': '2026-07-17', 'format': 'strict_date'}}},
+                    {'bool': {'must_not': [{'exists': {'field': 'created'}}]}},
+                ],
+                'minimum_should_match': 1,
+            }
+        }
+    ]
 
 
 @pytest.mark.parametrize(

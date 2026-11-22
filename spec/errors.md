@@ -104,6 +104,10 @@ it, as far as that is known when the mistake is found. A text is changed only to
 - **SPEC-E4.26** [SQL] A column search on `price` with `multi_values` `["7", "9223372036854775808"]`, or SearchBuilder
   `between` `1` and `9223372036854775808` on `price` → `invalid_number` with
   `Each value in the filter on "price" must be a number between -9223372036854775808 and 9223372036854775807.`
+- **SPEC-E4.27** [all] A column search on `made` with `multi_values` `["2024-03-05", "05.03.2024"]`, or SearchBuilder
+  `between` `2024-01-01` and `abc` on `made` → `invalid_date` with
+  `Each value in the filter on "made" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.` (several
+  values are not told to be one date, as E4.7 tells a single value).
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

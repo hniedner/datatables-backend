@@ -532,35 +532,51 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     )
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
-    reason="draft 1: PostgreSQL's day text of a timestamptz is its day in the session zone; PRD v2 (PRD-F42) makes "
-    'it the UTC day',
-    strict=True,
-    raises=AssertionError,
-)
 def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
+    """SPEC-F42.1, PostgreSQL's proof: in the job's session zone (UTC+14) the day text of row 1, 23:59 UTC on the
+    15th, is the 16th, and row 5's is the 15th. A column search runs the same expression; the test below goes
+    through one."""
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-07-15'}), session)) == [1]
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
-    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD v2 (PRD-F42) makes it the UTC day',
-    strict=True,
-    raises=AssertionError,
-)
-def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
-    """2026-08-01 23:00 at -05:00 is 2026-08-02 04:00 UTC. The row is added in this test's transaction only. SQLite
-    and MySQL store no offset (PRD v2, PRD-F21), so there it is written as its UTC time, as such a column holds it.
-    On PostgreSQL this test passes because the session's +14 puts 04:00 UTC on the same day; PostgreSQL's own check
-    is the strict xfail of `test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day`."""
+def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
+    """SPEC-F42.2, SQL Server's proof, on the table as the database describes it: 2026-08-01 23:00 at -05:00 is
+    2026-08-02 04:00 UTC, and the day text of a `DATETIMEOFFSET` is the day in the offset it was stored with. A
+    reflected `DATETIMEOFFSET` is SQLAlchemy's SQL Server type, which does not say `timezone=True`, so this is also
+    the proof that such a column is known to carry a zone.
+
+    The row is added in this test's transaction only. SQLite and MySQL store no offset (PRD-F21), so there it is
+    written as its UTC time, as such a column holds it, and the test only shows the search works. On PostgreSQL it
+    passes with the session-zone text as well, since UTC+14 puts 04:00 UTC on the same day: PostgreSQL's proof is
+    the test above."""
     stored = datetime(2026, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
     if session.get_bind().dialect.name not in ('postgresql', 'mssql'):
         stored = stored.astimezone(UTC)
     session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'seen_tz': stored})
-    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
-    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
+    reflected = Table(people.name, MetaData(), autoload_with=session.connection())
+    aware = SQLTable(reflected, [Column('id'), Column('seen_tz')])
+    params = request('id', 'seen_tz', column_search={'seen_tz': {'value': '2026-08-02'}})
+    assert ids(aware.fetch_sync(params, session)) == [6]
+
+
+@pytest.mark.parametrize(
+    ('column', 'search', 'expected'),
+    [
+        ('seen', {'multi_values': ['2026-07-15']}, [1]),  # a datetime column: the day, not the instant of midnight
+        # A timezone-aware column, through the categorical regex: each day is bounded by UTC midnights
+        ('seen_tz', {'value': '^(2026-07-15|2025-01-01)$', 'regex': True}, [1, 4]),
+        # SPEC-F21.7 beside a day on a date column: the empty entry is the row without a date, and joins the day
+        ('born', {'multi_values': ['', '1980-07-15']}, [2, 3]),
+    ],
+)
+def test_a_list_on_a_date_column_matches_each_entry_as_a_day(
+    session: Session, column: str, search: dict[str, Any], expected: list[int]
+):
+    """SPEC-F21.5, SPEC-F21.7: a categorical value or `multi_values` entry is a day and matches as `=` does."""
+    dated = SQLTable(people, [Column('id'), Column('born'), Column('seen'), Column('seen_tz')])
+    params = request('id', 'born', 'seen', 'seen_tz', column_search={column: search})
+    assert ids(dated.fetch_sync(params, session)) == expected
 
 
 # -- a boolean column ---
@@ -671,7 +687,8 @@ def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
 
 
 @pytest.mark.xfail(
-    reason='PRD-F20, PRD-F17: an empty multi_values entry does not mean empty yet, on any column type (SPEC-F44.3)',
+    reason='PRD-F20, PRD-F17: an empty multi_values entry does not mean empty yet on a boolean, string or number '
+    'column (SPEC-F44.3, issue #14); on a date column it does (SPEC-F21.7)',
     strict=True,
     raises=AssertionError,
 )
@@ -795,6 +812,8 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
     [
         ('age', '>', ['inf'], 'invalid_number'),  # SPEC-F25.1: a number Python reads, and no column holds
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
+        ('age', '=', [chr(0xB2)], 'invalid_number'),  # a superscript two: a digit to `str.isdigit`, no number
+        ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
         ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
@@ -924,6 +943,19 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             criterion('born', '=', '15/07/1980'),
             'invalid_date',
             'The filter on "born" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+        ),
+        # SPEC-E4.27, and SPEC-F21.6's code: a list of days, and the two of a `between`, are not told to be one date
+        (
+            WORDED,
+            {'column_search': {'born': {'multi_values': ['1980-07-15', '05.03.2024']}}},
+            'invalid_date',
+            'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+        ),
+        (
+            WORDED,
+            criterion('born', 'between', '1980-01-01', 'abc'),
+            'invalid_date',
+            'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
         ),
         (WORDED, criterion('born', 'contains', '1980-13'), 'invalid_date', SPAN),
         # A day that does not exist: `contains` also takes a year or a month, so its text must say so
@@ -1070,9 +1102,10 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 and SPEC-E4.26: each mistake has a text of its own, which names the condition and the
-    fix, and a column only by the name the server declared. A text is asserted here and nowhere else. The rows are
-    also the proof of their codes: SPEC-E1.2, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-F39.1, SPEC-F40.1."""
+    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.27: each mistake has a text of its own, which names the
+    condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
+    else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
+    SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
