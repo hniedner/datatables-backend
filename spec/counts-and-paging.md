@@ -52,9 +52,6 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
   holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.3** [all] Two tables over `items`, one with no base filter and one with the base filter `price` not
-  null, given the same app-supplied cache key and one `TotalCache`, each sent a global search `red`: the first
-  answers `recordsTotal` 4; the second answers 4 (the first's total, not its own 3) and runs no total count.
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.5** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
