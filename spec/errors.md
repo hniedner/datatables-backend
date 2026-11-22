@@ -108,6 +108,12 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `between` `2024-01-01` and `abc` on `made` → `invalid_date` with
   `Each value in the filter on "made" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.` (several
   values are not told to be one date, as E4.7 tells a single value).
+- **SPEC-E4.28** [all] SearchBuilder `=` on `name` with the two values `Bob` and `Ann` → `invalid_filter` with
+  `The filter on "name" holds more values than its condition takes. Remove the filter and set it again.`
+- **SPEC-E4.29** [SQL] With `price` redeclared as a `Numeric(32, 2)`: `=` with a whole number of 31 digits →
+  `invalid_number` with `The filter on "price" needs a number with at most 30 digits before the decimal point.`;
+  `between` `1` and that number →
+  `Each value in the filter on "price" must be a number with at most 30 digits before the decimal point.`
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

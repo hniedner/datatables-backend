@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 27 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 28 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -12,7 +12,9 @@
   OpenSearch servers, with lines in section 5; revision 25 is revision 24 in a new layout, one section per
   requirement, no requirement changed; revision 26, approved by the owner on 2026-11-21, states how a day and a
   number are written, in PRD-F21, PRD-F22 and PRD-F25; revision 27, approved by the owner on 2026-11-22, changes
-  the wording of PRD-O8, PRD-E13, PRD-P8 and PRD-P9 and the reason of PRD-O2). It replaces draft 1 (R1 to R9);
+  the wording of PRD-O8, PRD-E13, PRD-P8 and PRD-P9 and the reason of PRD-O2; revision 28, approved by the owner on
+  2026-11-22, changes PRD-F6, PRD-F17, PRD-F21, PRD-F25, PRD-F26, PRD-F33 and PRD-F44 and the reason of PRD-O8, with
+  lines in section 5 and the milestones in section 6). It replaces draft 1 (R1 to R9);
   section 10 maps every draft-1 item to its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -518,7 +520,10 @@ column does not contain it. A NULL column contains no word, so it passes `!word`
 #### PRD-F6
 
 `!"phrase"` excludes the phrase; a token that reduces to the empty word (a lone `"`, `"""`, `!""`, `""`, a bare `!`, or
-a `!` word that PRD-F35 drops) adds nothing, and so does search text of spaces only.
+a `!` word that PRD-F35 drops) adds nothing, and so does search text of spaces only: U+0020 and what PRD-F7 counts as
+spaces (LF, CR, U+2028, U+2029), in the global search and in a column search on a column of any type, on every backend.
+A tab stays a control character (PRD-F15). With `regex: true` a column search of spaces is a categorical value
+(PRD-F16): the exact value on a string column, empty on any other.
 
 - **Reason:** DataTables reduces them to an empty word (READ, its 3.1.5 source); a user who types a space must not get
   no rows.
@@ -634,7 +639,8 @@ list).
 
 #### PRD-F17
 
-An empty alternative in a categorical filter means empty, as PRD-F26 defines it.
+An empty alternative in a categorical filter means empty, as PRD-F26 defines it, at any position: `^(|a)$`, `^(a|)$`,
+`^(a||b)$` and `a|`. A filter that holds no value at all means empty alone: `^()$`, `^$` and a bare `|`.
 
 - **Reason:** A frontend's "(empty)" option needs a value to send.
 - **Priority:** must
@@ -672,9 +678,9 @@ read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an awa
 (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC
 day only when the app sets that zone to `+00:00`. A non-empty categorical value or `multi_values` entry on a date column
 is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one,
-or one of only white space, means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on
-OpenSearch. A day is written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM`
-or `HH:MM:SS`, the seconds with an optional fraction): it must exist and is then ignored, since SearchBuilder sends
+or one of only white space, means empty, as PRD-F26 defines it (PRD-F17, PRD-F20). A day is written `YYYY-MM-DD` in
+ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, the seconds with an optional
+fraction): it must exist and is then ignored, since SearchBuilder sends
 `YYYY-MM-DD HH:mm:ss` for a column of its `moment`, `luxon` or `datetime` type (READ in its source, not run in a
 browser). White space around the value is ignored. Any other spelling is `invalid_date`, among them a digit outside
 ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
@@ -715,7 +721,13 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 #### PRD-F25
 
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
-integer range. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
+integer range. An unsigned MySQL integer column is bounded by its unsigned range. A whole number with more digits before
+the decimal point than a `Numeric` column holds is out of range too: more than its declared precision less its scale,
+and on SQL Server more than 38 (MEASURED 2026-11-22: its driver refuses a longer number). On a SQL column that is not an
+integer, a whole number beyond 64 bits is compared as the column compares: exactly on a `Numeric` column (see section 5
+for SQLite), and as the nearest floating-point number on a `Float` column and on a column without a number type of its
+own (text declared a number, an expression without a type); one too large for a floating-point number is refused as not
+finite. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
 `.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
 `invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
@@ -726,7 +738,9 @@ integer range. A number is written in ASCII: an optional sign, digits with an op
 
 #### PRD-F26
 
-"Empty" means NULL plus `''` on SQL string columns; on OpenSearch, a missing field.
+"Empty" means NULL on SQL, and also `''` on a SQL column that stores text, whatever type the column is declared as: one
+whose SQL type is a string type (also behind a `TypeDecorator`; an `Enum` only when `''` is one of its values), or an
+expression without a SQL type that is declared a string. On OpenSearch it is a missing field.
 
 - **Reason:** Users do not tell NULL from an empty string.
 - **Priority:** must
@@ -778,8 +792,7 @@ The OpenSearch global search skips number and date columns.
 An OpenSearch column search on a number column, other than a categorical filter or `multi_values` list, takes one number
 and matches it exactly; several words, `!` or quotes are refused with `invalid_number`. A non-empty categorical value or
 `multi_values` entry on a number column is a number and matches as `=` does, on every backend; an unreadable one is
-`invalid_number`; an empty one means empty (PRD-F17, PRD-F20), which on a number column is NULL on SQL and a missing
-field on OpenSearch.
+`invalid_number`; an empty one, or one of only white space, means empty, as PRD-F26 defines it (PRD-F17, PRD-F20).
 
 - **Reason:** No text form to match a substring in; smart-search syntax has no meaning there.
 - **Priority:** must
@@ -885,8 +898,7 @@ other condition or value is refused with `invalid_filter` before anything runs. 
 
 The global search skips a boolean column. A column search on one, with a value, a categorical filter or a `multi_values`
 list, takes the values of PRD-F43 and matches them exactly; any other value is refused with `invalid_filter`. An empty
-alternative or `multi_values` entry means empty (PRD-F17, PRD-F20), which on a boolean column is NULL on SQL and a
-missing field on OpenSearch.
+alternative or `multi_values` entry, or one of only white space, means empty, as PRD-F26 defines it (PRD-F17, PRD-F20).
 
 - **Reason:** "true" as search text means nothing a user reads in the cell; a column search names the value. Owner's
   decision of 2026-11-19.
@@ -973,7 +985,9 @@ too, whatever its direction: it can change nothing.
 - **Reason:** DataTables sends a multi-column order with its primary column first (INFERRED from its multi-column
   ordering, where shift-click adds a column after the others). A column named twice sorts by its first entry alone, and
   leaving the second out bounds the entries applied by the declared columns: SQLite refuses an ORDER BY of 2,000 terms
-  (MEASURED 2026-11-22: a request with 1,999 order entries was answered, one with 2,000 failed in the database).
+  (MEASURED 2026-11-22: a request with 1,999 order entries was answered, one with 2,000 failed in the database). SQL
+  Server refuses an ORDER BY that names a column twice (MEASURED 2026-11-22 on SQL Server 2022: error 169, "A column has
+  been specified more than once in the order by list").
 - **Priority:** must
 
 ### 4.5 Counts and paging (C)
@@ -1544,6 +1558,11 @@ where a database decides. Each difference is stated here; every other answer is 
 | A text-only OpenSearch string column answers only the analysed search and `null`/`!null`; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
 | On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
+| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does; SQL answers such a number on an integer column with `invalid_number`. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
+| On SQL Server a list long enough to be sent as JSON on an expression column without a SQL type cannot be compiled, so the request fails as a server failure; giving the expression a type (`type_coerce` or `cast`) avoids it (issue #52). | SQL Server and the other databases | PRD-C17 |
+| On SQLite a whole number beyond 64 bits is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
+| A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
+| On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite; not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F9, PRD-F20 |
 
 ## 6. Release criteria for 1.0
 
@@ -1557,8 +1576,9 @@ where a database decides. Each difference is stated here; every other answer is 
 5. Every question in section 8 is answered and in the specs.
 6. The package is published with the release workflow.
 
-Before 1.0: v0.1 (core, SQL, OpenSearch, FastAPI adapter, SQLite tests) is published to reserve the name; v0.2 adds
-the container tests, an acceptance suite and the boolean type (PRD-F43, PRD-F44).
+Before 1.0 the work is grouped in GitHub milestones, whose names are not versions: v0.1 holds the PRD v2 behaviour and
+the acceptance suite, v0.2 the first release, published as version 0.1.0, v0.3 the first adoption, and v1.0 meets the
+release criteria above.
 
 ## 7. Changes from draft 1
 

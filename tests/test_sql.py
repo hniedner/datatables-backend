@@ -620,7 +620,7 @@ def with_blank_rows(session: Session, cased: SQLTable) -> Table:
 def test_empty_is_the_empty_string_too_where_the_column_stores_text(
     session: Session, cased: SQLTable, column: str, expected: list[int]
 ):
-    """PRD-F26: what the column stores decides, seen through a `TypeDecorator`, not what it is declared as."""
+    """SPEC-F26.3: what the column stores decides, seen through a `TypeDecorator`, not what it is declared as."""
     tags = with_blank_rows(session, cased)
     stored = SQLTable(
         tags,
@@ -640,7 +640,7 @@ def test_empty_is_the_empty_string_too_where_the_column_stores_text(
 def test_an_empty_entry_on_a_column_with_a_type_of_its_own_is_never_sent_as_a_value(
     session: Session, cased: SQLTable, column: str
 ):
-    """PRD-F20: both types refuse to convert `''`, so as a value of the list it failed the query."""
+    """SPEC-F26.4: both types refuse to convert `''`, so as a value of the list it failed the query."""
     tags = with_blank_rows(session, cased)
     typed = SQLTable(tags, [Column('id'), Column('ref'), Column('uid')])
     params = request('id', column, column_search={column: {'multi_values': ['']}})
@@ -651,7 +651,7 @@ def test_an_empty_entry_on_a_column_with_a_type_of_its_own_is_never_sent_as_a_va
 def test_empty_on_an_expression_without_a_type_follows_its_declaration(
     session: Session, cased: SQLTable, column: str, expected: list[int]
 ):
-    """PRD-F26: the library cannot know what such an expression stores. Declared a string (the default) it is
+    """SPEC-F26.3: the library cannot know what such an expression stores. Declared a string (the default) it is
     compared with `''`; declared a date it is not, as a date expression would refuse the comparison."""
     tags = with_blank_rows(session, cased)
     untyped = select(tags.c.id, literal_column('wrapped').label('text')).subquery()
@@ -660,7 +660,7 @@ def test_empty_on_an_expression_without_a_type_follows_its_declaration(
 
 
 def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_values(session: Session):
-    """PRD-F26: an enum that names `''` as a value can hold it, so there it is empty."""
+    """SPEC-F26.3: an enum that names `''` as a value can hold it, so there it is empty."""
     levels = Table(
         'dtb_test_tags',
         MetaData(),
@@ -959,14 +959,14 @@ SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
 def test_an_empty_alternative_or_entry_matches_the_rows_without_a_value(
     session: Session, column: str, search: dict[str, Any], expected: list[int]
 ):
-    """PRD-F17, PRD-F20: on a column of any type. The date column's row is in
+    """SPEC-F17.4, SPEC-F20.2, SPEC-F33.5, SPEC-F44.3: on a column of any type. The date column's row is in
     test_a_list_on_a_date_column_matches_each_entry_as_a_day."""
     params = request(*EVERY_TYPE, column_search={column: search})
     assert ids(every_type.fetch_sync(params, session)) == expected
 
 
 def test_white_space_is_a_value_on_a_string_column(session: Session):
-    """PRD-F20, PRD-F7: an exact value is never rewritten, so an entry of one space is that value, not an empty
+    """SPEC-F20.4: an exact value is never rewritten, so an entry of one space is that value, not an empty
     entry, which would find row 2's NULL too. No row holds a space. SQL Server compares strings without their
     trailing spaces (MEASURED on the `sqlserver` leg, run 45044380547), so there the space equals the `''` of
     row 3."""
@@ -984,7 +984,7 @@ def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, patt
 
 
 def test_a_value_that_ends_in_an_escaped_backslash_is_read_between_the_anchors(session: Session):
-    r"""SPEC-F19.1 in the form `^v$`: the `$` after `C:\\` is the anchor, not an escaped `$`. The value `C:\` is one
+    r"""SPEC-F19.2 in the form `^v$`: the `$` after `C:\\` is the anchor, not an escaped `$`. The value `C:\` is one
     no row holds; taken for a regex, the filter was refused."""
     params = request(*EVERY_TYPE, column_search={'team': {'value': r'^C:\\$', 'regex': True}})
     assert ids(every_type.fetch_sync(params, session)) == []
@@ -1014,7 +1014,7 @@ def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
     ],
 )
 def test_search_text_of_spaces_only_adds_nothing(session: Session, body: dict[str, Any], expected: list[int]):
-    """SPEC-F6.2, for every character that counts as a space (PRD-F7): a user who types a space gets every row."""
+    """SPEC-F6.3, for every character that counts as a space (PRD-F7): a user who types a space gets every row."""
     assert ids(every_type.fetch_sync(request(*EVERY_TYPE, **body), session)) == expected
 
 
@@ -1451,7 +1451,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.27: each mistake has a text of its own, which names the
+    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.28: each mistake has a text of its own, which names the
     condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
     else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
@@ -1469,7 +1469,7 @@ def test_a_user_error_says_what_is_wrong_and_what_to_do(
 def test_a_criterion_with_more_values_than_its_condition_takes_is_refused(
     session: Session, column: str, condition: str, values: list[str], code: str
 ):
-    """PRD-F36: using the first value alone would answer another question than the one asked. The text is in
+    """SPEC-F36.1, SPEC-F36.4: using the first value alone would answer another question than the one asked. The text is in
     test_a_user_error_says_what_is_wrong_and_what_to_do."""
     refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
 
@@ -1517,13 +1517,13 @@ def wide(session: Session) -> SQLTable:
 def test_a_whole_number_beyond_64_bits_is_answered_on_a_column_that_is_no_integer(
     session: Session, body: dict[str, Any]
 ):
-    """PRD-F25: a driver sends a whole number as a 64-bit integer, so this one failed the request on SQLite,
+    """SPEC-F25.4, SPEC-F25.5: a driver sends a whole number as a 64-bit integer, so this one failed the request on SQLite,
     PostgreSQL and SQL Server. It goes as the nearest float, and to a `Numeric` column as a decimal."""
     assert ids(wide(session).fetch_sync(request(*WIDE, **body), session)) == [1]
 
 
 def test_a_whole_number_beyond_64_bits_is_compared_exactly_with_a_numeric_column(session: Session):
-    """PRD-F25: 2^64 + 1 is not the 2^64 the row holds, though as floats they are the same number. SQLite is the
+    """SPEC-F25.5: 2^64 + 1 is not the 2^64 the row holds, though as floats they are the same number. SQLite is the
     stated exception (PRD section 5): SQLAlchemy binds a decimal as a float there, so it finds the row."""
     params = request(*WIDE, **criterion('exact', '=', str(TWO_64 + 1)))
     found = [1] if session.get_bind().dialect.name == 'sqlite' else []
@@ -1546,12 +1546,12 @@ def test_a_whole_number_beyond_64_bits_is_compared_exactly_with_a_numeric_column
 def test_a_whole_number_with_more_digits_than_a_numeric_column_holds_is_refused(
     session: Session, body: dict[str, Any], text: str
 ):
-    """PRD-F25: the column's precision less its scale. The bound in the text is the column's, never the user's."""
+    """SPEC-F25.5, and the texts of SPEC-E4.29, asserted here only: the column's precision less its scale. The bound in the text is the column's, never the user's."""
     assert refused(wide(session).fetch_sync(request(*WIDE, **body), session), 'invalid_number') == text
 
 
 def test_a_numeric_column_without_a_precision_is_bounded_only_where_the_database_bounds_it(session: Session):
-    """PRD-F25: SQL Server's decimal holds 38 digits, and its driver refuses to send a longer number (MEASURED:
+    """SPEC-F25.5: SQL Server's decimal holds 38 digits, and its driver refuses to send a longer number (MEASURED:
     HY104), so there 39 digits are the user's mistake. PostgreSQL and MySQL take the number, and no row holds it."""
     response = wide(session).fetch_sync(request(*WIDE, **criterion('loose', '=', '9' * 39)), session)
     if session.get_bind().dialect.name == 'mssql':
@@ -1561,12 +1561,12 @@ def test_a_numeric_column_without_a_precision_is_bounded_only_where_the_database
 
 
 def test_a_whole_number_too_large_for_a_float_is_no_finite_number(session: Session):
-    """PRD-F25: 400 digits on a float column, as `1e999` is refused where it is read (SPEC-F25.1)."""
+    """SPEC-F25.4: 400 digits on a float column, as `1e999` is refused where it is read (SPEC-F25.1)."""
     refused(wide(session).fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 400)), session), 'invalid_number')
 
 
 def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
-    """PRD-F25: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself, as declared and as
+    """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself, as declared and as
     reflected. A negative number is outside it on every database; the largest value is found on MySQL, the only
     database that stores it."""
     numbers = wide(session)

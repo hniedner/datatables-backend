@@ -409,7 +409,7 @@ MISSING = {'bool': {'must_not': [{'exists': {'field': 'pages'}}]}}
     ],
 )
 def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[str], expected: dict[str, Any]):
-    """PRD-F20, PRD-F26 (SPEC-F20.2, SPEC-F33.4): the entry is never sent as a value. On a number column white
+    """SPEC-F20.2, SPEC-F33.4, SPEC-F33.5: the entry is never sent as a value. On a number column white
     space is such an entry too."""
     client = Client()
     table.fetch_sync(request(*NAMES, column_search={column: {'multi_values': values}}), client)
@@ -417,7 +417,7 @@ def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[s
 
 
 def test_a_column_search_of_spaces_only_adds_no_clause():
-    """SPEC-F6.2 on a number column, where the text would otherwise have to be one number (PRD-F33)."""
+    """SPEC-F6.3 on a number column, where the text would otherwise have to be one number (PRD-F33)."""
     client = Client()
     table.fetch_sync(request(*NAMES, column_search={'pages': {'value': '   '}}), client)
     assert query(client) == []
