@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 28 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 29 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -14,7 +14,9 @@
   number are written, in PRD-F21, PRD-F22 and PRD-F25; revision 27, approved by the owner on 2026-11-22, changes
   the wording of PRD-O8, PRD-E13, PRD-P8 and PRD-P9 and the reason of PRD-O2; revision 28, approved by the owner on
   2026-11-22, changes PRD-F6, PRD-F17, PRD-F21, PRD-F25, PRD-F26, PRD-F33 and PRD-F44 and the reason of PRD-O8, with
-  lines in section 5 and the milestones in section 6). It replaces draft 1 (R1 to R9);
+  lines in section 5 and the milestones in section 6; revision 29, approved by the owner on 2026-11-22 after the
+  review of the same change, changes PRD-F20, PRD-F25, PRD-D19, PRD-E3 and PRD-E4, the reasons of PRD-F25 and
+  PRD-F26, lines in section 5 and the sentence on milestones in section 6). It replaces draft 1 (R1 to R9);
   section 10 maps every draft-1 item to its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -438,8 +440,9 @@ On a hooked column, SearchBuilder answers `=`, `!=`, `null` and `!null`; any oth
 
 On a text-only OpenSearch string column (PRD-D13), a categorical filter, a `multi_values` list and the SearchBuilder
 conditions `=`, `!=`, `starts`, `!starts`, `ends`, `!ends`, `contains` and `!contains` are refused with
-`invalid_filter`; only the analysed smart search (global and column) and `null`/`!null` are answered. A hooked column
-cannot be text-only (PRD-D20).
+`invalid_filter`, except a categorical filter or `multi_values` list of only empty entries, which means empty (PRD-F20)
+and is answered; beyond that only the analysed smart search (global and column) and `null`/`!null` are answered. A
+hooked column cannot be text-only (PRD-D20).
 
 - **Reason:** Exact, prefix, suffix and substring matches need the unanalysed form, which a text-only column does not
   have; answering them on analysed tokens would return different rows than asked.
@@ -663,7 +666,8 @@ The recommended form for a sender is `^(v1|v2)$` with each value escaped by Data
 #### PRD-F20
 
 A `multi_values` list in a column's search object is accepted as the same exact match; an empty entry means empty, as
-PRD-F26 defines it.
+PRD-F26 defines it. An entry of only white space is that exact value on a string column, and an empty entry on a
+column of any other type; so is such an alternative of a categorical filter.
 
 - **Reason:** An extension that needs no regex escaping, for clients that build the request themselves.
 - **Priority:** must
@@ -721,19 +725,20 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 #### PRD-F25
 
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
-integer range. An unsigned MySQL integer column is bounded by its unsigned range. A whole number with more digits before
-the decimal point than a `Numeric` column holds is out of range too: more than its declared precision less its scale,
-and on SQL Server more than 38 (MEASURED 2026-11-22: its driver refuses a longer number). On a SQL column that is not an
-integer, a whole number beyond 64 bits is compared as the column compares: exactly on a `Numeric` column (see section 5
-for SQLite), and as the nearest floating-point number on a `Float` column and on a column without a number type of its
-own (text declared a number, an expression without a type); one too large for a floating-point number is refused as not
-finite. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
-`.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
+integer range. An unsigned MySQL integer column is bounded by its unsigned range. On SQL Server a number with more than
+38 digits before the decimal point is out of range on a `Numeric` column, whatever precision the column declares
+(MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a `Numeric` column, and a declared
+precision bounds nothing. On a SQL column that is not an integer, a whole number outside the signed 64-bit range is
+compared as the column compares: exactly on a `Numeric` column (see section 5 for SQLite), as its digits on a column
+that stores text, and as the nearest floating-point number on a `Float` column and on an expression without a type; one
+of more than 308 digits is out of range. A number is written in ASCII: an optional sign, digits with an optional decimal
+point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
 `invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
-  docs/decisions/002-how-a-day-and-a-number-are-written.md.
+  docs/decisions/002-how-a-day-and-a-number-are-written.md. The measurements on PostgreSQL, MySQL and SQL Server are
+  in docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md.
 - **Priority:** must
 
 #### PRD-F26
@@ -742,7 +747,8 @@ finite. A number is written in ASCII: an optional sign, digits with an optional 
 whose SQL type is a string type (also behind a `TypeDecorator`; an `Enum` only when `''` is one of its values), or an
 expression without a SQL type that is declared a string. On OpenSearch it is a missing field.
 
-- **Reason:** Users do not tell NULL from an empty string.
+- **Reason:** Users do not tell NULL from an empty string. What each database answers when a column that stores no
+  text is compared with `''` is in docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md.
 - **Priority:** must
 
 #### PRD-F27
@@ -1148,7 +1154,9 @@ The code follows the first mistake in this order: (1) a control character (PRD-F
 over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format a date
 or number column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an
 OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date`
-for the maximum date (PRD-F24) and `invalid_number` outside the integer range (PRD-F25); (4) every other filter error, a
+for the maximum date (PRD-F24) and `invalid_number` for a number its SQL column does not take (PRD-F25: outside an
+integer's range, signed or unsigned, of more than 38 digits before the decimal point on a `Numeric` column on SQL
+Server, or of more than 308 digits where it is compared as a floating-point number); (4) every other filter error, a
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
 
@@ -1158,8 +1166,8 @@ boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then
 #### PRD-E4
 
 An `error` text names the exact condition and how to fix it, as far as that is known when the mistake is found. It is
-fixed per case apart from declared names and limits the server holds (an integer column's bounds, the result window, the
-last date there is), and never quotes the user's input.
+fixed per case apart from declared names and limits the server holds (an integer column's bounds, the digits a number
+may have, the result window, the last date there is), and never quotes the user's input.
 
 - **Reason:** A user can act only on a text that says what is wrong and what to do (owner's rule of 2026-11-21). Echoing
   input invites injection into logs and pages; a declared name and a limit are the server's own text.
@@ -1555,14 +1563,14 @@ where a database decides. Each difference is stated here; every other answer is 
 | DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between` over a range holding 0; the server lets NULL satisfy every negative condition. | Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=` and `!between`) | PRD-F37 |
 | A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page. | SQL and OpenSearch | PRD-C12 |
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
-| A text-only OpenSearch string column answers only the analysed search and `null`/`!null`; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
+| A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
 | On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
-| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does; SQL answers such a number on an integer column with `invalid_number`. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
-| On SQL Server a list long enough to be sent as JSON on an expression column without a SQL type cannot be compiled, so the request fails as a server failure; giving the expression a type (`type_coerce` or `cast`) avoids it (issue #52). | SQL Server and the other databases | PRD-C17 |
-| On SQLite a whole number beyond 64 bits is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
-| A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
-| On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite; not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F9, PRD-F20 |
+| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number and refuses a whole number of 400 digits in the same way. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
+| On SQL Server a list long enough to be sent as JSON on an expression column without a SQL type cannot be compiled, so the request fails as a server failure, a limit of this library, for which PRD-C17 does not hold; giving the expression a type (`type_coerce` or `cast`) avoids it (issue #52). | SQL Server and the other databases | PRD-C17 |
+| On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
+| A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
+| On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F20, PRD-F26 |
 
 ## 6. Release criteria for 1.0
 
@@ -1576,9 +1584,8 @@ where a database decides. Each difference is stated here; every other answer is 
 5. Every question in section 8 is answered and in the specs.
 6. The package is published with the release workflow.
 
-Before 1.0 the work is grouped in GitHub milestones, whose names are not versions: v0.1 holds the PRD v2 behaviour and
-the acceptance suite, v0.2 the first release, published as version 0.1.0, v0.3 the first adoption, and v1.0 meets the
-release criteria above.
+Before 1.0 the work is grouped in GitHub milestones, whose names count them in due-date order and are not versions; the
+first release is published as version 0.1.0.
 
 ## 7. Changes from draft 1
 
