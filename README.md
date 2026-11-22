@@ -177,18 +177,19 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   column of another type declared `type='string'`, are compared as sent. To have an expression folded, give it a
   string type: `func.upper(users.c.name, type_=String)` or `literal_column('upper(name)', String)`. A SQL function
   called through `func` has no type unless it is given one.
-- **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and
-  an `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a
-  column only by its declared name. The codes are `invalid_character` for a control character such as a tab, which
-  the user cannot see, `value_too_long` for a value of more than 255 characters (code points), `too_many_words` for
-  search text of more than 16 words, `invalid_number` or `invalid_date` for a value the column cannot read or hold,
-  `page_out_of_range` for an OpenSearch page beyond the result window, and `invalid_filter` for any other (an
-  unknown column, a value that is not a boolean, a condition the column's type does not take, a regex search). When
-  a request holds several, a control character, a value that is too long, text of too many words and a structure
-  over the bounds are answered first (the first the request holds in reading order: the global search, then the
-  column searches, then the SearchBuilder tree), then a number or date mistake, then any other, and the page last. The list of codes is closed: a code is added only in a release that says so, and a client
-  that reads a code it does not know treats it as a refusal of the request and shows `error`. Every other failure
-  raises, so the app decides how to report it; `DTResponse.query_failed(draw)` gives the usual shape.
+- **The user's mistakes come back as a response, not an exception.** A mistake is answered with an `error_code` and an
+  `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a column only
+  by its declared name. The codes are `invalid_character` for a control character such as a tab, which the user cannot
+  see, `value_too_long` for a value of more than 255 characters (code points), `too_many_words` for search text of more
+  than 16 words, `invalid_number` or `invalid_date` for a value the column cannot read or hold, `page_out_of_range` for
+  an OpenSearch page beyond the result window, and `invalid_filter` for any other (an unknown column, a value that is
+  not a boolean, a condition the column's type does not take, a regex search). When a request holds several, a control
+  character, a value that is too long, text of too many words and a structure over the bounds are answered first (the
+  first the request holds in reading order: the global search, then the column searches, then the SearchBuilder tree),
+  then a number or date mistake, then any other, and the page last. The list of codes is closed: a code is added only in
+  a release that says so, and a client that reads a code it does not know treats it as a refusal of the request and
+  shows `error`. Every other failure raises, so the app decides how to report it; `DTResponse.query_failed(draw)` gives
+  the usual shape.
 - **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
   request's own when that could be read. The FastAPI dependency answers it with 422 and

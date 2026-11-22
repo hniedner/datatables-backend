@@ -607,26 +607,9 @@ def test_the_largest_request_the_bounds_allow(client: OpenSearch):
     """PRD-F38, PRD-C17, a regression guard: the request of `largest_search_request` holds 4,672 leaf queries, 6,834
     clauses of `bool` queries and at most 256 in one `bool` (tests/test_opensearch.py). Measured on 3.10.0 and 2.19.7
     (docs/decisions/005), both answer it, though the default `indices.query.bool.max_clause_count` is 1,024: the
-    limit evidently does not count the whole tree. That it is counted per `bool` is not confirmed. A bound that grew
-    past what the servers answer turns this red."""
+    limit is counted per `bool`, as a control showed (1,024 clauses in one `bool` answered, 1,025 refused), and the
+    widest `bool` the library builds holds 256. A bound that grew past what the servers answer turns this red."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
     columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
     response = SearchTable(INDEX, columns).fetch_sync(largest_search_request(), client)
     assert response.error is None
-
-
-def test_a_bool_of_more_than_1024_clauses_is_refused(client: OpenSearch):
-    """PRD-F38, PRD-C17, the control of the test above: a single `bool` of 1,024 direct `should` clauses on a mapped
-    field is answered and one of 1,025 is refused, so the limit is the default `indices.query.bool.max_clause_count`
-    of 1,024 per `bool` and not over the whole tree. The index holds documents and the field is mapped, so the query
-    is not rewritten away before it is counted."""
-    assert client.count(index=INDEX)['count'] > 0
-    assert 'id' in client.indices.get_mapping(index=INDEX)[INDEX]['mappings']['properties']
-
-    def search(clauses: int) -> dict[str, Any]:
-        should = [{'term': {'id': f'x{number}'}} for number in range(clauses)]
-        return client.search(index=INDEX, body={'query': {'bool': {'should': should, 'minimum_should_match': 1}}})
-
-    assert search(1024)['hits']['total']['value'] == 0
-    with pytest.raises(RequestError):
-        search(1025)

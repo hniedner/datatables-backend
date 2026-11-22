@@ -20,7 +20,8 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E3.1** [all] A request holding both a U+0000 in the global search and `=` `abc` on `price` →
   `invalid_character` (step 1 before step 2).
 - **SPEC-E3.2** [all] A request holding a 17-word global search and `=` `2024-13-01` on `made` → `too_many_words`;
-  holding a global search of 256 code points and `=` `2024-13-01` on `made` → `value_too_long`; holding a SearchBuilder tree 10 groups deep counting the root and `=` `abc` on `price` → `invalid_filter`.
+  holding a global search of 256 code points and `=` `2024-13-01` on `made` → `value_too_long`; holding a SearchBuilder
+  tree 10 groups deep counting the root and `=` `abc` on `price` → `invalid_filter`.
 - **SPEC-E3.3** [all] A request holding SearchBuilder `=` `abc` on `price` and `contains` `x` on `active` →
   `invalid_number` (step 2 before step 4); holding `=` `2024-13-01` on `made` and a column search `x` on the
   undeclared `extra` → `invalid_date`.

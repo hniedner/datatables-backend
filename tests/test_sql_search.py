@@ -210,19 +210,22 @@ TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hook
     ('which', 'body', 'bound'),
     [
         ('all', glob(words(16)), None),
-        ('all', glob(words(17)), '16'),
         ('all', glob(f'{words(16)} !x "" !"" "'), None),  # tokens that reduce to no word are not counted
         ('all', glob(f'{words(15)} "a b"'), None),  # a phrase is one word
         ('all', glob(f'{words(16)} "a b"'), '16'),
         ('all', column(words(16), 'name'), None),
-        ('all', column(words(17), 'name'), '16'),
+        (
+            'all',
+            column(f'{words(16)} !x "" !"" "', 'name'),
+            None,
+        ),  # blank tokens and `!` are no words in a column either
+        ('all', column(f'{words(15)} "a b"', 'name'), None),  # a phrase is one word there too
+        ('all', column(f'{words(16)} "a b"', 'name'), '16'),
         ('all', glob('a' * 255), None),
-        ('all', glob('a' * 256), '255'),
         ('all', glob(' ' * 256), '255'),  # the raw text is measured, blank or not
         ('all', column(' ' * 256, 'name'), '255'),
         ('all', glob(EMOJI * 255), None),  # code points, not UTF-16 units or bytes
         ('all', glob(EMOJI * 256), '255'),
-        ('all', column('a' * 256, 'name'), '255'),
         ('mixed', glob(words(17)), '16'),  # PRD-D12: otherwise the whole request is refused
         ('hooked', glob(words(17)), None),  # ... and the cap is lifted when every searchable column is hooked
         ('hooked', glob('a' * 256), '255'),
@@ -243,3 +246,10 @@ def test_search_text_is_bound_in_code_points_and_words(
         assert bound in message
         assert 'q0' not in message
         assert 'aaa' not in message
+
+
+def test_search_text_over_the_word_bound_is_counted_with_no_column_to_search(session: Session):
+    """PRD-F14, PRD-F13: with no searchable column the cap is not lifted (nothing is hooked), so the words are the
+    mistake and not the missing column."""
+    response = unsearchable.fetch_sync(request('id', 'team', **glob(words(17))), session)
+    assert refused(response, 'too_many_words')

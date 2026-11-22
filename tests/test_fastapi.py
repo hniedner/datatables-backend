@@ -4,8 +4,14 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
+from datatables_backend import Column
+from datatables_backend import DTResponse
 from datatables_backend.fastapi import DataTablesParams
+from datatables_backend.opensearch import SearchTable
+
+from .conftest import criterion
 
 app = FastAPI()
 
@@ -55,3 +61,34 @@ def test_a_json_body_that_is_not_an_object_answers_422():
     """Also a list of pairs, which `parse_request` would read: over HTTP, JSON carries the request as an object."""
     response = client.post('/table', json=[['draw', '1'], ['length', '5']])
     assert (response.status_code, response.json()) == (422, {'detail': {'message': 'The table request is malformed.'}})
+
+
+docs = SearchTable(
+    'docs', [Column('name'), Column('made', type='date'), Column('price', type='number')], max_result_window=3
+)
+no_server: Any = object()  # every case below is refused before a server would be asked
+
+
+@app.post('/docs')
+def answer(params: DataTablesParams) -> DTResponse:
+    return docs.fetch_sync(params, no_server)
+
+
+@pytest.mark.parametrize(
+    ('extra', 'code'),
+    [
+        (criterion('name', '<', 'a'), 'invalid_filter'),
+        ({'search': {'value': '\t'}}, 'invalid_character'),
+        ({'search': {'value': 'a' * 256}}, 'value_too_long'),
+        ({'search': {'value': ' '.join(['w'] * 17)}}, 'too_many_words'),
+        (criterion('made', '=', '2024-13-01'), 'invalid_date'),
+        (criterion('price', '=', 'abc'), 'invalid_number'),
+        ({'start': 4, 'length': 3}, 'page_out_of_range'),
+    ],
+)
+def test_a_user_error_of_each_code_answers_http_200_with_its_code(extra: dict[str, Any], code: str):
+    """SPEC-A11.2: one case per code; the dependency takes no option that changes the status."""
+    columns = [{'data': name, 'searchable': True, 'orderable': True} for name in ('name', 'made', 'price')]
+    response = client.post('/docs', json={'draw': 3, 'columns': columns, **extra})
+    assert response.status_code == 200
+    assert (response.json()['draw'], response.json()['error_code']) == (3, code)

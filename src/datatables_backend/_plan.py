@@ -750,7 +750,12 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
     if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
-        return int(stripped)  # at most 255 digits (PRD-F14), which Python converts, unlike 4,301
+        try:
+            return int(stripped)
+        except ValueError:  # more digits than Python converts to an integer
+            # Reachable only through a search-value hook that expands the client's text (`1e5000` to 5,000 digits),
+            # which PRD-D14 will refuse on a number column; the client's own text is at most 255 characters
+            raise number_unreadable(column, listed=listed) from None
     number = float(stripped)
     if not math.isfinite(number):
         raise number_unreadable(column, listed=listed)

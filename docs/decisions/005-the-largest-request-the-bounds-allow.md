@@ -18,8 +18,14 @@ queries (2,048 global, 1,984 column searches, 512 list `term` queries, 128 crite
 
 Sent to a server (CI run 45078213951 of pull request #88, `tests/test_opensearch_live.py`), OpenSearch 3.10.0 and
 2.19.7 both answered it, with the default `indices.query.bool.max_clause_count` of 1,024. The limit is evidently not
-counted over the leaves or over every child. A count per `bool` fits, since the widest holds 256, but it was not
-varied to confirm. Not measured: a `bool` of more than 1,024 clauses, a changed limit, other servers.
+counted over the leaves or over every child.
+
+A control settled it (CI run 45080243788, both servers): a single `bool` of 1,024 `should` clauses on a mapped field
+of an index that holds documents was answered, and one of 1,025 was refused. So the limit is counted per `bool`. The
+widest `bool` the library builds is max(C, 256), C being the columns the global search covers (one `should` clause
+for each, whatever its kind) and 256 a list of values, so no entry in `docs/databases.md` is needed below 1,025
+searchable columns. The control was a one-off measurement of the server and is not kept as a test; the live test of
+the largest request stays as the guard. Not measured: a changed limit, other servers.
 
 ## SQL
 

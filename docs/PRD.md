@@ -623,13 +623,14 @@ A search over no usable column is refused (PRD-E1), never answered with every ro
 #### PRD-F14
 
 Search text holds at most 255 code points and 16 words; longer text is refused with `value_too_long`, and text of more
-words with `too_many_words`. Words are counted after PRD-F4's split: a quoted phrase is one word, and a token that reduces to the empty word (a lone `"`, `"""`, `!""`,
-`""`, a bare `!`, or a `!` word that PRD-F35 drops) is not counted and adds nothing. The 16-word cap is lifted only
-where PRD-D12 and PRD-D17 say. The 255-code-point bound is the bound of every value the client sends, measured on the
-text as sent, before trimming and before a hook: a column search, each entry of a `multi_values` list, each alternative
-of a categorical filter (PRD-F16), and each value a SearchBuilder condition reads (PRD-F36), a number or a date as
-well. A value no condition reads, a surplus value or that of `null`, is not measured. The 16-word cap applies to text
-that is split into words, not to a list, a SearchBuilder value, or a value read as one number, date or boolean.
+words with `too_many_words`. Words are counted after PRD-F4's split: a quoted phrase is one word, and a token that
+reduces to the empty word (a lone `"`, `"""`, `!""`, `""`, a bare `!`, or a `!` word that PRD-F35 drops) is not counted
+and adds nothing. The 16-word cap is lifted only where PRD-D12 and PRD-D17 say. The 255-code-point bound is the bound of
+every value the client sends, measured on the text as sent, before trimming and before a hook: a column search, each
+entry of a `multi_values` list, each alternative of a categorical filter (PRD-F16), after unescaping and not the raw
+pattern, and each value a SearchBuilder condition reads (PRD-F36), a number or a date as well. A value no condition
+reads, a surplus value or that of `null`, is not measured. The 16-word cap applies to text that is split into words, not
+to a list, a SearchBuilder value, or a value read as one number, date or boolean.
 
 - **Reason:** Each word adds a condition per searchable column; SvelteDT's field allows 255 characters.
 - **Priority:** must
@@ -747,9 +748,10 @@ integer range. An unsigned MySQL integer column is bounded by its unsigned range
 precision bounds nothing. On a SQL column that is not an integer, a whole number outside the signed 64-bit range is
 compared as the column compares: exactly on a `Numeric` column (see section 5 for SQLite), as its digits on a column
 that stores text, and as the nearest floating-point number on a `Float` column and on an expression without a type. A
-number is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal
-point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
-`invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
+number is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written
+in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
+(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a
+digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
@@ -1158,9 +1160,9 @@ A request the user can fix is answered, not raised: the response carries an `err
 #### PRD-E2
 
 The user-error codes are `invalid_filter`, `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`,
-`invalid_number` and `page_out_of_range`, documented and stable. The list is closed: a release answers only the codes its documentation
-lists, and a code is added only in a release that says so. A client treats a code it does not know as a refusal of the
-request and shows `error`.
+`invalid_number` and `page_out_of_range`, documented and stable. The list is closed: a release answers only the codes
+its documentation lists, and a code is added only in a release that says so. A client treats a code it does not know as
+a refusal of the request and shows `error`.
 
 - **Reason:** A frontend maps codes to its own messages; SvelteDT can show the reason at the field. A control character
   has a code of its own because the user cannot see it, so a frontend needs to say more than "invalid filter" (owner's
@@ -1169,17 +1171,16 @@ request and shows `error`.
 
 #### PRD-E3
 
-The code follows the first mistake in this order: (1) a control character (PRD-F15) is `invalid_character`, a value
-over 255 code points (PRD-F14) is `value_too_long`, search text of more than 16 words (PRD-F14) is `too_many_words`,
-and a structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first mistake is the one found first
-in the order the request is read, the global search, then the column searches in the request's order, then the
-SearchBuilder tree (its structure, then its criteria in document order), and within one value a control character,
-then the length, then the words; (2) a value whose format a date
-or number column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an
-OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date`
-for the maximum date (PRD-F24) and `invalid_number` for a number its SQL column does not take (PRD-F25: outside an
-integer's range, signed or unsigned, or of more than 38 digits before the decimal point on a `Numeric` column on SQL
-Server); (4) every other filter error, a
+The code follows the first mistake in this order: (1) a control character (PRD-F15) is `invalid_character`, a value over
+255 code points (PRD-F14) is `value_too_long`, search text of more than 16 words (PRD-F14) is `too_many_words`, and a
+structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first mistake is the one found first in the
+order the request is read, the global search, then the column searches in the request's order, then the SearchBuilder
+tree (its structure, then its criteria in document order), and within one filter a control character in any of its
+values, then any value's length, then the words; (2) a value whose format a date or number column cannot read is
+`invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or
+number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and
+`invalid_number` for a number its SQL column does not take (PRD-F25: outside an integer's range, signed or unsigned, or
+of more than 38 digits before the decimal point on a `Numeric` column on SQL Server); (4) every other filter error, a
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
 
@@ -1407,9 +1408,9 @@ integer (PRD-P10), and leaves it out when `draw` itself is the malformed part.
 #### PRD-A11
 
 The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_character`, `value_too_long`,
-`too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and `error_code` beside `draw`, `recordsTotal`,
-`recordsFiltered` and an empty `data`. There is no option to change the status; an app that wants a 4xx maps the
-response in its own route. A malformed request stays 422 (PRD-A10).
+`too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and
+`error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to change the
+status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10).
 
 - **Reason:** DataTables reads the error only from a successful response (READ, DataTables 3.1.5 `dataTables.mjs`:
   `buildAjax`'s success callback reads `json.error` at :5512; its `error` handler at :5552 fires `xhr` with a null
@@ -1644,9 +1645,8 @@ first release is published as version 0.1.0.
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
   whatever its Content-Type (PRD-A9, changed from draft 1's R8).
 - Errors: `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`, `invalid_number` and
-  `page_out_of_range` beside `invalid_filter`, with
-  a precedence (PRD-E2, PRD-E3), and texts that say what is wrong and how to fix it (PRD-E4); the response's unused
-  `metadata` field goes (PRD-R5).
+  `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2, PRD-E3), and texts that say what is wrong and
+  how to fix it (PRD-E4); the response's unused `metadata` field goes (PRD-R5).
 - New: an integer `data` (PRD-P20), a `null` `data` and nameless columns (PRD-P21), declared OpenSearch field kinds
   (PRD-D13), the hook-column rules (PRD-D14 to PRD-D18), the text-only OpenSearch refusals (PRD-D19), a hooked
   OpenSearch column's keyword field (PRD-D20), the structure bounds (PRD-F38), object `data` (PRD-P18),

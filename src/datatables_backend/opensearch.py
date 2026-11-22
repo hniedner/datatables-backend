@@ -296,9 +296,9 @@ _FOLDED_TO_A_WILDCARD = frozenset({chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)})
 def _regexp(field: str, before: str, value: str, after: str, *, marks: bool = False) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
     that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII (and, where ``marks``
-    is asked, without a fullwidth mark that a ``wildcard`` would misread), and one longer than 255 code points,
-    beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most 768 UTF-16 units,
-    under the 1,000 of the default ``index.max_regex_length``).
+    is asked, without a fullwidth mark that a ``wildcard`` would misread). A value is at most 255 code points
+    (PRD-F14), the longest measured as a ``regexp`` on every server: a pattern is then at most 768 UTF-16 units,
+    under the 1,000 of the default ``index.max_regex_length``.
 
     A character of ``value`` gets a backslash, also when it is outside ASCII: the server runs the pattern through
     the field's normalizer, which can make an ASCII bracket of a fullwidth one. The backslash makes it that

@@ -2027,7 +2027,7 @@ def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
     raises=DBAPIError,
     reason='PRD-C17, PRD-F38: SQLite refuses the request, "Expression tree is too large (maximum depth 1000)": it '
     'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured on '
-    '2026-11-22; PostgreSQL and MySQL answer it',
+    '2026-11-22; PostgreSQL and MySQL answer it. Issue #89 closes the gap',
 )
 @pytest.mark.xfail(
     os.environ.get('DTB_SQL_DIALECT') == 'mssql',
@@ -2035,7 +2035,7 @@ def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
     raises=DBAPIError,
     reason='PRD-C17: SQL Server refuses the request, ODBC error 07002 "COUNT field incorrect": it binds 3,184 '
     'parameters (2,144 + 16 x 65 columns of the global search) where the limit is 2,100. Measured on 2026-11-22 '
-    '(CI run 45078213951)',
+    '(CI run 45078213951). Issue #89 closes the gap',
 )
 def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
     """SPEC-C17.1, PRD-C17: the request of `largest_sql_request` over 62 columns. Its parameters are counted by
@@ -2152,10 +2152,8 @@ def test_a_form_encoded_multi_values_list_is_read(session: Session):
 
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
 
-SEVENTEEN = ' '.join(['w'] * 17)
+SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
 OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
-    ({'column_search': {'name': {'value': 'a' * 256}}}, 'value_too_long'),
-    ({'column_search': {'name': {'value': SEVENTEEN}}}, 'too_many_words'),
     ({'column_search': {'age': {'value': '1' * 256}}}, 'value_too_long'),  # SQL searches a number's text
     ({'column_search': {'name': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
     ({'column_search': {'born': {'multi_values': ['2024-01-01', '1' * 256]}}}, 'value_too_long'),
@@ -2164,16 +2162,20 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     (criterion('name', 'contains', 'a' * 256), 'value_too_long'),
     (criterion('name', 'starts', 'a' * 256), 'value_too_long'),
     (criterion('age', '=', '1' * 256), 'value_too_long'),
-    (criterion('age', '=', '9' * 4301), 'value_too_long'),  # more digits than Python converts to an integer
-    (criterion('age', '=', '0' * 5000), 'value_too_long'),
     (criterion('age', 'between', '1', '2' * 256), 'value_too_long'),
     (criterion('born', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
     (criterion('born', 'contains', '2024' + ' ' * 252), 'value_too_long'),
+    # the length comes before the name: `active` is no column of this table
     (criterion('active', '=', 'true' + ' ' * 252), 'value_too_long'),
     # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
     (criterion('age', '=', 'x' * 300), 'value_too_long'),  # no number, and too long
     (criterion('born', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
     ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
+    ({'column_search': {'extra': {'value': SEVENTEEN}}}, 'too_many_words'),  # no column to lift the cap
+    ({'column_search': {'name': {'value': ' '.join(['abcdefghij'] * 30)}}}, 'value_too_long'),  # 30 words, length first
+    # PRD-E3, within one filter: a control character in any value, then the length of any value
+    ({'column_search': {'name': {'multi_values': ['a' * 256, 'b\x01']}}}, 'invalid_character'),
+    (criterion('age', 'between', '1' * 256, '2\x01'), 'invalid_character'),
     ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
     ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
     ({'column_search': {'name': {'value': 'a' * 256, 'multi_values': ['x']}}}, 'value_too_long'),
@@ -2195,7 +2197,7 @@ def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
     request, with a text that holds none of what was sent."""
     names = (*ALL, 'extra') if 'extra' in str(body) else ALL
     message = refused(table.fetch_sync(request(*names, **body), session), code)
-    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'www', 'abc', '111'))
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', '111', *SEVENTEEN.split()))
 
 
 @pytest.mark.parametrize(
@@ -2258,3 +2260,28 @@ def test_the_text_of_each_bound_names_the_condition_and_the_fix(
 ):
     """SPEC-E4.30: each text is fixed, names only a declared column, and says what to shorten."""
     assert refused(table.fetch_sync(request(*ALL, **body), session), code) == text
+
+
+def test_words_are_not_counted_on_a_boolean_column(session: Session):
+    """PRD-F14: a boolean's value is one value to read, not words, so 17 of them are no `too_many_words` but the
+    value that is no boolean (PRD-E3 (4))."""
+    flags = SQLTable(people, [Column('id'), Column('active')])
+    response = flags.fetch_sync(request('id', 'active', column_search={'active': {'value': SEVENTEEN}}), session)
+    assert refused(response) == 'The filter on "active" needs true or false (1 or 0 also work).'
+
+
+def expanded(text: str) -> str:
+    return format(Decimal(text), 'f')
+
+
+def test_a_hook_that_expands_a_number_is_refused_not_failed(session: Session):
+    """PRD-D14, PRD-F25: the 255 bound is measured on the client's text, before the hook, so a hook on a number
+    column can still make `1e5000` 5,000 digits, which Python does not convert to an integer, and `1e400` 401, which
+    a `Float` column does not take. Both are the user's mistake, not a failure; they go when PRD-D14 refuses a hook
+    on a number column."""
+    hooked = SQLTable(people, [Column('id'), Column('age', search_value=expanded)])
+    params = request('id', 'age', column_search={'age': {'multi_values': ['1e5000']}})
+    assert 'must be a number' in refused(hooked.fetch_sync(params, session), 'invalid_number')
+    floats = SQLTable(wide(session).source, [Column('id'), Column('ratio', search_value=expanded)])
+    params = request('id', 'ratio', column_search={'ratio': {'multi_values': ['1e400']}})
+    assert 'at most 308 digits' in refused(floats.fetch_sync(params, session), 'invalid_number')

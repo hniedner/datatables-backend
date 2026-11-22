@@ -50,8 +50,9 @@ the parameters, since search text is split into words.
   test of SPEC-C17.1). A request of a few words binds far fewer. A `base_filter` or an expression column that binds
   parameters of its own adds to the count.
 - **Example:** a global search of 16 words, 62 column searches of 16 words, two lists of 256 days and 64 criteria.
-- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022 (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
-- **Requirement:** PRD-C17, which the bounds do not meet yet.
+- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022
+  (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
+- **Requirement:** PRD-C17, which the bounds do not meet yet; issue #89 closes the gap.
 
 ### A decimal holds 38 digits at most
 
@@ -87,7 +88,7 @@ This is a limit of the library, not of SQLite: a request is not bounded in the c
 - **Example:** the request of the entry on SQL Server above.
 - **How it is known:** MEASURED 2026-11-22 (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the exact
   number of conditions was not measured.
-- **Requirement:** PRD-C17, PRD-F38.
+- **Requirement:** PRD-C17, PRD-F38; issue #89 closes the gap.
 
 ## Every SQL database
 

@@ -154,7 +154,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F14.5** [all] Step 1 is found before every refusal of step 4 in the same part of a request: 17 words with
   `regex` true, 17 words and no searchable column, a global search of 256 code points with `multi_values`, and a
   column search of 256 code points on a name the server does not declare, each answer the code of step 1, not
-  `invalid_filter`. A control character comes before the length of the same value, which comes before its words.
+  `invalid_filter`. Within one filter, a control character in any value comes before the length of any value, which
+  comes before the words: `multi_values` `["a" x 256, "b\x01"]` → `invalid_character`.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_character`; so do U+0009 (TAB), U+001B and
   U+007F.
 - **SPEC-F15.2** [all] U+0000 in a column search, in a SearchBuilder `=` value, in a categorical value and in a

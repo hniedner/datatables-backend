@@ -431,14 +431,6 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
     assert query(client) == []
 
 
-def test_search_text_over_the_word_bound_is_refused_before_anything_is_sent():
-    """SPEC-F14.2: the bound is the plan's, so OpenSearch refuses as SQL does."""
-    client = Client()
-    text = ' '.join(f'q{n}' for n in range(17))
-    assert '16' in refused(table.fetch_sync(request(*NAMES, search={'value': text}), client), 'too_many_words')
-    assert (client.searches, client.counts) == ([], [])
-
-
 def test_a_global_search_over_numbers_and_dates_only_is_refused():
     numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
     refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
@@ -907,18 +899,20 @@ def test_the_largest_request_the_bounds_allow_is_this_many_clauses():
 
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
 
-SEVENTEEN = ' '.join(['w'] * 17)
+SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
 OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     ({'search': {'value': 'a' * 256}}, 'value_too_long'),
     ({'search': {'value': SEVENTEEN}}, 'too_many_words'),
     ({'column_search': {'title': {'value': 'a' * 256}}}, 'value_too_long'),
     ({'column_search': {'title': {'value': SEVENTEEN}}}, 'too_many_words'),
     ({'column_search': {'pages': {'value': '1' * 256}}}, 'value_too_long'),
+    # PRD-E3 (2): on a number or date column that is one value to match, words are no words, so the value is unreadable
+    ({'column_search': {'pages': {'value': SEVENTEEN}}}, 'invalid_number'),
+    ({'column_search': {'created': {'value': SEVENTEEN}}}, 'invalid_date'),
     ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
     ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
     (criterion('title', 'contains', 'a' * 256), 'value_too_long'),
     (criterion('pages', '=', '1' * 256), 'value_too_long'),
-    (criterion('pages', '=', '0' * 5000), 'value_too_long'),  # which Python would not convert to an integer
     (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
     (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
     # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
@@ -942,14 +936,14 @@ def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(bod
     names = (*NAMES, 'extra') if 'extra' in str(body) else NAMES
     message = refused(table.fetch_sync(request(*names, **body), client), code)
     assert client.searches == []
-    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'www', 'abc'))
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', *SEVENTEEN.split()))
 
 
 @pytest.mark.parametrize(
     'body',
     [
         {'search': {'value': 'a' * 255}},
-        {'search': {'value': ' '.join(['w'] * 16)}},
+        {'search': {'value': ' '.join(SEVENTEEN.split()[:16])}},
         {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}},
         {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
         criterion('title', 'contains', 'a' * 255),
