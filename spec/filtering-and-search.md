@@ -246,7 +246,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F33.2** [OS] Column search on `price`: `7 8`, `!7`, `"7"` and `abc` → error_code `invalid_number`.
 - **SPEC-F33.3** [all] Categorical `^(7|8)$` and `multi_values` `["7", "8"]` on `price` → rows 1, 3.
 - **SPEC-F33.4** [all] `multi_values` `["x"]` on `price` → error_code `invalid_number`; `[""]` → rows 4.
-- **SPEC-F34.1** [OS] Column search on `made`: `2024` → rows 1, 2; `2024-03-05` → rows 1.
+- **SPEC-F34.1** [OS] Column search on `made`: `2024` → rows 1, 2; `2024-03-05` → rows 1; `2024-03-05 10:00:00`, a
+  day with a time after it (PRD-F22) → rows 1.
 - **SPEC-F34.2** [OS] Column search on `made`: `2024 2023`, `!2024`, `"2024"` and `2024-13` → error_code
   `invalid_date`.
 - **SPEC-F35.1** [all] Given rows 5 (`note` `a-b`) and 6 (`note` `a.b`), every other column of both but `id` NULL

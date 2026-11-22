@@ -668,10 +668,10 @@ which OpenSearch stores as a UTC instant. On SQLite and in a MySQL `DATETIME`, w
 read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it
 (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC
 day only when the app sets that zone to `+00:00`. A non-empty categorical value or `multi_values` entry on a date column
-is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one
-means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on OpenSearch. A day is
-written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, the
-seconds with an optional fraction): it must exist and is then ignored, since SearchBuilder sends
+is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one,
+or one of only white space, means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on
+OpenSearch. A day is written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM`
+or `HH:MM:SS`, the seconds with an optional fraction): it must exist and is then ignored, since SearchBuilder sends
 `YYYY-MM-DD HH:mm:ss` for a column of its `moment`, `luxon` or `datetime` type (READ in its source, not run in a
 browser). White space around the value is ignored. Any other spelling is `invalid_date`, among them a digit outside
 ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
@@ -784,7 +784,8 @@ field on OpenSearch.
 #### PRD-F34
 
 An OpenSearch column search on a date column, other than a categorical filter or `multi_values` list (PRD-F21), takes
-one date term (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); several words, `!` or quotes are refused with `invalid_date`.
+one date term, written as PRD-F22 says (`YYYY`, `YYYY-MM`, or a day with an optional time after it); any other text,
+among it several terms, `!` or quotes, is refused with `invalid_date`.
 
 - **Reason:** A date span is one term; smart-search syntax has no meaning there.
 - **Priority:** must
