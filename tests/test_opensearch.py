@@ -898,7 +898,6 @@ def test_the_widest_bool_of_a_request_of_the_budget_holds_at_most_the_default_cl
     SearchTable('docs', columns).fetch_sync(request(*(c.name for c in columns), search={'value': 'ann'}), client)
     leaves, _, widest = tally(client.searches[0]['query'])
     assert (leaves, widest) == (2 * BUDGET, BUDGET)
-    assert widest <= 1024
 
 
 def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():

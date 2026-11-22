@@ -10,8 +10,8 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E1.2** [all] SearchBuilder `<` `a` on `name` → `fetch` and `fetch_sync` return the answer with error_code
   `invalid_filter`; `InvalidFilter` does not propagate out of either.
 - **SPEC-E2.1** [all] Across every user-error case in the specs, `fetch` answers one of exactly `invalid_filter`,
-  `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`, `page_out_of_range`; it
-  never answers another code (`query_failed` is the app's, PRD-E5).
+  `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`,
+  `page_out_of_range`; it never answers another code (`query_failed` is the app's, PRD-E5).
 - **SPEC-E2.2** [all] The eight codes are stable: each case in P, D, F, O and C that names a code answers that code.
   [review] The eight are listed in the docstring of `DTResponse`.
 - **SPEC-E2.3** [review] The docstring of `DTResponse` and the README say that the list of codes is closed, that a

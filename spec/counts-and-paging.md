@@ -66,15 +66,18 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
-- **SPEC-C17.1** [all] A request of exactly 960 conditions is answered (PRD-C17). [SQL] The most binds: two lists of
-  256 days on `seen` and `seen_tz`, which may hold a time (two parameters each), 64 criteria `between` `0` and `99`
-  on `id`, and 24 column searches of the 16 words of `LARGEST_WORDS` on columns that read `email_address` → row 1;
-  1,538 parameters with the page's two, within SQL Server's measured 2,097. [SQL] The deepest expression: the global
-  search `!ann` over 960 columns that read `email_address` → 4 rows (a row with no email passes a negation), within
-  SQLite's depth of 1,000. [OS] The global search `x` over 960 columns that read `title` → answered, on both servers.
-- **SPEC-C17.2** [all] A request of 961 conditions is answered with error_code `request_too_large` and `data` `[]`,
-  and nothing is sent to the database or the cluster. [SQL] The global search `ann` over 961 columns; and the request
-  of `SPEC-C17.1`'s most binds plus a word of one more column search. [OS] The global search `ann` over 961 columns.
+- **SPEC-C17.1** [all] A request of exactly 960 conditions is answered (PRD-C17). [SQL] Nearly the most binds: lists of
+  256 and 255 days on `seen` and `seen_tz`, which may hold a time (two parameters each), 64 criteria `between` `0` and
+  `99` on `id`, 24 column searches of the 16 words of `LARGEST_WORDS` and one of a word, on columns that read
+  `email_address` → row 1; 1,537 parameters with the page's two, within SQL Server's measured 2,097. [SQL] The deepest
+  expression: the global search `!ann` over 960 columns that read `email_address` → 4 rows (a row with no email passes a
+  negation), within SQLite's depth of 1,000. [OS] The global search `x` over 960 columns that read `title` → answered,
+  on both servers.
+- **SPEC-C17.2** [all] A request of 961 conditions is answered with error_code `request_too_large` and `data` `[]`, and
+  nothing is sent to the database or the cluster. [SQL] The global search `ann` over 961 columns; the global search
+  `!ann` over 961 columns (a negation counts as its word does); and the request of `SPEC-C17.1`'s most binds with an
+  empty entry added to the list of 255 days (an empty entry counts as a value). [OS] The global search `ann` over 961
+  columns.
 - **SPEC-C17.3** [OS] The global search `ann` over 960 columns that read `title` (text+keyword) sends one `should`
   for each column in one `bool`, each a `bool` of two clauses: 1,920 leaf queries and a widest `bool` of 960, within
   the default `indices.query.bool.max_clause_count` of 1,024.

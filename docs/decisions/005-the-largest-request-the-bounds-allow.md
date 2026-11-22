@@ -20,12 +20,13 @@ Sent to a server (CI run 45078213951 of pull request #88, `tests/test_opensearch
 2.19.7 both answered it, with the default `indices.query.bool.max_clause_count` of 1,024. The limit is evidently not
 counted over the leaves or over every child.
 
-A control settled it (CI run 45080243788, both servers): a single `bool` of 1,024 `should` clauses on a mapped field
-of an index that holds documents was answered, and one of 1,025 was refused. So the limit is counted per `bool`. The
-widest `bool` the library builds is max(C, 256), C being the columns the global search covers (one `should` clause
-for each, whatever its kind) and 256 a list of values, so the clause limit needs no entry in `docs/databases.md`
-below 1,025 searchable columns (the index's own limit of fields comes first, see its entry). The control was a one-off measurement of the server and is not kept as a test; the live test of
-the largest request stays as the guard. Not measured: a changed limit, other servers.
+A control settled it (CI run 45080243788, both servers): a single `bool` of 1,024 `should` clauses on a mapped field of
+an index that holds documents was answered, and one of 1,025 was refused. So the limit is counted per `bool`. The widest
+`bool` the library builds is max(C, 256), C being the columns the global search covers (one `should` clause for each,
+whatever its kind) and 256 a list of values, so the clause limit needs no entry in `docs/databases.md` below 1,025
+searchable columns (the index's own limit of fields comes first, see its entry). The control was a one-off measurement
+of the server and is not kept as a test; the live test of the budget, `test_a_request_of_the_budget_is_answered`, is the
+guard. Not measured: a changed limit, other servers.
 
 ## SQL
 
@@ -48,7 +49,7 @@ request above is refused with `request_too_large` before anything is queried, an
 
 The owner decided a budget of conditions (PRD-C17): one word on one column, one list value and one range each count
 one. The number is 960, which is 16 words over 60 columns. The measurements below bound it from above: SQLite's
-depth allows 991 - 9 = 982 conditions at the worst shape, and SQL Server's parameters allow 2,097 - 2 = 2,095 in the
+depth allows 1,000 - 9 = 991 conditions at the worst shape, and SQL Server's parameters allow 2,097 - 2 = 2,095 in the
 filtered statement, where the worst request under 960 binds 1,536.
 
 ### What a condition binds
@@ -81,10 +82,10 @@ range above showed it.
 
 ### SQLite, the depth of an expression
 
-SQLite 3.53.1 with Python 3.14.7: the build's limit is 1,000, read from the error text ("maximum depth 1000"). SQLAlchemy
-renders a word as `lower(x) LIKE lower(?) ESCAPE '\'`, so a leaf is three levels high and a chain adds one level per
-condition. Conditions counted as the budget counts them; "answered" is the largest and "refused" the next, found by
-bisection in a script outside the repository:
+SQLite 3.53.1 with Python 3.14.7: the build's limit is 1,000, read from the error text ("maximum depth 1000").
+SQLAlchemy renders a word as `lower(x) LIKE lower(?) ESCAPE '\'`, so a leaf is three levels high and a chain adds one
+level per condition. Conditions counted as the budget counts them; "answered" is the largest and "refused" the next,
+found by bisection in a script outside the repository:
 
 | shape | answered | refused |
 |---|---|---|

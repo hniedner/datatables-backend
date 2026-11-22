@@ -2022,10 +2022,11 @@ def wide_request(columns: int, *, search: str, **body: Any) -> tuple[SQLTable, D
 
 
 def worst_binds_request(*, one_more: bool = False) -> tuple[SQLTable, DTParams]:
-    """BUDGET conditions that bind the most parameters: 512 days in two lists on columns that may hold a time (two
-    each), 64 ranges (two each), and 384 words of column searches (one each). ``one_more`` adds a word of one more
-    column search, which is BUDGET + 1."""
-    emails = [f'e{number}' for number in range(24 + one_more)]
+    """BUDGET conditions that bind nearly the most parameters: 511 days in two lists on columns that may hold a time
+    (two each), 64 ranges (two each), and 385 words of column searches (one each), which is 1,535 parameters. One
+    day short of the most the bounds allow (1,536), so that ``one_more`` can add an empty entry to a full list, which
+    is 512 entries in all, the bound of PRD-F38, and so BUDGET + 1 conditions."""
+    emails = [f'e{number}' for number in range(25)]
     wide = SQLTable(
         people,
         [Column('id'), *(Column(name, field='email_address') for name in emails), Column('seen'), Column('seen_tz')],
@@ -2034,15 +2035,15 @@ def worst_binds_request(*, one_more: bool = False) -> tuple[SQLTable, DTParams]:
     between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
     names = ['id', *emails, 'seen', 'seen_tz']
     searched = {name: {'value': LARGEST_WORDS if number < 24 else 'ann'} for number, name in enumerate(emails)}
-    listed = {name: {'multi_values': days} for name in ('seen', 'seen_tz')}
+    listed = {'seen': {'multi_values': days}, 'seen_tz': {'multi_values': [*days[1:], ''] if one_more else days[1:]}}
     criteria = {'logic': 'AND', 'criteria': [between] * 64}
     return wide, request(*names, column_search={**searched, **listed}, searchBuilder=criteria)
 
 
 def test_a_request_of_the_most_binds_the_budget_allows_is_answered(session: Session):
     """SPEC-C17.1, PRD-C17: BUDGET conditions of the kind that bind two parameters each (days of a column that may
-    hold a time, ranges) up to the bounds, which is 1,536 and, with the page's two, within SQL Server's 2,100. It
-    catches a budget that counts a condition as less than the parameters it binds."""
+    hold a time, ranges) up to the bounds, which is 1,535 and, with the page's two, within SQL Server's measured
+    2,097. It catches a budget that counts a condition as less than the parameters it binds."""
     wide, params = worst_binds_request()
     assert ids(wide.fetch_sync(params, session)) == [1]
 
@@ -2061,17 +2062,20 @@ def test_a_request_of_the_deepest_expression_the_budget_allows_is_answered(sessi
     'shape',
     [
         pytest.param(lambda: wide_request(BUDGET + 1, search='ann'), id='one word over a column too many'),
-        pytest.param(lambda: worst_binds_request(one_more=True), id='the most binds the budget allows, and a word'),
+        pytest.param(lambda: wide_request(BUDGET + 1, search='!ann'), id='a negated word over a column too many'),
+        pytest.param(
+            lambda: worst_binds_request(one_more=True), id='the most binds the budget allows, and an empty entry'
+        ),
     ],
 )
 def test_a_request_one_condition_over_the_budget_is_refused_before_any_query(
     session: Session, shape: Callable[[], tuple[SQLTable, DTParams]]
 ):
     """SPEC-C17.2, PRD-C17, PRD-E2: a request of BUDGET + 1 conditions is answered `request_too_large` with nothing
-    run, on every database. The first shape counts only the words of the global search; the second adds days of
-    lists and ranges (1,538 parameters with the page's, plus one), so it catches a budget that leaves those kinds
-    out of the count, which SQL Server's 2,100 would show only later. It also catches a budget that is counted after
-    a statement has gone out."""
+    run, on every database. The first shape counts the words of the global search; the second a negated word, which
+    SQLite's depth would refuse at 992 columns, a client-causable failure; the third adds days of lists and ranges
+    and an empty entry of a list, so it catches a budget that leaves those kinds out of the count, which SQL Server's
+    limit would show only later. It also catches a budget that is counted after a statement has gone out."""
     sent: list[str] = []
     event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: sent.append(args[2]))
     wide, params = shape()

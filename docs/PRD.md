@@ -1172,9 +1172,8 @@ A request the user can fix is answered, not raised: the response carries an `err
 
 The user-error codes are `invalid_filter`, `invalid_character`, `value_too_long`, `too_many_words`,
 `request_too_large`, `invalid_date`, `invalid_number` and `page_out_of_range`, documented and stable. The list is
-closed: a release answers only the codes its documentation lists, and a code is added only in a release that says so
-(the release notes of the first release name `request_too_large`). A client treats a code it does not know as a refusal
-of the request and shows `error`.
+closed: a release answers only the codes its documentation lists, and a code is added only in a release that says so. A
+client treats a code it does not know as a refusal of the request and shows `error`.
 
 - **Reason:** A frontend maps codes to its own messages; SvelteDT can show the reason at the field. A control character
   has a code of its own because the user cannot see it, so a frontend needs to say more than "invalid filter" (owner's
@@ -1423,9 +1422,9 @@ integer (PRD-P10), and leaves it out when `draw` itself is the malformed part.
 #### PRD-A11
 
 The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_character`, `value_too_long`,
-`too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and
-`error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to change the
-status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10).
+`too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying
+`error` and `error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to
+change the status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10).
 
 - **Reason:** DataTables reads the error only from a successful response (READ, DataTables 3.1.5 `dataTables.mjs`:
   `buildAjax`'s success callback reads `json.error` at :5512; its `error` handler at :5552 fires `xhr` with a null
@@ -1660,9 +1659,9 @@ first release is published as version 0.1.0.
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
   whatever its Content-Type (PRD-A9, changed from draft 1's R8).
-- Errors: `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number` and
-  `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2, PRD-E3), and texts that say what is wrong and
-  how to fix it (PRD-E4); the response's unused `metadata` field goes (PRD-R5).
+- Errors: `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`
+  and `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2, PRD-E3), and texts that say what is wrong
+  and how to fix it (PRD-E4); the response's unused `metadata` field goes (PRD-R5).
 - New: an integer `data` (PRD-P20), a `null` `data` and nameless columns (PRD-P21), declared OpenSearch field kinds
   (PRD-D13), the hook-column rules (PRD-D14 to PRD-D18), the text-only OpenSearch refusals (PRD-D19), a hooked
   OpenSearch column's keyword field (PRD-D20), the structure bounds (PRD-F38), object `data` (PRD-P18),
