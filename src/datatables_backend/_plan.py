@@ -288,8 +288,8 @@ def plan(
 ) -> Plan:
     """Check ``params`` against ``columns`` and return what it asks for. ``describe`` says what the backend can do
     with a column, so that a skip or a refusal is decided here, for every backend alike. Two refusals are left to a
-    backend, which alone knows what they need: SQL's of a number outside its column's range, and OpenSearch's of a
-    list of exact values on analysed text.
+    backend, which alone knows what they need: SQL's of a whole number its column cannot hold or be compared with,
+    and OpenSearch's of a list of exact values on analysed text.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -527,26 +527,28 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first."""
     stripped = text.strip()
-
-    def unreadable() -> InvalidFilter:
-        needed = (
-            f'Each value in the filter on "{column.name}" must be a number'
-            if listed
-            else f'The filter on "{column.name}" needs one number'
-        )
-        return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
-
     if not _NUMBER.fullmatch(stripped):
-        raise unreadable()
+        raise number_unreadable(column, listed=listed)
     if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
         try:
             return int(stripped)
         except ValueError:  # more digits than Python converts to an integer
-            raise unreadable() from None
+            raise number_unreadable(column, listed=listed) from None
     number = float(stripped)
     if not math.isfinite(number):
-        raise unreadable()
+        raise number_unreadable(column, listed=listed)
     return number
+
+
+def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of a value in a filter on ``column`` that is no number, or no finite one. A backend raises it
+    too, for a whole number its column can only take as a float and that is too large for one."""
+    needed = (
+        f'Each value in the filter on "{column.name}" must be a number'
+        if listed
+        else f'The filter on "{column.name}" needs one number'
+    )
+    return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
 
 
 def parse_boolean(text: str, column: Column) -> bool:

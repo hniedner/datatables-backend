@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from datetime import date
 from datetime import datetime
+from decimal import Decimal
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -74,6 +75,7 @@ from ._plan import Plan
 from ._plan import Range
 from ._plan import mistake
 from ._plan import next_day
+from ._plan import number_unreadable
 from ._plan import plan
 from ._plan import refused
 from .cache import TotalCache
@@ -96,6 +98,8 @@ type SyncSource = Session | Connection
 
 #: SQL Server refuses a statement with more than 2,100 bound parameters; this leaves room for the driver and paging
 MSSQL_PARAMETER_BUDGET = 2000
+#: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
+MSSQL_DECIMAL_DIGITS = 38
 #: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
 #: LAST; every other database is told where NULL goes
 _NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
@@ -182,7 +186,7 @@ class SQLTable:
             stmt = select(*(self._sql(column).label(column.name) for column in self.columns)).select_from(self.source)
             if self.base_filter is not None:
                 stmt = stmt.where(self.base_filter)
-            return stmt.where(*self._conditions(request, in_list, mistakes))
+            return stmt.where(*self._conditions(request, in_list, dialect, mistakes))
 
         filtered_rows = build(_bound_in)
         mistakes.raise_first()  # from here on the request holds no mistake, so a second build finds none either
@@ -213,7 +217,9 @@ class SQLTable:
             return 'date'
         return 'string'
 
-    def _conditions(self, request: Plan, in_list: _InList, mistakes: Mistakes) -> list[ColumnElement[bool]]:
+    def _conditions(
+        self, request: Plan, in_list: _InList, dialect: Dialect, mistakes: Mistakes
+    ) -> list[ColumnElement[bool]]:
         """The request's conditions. One that holds a mistake (a number the column cannot hold) is left out, and
         the mistake kept in ``mistakes``."""
         conditions: list[ColumnElement[bool]] = []
@@ -223,7 +229,7 @@ class SQLTable:
         if request.search_builder is not None:
             filters.append(request.search_builder)
         for node in filters:
-            built = self._compile(node, in_list, mistakes)
+            built = self._compile(node, in_list, dialect, mistakes)
             if built is not None:
                 conditions.append(built)
         return conditions
@@ -236,28 +242,35 @@ class SQLTable:
             return _day_text(_utc(column) if _aware(sql_type) else column).ilike(pattern, escape='\\')
         return _text(column).ilike(pattern, escape='\\')
 
-    def _compile(self, node: Filter | Group, in_list: _InList, mistakes: Mistakes) -> ColumnElement[bool] | None:
+    def _compile(
+        self, node: Filter | Group, in_list: _InList, dialect: Dialect, mistakes: Mistakes
+    ) -> ColumnElement[bool] | None:
         """The condition of one node of the plan; None for a condition that holds a mistake (a number outside the
         column's range, kept in ``mistakes``) and for a group left with none."""
         if isinstance(node, Group):
-            parts = [part for item in node.items if (part := self._compile(item, in_list, mistakes)) is not None]
+            built = (self._compile(item, in_list, dialect, mistakes) for item in node.items)
+            parts = [part for part in built if part is not None]
             if not parts:
                 return None
             return and_(*parts) if node.logic == 'AND' else or_(*parts)
         with mistakes.part():
-            return self._condition(node, in_list)
+            return self._condition(node, in_list, dialect)
         return None
 
-    def _condition(self, node: Filter, in_list: _InList) -> ColumnElement[bool]:
+    def _condition(self, node: Filter, in_list: _InList, dialect: Dialect) -> ColumnElement[bool]:
         """One condition on one column.
 
         Raises:
-            InvalidFilter: a number of the condition is outside the column's range.
+            InvalidFilter: a number of the condition is one the column cannot be compared with (``_number``).
         """
         column = self._sql(node.column)
+
+        def number(value: Any, *, listed: bool) -> Any:
+            return _number(column, value, node.column, dialect, listed=listed)
+
         match node:
             case Not():
-                negated = not_(self._condition(node.node, in_list))
+                negated = not_(self._condition(node.node, in_list, dialect))
                 # NULL is not equal to, does not contain and is not between anything, so it passes every negative
                 # condition (PRD-F37), where SQL's own NOT would drop it. "Not empty" is the one it does not pass
                 return negated if isinstance(node.node, Empty) else or_(negated, column.is_(None))
@@ -266,7 +279,7 @@ class SQLTable:
             case Empty():
                 return _empty(column, node.type)
             case Equals() if node.type == 'number':
-                return column == _number(column, node.value, node.column, listed=False)
+                return column == number(node.value, listed=False)
             case Equals() if node.type == 'boolean':
                 return column == _boolean(column, node.value)
             case Equals():
@@ -279,13 +292,16 @@ class SQLTable:
                 return _text(column).ilike(pattern, escape='\\')
             case Range() if node.type == 'number':
                 several = node.lower is not None and node.upper is not None  # the two values of a `between`
-                return _between(
-                    column, node.lower, node.upper, lambda value: _number(column, value, node.column, listed=several)
-                )
+                return _between(column, node.lower, node.upper, lambda value: number(value, listed=several))
             case Range():
                 return _days(column, node.lower, node.upper)
             case OneOf():
-                return _one_of(node, column, in_list)
+                values: list[Any] = list(node.values)
+                if node.type == 'number':
+                    values = [number(value, listed=True) for value in values]
+                elif node.type == 'boolean':
+                    values = [_boolean(column, value) for value in values]
+                return _one_of(node, column, values, in_list)
             case _:
                 assert_never(node)
 
@@ -391,28 +407,58 @@ def _is_text(column: ColumnElement[Any]) -> bool:
         return False
 
 
-def _number(column: ColumnElement[Any], value: Any, declared: Column, *, listed: bool) -> Any:
-    """``value`` checked against the column's integer range (as SQL Server's and PostgreSQL's integers have it): 16
-    bits for a ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``. A column of another type has
-    no range here. The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed``
-    says the value is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
+def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: Dialect, *, listed: bool) -> Any:
+    """``value`` as the column compares it, by the type the column stores (PRD-F25).
+
+    An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
+    ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is
+    unsigned (MySQL's). A ``Numeric`` column holds so many digits before the decimal point: its precision less its
+    scale, and on SQL Server never more than 38, beyond which its driver refuses the number. A whole number outside
+    either is the user's mistake.
+
+    A driver sends a whole number as a 64-bit integer, so one beyond 64 bits goes to a ``Numeric`` column as a
+    ``Decimal``, which compares exactly, and to any other column (a ``Float``, text declared a number, an
+    expression without a type) as the nearest float; one too large for a float is no finite number.
+
+    The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
+    is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
-    if not isinstance(sql_type, Integer) or not isinstance(value, int | float):
-        return value
-    if isinstance(value, float):
-        if not value.is_integer():
-            return value
+    if isinstance(sql_type, Integer) and isinstance(value, float) and value.is_integer():
         value = int(value)
-    bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
-    low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-    if not low <= value <= high:
-        needed = (
-            f'Each value in the filter on "{declared.name}" must be a number'
-            if listed
-            else f'The filter on "{declared.name}" needs a number'
-        )
-        raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
-    return value
+    if not isinstance(value, int):  # a number with a fraction, or what a hook made of the text
+        return value
+    needed = (
+        f'Each value in the filter on "{declared.name}" must be a number'
+        if listed
+        else f'The filter on "{declared.name}" needs a number'
+    )
+    if isinstance(sql_type, Integer):
+        bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+        if getattr(sql_type, 'unsigned', False):
+            low, high = 0, 2**bits - 1
+        if not low <= value <= high:
+            raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
+        return value
+    exact = isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)  # a Float is a Numeric to SQLAlchemy
+    if exact:
+        digits = None if sql_type.precision is None else sql_type.precision - (sql_type.scale or 0)
+        if dialect.name == 'mssql':
+            digits = MSSQL_DECIMAL_DIGITS if digits is None else min(digits, MSSQL_DECIMAL_DIGITS)
+        if digits is not None and value and len(str(abs(value))) > digits:
+            raise mistake(
+                'datatables_number_out_of_range',
+                f'{needed} with at most {digits} digits before the decimal point.',
+                declared,
+            )
+    if -(2**63) <= value < 2**63:
+        return value
+    if exact:
+        return Decimal(value)
+    try:
+        return float(value)
+    except OverflowError:
+        raise number_unreadable(declared, listed=listed) from None
 
 
 def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
@@ -494,9 +540,10 @@ def _days(column: ColumnElement[Any], lower: Bound | None, upper: Bound | None) 
     return _between(column, lower, upper, at)
 
 
-def _one_of(node: OneOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
-    """A list of exact values, and the rows without a value where the list holds an empty entry (PRD-F17,
-    PRD-F20), which is never one of the values sent. On a date column the row's day is one of the list's days. A
+def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], in_list: _InList) -> ColumnElement[bool]:
+    """A list of exact values (``values``: the node's, as the column compares them), and the rows without a value
+    where the list holds an empty entry (PRD-F17, PRD-F20), which is never one of the values sent. On a date
+    column the row's day is one of the list's days. A
     column whose SQL type is a ``Date`` holds a day and nothing else, so its days are one IN list: a long list
     stays one flat condition and takes SQL Server's JSON path (PRD-C17). A column of any other type, a datetime or
     one only declared a date, may hold a time, so each entry gets the day's two bounds, as ``=`` gives it: two
@@ -504,14 +551,8 @@ def _one_of(node: OneOf, column: ColumnElement[Any], in_list: _InList) -> Column
     parts: list[ColumnElement[bool]] = []
     if node.type == 'date' and not isinstance(_sql_type(column), Date):
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
-    elif node.values:
-        if node.type == 'boolean':
-            parts.append(in_list(column, [_boolean(column, value) for value in node.values], False))
-        elif node.type == 'number':
-            values = [_number(column, value, node.column, listed=True) for value in node.values]
-            parts.append(in_list(column, values, False))
-        else:
-            parts.append(in_list(column, list(node.values), node.type == 'string' and _folds(node.column, column)))
+    elif values:
+        parts.append(in_list(column, values, node.type == 'string' and _folds(node.column, column)))
     if node.empty:
         parts.append(_empty(column, node.type))
     return or_(*parts)

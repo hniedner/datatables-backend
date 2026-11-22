@@ -8,6 +8,7 @@ from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from decimal import Decimal
 import logging
 import os
 import re
@@ -20,8 +21,10 @@ from sqlalchemy import CHAR
 from sqlalchemy import BigInteger
 from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Enum
+from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
+from sqlalchemy import Numeric
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import Uuid
@@ -30,6 +33,7 @@ from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
 from sqlalchemy import select
+from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -1452,6 +1456,107 @@ def test_a_criterion_with_more_values_than_its_condition_takes_is_refused(
     """PRD-F36: using the first value alone would answer another question than the one asked. The text is in
     test_a_user_error_says_what_is_wrong_and_what_to_do."""
     refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
+
+
+WIDE = ('id', 'ratio', 'exact', 'loose', 'count', 'untyped')
+TWO_64 = 2**64
+
+
+def wide(session: Session) -> SQLTable:
+    """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float) and in `exact`
+    (a `Numeric(32, 2)`, so 30 digits before the point), and in `count`, an unsigned BIGINT on MySQL and a signed one elsewhere, the largest value
+    it takes; `untyped` is `ratio` as an expression without a SQL type, declared a number. Row 2 holds NULL."""
+    dialect = session.get_bind().dialect.name
+    numbers = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('ratio', Float),
+        SQLColumn('exact', Numeric(32, 2)),
+        SQLColumn('loose', Numeric),
+        SQLColumn('count', mysql.BIGINT(unsigned=True)),
+    )
+    numbers.create(session.connection())
+    largest = TWO_64 - 1 if dialect == 'mysql' else 2**63 - 1
+    session.execute(
+        numbers.insert(),
+        [
+            {'id': 1, 'ratio': 2.0**64, 'exact': Decimal(TWO_64), 'loose': Decimal(7), 'count': largest},
+            {'id': 2, 'ratio': None, 'exact': None, 'loose': None, 'count': None},
+        ],
+    )
+    source = select(*numbers.c, literal_column('ratio').label('untyped')).subquery()
+    return SQLTable(source, [*(Column(name) for name in WIDE[:-1]), Column('untyped', type='number')])
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        criterion('ratio', '=', str(TWO_64)),
+        {'column_search': {'ratio': {'multi_values': [str(TWO_64)]}}},  # the list reads its values in its own place
+        criterion('untyped', '=', str(TWO_64)),  # a column without a number type of its own compares as a float too
+        criterion('exact', '=', str(TWO_64)),
+    ],
+)
+def test_a_whole_number_beyond_64_bits_is_answered_on_a_column_that_is_no_integer(
+    session: Session, body: dict[str, Any]
+):
+    """PRD-F25: a driver sends a whole number as a 64-bit integer, so this one failed the request on SQLite,
+    PostgreSQL and SQL Server. It goes as the nearest float, and to a `Numeric` column as a decimal."""
+    assert ids(wide(session).fetch_sync(request(*WIDE, **body), session)) == [1]
+
+
+def test_a_whole_number_beyond_64_bits_is_compared_exactly_with_a_numeric_column(session: Session):
+    """PRD-F25: 2^64 + 1 is not the 2^64 the row holds, though as floats they are the same number. SQLite is the
+    stated exception (PRD section 5): SQLAlchemy binds a decimal as a float there, so it finds the row."""
+    params = request(*WIDE, **criterion('exact', '=', str(TWO_64 + 1)))
+    found = [1] if session.get_bind().dialect.name == 'sqlite' else []
+    assert ids(wide(session).fetch_sync(params, session)) == found
+
+
+@pytest.mark.parametrize(
+    ('body', 'text'),
+    [
+        (
+            criterion('exact', '=', '9' * 31),
+            'The filter on "exact" needs a number with at most 30 digits before the decimal point.',
+        ),
+        (
+            criterion('exact', 'between', '1', '9' * 31),
+            'Each value in the filter on "exact" must be a number with at most 30 digits before the decimal point.',
+        ),
+    ],
+)
+def test_a_whole_number_with_more_digits_than_a_numeric_column_holds_is_refused(
+    session: Session, body: dict[str, Any], text: str
+):
+    """PRD-F25: the column's precision less its scale. The bound in the text is the column's, never the user's."""
+    assert refused(wide(session).fetch_sync(request(*WIDE, **body), session), 'invalid_number') == text
+
+
+def test_a_numeric_column_without_a_precision_is_bounded_only_where_the_database_bounds_it(session: Session):
+    """PRD-F25: SQL Server's decimal holds 38 digits, and its driver refuses to send a longer number (MEASURED:
+    HY104), so there 39 digits are the user's mistake. PostgreSQL and MySQL take the number, and no row holds it."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion('loose', '=', '9' * 39)), session)
+    if session.get_bind().dialect.name == 'mssql':
+        refused(response, 'invalid_number')
+    else:
+        assert ids(response) == []
+
+
+def test_a_whole_number_too_large_for_a_float_is_no_finite_number(session: Session):
+    """PRD-F25: 400 digits on a float column, as `1e999` is refused where it is read (SPEC-F25.1)."""
+    refused(wide(session).fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 400)), session), 'invalid_number')
+
+
+def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
+    """PRD-F25: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself, as declared and as
+    reflected. A negative number is outside it on every database; the largest value is found on MySQL, the only
+    database that stores it."""
+    numbers = wide(session)
+    refused(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', '-1')), session), 'invalid_number')
+    if session.get_bind().dialect.name == 'mysql':
+        assert ids(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', str(TWO_64 - 1))), session)) == [1]
 
 
 @pytest.mark.parametrize(
