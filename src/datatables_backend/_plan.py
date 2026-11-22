@@ -22,7 +22,6 @@ import math
 import re
 from typing import Any
 from typing import Literal
-from typing import cast
 import unicodedata
 
 from .columns import Column
@@ -201,7 +200,9 @@ class Part:
 
 @dataclass(frozen=True)
 class Bound:
-    value: Any
+    """One end of a ``Range``: a number, or a day."""
+
+    value: int | float | date
     included: bool
 
 
@@ -281,7 +282,9 @@ def plan(
     mistakes: Mistakes,
 ) -> Plan:
     """Check ``params`` against ``columns`` and return what it asks for. ``describe`` says what the backend can do
-    with a column, so that every skip and refusal is decided here, for every backend alike.
+    with a column, so that a skip or a refusal is decided here, for every backend alike. Two refusals are left to a
+    backend, which alone knows what they need: SQL's of a number outside its column's range, and OpenSearch's of a
+    list of exact values on analysed text.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -458,39 +461,43 @@ def _criterion(
             f'The filter on "{column.name}" needs {"two values" if needed == 2 else "a value"}.',
             column,
         )
-    positive = _condition(column, kind, cast(Condition, condition.removeprefix('!')), values)
+    positive = _positive(column, kind, condition, values)
     return Not(positive) if condition.startswith('!') else positive
 
 
-def _condition(
+def _positive(
     column: Column, kind: ColumnType, condition: Condition, values: Sequence[Any]
 ) -> Equals | Part | Range | Empty:
-    """A positive condition as what it matches. A date is matched by whole days (PRD-F21): each condition is the
-    days from one, included, up to another, not included."""
-    if condition == 'null':
-        return Empty(column, kind)
-    if kind == 'date':
-        if condition == 'contains':
+    """What a condition matches, or for a negative one what it does not. A date is matched by whole days (PRD-F21):
+    each condition is the days from one, included, up to another, not included."""
+    if kind == 'date' and condition not in ('null', '!null'):
+        start: date | None
+        end: date | None
+        if condition in ('contains', '!contains'):
             start, end = values[0]
         else:
             first, last = values[0], values[-1]
             start = None if condition in ('<', '<=') else next_day(first) if condition == '>' else first
             end = None if condition in ('>', '>=') else first if condition == '<' else next_day(last)
-        return Range(column, kind, Bound(start, True) if start else None, Bound(end, False) if end else None)
+        return Range(
+            column, kind, None if start is None else Bound(start, True), None if end is None else Bound(end, False)
+        )
     match condition:
-        case '=':
+        case 'null' | '!null':
+            return Empty(column, kind)
+        case '=' | '!=':
             return Equals(column, kind, values[0])
-        case 'contains':
+        case 'contains' | '!contains':
             return Part(column, kind, values[0], 'any')
-        case 'starts':
+        case 'starts' | '!starts':
             return Part(column, kind, values[0], 'start')
-        case 'ends':
+        case 'ends' | '!ends':
             return Part(column, kind, values[0], 'end')
-        case 'between':
+        case 'between' | '!between':
             return Range(column, kind, Bound(values[0], True), Bound(values[1], True))
         case '<' | '<=':
             return Range(column, kind, None, Bound(values[0], condition == '<='))
-        case _:  # '>' or '>='
+        case '>' | '>=':
             return Range(column, kind, Bound(values[0], condition == '>='), None)
 
 

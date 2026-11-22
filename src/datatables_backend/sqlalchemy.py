@@ -18,6 +18,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import assert_never
 from typing import cast
 
 from sqlalchemy import BigInteger
@@ -55,6 +56,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
 
+from ._plan import Bound
 from ._plan import Capabilities
 from ._plan import Contains
 from ._plan import Empty
@@ -214,7 +216,9 @@ class SQLTable:
         conditions: list[ColumnElement[bool]] = []
         if request.global_search:
             conditions.append(or_(*(self._contains(search) for search in request.global_search)))
-        filters = [*request.column_searches, *([request.search_builder] if request.search_builder else [])]
+        filters: list[Filter | Group] = list(request.column_searches)
+        if request.search_builder is not None:
+            filters.append(request.search_builder)
         for node in filters:
             built = self._compile(node, in_list, mistakes)
             if built is not None:
@@ -230,35 +234,41 @@ class SQLTable:
         return _text(column).ilike(pattern, escape='\\')
 
     def _compile(self, node: Filter | Group, in_list: _InList, mistakes: Mistakes) -> ColumnElement[bool] | None:
-        """The condition of one node of the plan; None for one that holds a mistake (a number outside the column's
-        range, kept in ``mistakes``) and for a group left with none."""
+        """The condition of one node of the plan; None for a condition that holds a mistake (a number outside the
+        column's range, kept in ``mistakes``) and for a group left with none."""
         if isinstance(node, Group):
             parts = [part for item in node.items if (part := self._compile(item, in_list, mistakes)) is not None]
             if not parts:
                 return None
             return and_(*parts) if node.logic == 'AND' else or_(*parts)
+        with mistakes.part():
+            return self._condition(node, in_list)
+        return None
+
+    def _condition(self, node: Filter, in_list: _InList) -> ColumnElement[bool]:
+        """One condition on one column.
+
+        Raises:
+            InvalidFilter: a number of the condition is outside the column's range.
+        """
         column = self._sql(node.column)
-        if isinstance(node, Not):
-            positive = self._compile(node.node, in_list, mistakes)
-            if positive is None:
-                return None
-            # PRD-F37 lets NULL satisfy every negative condition. Today only a boolean's `!=` does; the second pull
-            # request of issue 14 makes this the rule for every negation but "not empty"
-            if node.type == 'boolean' and isinstance(node.node, Equals):
-                return or_(not_(positive), column.is_(None))
-            return not_(positive)
-        if isinstance(node, Contains):
-            return self._contains(node)
-        if node.type == 'number' and isinstance(node, Equals | Range | OneOf):
-            with mistakes.part():
-                return _number_condition(node, column, in_list)
-            return None
         match node:
+            case Not():
+                positive = self._condition(node.node, in_list)
+                # PRD-F37 lets NULL satisfy every negative condition. Today only a boolean's `!=` does; the second
+                # pull request of issue 14 makes this the rule for every negation but "not empty"
+                if node.type == 'boolean' and isinstance(node.node, Equals):
+                    return or_(not_(positive), column.is_(None))
+                return not_(positive)
+            case Contains():
+                return self._contains(node)
             case Empty():  # a number or a date is never compared with text
                 return _empty(column) if node.type in ('string', 'number') else column.is_(None)
+            case Equals() if node.type == 'number':
+                return column == _number(column, node.value, node.column, listed=False)
+            case Equals() if node.type == 'boolean':
+                return column == _boolean(column, node.value)
             case Equals():
-                if node.type == 'boolean':
-                    return column == _boolean(column, node.value)
                 # The value is folded by the database too: Python lowers letters that SQLite's lower() leaves alone
                 fold = _folds(node.column, column)
                 return _lower(column) == func.lower(node.value) if fold else column == node.value
@@ -266,10 +276,17 @@ class SQLTable:
                 escaped = escape_like(str(node.value))
                 pattern = {'any': f'%{escaped}%', 'start': f'{escaped}%', 'end': f'%{escaped}'}[node.where]
                 return _text(column).ilike(pattern, escape='\\')
-            case Range():  # of days
-                return _days(column, node.lower and node.lower.value, node.upper and node.upper.value)
+            case Range() if node.type == 'number':
+                several = node.lower is not None and node.upper is not None  # the two values of a `between`
+                return _between(
+                    column, node.lower, node.upper, lambda value: _number(column, value, node.column, listed=several)
+                )
+            case Range():
+                return _days(column, node.lower, node.upper)
             case OneOf():
                 return _one_of(node, column, in_list)
+            case _:
+                assert_never(node)
 
     def _ordered(self, stmt: Select[Any], request: Plan, dialect: Dialect) -> Select[Any]:
         """The user's order with NULL as the lowest value, then the primary key in the direction of the first
@@ -410,29 +427,17 @@ def _empty(column: ColumnElement[Any]) -> ColumnElement[bool]:
     return column.is_(None)
 
 
-def _number_condition(
-    node: Equals | Range | OneOf, column: ColumnElement[Any], in_list: _InList
+def _between(
+    column: ColumnElement[Any], lower: Bound | None, upper: Bound | None, value: Callable[[Any], Any]
 ) -> ColumnElement[bool]:
-    """A condition on a number column, each of its numbers checked against the column's range first."""
-
-    def checked(value: Any, *, listed: bool) -> Any:
-        return _number(column, value, node.column, listed=listed)
-
-    match node:
-        case Equals():
-            return column == checked(node.value, listed=False)
-        case OneOf():
-            return in_list(column, [checked(value, listed=True) for value in node.values], False)
-        case Range():
-            several = node.lower is not None and node.upper is not None  # the two values of a `between`
-            parts: list[ColumnElement[bool]] = []
-            if node.lower is not None:
-                low = checked(node.lower.value, listed=several)
-                parts.append(column >= low if node.lower.included else column > low)
-            if node.upper is not None:
-                high = checked(node.upper.value, listed=several)
-                parts.append(column <= high if node.upper.included else column < high)
-            return and_(*parts) if several else parts[0]
+    """The column lies between the bounds, each included or not as it says; one of them may be open. ``value``
+    gives a bound's value as the column compares it."""
+    parts: list[ColumnElement[bool]] = []
+    if lower is not None:
+        parts.append(column >= value(lower.value) if lower.included else column > value(lower.value))
+    if upper is not None:
+        parts.append(column <= value(upper.value) if upper.included else column < value(upper.value))
+    return and_(*parts) if len(parts) == 2 else parts[0]
 
 
 def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
@@ -459,10 +464,9 @@ def _lower(column: ColumnElement[Any]) -> ColumnElement[Any]:
     return func.lower(_text(column))
 
 
-def _days(column: ColumnElement[Any], start: date | None, end: date | None) -> ColumnElement[bool]:
-    """The column's day is from ``start`` up to, not including, ``end`` (either may be open), whether it holds
-    dates or datetimes: a datetime is compared with the midnight that begins the day, in UTC where the column
-    carries a zone."""
+def _days(column: ColumnElement[Any], lower: Bound | None, upper: Bound | None) -> ColumnElement[bool]:
+    """The column's day lies between two days, whether it holds dates or datetimes: a datetime is compared with the
+    midnight that begins the day, in UTC where the column carries a zone."""
     sql_type = _sql_type(column)
 
     def at(day: date) -> date | datetime:
@@ -471,26 +475,24 @@ def _days(column: ColumnElement[Any], start: date | None, end: date | None) -> C
         midnight = datetime(day.year, day.month, day.day)
         return midnight.replace(tzinfo=UTC) if _aware(sql_type) else midnight
 
-    if start is None:
-        return column < at(cast(date, end))
-    if end is None:
-        return column >= at(start)
-    return and_(column >= at(start), column < at(end))
+    return _between(column, lower, upper, at)
 
 
 def _one_of(node: OneOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
-    """A list on a string, boolean or date column. On a date column the row's day is one of its days, or the row
+    """A list of exact values. On a date column the row's day is one of its days, or the row
     has none where the list holds an empty entry (PRD-F21). A column whose SQL type is a ``Date`` holds a day and
     nothing else, so its days are one IN list: a long list stays one flat condition and takes SQL Server's JSON
     path (PRD-C17). A column of any other type, a datetime or one only declared a date, may hold a time, so each
     entry gets the day's two bounds, as ``=`` gives it: two parameters each, and no JSON path."""
     if node.type == 'boolean':
         return in_list(column, [_boolean(column, value) for value in node.values], False)
+    if node.type == 'number':
+        return in_list(column, [_number(column, value, node.column, listed=True) for value in node.values], False)
     if node.type == 'string':
         return in_list(column, list(node.values), _folds(node.column, column))
     parts: list[ColumnElement[bool]] = []
     if not isinstance(_sql_type(column), Date):
-        parts += [_days(column, day, next_day(day)) for day in node.values]
+        parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
     elif node.values:
         parts.append(in_list(column, list(node.values), False))
     if node.empty:

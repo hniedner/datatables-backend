@@ -378,7 +378,7 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             if node.upper is not None:
                 bounds['lte' if node.upper.included else 'lt'] = node.upper.value
             if node.type == 'date':  # days, in the one format every date field reads
-                bounds = {**{key: day.isoformat() for key, day in bounds.items()}, 'format': 'strict_date'}
+                bounds = {**{key: str(day) for key, day in bounds.items()}, 'format': 'strict_date'}  # ISO days
             return {'range': {field: bounds}}
         case Equals() if node.type != 'string':
             return {'term': {field: node.value}}
