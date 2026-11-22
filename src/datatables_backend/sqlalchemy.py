@@ -661,10 +661,13 @@ def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> C
 # Not measured: it runs only on SQL Server; every test of the sqlserver leg runs it
 def _parameter_count(stmt: Select[Any], dialect: Dialect) -> int:  # pragma: no cover
     """The parameters ``stmt`` sends on the session's database, each value of a list counted. It is compiled by the
-    session's own kind of dialect, which alone knows every construct of its database, told to number its parameters
-    by position so they can be counted."""
-    kind: Any = type(dialect)  # the `Dialect` interface declares no constructor; every SQL Server dialect takes this
-    positional = kind(paramstyle='qmark')
+    session's own dialect, which alone knows every construct of its database and how this server is sent a
+    statement. A driver that names its parameters (pymssql) cannot be counted by position, so a dialect of the same
+    kind that numbers them stands in; it knows no server version and may count a few too many, never too few."""
+    positional = dialect
+    if not dialect.positional:
+        kind: Any = type(dialect)  # the `Dialect` interface declares no constructor; SQL Server's dialects take this
+        positional = kind(paramstyle='qmark')
     compiled = cast(SQLCompiler, stmt.compile(dialect=positional, compile_kwargs={'render_postcompile': True}))
     return len(compiled.positiontup or ())
 

@@ -18,6 +18,9 @@ class TotalCache:
     scope a cache of its own: a database session's state (row-level security, a role, a schema search path or
     schema translation, the current database), OpenSearch's document-level security, or a second cluster with the
     same index name.
+
+    A bound value enters the key by its ``repr``, which must not change between requests: a value whose ``repr``
+    holds its address never finds its total again.
     """
 
     def __init__(self, ttl: float = 300.0) -> None:

@@ -202,6 +202,16 @@ def test_two_scopes_that_differ_only_in_a_bound_value_never_share_a_total(
     assert totals == [2, 1]
 
 
+async def test_the_async_fetch_keeps_two_scopes_apart_too(async_session: AsyncSession):
+    """SPEC-C15.5 through `fetch`, which reads and fills the cache in code of its own."""
+    cache, params = TotalCache(ttl=60), request('id', 'name', search={'value': 'e'})
+    totals = [
+        (await _scoped_in_a_subquery(team, cache).fetch(params, async_session)).recordsTotal
+        for team in ('red', 'green')
+    ]
+    assert totals == [2, 1]
+
+
 class _every_row(ColumnElement[bool]):  # noqa: N801
     """A condition with a handler for each database the tests run on and none for SQLAlchemy's default dialect, as
     an application's own construct or MySQL's ``MATCH`` has."""
