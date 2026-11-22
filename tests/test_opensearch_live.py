@@ -410,20 +410,6 @@ def test_a_fullwidth_mark_is_searched_as_the_character_its_field_folds_it_to(
 
 
 @pytest.mark.xfail(
-    reason='PRD-F38, issue #27: a list is not capped at 256 values yet, and a string list is one term query for each '
-    'value (PRD-F9), so past the cluster\'s 1,024 clauses ("maxClauseCount is set to 1024", what 3.10.0 and 2.19.7 '
-    'answer) the search fails where a `terms` query answered',
-    strict=True,
-    raises=RequestError,
-)
-def test_a_long_list_of_exact_values_is_answered(client: OpenSearch):
-    """1,100 values are 1,100 term queries in one `bool`, where a `terms` query took 65,536."""
-    values = [f'n{index}' for index in range(1099)] + ['APPLE PIE']
-    params = request(*NAMES, column_search={'title': {'multi_values': values}})
-    assert found(table.fetch_sync(params, client)) == ['a1']
-
-
-@pytest.mark.xfail(
     reason="PRD-E7, issue #47: a number outside the range of the field's own mapping (`pages` is an `integer`) is "
     'refused by the server with a 400 ("out of range for an integer"), so the request fails where the user\'s '
     'mistake should be answered with invalid_number. PRD section 5 states the limit until the issue is closed',

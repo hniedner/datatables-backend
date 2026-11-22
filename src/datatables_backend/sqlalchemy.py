@@ -400,9 +400,10 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
     is a fair question, and they answer it.
 
     A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
-    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to a column that stores text as
-    its digits, since text is compared with text; to any other column (a ``Float``, an expression without a type)
-    as the nearest float, which holds a whole number of up to 308 digits.
+    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly (on SQLite, which binds no ``Decimal``
+    and compares a ``Numeric`` as a float, as the nearest float); to a column that stores text as its digits, since
+    text is compared with text; to any other column (a ``Float``, an expression without a type) as the nearest
+    float, which holds a whole number of up to 308 digits.
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
@@ -433,7 +434,7 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
         )
     if isinstance(value, float) or -(2**63) <= value < 2**63:
         return value
-    if exact:
+    if exact and dialect.name != 'sqlite':  # SQLite binds no Decimal, and compares a Numeric as a float anyway
         return Decimal(value)
     if isinstance(sql_type, String):
         return str(value)

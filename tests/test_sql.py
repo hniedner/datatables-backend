@@ -1700,6 +1700,13 @@ def test_a_whole_number_too_large_for_a_float_is_refused_with_the_digits_it_may_
     assert refused(response, 'invalid_number') == 'The filter on "ratio" needs a number of at most 308 digits.'
 
 
+def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
+    """SPEC-F25.7: a list entry is sent to a decimal column as a single value is. SQLite binds no `Decimal` and
+    raised `ProgrammingError` for the entry; it compares a `Numeric` as a float, so it gets the nearest float."""
+    params = request(*WIDE, column_search={'exact': {'multi_values': ['1', str(TWO_64)]}})
+    assert ids(wide(session).fetch_sync(params, session)) == [1]
+
+
 def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
     """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself. A negative number is
     outside it on every database; the largest value is found on MySQL, the only database that stores it."""

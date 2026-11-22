@@ -247,6 +247,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   none; [SQL Server] → error_code `invalid_number`.
 - **SPEC-F25.6** [SQL] With `price` redeclared as MySQL's unsigned `BIGINT`: `=` `-1` → error_code `invalid_number`.
   [MySQL] Given a row whose `price` is 18446744073709551615: `=` `18446744073709551615` → that row.
+- **SPEC-F25.7** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
+  18446744073709551616: a `multi_values` list of `1` and `18446744073709551616` → that row, on SQLite too (which
+  sends the nearest float).
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
