@@ -91,6 +91,8 @@ query raises, as any server failure does. These limits hold on every version, 3.
 - **A normalizer that rewrites a character into punctuation.** On a keyword field with such a normalizer
   (`asciifolding` does it to `⒜`, `⑴`, `⁇`), a value that holds a cased character outside ASCII and such a
   character can fail, miss its own row or match other rows. A `lowercase` normalizer is not affected.
+  [What each database does on its own](docs/databases.md) says which characters folded to `*`, `?` or `\` a search
+  still reads as a wildcard.
 - **A normalizer that trims.** On a keyword field with a `trim` normalizer, a search text with a cased character
   outside ASCII and a space at its start or end finds fewer rows than the same text without the space: the space is
   kept where the search is open (`contains`, a global or column search, `starts` with a space at the end, `ends`

@@ -101,6 +101,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F9.18** [OS] A value longer than 255 code points is sent as the `term` or `wildcard` it would be without
   its cased character outside ASCII: a letter outside the BMP and 254 dots, 255 code points, is a `regexp`; with 255
   dots, 256 code points, a `term`.
+- **SPEC-F9.19** [OS] SearchBuilder `contains` with `a`, a fullwidth `＊` (U+FF0A), `？` (U+FF1F) or `＼` (U+FF3C),
+  and `b` on a keyword column is sent as a `regexp` query with `case_insensitive`, open at both ends, the mark
+  behind a backslash. `=` with `a＊b` is the `term` it was, and `contains` with `＊` and 255 letters `a`, 256 code
+  points, the `wildcard` it was.
+- **SPEC-F9.20** [OS container] Given a keyword field with a normalizer of `asciifolding` and `lowercase`, holding
+  `a*b` in row 1, `a＊b` in row 2, `a?b` in row 3, `a？b` in row 4, and `a\b`, `a＼b` and `axyb` in row 5:
+  SearchBuilder `contains` `a＊b` → rows 1, 2; `a？b` → rows 3, 4; `a＼b` → rows 5.
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,

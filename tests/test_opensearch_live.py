@@ -63,8 +63,15 @@ MAPPING = {
         'meta': {'properties': {'author': KEYWORD_TEXT}},
         'active': {'type': 'boolean'},
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
+        # A whole string the server folds to ASCII and to small letters; declared only by the table `folded` below
+        'folded': {'type': 'keyword', 'normalizer': 'to_ascii'},
     }
 }
+SETTINGS = {
+    'number_of_replicas': 0,
+    'analysis': {'normalizer': {'to_ascii': {'type': 'custom', 'filter': ['asciifolding', 'lowercase']}}},
+}
+ASTERISK, QUESTION, BACKSLASH = chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)  # the fullwidth forms of `*`, `?` and `\`
 LONGEST = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:255]  # as many code points as PRD-F14 lets a search text hold
 # Three values of 255 code points with a cased letter outside ASCII, each a `regexp` query. One letter repeated is
 # the text a server refuses earliest of those measured: as a substring it answers 300 of them and refuses 400, as
@@ -89,16 +96,18 @@ ESCAPED = [*(f'Ä{char}Z' for char in OPERATORS), f'Ä{PUNCTUATION}Z']
 DECOY = 'ÄXZ'
 DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
-     'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED},
+     'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED, 'folded': 'a*b'},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY},
-    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST},
+     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b'},
+    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b'},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
      'meta': {'author': 'Cy'}, 'active': True, 'label': [REPEATED_LETTER, DOTTED, LONGEST_PATTERN, 'bär'],
-     'seen': '2026-08-02T22:00:00-05:00'},  # written on the 2nd, and 03:00 UTC on the 3rd
+     'seen': '2026-08-02T22:00:00-05:00',  # written on the 2nd, and 03:00 UTC on the 3rd
+     'folded': f'a{QUESTION}b'},
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
      'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL',
-     'seen': '2026-08-01T23:00:00-05:00'},  # written on the 1st, and 04:00 UTC on the 2nd
+     'seen': '2026-08-01T23:00:00-05:00',  # written on the 1st, and 04:00 UTC on the 2nd
+     'folded': ['a\\b', f'a{BACKSLASH}b', 'axyb']},
 ]  # fmt: skip
 COLUMNS = [
     IndexColumn('id', text='keyword'),
@@ -118,7 +127,7 @@ def client() -> Iterator[OpenSearch]:
     client = OpenSearch(hosts=[URL])
     if client.indices.exists(index=INDEX):  # left by an interrupted run
         client.indices.delete(index=INDEX)
-    client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
+    client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': SETTINGS})
     for number, document in enumerate(DOCUMENTS, 1):
         client.index(index=INDEX, id=str(number), body=document)
     client.indices.refresh(index=INDEX)
@@ -376,6 +385,28 @@ def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch):
     dots above, and `@`, `\\` and `~` by the rows before this one."""
     params = request(*LABEL_NAMES, **criterion('label', '=', f'Ä{PUNCTUATION}Z'))
     assert found(whole_label.fetch_sync(params, client)) == ['a1']
+
+
+folded = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('folded', text='keyword')])
+
+
+@pytest.mark.parametrize(
+    ('mark', 'expected'),
+    [
+        pytest.param(ASTERISK, ['a1', 'b2'], id='asterisk'),  # as any string, it would find every row
+        pytest.param(QUESTION, ['c3', 'd4'], id='question-mark'),  # as any one character, every row as well
+        pytest.param(BACKSLASH, ['e5'], id='backslash'),  # as the escape of a wildcard, no row
+    ],
+)
+def test_a_fullwidth_mark_is_searched_as_the_character_its_field_folds_it_to(
+    client: OpenSearch, mark: str, expected: list[str]
+):
+    """SPEC-F9.20: `folded` is a keyword field whose normalizer makes the mark an ASCII `*`, `?` or `\\`, in what
+    is stored and in what is searched. a1 and b2 hold `a*b`, with the ASCII and with the fullwidth asterisk; c3 and
+    d4 hold `a?b` in the same two forms; e5 holds `a\\b` in both and `axyb`. A search for `a`, the mark, `b` finds
+    the rows holding the ASCII or the fullwidth character there, and no other."""
+    params = request('id', 'folded', **criterion('folded', 'contains', f'a{mark}b'))
+    assert found(folded.fetch_sync(params, client)) == expected
 
 
 @pytest.mark.xfail(
