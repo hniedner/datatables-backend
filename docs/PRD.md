@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 32 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 33 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -19,7 +19,8 @@
   PRD-F26, lines in section 5 and the sentence on milestones in section 6; revision 30, approved by the owner on
   2026-11-22, changes who may change a requirement, in the last sentences of this block; revision 31, approved by
   the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key); revision 32, approved by the
-  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17). It replaces draft 1 (R1 to R9); section
+  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17; revision 33 adds a clause to PRD-F11 (a word
+on analysed text matches as a phrase of its tokens), with its line in section 5). It replaces draft 1 (R1 to R9); section
   10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -1576,7 +1577,7 @@ where a database decides. Each difference is stated here; every other answer is 
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
 | A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
-| On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`) and, where the analyser splits it, a phrase of its tokens (`foo-bar` finds `foo bar` but not `foo` alone); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
+| On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither. | SQL and OpenSearch | PRD-F11 |
 | On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number and refuses a whole number of 400 digits in the same way. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
 | On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
 | A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
