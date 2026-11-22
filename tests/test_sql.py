@@ -1541,6 +1541,27 @@ def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Sess
     assert ids(table.fetch_sync(params, session)) == []
 
 
+def test_an_order_by_the_key_of_a_join_names_the_key_once(session: Session):
+    """PRD-O3 on a join, whose columns are named `<table>_<column>`: the tie-breaker must know the key the user
+    already orders by. SQL Server refuses a column named twice in an ORDER BY."""
+    other = people.alias('other')
+    joined = SQLTable(people.join(other, people.c.id == other.c.id), [Column('id', field='dtb_test_people_id')])
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    assert ids(joined.fetch_sync(request('id', order=[{'column': 0, 'dir': 'desc'}]), session)) == [5, 4, 3, 2, 1]
+    assert statements[-1][statements[-1].rindex('ORDER BY') :].count('dtb_test_people.id') == 1
+
+
+def test_two_columns_on_one_field_are_ordered_by_once(session: Session):
+    """SPEC-O8.4 for two declared columns that read the same field: the second entry is the first one's repeat."""
+    twice = SQLTable(people, [Column('id'), Column('name'), Column('label', field='name')])
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    params = request('id', 'name', 'label', order=[{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}])
+    assert len(ids(twice.fetch_sync(params, session))) == 5  # answered: SQL Server refuses a column named twice
+    assert statements[-1][statements[-1].rindex('ORDER BY') :].count('dtb_test_people.name') == 1
+
+
 def test_a_join_works_as_a_source(session: Session):
     other = people.alias('other')
     joined = people.join(other, people.c.age == other.c.age)

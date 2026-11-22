@@ -263,12 +263,13 @@ class SQLTable:
         entry: the same rows come in the same order, a tie never splits across pages, and a descending order is the
         exact reverse of the ascending one."""
         descending = bool(request.order) and request.order[0].descending
-        ordered: set[str] = set()
-        for item in request.order:
-            ordered.add(item.column.source)
-            stmt = stmt.order_by(self._by(self._sql(item.column), item.descending, dialect))
+        ordered = [self._sql(item.column) for item in request.order]
+        for column, item in zip(ordered, request.order, strict=True):
+            stmt = stmt.order_by(self._by(column, item.descending, dialect))
         for key in _primary_key(self.source):
-            if key.key not in ordered:
+            # A key column the user already orders by is not named again: SQL Server refuses a column named twice.
+            # It is told by the column itself, since a join names its columns `<table>_<column>`, not by their keys
+            if all(key is not column for column in ordered):
                 stmt = stmt.order_by(self._by(key, descending, dialect))
         return stmt
 
