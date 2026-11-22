@@ -497,24 +497,25 @@ def _days(column: ColumnElement[Any], lower: Bound | None, upper: Bound | None) 
 
 
 def _one_of(node: OneOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
-    """A list of exact values. On a date column the row's day is one of its days, or the row
-    has none where the list holds an empty entry (PRD-F21). A column whose SQL type is a ``Date`` holds a day and
-    nothing else, so its days are one IN list: a long list stays one flat condition and takes SQL Server's JSON
-    path (PRD-C17). A column of any other type, a datetime or one only declared a date, may hold a time, so each
-    entry gets the day's two bounds, as ``=`` gives it: two parameters each, and no JSON path."""
-    if node.type == 'boolean':
-        return in_list(column, [_boolean(column, value) for value in node.values], False)
-    if node.type == 'number':
-        return in_list(column, [_number(column, value, node.column, listed=True) for value in node.values], False)
-    if node.type == 'string':
-        return in_list(column, list(node.values), _folds(node.column, column))
+    """A list of exact values, and the rows without a value where the list holds an empty entry (PRD-F17,
+    PRD-F20), which is never one of the values sent. On a date column the row's day is one of the list's days. A
+    column whose SQL type is a ``Date`` holds a day and nothing else, so its days are one IN list: a long list
+    stays one flat condition and takes SQL Server's JSON path (PRD-C17). A column of any other type, a datetime or
+    one only declared a date, may hold a time, so each entry gets the day's two bounds, as ``=`` gives it: two
+    parameters each, and no JSON path."""
     parts: list[ColumnElement[bool]] = []
-    if not isinstance(_sql_type(column), Date):
+    if node.type == 'date' and not isinstance(_sql_type(column), Date):
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
     elif node.values:
-        parts.append(in_list(column, list(node.values), False))
+        if node.type == 'boolean':
+            parts.append(in_list(column, [_boolean(column, value) for value in node.values], False))
+        elif node.type == 'number':
+            values = [_number(column, value, node.column, listed=True) for value in node.values]
+            parts.append(in_list(column, values, False))
+        else:
+            parts.append(in_list(column, list(node.values), node.type == 'string' and _folds(node.column, column)))
     if node.empty:
-        parts.append(column.is_(None))
+        parts.append(_empty(column, node.type))
     return or_(*parts)
 
 

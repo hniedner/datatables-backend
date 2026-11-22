@@ -382,6 +382,47 @@ def test_a_list_on_a_date_column_is_a_day_range_for_each_entry():
     ]
 
 
+MISSING = {'bool': {'must_not': [{'exists': {'field': 'pages'}}]}}
+
+
+@pytest.mark.parametrize(
+    ('column', 'values', 'expected'),
+    [
+        # Beside a value: a string folds, so each value is a term query; a number is one terms query
+        (
+            'title',
+            ['', 'a'],
+            {
+                'bool': {
+                    'should': [
+                        {'term': {'title.keyword': {'value': 'a', 'case_insensitive': True}}},
+                        {'bool': {'must_not': [{'exists': {'field': 'title'}}]}},
+                    ],
+                    'minimum_should_match': 1,
+                }
+            },
+        ),
+        ('pages', [' ', '7'], {'bool': {'should': [{'terms': {'pages': [7]}}, MISSING], 'minimum_should_match': 1}}),
+        ('pages', [''], MISSING),  # alone, with no value to send
+        # Analysed text has no whole string for a list of values, but it can be missing
+        ('body', [''], {'bool': {'must_not': [{'exists': {'field': 'body'}}]}}),
+    ],
+)
+def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[str], expected: dict[str, Any]):
+    """PRD-F20, PRD-F26 (SPEC-F20.2, SPEC-F33.4): the entry is never sent as a value. On a number column white
+    space is such an entry too."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={column: {'multi_values': values}}), client)
+    assert query(client) == [expected]
+
+
+def test_a_column_search_of_spaces_only_adds_no_clause():
+    """SPEC-F6.2 on a number column, where the text would otherwise have to be one number (PRD-F33)."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={'pages': {'value': '   '}}), client)
+    assert query(client) == []
+
+
 @pytest.mark.parametrize(
     'unfolded',
     [

@@ -632,6 +632,17 @@ def test_empty_is_the_empty_string_too_where_the_column_stores_text(
     assert ids(stored.fetch_sync(request('id', column, **criterion(column, 'null')), session)) == expected
 
 
+@pytest.mark.parametrize('column', ['ref', 'uid'])
+def test_an_empty_entry_on_a_column_with_a_type_of_its_own_is_never_sent_as_a_value(
+    session: Session, cased: SQLTable, column: str
+):
+    """PRD-F20: both types refuse to convert `''`, so as a value of the list it failed the query."""
+    tags = with_blank_rows(session, cased)
+    typed = SQLTable(tags, [Column('id'), Column('ref'), Column('uid')])
+    params = request('id', column, column_search={column: {'multi_values': ['']}})
+    assert ids(typed.fetch_sync(params, session)) == [6, 7]
+
+
 @pytest.mark.parametrize(('column', 'expected'), [('text', [6, 7]), ('day', [7])])
 def test_empty_on_an_expression_without_a_type_follows_its_declaration(
     session: Session, cased: SQLTable, column: str, expected: list[int]
@@ -907,17 +918,80 @@ def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
     assert ids(flagged.fetch_sync(params, session)) == expected
 
 
-@pytest.mark.xfail(
-    reason='PRD-F20, PRD-F17: an empty multi_values entry means empty only on a date column yet (SPEC-F21.7). A '
-    'boolean column refuses it with invalid_filter, as here, and a number column with invalid_number (SPEC-F44.3, '
-    'issue #14)',
-    strict=True,
-    raises=AssertionError,
+EVERY_TYPE = ('id', 'email', 'age', 'born', 'team', 'active')
+every_type = SQLTable(
+    people,
+    [
+        Column('id'),
+        Column('email', field='email_address'),
+        Column('age'),
+        Column('born'),
+        Column('team'),
+        Column('active'),
+    ],
 )
-def test_an_empty_multi_values_entry_on_a_boolean_column_means_null(session: Session):
-    params = request(*FLAGGED)
-    params.columns[2].search.multi_values = ['', '1']
-    assert ids(flagged.fetch_sync(params, session)) == [1, 3, 4]
+#: Every character PRD-F6 counts as a space: U+0020, LF, CR, U+2028 and U+2029
+SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
+
+
+@pytest.mark.parametrize(
+    ('column', 'search', 'expected'),
+    [
+        # `email` is NULL in row 2 and `''` in row 3. An empty alternative beside a value, a group that holds
+        # nothing else, anchors around nothing, and a bar between nothing (PRD-F17)
+        ('email', {'value': r'^(|ann@example\.org)$', 'regex': True}, [1, 2, 3]),
+        ('email', {'value': '^()$', 'regex': True}, [2, 3]),
+        ('email', {'value': '^$', 'regex': True}, [2, 3]),
+        ('email', {'value': '|', 'regex': True}, [2, 3]),
+        ('email', {'multi_values': ['', 'ann@example.org']}, [1, 2, 3]),  # SPEC-F20.2
+        ('email', {'multi_values': [' ']}, []),  # on a string column white space is a value, which no row holds
+        ('age', {'multi_values': [' ', '31']}, [1, 3, 4]),  # on any other type it holds nothing (PRD-F33)
+        ('active', {'multi_values': ['', '1']}, [1, 3, 4]),  # SPEC-F44.3
+    ],
+)
+def test_an_empty_alternative_or_entry_matches_the_rows_without_a_value(
+    session: Session, column: str, search: dict[str, Any], expected: list[int]
+):
+    """PRD-F17, PRD-F20: on a column of any type. The date column's row is in
+    test_a_list_on_a_date_column_matches_each_entry_as_a_day."""
+    params = request(*EVERY_TYPE, column_search={column: search})
+    assert ids(every_type.fetch_sync(params, session)) == expected
+
+
+@pytest.mark.parametrize('pattern', ['^red|blue$', r'r\ed', r'\d'])
+def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, pattern: str):
+    """SPEC-F18.1: anchors without the group anchor each value at one end only, and a backslash escapes only the
+    characters of PRD-F19: `\\e` is no `e` and `\\d` no `d`. Read as values, the first two would find rows."""
+    params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
+    refused(every_type.fetch_sync(params, session))
+
+
+def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
+    """SPEC-D16.1: "empty" is about what is stored, not text to transform. The hook sees the other entry only."""
+    seen: list[str] = []
+
+    def stored(text: str) -> str:
+        seen.append(text)
+        return text
+
+    hooked = SQLTable(people, [Column('id'), Column('email', field='email_address', search_value=stored)])
+    params = request('id', 'email', column_search={'email': {'multi_values': ['', 'ann@example.org']}})
+    assert ids(hooked.fetch_sync(params, session)) == [1, 2, 3]
+    assert seen == ['ann@example.org']
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        ({'column_search': {'active': {'value': SPACES}}}, [1, 2, 3, 4, 5]),  # also no value a boolean must read
+        ({'search': {'value': SPACES}}, [1, 2, 3, 4, 5]),
+        # With `regex: true` the spaces are a categorical value, which no row holds
+        ({'column_search': {'team': {'value': SPACES, 'regex': True}}}, []),
+    ],
+)
+def test_search_text_of_spaces_only_adds_nothing(session: Session, body: dict[str, Any], expected: list[int]):
+    """SPEC-F6.2, for every character that counts as a space (PRD-F7): a user who types a space gets every row."""
+    assert ids(every_type.fetch_sync(request(*EVERY_TYPE, **body), session)) == expected
 
 
 def test_a_reflected_boolean_column_is_typed_by_what_the_database_reports(session: Session):

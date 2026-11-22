@@ -396,24 +396,26 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
 
 
 def _one_of(node: OneOf) -> dict[str, Any]:
+    """A list of exact values, and the documents without the field where the list holds an empty entry (PRD-F17,
+    PRD-F20), which is never one of the values sent."""
     column = node.column
-    if node.type == 'date':  # each day as the range `=` gives it, and a missing field for an empty entry
+    missing = [_compile(Empty(column, node.type))] if node.empty else []
+    if node.type == 'date':  # each day as the range `=` gives it
         days = [_compile(Range(column, 'date', Bound(day, True), Bound(next_day(day), False))) for day in node.values]
-        return _any([*days, *([_compile(Empty(column, 'date'))] if node.empty else [])])
-    if node.type != 'string':
-        return {'terms': {column.source: list(node.values)}}
-    field = _keyword(column)
-    if field is None:  # analysed text holds no whole string to match exactly
+        return _any([*days, *missing])
+    field = _keyword(column) if node.type == 'string' else column.source
+    if field is None and node.values:  # analysed text holds no whole string to match exactly
         raise mistake(
             'datatables_search_refused',
             f'The column "{column.name}" can be searched only for text it contains, not for a list of exact '
             'values. Type the text to search for instead.',
             column,
         )
-    if not _folds(column):
-        return {'terms': {field: list(node.values)}}
-    # A terms query takes no case_insensitive, so a list of strings is one term query for each value
-    return _any([_term(column, field, str(value)) for value in node.values])
+    if field is not None and node.type == 'string' and _folds(column):
+        # A terms query takes no case_insensitive, so a list of strings is one term query for each value
+        return _any([*(_term(column, field, str(value)) for value in node.values), *missing])
+    clauses = [*([{'terms': {field: list(node.values)}}] if node.values else []), *missing]
+    return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 
 def _sort(request: Plan) -> list[dict[str, Any]]:
