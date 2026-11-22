@@ -134,6 +134,7 @@ def test_continuation_ends_at_a_blank_line(tmp_path: Path) -> None:
         '\n\nText.\n\n- **Reason:** Why.\n- **Priority:** must\n\nMore.\n\n',
         '\n\nText.\n\n- **Reason:** Why,\nunindented.\n- **Priority:** must\n\n',
         '\n\nText.\n\n- **Reason:** A.\n- **Reason:** B.\n- **Priority:** must\n\n',
+        '\n\nText.\n\n- **Priority:** must\n- **Reason:** Why.\n- **Priority:** must\n\n',
     ],
 )
 def test_drifted_requirement_section_fails(tmp_path: Path, body: str) -> None:
@@ -151,7 +152,7 @@ def test_drifted_requirement_heading_fails(tmp_path: Path, heading: str) -> None
     assert result.stderr == f'PRD.md:{PRD.count("\n") + 2} is not a requirement heading of the expected shape\n'
 
 
-@pytest.mark.parametrize('row', ['| PRD-F3 | Text. | Why. | must |', '| **PRD-F3** | Text. | Why. | must |'])
+@pytest.mark.parametrize('row', ['| PRD-F3 | Text. | Why. | must |', '| **[PRD-F3](#prd-f3)** | Text. | Why. | must |'])
 def test_requirement_in_table_form_fails(tmp_path: Path, row: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE}, prd=row + '\n\n' + PRD)
     assert result.returncode == 1

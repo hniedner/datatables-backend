@@ -7,8 +7,9 @@ with the Reason or the Priority label (so several paragraphs, a list or a quote 
 ``should`` or ``later``). Blank lines are not counted.
 
 A heading line is any line whose first character after white space is ``#``. The rule is by line, not by Markdown:
-a ``#`` line inside a code fence, or a wrapped line of text that starts with ``#``, is a heading line too, so the
-PRD's text never starts a line with ``#``. A heading line that holds ``PRD-`` and is not a requirement's heading
+a ``#`` line inside a code fence, or a wrapped line of text that starts with ``#``, is a heading line too, so no
+line of a requirement's section, its reason's further lines included, has ``#`` as its first character after white
+space. A heading line that holds ``PRD-`` and is not a requirement's heading
 (another level, indented, with more text) is a finding, so a heading names a requirement id only when it is that
 requirement's own. A table line whose first cell starts with ``PRD-``, decorated or linked, which was the layout
 before the sections, is a finding too. A requirement written in neither form (a bold line, a list item) is not seen;

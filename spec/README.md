@@ -30,7 +30,8 @@ second paragraph under it is not read.
 - Each PRD requirement is a section: the heading `#### PRD-X1`, the requirement's text, then the list items
   `- **Reason:** ...` (its further lines indented by spaces, not a tab) and `- **Priority:** must` (or `should`,
   `later`), the priority last; `scripts/trace_check.py` reads no other form. No other line of the PRD whose first
-  character after white space is `#` names a `PRD-` id, and no line of a requirement's text starts with `#`.
+  character after white space is `#` names a `PRD-` id, and no line of a requirement's section, its reason's
+  further lines included, has `#` as its first character after white space.
 - A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2). A code
   span stays on one line.
 - A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
