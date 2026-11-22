@@ -58,15 +58,15 @@ MAX_CRITERIA = 64  # in the whole tree
 MAX_LIST_VALUES = 256  # in one categorical filter or `multi_values` list
 MAX_VALUES = 512  # in all the lists of one request
 MAX_COLUMN_SEARCHES = 64  # column searches that hold a value
-# The bounds of search text (PRD-F14), until #69 gives them their own codes
-MAX_SEARCH_LENGTH = 255  # code points of the raw text
+# The bounds of a value and of search text (PRD-F14)
+MAX_VALUE_LENGTH = 255  # code points of any value the client sends, as sent
 MAX_SEARCH_WORDS = 16  # counted after the split; a word that reduces to nothing is not counted
 SEARCH_DEPTH = f'The search builder nests more than {MAX_DEPTH} groups. Nest at most {MAX_DEPTH} groups.'
 SEARCH_CRITERIA = f'The search builder holds more than {MAX_CRITERIA} criteria. Use at most {MAX_CRITERIA} criteria.'
 TOO_MANY_VALUES = f'The filters hold more than {MAX_VALUES} values in all. Remove some values.'
 TOO_MANY_COLUMN_SEARCHES = f'The request searches more than {MAX_COLUMN_SEARCHES} columns. Clear some column searches.'
 SEARCH_TOO_LONG = (
-    f'The search text holds more than {MAX_SEARCH_LENGTH} characters. Shorten it to at most {MAX_SEARCH_LENGTH}.'
+    f'The search text holds more than {MAX_VALUE_LENGTH} characters. Shorten it to at most {MAX_VALUE_LENGTH}.'
 )
 SEARCH_TOO_MANY_WORDS = (
     f'The search text holds more than {MAX_SEARCH_WORDS} words. Search for at most {MAX_SEARCH_WORDS} words.'
@@ -91,8 +91,8 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_list_too_long': ('invalid_filter', 1),
     'datatables_too_many_values': ('invalid_filter', 1),
     'datatables_too_many_column_searches': ('invalid_filter', 1),
-    'datatables_search_too_long': ('invalid_filter', 1),
-    'datatables_search_too_many_words': ('invalid_filter', 1),
+    'datatables_value_too_long': ('value_too_long', 1),
+    'datatables_too_many_words': ('too_many_words', 1),
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),
@@ -357,6 +357,7 @@ def plan(
         with mistakes.part():
             listed = _within_the_lists(search, declared.get(requested.key), listed)
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
+            _within_the_bounds_of(search, declared.get(requested.key), describe)  # before step 4 can hide them
             column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
             if (built := _column_search(search, column, describe(column), hooked)) is not None:
                 column_searches.append(built)
@@ -390,14 +391,9 @@ def _global_search(
     text = params.search.value
     if _control_character([text]):
         raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
-    if params.search.multi_values:  # refused as a form, so its entries are never read
-        raise mistake('datatables_values_refused', SEARCH_VALUES)
-    _within_the_length(text)
+    if len(text) > MAX_VALUE_LENGTH:  # before every refusal of step 4 that would hide it (PRD-E3)
+        raise mistake('datatables_value_too_long', SEARCH_TOO_LONG)
     searched_words = _words(text)
-    if not searched_words:  # text with no word adds nothing (PRD-F6)
-        return None
-    if params.search.regex:
-        raise mistake('datatables_regex_refused', SEARCH_REGEX)
     found: list[tuple[Column, ColumnType]] = []
     covered: set[str] = set()  # a column the request names again is searched once (PRD-F38)
     for requested in params.columns:
@@ -414,12 +410,19 @@ def _global_search(
         ):
             covered.add(column.name)
             found.append((column, able.type))
+    plain: list[tuple[Column, ColumnType]] = [(column, kind) for column, kind in found if column.search_value is None]
+    if plain or not found:  # the cap is lifted where every searchable column is hooked (PRD-D12)
+        _within_the_words(searched_words, None, in_column=False)
+    if params.search.multi_values:  # refused as a form, so its entries are never read
+        raise mistake('datatables_values_refused', SEARCH_VALUES)
+    if not searched_words:  # text with no word adds nothing (PRD-F6)
+        return None
+    if params.search.regex:
+        raise mistake('datatables_regex_refused', SEARCH_REGEX)
     if not found:
         raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
-    plain: list[tuple[Column, ColumnType]] = [(column, kind) for column, kind in found if column.search_value is None]
     alternatives: list[Filter | Group] = []
-    if plain:  # the cap is lifted where every searchable column is hooked (PRD-D12)
-        _within_the_words(searched_words)
+    if plain:
         alternatives.append(_all('AND', [_word(plain, word, negated) for word, negated in searched_words]))
     # A hooked column is matched for the whole text until PRD-D12 turns it into an equality (#28)
     alternatives.extend(Contains(column, kind, hooked(column, text)) for column, kind in found if column.search_value)
@@ -459,14 +462,33 @@ def _all(logic: Literal['AND', 'OR'], items: Sequence[Filter | Group]) -> Filter
     return items[0] if len(items) == 1 else Group(logic, tuple(items))
 
 
-def _within_the_length(text: str, column: Column | None = None) -> None:
-    if len(text) > MAX_SEARCH_LENGTH:
-        raise mistake('datatables_search_too_long', SEARCH_TOO_LONG, column)
+def _within_the_length(texts: Iterable[str], column: Column | None, *, search: bool) -> None:
+    """No value of a column's filter holds more than ``MAX_VALUE_LENGTH`` code points (PRD-F14). ``search`` says the
+    text is the column's search, not a value of a list or a criterion. ``column`` is the declared column the filter
+    is on, which the reason names; None for a name the server did not declare, which it never does."""
+    if any(len(text) > MAX_VALUE_LENGTH for text in texts):
+        if search:
+            where = f'The search on "{column.name}"' if column else 'A column search'
+            reason = f'{where} holds more than {MAX_VALUE_LENGTH} characters. Shorten it to at most {MAX_VALUE_LENGTH}.'
+        else:
+            where = f'A value in the filter on "{column.name}"' if column else 'A value in a column filter'
+            reason = (
+                f'{where} holds more than {MAX_VALUE_LENGTH} characters. '
+                f'Shorten each value to at most {MAX_VALUE_LENGTH}.'
+            )
+        raise mistake('datatables_value_too_long', reason, column)
 
 
-def _within_the_words(words: Sequence[tuple[str, bool]], column: Column | None = None) -> None:
+def _within_the_words(words: Sequence[tuple[str, bool]], column: Column | None, *, in_column: bool) -> None:
+    """No search text holds more than ``MAX_SEARCH_WORDS`` words (PRD-F14). ``in_column`` says it is a column's
+    search, whose reason names ``column``, the declared column it is on (None for a name the server did not
+    declare, which it never does); else it is the global search."""
     if len(words) > MAX_SEARCH_WORDS:
-        raise mistake('datatables_search_too_many_words', SEARCH_TOO_MANY_WORDS, column)
+        if not in_column:
+            raise mistake('datatables_too_many_words', SEARCH_TOO_MANY_WORDS)
+        where = f'The search on "{column.name}"' if column else 'A column search'
+        reason = f'{where} holds more than {MAX_SEARCH_WORDS} words. Search for at most {MAX_SEARCH_WORDS} words.'
+        raise mistake('datatables_too_many_words', reason, column)
 
 
 def _is_search(search: Search) -> bool:
@@ -474,7 +496,7 @@ def _is_search(search: Search) -> bool:
     categorical value, or a list."""
     if not (search.value or search.multi_values):
         return False
-    if not (search.regex or search.multi_values) and len(search.value) > MAX_SEARCH_LENGTH:
+    if not (search.regex or search.multi_values) and len(search.value) > MAX_VALUE_LENGTH:
         return True  # blank or not, it is refused as too long (PRD-F14)
     return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
 
@@ -497,6 +519,30 @@ def _list_size(search: Search) -> int:
         return len(search.multi_values)
     alternatives = _alternatives(search.value) if search.regex else None
     return len(alternatives) if alternatives is not None else 0
+
+
+def _within_the_bounds_of(search: Search, column: Column | None, describe: Callable[[Column], Capabilities]) -> None:
+    """Raise the mistake of a column search beyond PRD-F14's bounds: a value over ``MAX_VALUE_LENGTH`` code points, as
+    sent (the text, each entry of a list, each alternative of a categorical regex), or text over
+    ``MAX_SEARCH_WORDS`` words where it is split into them. It runs before any refusal of step 4 (PRD-E3). A
+    boolean, and a number or date that is one value to match, are no words; nor is a hooked column's text (PRD-D17)."""
+    texts = list(search.multi_values or [])
+    if search.regex:
+        texts += _alternatives(search.value) or []  # a regex that is no categorical form is refused where it is read
+    else:
+        texts.append(search.value)
+    listed = bool(search.multi_values or search.regex)
+    _within_the_length(texts, column, search=not listed)
+    if listed:
+        return
+    able = describe(column) if column else None
+    if column is None or (
+        column.search_value is None
+        and able is not None
+        and able.type != 'boolean'
+        and not (able.value_search and able.type in ('number', 'date'))
+    ):
+        _within_the_words(_words(search.value), column, in_column=True)
 
 
 def _within_the_lists(search: Search, column: Column | None, listed: int) -> int:
@@ -616,6 +662,7 @@ def _criterion(
     texts = item.value[:needed]
     column = declared.get(item.origData)
     _no_control_character(texts, column)
+    _within_the_length(texts, column, search=False)
     if column is None:  # never logged or answered by its name: that is the client's text
         raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
     kind = describe(_filterable(column)).type
@@ -703,10 +750,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
     if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
-        try:
-            return int(stripped)
-        except ValueError:  # more digits than Python converts to an integer
-            raise number_unreadable(column, listed=listed) from None
+        return int(stripped)  # at most 255 digits (PRD-F14), which Python converts, unlike 4,301
     number = float(stripped)
     if not math.isfinite(number):
         raise number_unreadable(column, listed=listed)
@@ -837,7 +881,6 @@ def _column_search(
         )
     searched_words: list[tuple[str, bool]] = []
     if not (search.multi_values or search.regex):
-        _within_the_length(search.value, column)
         searched_words = _words(search.value)
         if not searched_words:  # no word is no search, on a column of any type (PRD-F6)
             return None
@@ -864,7 +907,6 @@ def _column_search(
     else:
         if column.search_value:  # matched for the whole text, with no word cap, until PRD-D17 (#28)
             return Contains(column, kind, hooked(column, search.value))
-        _within_the_words(searched_words, column)
         return _all('AND', [_word([(column, kind)], word, negated) for word, negated in searched_words])
     # An entry that holds nothing is no value: it matches a row without one (PRD-F17, PRD-F20), and no hook is
     # given it (PRD-D16). A string column takes an entry of white space as that exact value; on any other type

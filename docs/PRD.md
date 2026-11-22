@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 33 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 34 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -20,7 +20,10 @@
   2026-11-22, changes who may change a requirement, in the last sentences of this block; revision 31, approved by
   the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key); revision 32, approved by the
   owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17; revision 33 adds a clause to PRD-F11 (a
-  word on analysed text matches as a phrase of its tokens), with its line in section 5). It replaces draft 1 (R1 to
+  word on analysed text matches as a phrase of its tokens), with its line in section 5; revision 34 gives the bounds
+  of PRD-F14 their own codes, `value_too_long` and `too_many_words`, as the owner decided on 2026-11-22, in PRD-F14,
+  PRD-E2, PRD-E3 and PRD-A11, extends the 255-code-point bound to every value the client sends, and drops PRD-F25's
+  rule of 308 digits, which that bound makes unreachable, with lines in section 5). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -619,10 +622,14 @@ A search over no usable column is refused (PRD-E1), never answered with every ro
 
 #### PRD-F14
 
-Search text holds at most 255 code points and 16 words; longer text is refused with `invalid_filter`. Words are counted
-after PRD-F4's split: a quoted phrase is one word, and a token that reduces to the empty word (a lone `"`, `"""`, `!""`,
+Search text holds at most 255 code points and 16 words; longer text is refused with `value_too_long`, and text of more
+words with `too_many_words`. Words are counted after PRD-F4's split: a quoted phrase is one word, and a token that reduces to the empty word (a lone `"`, `"""`, `!""`,
 `""`, a bare `!`, or a `!` word that PRD-F35 drops) is not counted and adds nothing. The 16-word cap is lifted only
-where PRD-D12 and PRD-D17 say.
+where PRD-D12 and PRD-D17 say. The 255-code-point bound is the bound of every value the client sends, measured on the
+text as sent, before trimming and before a hook: a column search, each entry of a `multi_values` list, each alternative
+of a categorical filter (PRD-F16), and each value a SearchBuilder condition reads (PRD-F36), a number or a date as
+well. A value no condition reads, a surplus value or that of `null`, is not measured. The 16-word cap applies to text
+that is split into words, not to a list, a SearchBuilder value, or a value read as one number, date or boolean.
 
 - **Reason:** Each word adds a condition per searchable column; SvelteDT's field allows 255 characters.
 - **Priority:** must
@@ -739,8 +746,8 @@ integer range. An unsigned MySQL integer column is bounded by its unsigned range
 (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a `Numeric` column, and a declared
 precision bounds nothing. On a SQL column that is not an integer, a whole number outside the signed 64-bit range is
 compared as the column compares: exactly on a `Numeric` column (see section 5 for SQLite), as its digits on a column
-that stores text, and as the nearest floating-point number on a `Float` column and on an expression without a type; one
-of more than 308 digits is out of range. A number is written in ASCII: an optional sign, digits with an optional decimal
+that stores text, and as the nearest floating-point number on a `Float` column and on an expression without a type. A
+number is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal
 point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
 `invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
@@ -1150,8 +1157,8 @@ A request the user can fix is answered, not raised: the response carries an `err
 
 #### PRD-E2
 
-The user-error codes are `invalid_filter`, `invalid_character`, `invalid_date`, `invalid_number` and
-`page_out_of_range`, documented and stable. The list is closed: a release answers only the codes its documentation
+The user-error codes are `invalid_filter`, `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`,
+`invalid_number` and `page_out_of_range`, documented and stable. The list is closed: a release answers only the codes its documentation
 lists, and a code is added only in a release that says so. A client treats a code it does not know as a refusal of the
 request and shows `error`.
 
@@ -1162,13 +1169,17 @@ request and shows `error`.
 
 #### PRD-E3
 
-The code follows the first mistake in this order: (1) a control character (PRD-F15) is `invalid_character`, and text
-over the bounds (PRD-F14) or a structure over the bounds (PRD-F38) is `invalid_filter`; (2) a value whose format a date
+The code follows the first mistake in this order: (1) a control character (PRD-F15) is `invalid_character`, a value
+over 255 code points (PRD-F14) is `value_too_long`, search text of more than 16 words (PRD-F14) is `too_many_words`,
+and a structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first mistake is the one found first
+in the order the request is read, the global search, then the column searches in the request's order, then the
+SearchBuilder tree (its structure, then its criteria in document order), and within one value a control character,
+then the length, then the words; (2) a value whose format a date
 or number column cannot read is `invalid_date` or `invalid_number`, including several words, `!` or quotes on an
 OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value outside the range is `invalid_date`
 for the maximum date (PRD-F24) and `invalid_number` for a number its SQL column does not take (PRD-F25: outside an
-integer's range, signed or unsigned, of more than 38 digits before the decimal point on a `Numeric` column on SQL
-Server, or of more than 308 digits where it is compared as a floating-point number); (4) every other filter error, a
+integer's range, signed or unsigned, or of more than 38 digits before the decimal point on a `Numeric` column on SQL
+Server); (4) every other filter error, a
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
 
@@ -1395,8 +1406,8 @@ integer (PRD-P10), and leaves it out when `draw` itself is the malformed part.
 
 #### PRD-A11
 
-The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_character`, `invalid_date`,
-`invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and `error_code` beside `draw`, `recordsTotal`,
+The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_character`, `value_too_long`,
+`too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and `error_code` beside `draw`, `recordsTotal`,
 `recordsFiltered` and an empty `data`. There is no option to change the status; an app that wants a 4xx maps the
 response in its own route. A malformed request stays 422 (PRD-A10).
 
@@ -1576,9 +1587,10 @@ where a database decides. Each difference is stated here; every other answer is 
 | A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page. | SQL and OpenSearch | PRD-C12 |
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
 | A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
-| Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
+| Search text of more than 16 words is refused with `too_many_words`; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
+| A value over 255 code points is refused with `value_too_long` on every backend. | Every backend | PRD-F14 |
 | On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither. | SQL and OpenSearch | PRD-F11 |
-| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number and refuses a whole number of 400 digits in the same way. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
+| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
 | On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
 | A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
 | On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F20, PRD-F26 |
@@ -1631,7 +1643,8 @@ first release is published as version 0.1.0.
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
   whatever its Content-Type (PRD-A9, changed from draft 1's R8).
-- Errors: `invalid_character`, `invalid_date`, `invalid_number` and `page_out_of_range` beside `invalid_filter`, with
+- Errors: `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`, `invalid_number` and
+  `page_out_of_range` beside `invalid_filter`, with
   a precedence (PRD-E2, PRD-E3), and texts that say what is wrong and how to fix it (PRD-E4); the response's unused
   `metadata` field goes (PRD-R5).
 - New: an integer `data` (PRD-P20), a `null` `data` and nameless columns (PRD-P21), declared OpenSearch field kinds

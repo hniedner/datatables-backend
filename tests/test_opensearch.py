@@ -435,7 +435,7 @@ def test_search_text_over_the_word_bound_is_refused_before_anything_is_sent():
     """SPEC-F14.2: the bound is the plan's, so OpenSearch refuses as SQL does."""
     client = Client()
     text = ' '.join(f'q{n}' for n in range(17))
-    assert '16' in refused(table.fetch_sync(request(*NAMES, search={'value': text}), client))
+    assert '16' in refused(table.fetch_sync(request(*NAMES, search={'value': text}), client), 'too_many_words')
     assert (client.searches, client.counts) == ([], [])
 
 

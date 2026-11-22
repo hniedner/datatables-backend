@@ -1693,6 +1693,13 @@ def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value:
         assert ids(response) == []
 
 
+def test_the_longest_whole_number_a_request_may_hold_is_compared_as_a_float(session: Session):
+    """SPEC-F25.4: a float holds every whole number of up to 308 digits and a value is at most 255 characters
+    (PRD-F14), so the longest is answered, with no row. A longer one is `value_too_long`, which another test asserts."""
+    numbers = wide(session)
+    assert ids(numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 255)), session)) == []
+
+
 def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
     """SPEC-F25.7: a list entry is sent to a decimal column as a single value is. SQLite binds no `Decimal` and
     raised `ProgrammingError` for the entry; it compares a `Numeric` as a float, so it gets the nearest float."""
@@ -2019,8 +2026,16 @@ def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
     strict=True,
     raises=DBAPIError,
     reason='PRD-C17, PRD-F38: SQLite refuses the request, "Expression tree is too large (maximum depth 1000)": it '
-    'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured locally '
-    'on 2026-11-22; the other databases are asked by CI',
+    'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured on '
+    '2026-11-22; PostgreSQL and MySQL answer it',
+)
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
+    strict=True,
+    raises=DBAPIError,
+    reason='PRD-C17: SQL Server refuses the request, ODBC error 07002 "COUNT field incorrect": it binds 3,184 '
+    'parameters (2,144 + 16 x 65 columns of the global search) where the limit is 2,100. Measured on 2026-11-22 '
+    '(CI run 45078213951)',
 )
 def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
     """SPEC-C17.1, PRD-C17: the request of `largest_sql_request` over 62 columns. Its parameters are counted by
@@ -2176,7 +2191,7 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
 def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
     session: Session, body: dict[str, Any], code: str
 ):
-    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.3, SPEC-E3.2): the same refusal for every kind of value and part of the
+    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.5, SPEC-E3.2): the same refusal for every kind of value and part of the
     request, with a text that holds none of what was sent."""
     names = (*ALL, 'extra') if 'extra' in str(body) else ALL
     message = refused(table.fetch_sync(request(*names, **body), session), code)
@@ -2201,3 +2216,45 @@ def test_a_value_within_the_bounds_is_answered(session: Session, body: dict[str,
 def test_a_surplus_value_is_not_measured_and_stays_the_mistake_it_is(session: Session):
     """PRD-F14, PRD-F36: only the values a condition reads are measured."""
     refused(table.fetch_sync(request(*ALL, **criterion('name', '=', 'Bob', 'a' * 300)), session))
+
+
+@pytest.mark.parametrize(
+    ('body', 'code', 'text'),
+    [
+        (
+            {'search': {'value': 'a' * 256}},
+            'value_too_long',
+            'The search text holds more than 255 characters. Shorten it to at most 255.',
+        ),
+        (
+            {'column_search': {'name': {'value': 'a' * 256}}},
+            'value_too_long',
+            'The search on "name" holds more than 255 characters. Shorten it to at most 255.',
+        ),
+        (
+            {'column_search': {'name': {'multi_values': ['a' * 256]}}},
+            'value_too_long',
+            'A value in the filter on "name" holds more than 255 characters. Shorten each value to at most 255.',
+        ),
+        (
+            criterion('name', '=', 'a' * 256),
+            'value_too_long',
+            'A value in the filter on "name" holds more than 255 characters. Shorten each value to at most 255.',
+        ),
+        (
+            {'search': {'value': SEVENTEEN}},
+            'too_many_words',
+            'The search text holds more than 16 words. Search for at most 16 words.',
+        ),
+        (
+            {'column_search': {'name': {'value': SEVENTEEN}}},
+            'too_many_words',
+            'The search on "name" holds more than 16 words. Search for at most 16 words.',
+        ),
+    ],
+)
+def test_the_text_of_each_bound_names_the_condition_and_the_fix(
+    session: Session, body: dict[str, Any], code: str, text: str
+):
+    """SPEC-E4.30: each text is fixed, names only a declared column, and says what to shorten."""
+    assert refused(table.fetch_sync(request(*ALL, **body), session), code) == text

@@ -39,14 +39,19 @@ No entry yet.
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F20, PRD-F26.
 
-### Your own parameters count toward the 2,100 limit
+### The largest request the bounds allow binds more than 2,100 parameters
 
-- **What you see:** SQL Server refuses a statement with more than 2,100 parameters. The bounds of a request
-  (PRD-F38) keep what the library binds for it to about 1,200, plus one for each column the global search covers, but
-  a `base_filter` or an expression column that binds parameters of its own adds to them.
-- **Example:** a `base_filter` that holds a list of 1,000 values, beside a request of the largest size.
-- **How it is known:** by arithmetic from the bounds; the largest request (SPEC-C17.1) runs on this leg.
-- **Requirement:** PRD-C17.
+This is a limit of the library, not of SQL Server: the bounds of PRD-F38 keep the values of a request in check, not
+the parameters, since search text is split into words.
+
+- **What you see:** SQL Server refuses a statement with more than 2,100 parameters. A request at all the bounds binds
+  2,144 + 16 x C of them, C being the number of columns the global search covers, so it is refused at any C: the
+  server fails the request (ODBC error 07002, `COUNT field incorrect`; pinned as a strict expected failure of the
+  test of SPEC-C17.1). A request of a few words binds far fewer. A `base_filter` or an expression column that binds
+  parameters of its own adds to the count.
+- **Example:** a global search of 16 words, 62 column searches of 16 words, two lists of 256 days and 64 criteria.
+- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022 (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
+- **Requirement:** PRD-C17, which the bounds do not meet yet.
 
 ### A decimal holds 38 digits at most
 
@@ -71,6 +76,18 @@ No entry yet.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F25.
+
+### The largest request the bounds allow is refused for its expression depth
+
+This is a limit of the library, not of SQLite: a request is not bounded in the conditions joined by AND.
+
+- **What you see:** SQLite refuses a statement whose expression is deeper than 1,000 ("Expression tree is too large
+  (maximum depth 1000)"). A request of 62 column searches of 16 words and more joins over 1,000 conditions by AND, so
+  the server fails the request. PostgreSQL and MySQL answer it.
+- **Example:** the request of the entry on SQL Server above.
+- **How it is known:** MEASURED 2026-11-22 (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the exact
+  number of conditions was not measured.
+- **Requirement:** PRD-C17, PRD-F38.
 
 ## Every SQL database
 
@@ -119,19 +136,6 @@ filter, and it sees nothing else.
 - **How it is known:** read in the code (the key is built from the index name and the base filter); not run on a
   server.
 - **Requirement:** PRD-C15.
-
-### A request at the bounds can pass the cluster's clause limit
-
-This is a limit of the library, not of OpenSearch: the bounds of PRD-F38 do not count clauses.
-
-- **What you see:** OpenSearch refuses a query with more than 1,024 clauses by default
-  (`indices.query.bool.max_clause_count`). A request within every bound can still pass it: two lists of 256 values, 64
-  criteria of three words each and 62 column searches of three words each make about 1,029 by the reviewer's count. The
-  request fails as a server failure.
-- **Example:** two `multi_values` lists of 256 strings, with a column search of three words on 62 more columns.
-- **How it is known:** counted from the query the library builds; not run on a cluster. Raise the cluster's limit, or
-  report a need for lower bounds.
-- **Requirement:** PRD-F38.
 
 ### A number outside the range of its field fails the request
 

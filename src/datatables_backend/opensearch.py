@@ -274,10 +274,6 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
-# Code points: PRD-F14's longest search text, and the longest value measured as a regexp on every server.
-MAX_REGEXP_VALUE = 255
-
-
 def _cased(char: str) -> bool:
     """Whether ``char`` has another case, as this interpreter's Unicode tables have it."""
     return char.lower() != char or char.upper() != char
@@ -315,7 +311,7 @@ def _regexp(field: str, before: str, value: str, after: str, *, marks: bool = Fa
     - whitespace, which is no operator either: a normalizer that trims takes a space at the end of the pattern and
       would leave its backslash there, which is an error."""
     wanted = _cased_beyond_ascii(value) or (marks and not _FOLDED_TO_A_WILDCARD.isdisjoint(value))
-    if len(value) > MAX_REGEXP_VALUE or not wanted:
+    if not wanted:
         return None
     literal = ''.join(char if char.isalnum() or _cased(char) or char.isspace() else f'\\{char}' for char in value)
     return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
