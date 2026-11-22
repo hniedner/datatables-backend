@@ -11,21 +11,24 @@ Owner's decision of 2026-11-21:
 - A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and
   an optional exponent (`1e3`). White space around it is ignored. Any other spelling is `invalid_number`.
 - A day is written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or
-  `HH:MM:SS`, with an optional fraction). It must exist and is then ignored. White space around the value is ignored.
+  `HH:MM:SS`, the seconds with an optional fraction). It must exist and is then ignored. White space around the value is ignored.
   Any other spelling is `invalid_date`: a zone or an offset after the time among them, because the instant it names
   can fall on another UTC day than the one written.
 - A year and a year-month (PRD-F22) are written in ASCII digits, and a day there as anywhere.
 
 One stated spelling is answered alike on every backend. Before, the spellings were whatever Python's `int`, `float`
-and `date.fromisoformat` happened to read, which the PRD did not say and which differed between conditions.
+and `date.fromisoformat` happened to read, and for a year or a year-month in `contains` a pattern with `\d`, which
+takes the digits of every script. The PRD did not say, and the conditions differed.
 
 ## What sends a date or a number
 
-SearchBuilder is the only stock DataTables client whose date and number values the library reads: ColumnControl's
-filters are refused (PRD-P5), and a classic column filter holds whatever the application's own input put there.
+INFERRED: SearchBuilder is the only stock DataTables client whose date and number values the library reads. A
+non-empty ColumnControl `list` and a ColumnControl `search` with a value are refused as a malformed request
+(PRD-P5), and DataTables itself has no date or number input for a column filter (not checked in its source): a
+classic column filter holds whatever the application's own input put there.
 
-Read in `DataTables/SearchBuilder` at commit `184fb4dfd022d1c21da07e9b6b2db16c2c9a0b6c` (2026-09-25), not run in a
-browser:
+READ in `DataTables/SearchBuilder` at commit `184fb4dfd022d1c21da07e9b6b2db16c2c9a0b6c` (2026-09-25), not run in a
+browser; each "so" below is INFERRED from the lines named:
 
 - `src/SearchBuilder.ts`, line 465: on a server-side table the request's `searchBuilder` is `getDetails(true)`.
 - `src/Criteria.ts`, `getDetails`, lines 2528 to 2568: for a column of a `moment`, `luxon` or `datetime` type, a value
@@ -40,14 +43,15 @@ browser:
   `[0-9.\-]` is removed from each value. So an exponent, a `+` and a digit outside ASCII never arrive from
   SearchBuilder on a number column; `5.`, `.5` and an empty text can.
 
-SvelteDT 1.0 sends no date value and parses no number or day from text (its reviewer's reading of its main at
-`5ad6d9a`), so it places no constraint.
+SvelteDT 1.0 sends no date value and parses no number or day from text (READ by its reviewer in its main at
+`5ad6d9a`, not run), so it places no constraint.
 
 ## What changed
 
-Run on 2026-11-21 through `parse_request` and `fetch_sync`, on SQLite and a recording OpenSearch client, with the
-library at `f463272` (before) and with the rule (after). A categorical filter or `multi_values` list on a date
-column reads each entry as `=` does, from the same pull request on (#41), so the rows for `=` hold for its entries.
+RUN on 2026-11-21 through `parse_request` and `fetch_sync`, on SQLite and a recording OpenSearch client, with the
+library at `f463272` (before) and at `66a3fcf`, the commit that brought the rule (after). A categorical filter or
+`multi_values` list on a date column reads each entry as `=` does since `cf2b298`, so the rows for `=` hold for its
+entries.
 
 | Spelling | Before | After |
 | --- | --- | --- |
@@ -61,6 +65,9 @@ column reads each entry as `=` does, from the same pull request on (#41), so the
 | `+31`, `1e1`, `.5`, `5.`, `1E3`, `-.5e-2` | the number | the number |
 | `²` (U+00B2), `+-7`, a whole number of 5,000 digits | `ValueError` out of `fetch` | `invalid_number` |
 
+The 5,000 digits fail in Python, which by default converts at most 4,300 digits to an integer
+(`sys.get_int_max_str_digits()`); a process that raises the limit reads a longer number.
+
 A number is read in one function and a day in one (`parse_number` and `_written_day` in `_plan.py`), which every
 condition, list and column search goes through. Each of their patterns matches a text in one way only; on a text of a
-million characters that does not fit, each answers within 0.06 s (run on the development machine).
+million characters that does not fit, each answers within 0.06 s (RUN on the development machine).

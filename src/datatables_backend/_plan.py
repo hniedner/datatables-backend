@@ -355,7 +355,7 @@ def _criterion(
     elif condition in ('contains', '!contains'):
         values = tuple(day_span(text, column) for text in texts)
     else:
-        values = tuple(parse_day(text, column, listed=needed == 2) for text in texts)
+        values = parse_days(texts, column, listed=needed == 2)
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
         raise mistake(
             'datatables_value_missing',
@@ -374,21 +374,25 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first."""
     stripped = text.strip()
-    number = math.nan
-    if _NUMBER.fullmatch(stripped):
-        try:
-            if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
-                return int(stripped)
-            number = float(stripped)
-        except ValueError:  # more digits than Python converts to an integer
-            pass
-    if not math.isfinite(number):
+
+    def unreadable() -> InvalidFilter:
         needed = (
             f'Each value in the filter on "{column.name}" must be a number'
             if listed
             else f'The filter on "{column.name}" needs one number'
         )
-        raise mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
+        return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
+
+    if not _NUMBER.fullmatch(stripped):
+        raise unreadable()
+    if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
+        try:
+            return int(stripped)
+        except ValueError:  # more digits than Python converts to an integer
+            raise unreadable() from None
+    number = float(stripped)
+    if not math.isfinite(number):
+        raise unreadable()
     return number
 
 
@@ -414,31 +418,44 @@ def _last_day(column: Column) -> InvalidFilter:
     )
 
 
-def parse_day(text: str, column: Column, *, listed: bool = False) -> date:
-    """The day ``text`` names in a filter on ``column``, written as ``_written_day`` reads it. The last day there is,
-    9999-12-31, is refused in every condition: it has no next day to bound it by, and that is the user's filter, not
-    a failed query. ``listed`` says the text is one of several values (a list, or the two of a ``between``), where
-    the reason must not ask for one date."""
-    day = _written_day(text.strip())
-    if day is None:
-        needed = (
-            f'Each value in the filter on "{column.name}" must be a date'
-            if listed
-            else f'The filter on "{column.name}" needs a date'
-        )
-        raise mistake(
-            'datatables_date_unreadable', f'{needed} that exists, written as YYYY-MM-DD, like 2024-03-05.', column
-        )
-    if day == date.max:
+def parse_days(
+    texts: Sequence[str], column: Column, *, listed: bool, blank_is_empty: bool = False
+) -> tuple[date | None, ...]:
+    """The days ``texts`` name in a filter on ``column``, each written as ``_written_day`` reads it, white space
+    around it ignored. ``listed`` says they are several values (a list, or the two of a ``between``), where the
+    reason must not ask for one date. With ``blank_is_empty`` a text that holds nothing is None, an empty entry of a
+    list; otherwise no day is None.
+
+    Every text's format is checked before any day's range, so the format is the mistake answered wherever it
+    stands (PRD-E3). The last day there is, 9999-12-31, is refused in every condition: it has no next day to bound
+    it by, and that is the user's filter, not a failed query."""
+    days: list[date | None] = []
+    for text in texts:
+        value = text.strip()
+        if blank_is_empty and not value:
+            days.append(None)
+            continue
+        day = _written_day(value)
+        if day is None:
+            needed = (
+                f'Each value in the filter on "{column.name}" must be a date'
+                if listed
+                else f'The filter on "{column.name}" needs a date'
+            )
+            raise mistake(
+                'datatables_date_unreadable', f'{needed} that exists, written as YYYY-MM-DD, like 2024-03-05.', column
+            )
+        days.append(day)
+    if date.max in days:
         raise _last_day(column)
-    return day
+    return tuple(days)
 
 
 def _written_day(value: str) -> date | None:
     """The day ``value`` writes as PRD-F21 says, or None: ``YYYY-MM-DD`` in ASCII digits, and after it, at most, a
-    space or a ``T`` and a time of day that exists (``HH:MM`` or ``HH:MM:SS``, with an optional fraction), which is
-    ignored. SearchBuilder sends such a time; a zone or an offset after it is refused, since the instant it names
-    can fall on another UTC day."""
+    space or a ``T`` and a time of day that exists (``HH:MM`` or ``HH:MM:SS``, the seconds with an optional
+    fraction), which is ignored. SearchBuilder sends such a time; a zone or an offset after it is refused, since the
+    instant it names can fall on another UTC day."""
     form = _DAY.fullmatch(value)
     if form is None:
         return None
@@ -451,11 +468,13 @@ def _written_day(value: str) -> date | None:
 
 def on_day(column: Column, day: date | None) -> Criterion:
     """One entry of a list on a date column as the criterion that matches it: ``=`` for a day, "empty" for None."""
-    return Criterion(column, 'date', '=' if day else 'null', (day,) if day else ())
+    if day is None:
+        return Criterion(column, 'date', 'null', ())
+    return Criterion(column, 'date', '=', (day,))
 
 
 def next_day(day: date) -> date:
-    """The day after ``day``, which ``parse_day`` and ``day_span`` made sure exists."""
+    """The day after ``day``, which ``parse_days`` and ``day_span`` made sure exists."""
     return day + timedelta(days=1)
 
 
@@ -464,24 +483,22 @@ def day_span(text: str, column: Column) -> DaySpan:
     or a day as ``_written_day`` reads it, so `contains` and `=` take the same day. A span that holds the last day
     there is, is refused as that day is."""
     value = text.strip()
-    unreadable = mistake(
-        'datatables_date_unreadable',
-        f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
-        'or YYYY-MM-DD, like 2024-03.',
-        column,
-    )
     form = _YEAR_OR_MONTH.fullmatch(value)
-    if form is None:
-        day = _written_day(value)
-        if day is None:
-            raise unreadable
-        if day == date.max:
-            raise _last_day(column)
-        return DaySpan(day, next_day(day))
     try:
-        start = date(int(form['year']), int(form['month'] or 1), 1)
+        start = date(int(form['year']), int(form['month'] or 1), 1) if form else _written_day(value)
     except ValueError:  # the year 0000, or a month that does not exist
-        raise unreadable from None
+        start = None
+    if start is None:
+        raise mistake(
+            'datatables_date_unreadable',
+            f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
+            'or YYYY-MM-DD, like 2024-03.',
+            column,
+        )
+    if form is None:
+        if start == date.max:
+            raise _last_day(column)
+        return DaySpan(start, next_day(start))
     last = start.month if form['month'] else 12
     if (start.year, last) == (date.max.year, 12):
         raise _last_day(column)
@@ -521,7 +538,7 @@ def _column_search(
     if kind == 'boolean':
         return AnyOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
     if kind == 'date':  # read here, so an unreadable entry is found before a backend builds anything
-        return AnyOf(column, kind, tuple(parse_day(text, column, listed=True) if text else None for text in texts))
+        return AnyOf(column, kind, parse_days(texts, column, listed=True, blank_is_empty=True))
     return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 

@@ -204,10 +204,8 @@ class SQLTable:
         for search in request.column_searches:
             if isinstance(search, AnyOf):
                 column = self._sql(search.column)
-                if search.type == 'date':  # each entry as its own criterion: `=` for a day, "empty" for none
-                    conditions.append(
-                        or_(*(_date_criterion(on_day(search.column, day), column) for day in search.values))
-                    )
+                if search.type == 'date':
+                    conditions.append(_on_days(search, column, in_list))
                     continue
                 with mistakes.part():
                     if search.type == 'boolean':
@@ -508,6 +506,22 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
             raise AssertionError(node.condition)
 
 
+def _on_days(search: AnyOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
+    """A list on a date column: the row's day is one of its days, or the row has none where the list holds an empty
+    entry (PRD-F21). A column that holds no time compares its days as one IN list, so a long list stays one flat
+    condition and takes SQL Server's JSON path (PRD-C17). A column with a time needs the day's two bounds for each
+    entry, as ``=`` does: two parameters each, and no JSON path."""
+    days = [day for day in search.values if day is not None]
+    parts: list[ColumnElement[bool]] = []
+    if isinstance(_sql_type(column), DateTime):
+        parts += [_date_criterion(on_day(search.column, day), column) for day in days]
+    elif days:
+        parts.append(in_list(column, days, False))
+    if len(days) < len(search.values):
+        parts.append(column.is_(None))
+    return or_(*parts)
+
+
 def _aware(sql_type: Any) -> bool:
     """Whether a column of this type carries a time zone (PRD-F21): a ``DateTime(timezone=True)``, or SQL Server's
     own ``DATETIMEOFFSET``, which a reflected table has and which does not set that flag."""
@@ -591,7 +605,10 @@ def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> 
 
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()), fold)
+    # A day travels as its ISO text, which SQL Server casts to the column's type as it casts every value
+    return _JsonValuesIn(
+        column, bindparam(None, json.dumps(list(values), default=date.isoformat), type_=String()), fold
+    )
 
 
 def _parameter_count(stmt: Select[Any]) -> int:

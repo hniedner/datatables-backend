@@ -10,9 +10,9 @@
   the SQL column types it folds and for OpenSearch's ASCII-only fold, with lines in section 5; revision 24 changes
   PRD-F9 for OpenSearch, which folds letters outside ASCII from 3.1 on, and adds PRD-Q14 for the supported
   OpenSearch servers, with lines in section 5; revision 25 is revision 24 in a new layout, one section per
-  requirement, no requirement changed; revision 26 states how a day and a number are written, in PRD-F21, PRD-F22
-  and PRD-F25). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. A requirement
-  now changes only by the owner.
+  requirement, no requirement changed; revision 26, approved by the owner on 2026-11-21, states how a day and a
+  number are written, in PRD-F21, PRD-F22 and PRD-F25). It replaces draft 1 (R1 to R9); section 10 maps every
+  draft-1 item to its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -670,14 +670,16 @@ read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an awa
 day only when the app sets that zone to `+00:00`. A non-empty categorical value or `multi_values` entry on a date column
 is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one
 means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on OpenSearch. A day is
-written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, with an
-optional fraction): it must exist and is then ignored, since SearchBuilder sends `YYYY-MM-DD HH:mm:ss` for a column it
-formats with Moment or Luxon. White space around the value is ignored. Any other spelling is `invalid_date`, among them
-a digit outside ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
+written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, the
+seconds with an optional fraction): it must exist and is then ignored, since SearchBuilder sends
+`YYYY-MM-DD HH:mm:ss` for a column of its `moment`, `luxon` or `datetime` type (READ in its source, not run in a
+browser). White space around the value is ignored. Any other spelling is `invalid_date`, among them a digit outside
+ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
 
 - **Reason:** A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL
   documentation, not measured here. One stated spelling is answered alike on every backend; an offset is refused rather
-  than ignored, because the instant it names can fall on another UTC day.
+  than ignored, because the instant it names can fall on another UTC day. The reading and the comparison with the
+  earlier behaviour are in docs/decisions/002-how-a-day-and-a-number-are-written.md.
 - **Priority:** must
 
 #### PRD-F22
@@ -715,7 +717,8 @@ integer range. A number is written in ASCII: an optional sign, digits with an op
 `invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
-  answered alike on every backend.
+  answered alike on every backend. The reading and the comparison with the earlier behaviour are in
+  docs/decisions/002-how-a-day-and-a-number-are-written.md.
 - **Priority:** must
 
 #### PRD-F26

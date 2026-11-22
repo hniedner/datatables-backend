@@ -500,7 +500,9 @@ def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: 
         # exponent
         ('age', '=', ['+31'], [1, 4]),
         ('age', '=', ['31.'], [1, 4]),
-        ('age', '=', ['.31e2'], [1, 4]),
+        ('age', '=', ['.31E+2'], [1, 4]),
+        ('age', '=', [' 31 '], [1, 4]),  # white space around a value is ignored, here and for the dates below
+        ('born', 'contains', [' 1980 '], [2]),
         # SPEC-F21.9: a time of day after the day is ignored: after a space, with seconds and a fraction, as
         # SearchBuilder sends it for a formatted column; after a `T`, without seconds
         ('born', '=', ['1980-07-15 10:00:00.250'], [2]),
@@ -554,8 +556,7 @@ def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(s
     """SPEC-F42.2, SQL Server's proof, on the table as the database describes it: 2026-08-01 23:00 at -05:00 is
     2026-08-02 04:00 UTC, and the day text of a `DATETIMEOFFSET` is the day in the offset it was stored with. A
     reflected `DATETIMEOFFSET` is SQLAlchemy's SQL Server type, which does not say `timezone=True`, so this is also
-    the proof that such a column is known to carry a zone. The `=` at the end guards the bounds a criterion sends
-    to such a column, which carry UTC now; it is no proof of the zone, since bounds without one are read as UTC.
+    the proof that such a column is known to carry a zone.
 
     The row is added in this test's transaction only. SQLite and MySQL store no offset (PRD-F21), so there it is
     written as its UTC time, as such a column holds it, and the test only shows the search works. On PostgreSQL it
@@ -569,17 +570,25 @@ def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(s
     aware = SQLTable(reflected, [Column('id'), Column('seen_tz')])
     params = request('id', 'seen_tz', column_search={'seen_tz': {'value': '2026-08-02'}})
     assert ids(aware.fetch_sync(params, session)) == [6]
-    assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', '=', '2026-08-02')), session)) == [6]
+
+
+def test_the_day_text_of_a_column_without_a_zone_is_the_day_it_stores(session: Session):
+    """PRD-F42 changes only a timezone-aware column. PostgreSQL's proof: were a `timestamp` taken to UTC like a
+    `timestamptz`, the job's session zone (UTC+14) would render row 1, stored as 23:59 on the 15th, on the 16th,
+    and row 5, stored as 20:00 on the 14th, on the 15th."""
+    naive = SQLTable(people, [Column('id'), Column('seen')])
+    assert ids(naive.fetch_sync(request('id', 'seen', search={'value': '2026-07-15'}), session)) == [1]
 
 
 @pytest.mark.parametrize(
     ('column', 'search', 'expected'),
     [
-        ('seen', {'multi_values': ['2026-07-15']}, [1]),  # a datetime column: the day, not the instant of midnight
-        # A timezone-aware column, through the categorical regex: each day is bounded by UTC midnights
+        # A column with a time, through the categorical regex: each entry is its day, not the instant of midnight,
+        # and on a timezone-aware column the day is bounded by UTC midnights
         ('seen_tz', {'value': '^(2026-07-15|2025-01-01)$', 'regex': True}, [1, 4]),
-        # SPEC-F21.7 beside a day on a date column: the empty entry is the row without a date, and joins the day
-        ('born', {'multi_values': ['', '1980-07-15']}, [2, 3]),
+        # SPEC-F21.7 beside a day on a date column: an entry of only white space is empty, the row without a date,
+        # and joins the day, around which white space is ignored as around any value
+        ('born', {'multi_values': [' ', ' 1980-07-15 ']}, [2, 3]),
     ],
 )
 def test_a_list_on_a_date_column_matches_each_entry_as_a_day(
@@ -834,6 +843,8 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
         ('born', '=', ['19800715'], 'invalid_date'),
         ('born', '=', ['1980-07-15T10:00+02:00'], 'invalid_date'),
         ('born', '=', ['1980-07-15 24:00'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10'], 'invalid_date'),  # an hour is no time of day
+        ('born', '=', ['1980-07-15T' + '10:00'.translate(FULL_WIDTH)], 'invalid_date'),  # the time in other digits
         ('born', 'contains', ['1980'.translate(FULL_WIDTH)], 'invalid_date'),  # SPEC-F22.5: a year in other digits
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
@@ -974,7 +985,8 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         ),
         (
             WORDED,
-            criterion('born', 'between', '1980-01-01', 'abc'),
+            # PRD-E3 within one filter: the second value's format is answered, not the first value's range
+            criterion('born', 'between', '9999-12-31', 'abc'),
             'invalid_date',
             'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
         ),
@@ -1360,6 +1372,15 @@ def test_many_multi_select_values_on_a_number_column_still_run(session: Session)
     params = request(*ALL)
     params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
     assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_many_days_on_a_date_column_still_run(session: Session):
+    """SPEC-F21.11, PRD-C17 for a list of days. A column that holds no time compares them as one list: as a range for each day,
+    3,000 of them nest deeper than SQLite's expression tree allows (1,000) and take 6,000 parameters on SQL Server
+    (2,100). There the days travel as JSON and are cast to the column's `DATE`."""
+    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's day
+    params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
+    assert ids(table.fetch_sync(params, session)) == [2]
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):

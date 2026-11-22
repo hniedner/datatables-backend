@@ -176,34 +176,42 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.5** [all] Categorical `^(2024-03-05)$` and `multi_values` `["2024-03-05"]` on `made` → rows 1; on `at`
   `["2024-03-06"]` → rows 2.
 - **SPEC-F21.6** [all] `multi_values` `["2024-13-01"]` or `["05.03.2024"]` on `made` → error_code `invalid_date`.
-- **SPEC-F21.7** [all] `multi_values` `[""]` on `made` → rows 3 (NULL on SQL, missing on OS).
+- **SPEC-F21.7** [all] `multi_values` `[""]` on `made` → rows 3 (NULL on SQL, missing on OS). An entry of only white
+  space is empty too: white space around a value is ignored first.
 - **SPEC-F21.8** [SQLite] Given a row whose `at` is written as the aware value `2024-03-06T01:00+02:00` (the instant
   2024-03-05T23:00Z): `=` `2024-03-06` matches it and `=` `2024-03-05` does not, since the offset is dropped and the
   stored `01:00` is read as UTC.
-- **SPEC-F21.9** [all] SearchBuilder `=` on `made` with `2024-03-05 10:00:00.250` or `2024-03-05T23:59` → rows 1: a
-  time of day after the day is ignored.
-- **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `20240305`, `2024-03-05T10:00+02:00` or
-  `2024-03-05 24:00` → error_code `invalid_date`; so does `contains` with the day in digits outside ASCII.
+- **SPEC-F21.9** [all] A day followed by a time of day, `2024-03-05 10:00:00.250` or `2024-03-05T23:59`, and a day
+  with white space around it, is read as `2024-03-05`: SearchBuilder `=` on `made` with it answers as with the day
+  alone. (A spelling is read by the plan, which every backend shares; this and the other statements on spellings,
+  F21.10, F22.5 and F25.3, are checked where the value is read, on SQL.)
+- **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `20240305`, `2024-03-05T10:00+02:00`,
+  `2024-03-05 24:00`, `2024-03-05T10` or a time in digits outside ASCII → error_code `invalid_date`; so does
+  `contains` with the day in digits outside ASCII.
+- **SPEC-F21.11** [SQL] A `multi_values` list of 3,000 days and `2024-03-05` on `made` → rows 1 (PRD-C17: on a
+  column that holds no time the days are one list, which SQL Server takes as JSON).
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
   `invalid_date`.
 - **SPEC-F22.3** [all] SearchBuilder `contains` `2024-03-06` on `at` → rows 2 (UTC span).
 - **SPEC-F22.4** [OS] Column search on `made` with `2024-12` → rows 2.
-- **SPEC-F22.5** [all] SearchBuilder `contains` on `made`: `2024-03-05 10:00:00` → rows 1 (the day as `=` reads it);
-  `2024` in digits outside ASCII → error_code `invalid_date`.
+- **SPEC-F22.5** [all] SearchBuilder `contains` on `made` reads `2024-03-05 10:00:00` as `=` reads it, the day
+  `2024-03-05`, and a year with white space around it as the year; `2024` in digits outside ASCII → error_code
+  `invalid_date`.
 - **SPEC-F23.1** [SQL] Global search `17` → rows 2; column search `7` on `price` → rows 1, 2.
 - **SPEC-F23.2** [SQL] Column search `2024-12` on `made` → rows 2; `03-05` → rows 1 (date text is `YYYY-MM-DD`).
 - **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` and `at` text).
 - **SPEC-F24.1** [all] SearchBuilder on `made` with the maximum date as a bound → error_code `invalid_date`, not a
   database error, in each of: `=`, `!=`, `<`, `<=`, `>`, `>=` with `9999-12-31`; `between` and `!between` with
   `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
-- **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc`, `NaN`, `inf`, `-Infinity` or `1e999` → error_code
-  `invalid_number`. So does a whole number of 5,000 digits: it is no failed request.
+- **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc` or `1e999` (written as a number, and not finite) →
+  error_code `invalid_number`. So does a whole number of 5,000 digits: it is no failed request.
 - **SPEC-F25.2** [SQL] On `price` (a `BigInteger`), `=` `9223372036854775808` → error_code `invalid_number`;
   `9223372036854775807` is answered. With `price` redeclared as a `SmallInteger`, `=` `32768` → `invalid_number`.
-- **SPEC-F25.3** [all] SearchBuilder `=` on `price` with `+7`, `7.` or `.7e1` → rows 1. With `1_000`, or `7` in a
-  digit outside ASCII (the full-width `７`, U+FF17) → error_code `invalid_number`.
+- **SPEC-F25.3** [all] SearchBuilder `=` on `price` reads `+7`, `7.`, `.7E+1` and `7` with white space around it as
+  the number 7. With `1_000`, or `7` in a digit outside ASCII (the full-width `７`, U+FF17) → error_code
+  `invalid_number`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 
