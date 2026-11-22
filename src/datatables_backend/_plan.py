@@ -707,7 +707,10 @@ def _alternatives(pattern: str) -> list[str] | None:
     empty (PRD-F17): ``^(|a)$``, ``a|``, ``^()$``, ``^$``, a bare ``|``."""
     body = pattern
     alone = False  # anchored without a group, which holds one value
-    if body.startswith('^') and body.endswith('$') and not body.endswith('\\$'):
+    # A `$` at the end is taken for the anchor also after a backslash: after escaped backslashes it is one (the
+    # value `C:\` is written `^C:\\$`), and were it escaped itself, what is left would end in a lone backslash,
+    # which is refused below as the unanchored `^` would be
+    if body.startswith('^') and body.endswith('$'):
         body = body[1:-1]
         alone = not (body.startswith('(') and body.endswith(')'))
         if not alone:

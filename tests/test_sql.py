@@ -691,11 +691,7 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         ('age', '>', ['31'], [2, 5]),
         ('age', '<=', ['31.0'], [1, 4]),
         ('age', 'between', ['40', '60'], [2, 5]),
-        # PRD-F37 (SPEC-F37.1, SPEC-F37.2): NULL passes every negative condition, where SQL's NOT drops it. `email`
-        # is NULL in row 2 and `''` in row 3; `age` is NULL in row 3. "Not empty" above is the one it does not pass
-        ('email', '!=', ['ann@example.org'], [2, 3, 4, 5]),
-        ('email', '!ends', ['org'], [2, 3]),
-        ('age', '!between', ['40', '60'], [1, 3, 4]),
+        ('age', '!between', ['40', '60'], [1, 3, 4]),  # row 3 has no age (PRD-F37)
         ('age', 'null', [], [3]),
         ('born', '=', ['1980-07-15'], [2]),
         ('born', '<', ['1980-07-15'], [5]),
@@ -721,6 +717,10 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
         ('seen', 'between', ['2026-07-14', '2026-07-15'], [1, 5]),
+        # PRD-F37 (SPEC-F37.1): NULL passes every negative condition, where SQL's NOT drops it. `email` is NULL in
+        # row 2 and `''` in row 3. "Not empty" above is the one negation it does not pass
+        ('email', '!=', ['ann@example.org'], [2, 3, 4, 5]),
+        ('email', '!ends', ['org'], [2, 3]),
     ],
 )
 def test_searchbuilder_conditions(
@@ -974,6 +974,13 @@ def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, patt
     refused(every_type.fetch_sync(params, session))
 
 
+def test_a_value_that_ends_in_an_escaped_backslash_is_read_between_the_anchors(session: Session):
+    r"""SPEC-F19.1 in the form `^v$`: the `$` after `C:\\` is the anchor, not an escaped `$`. The value `C:\` is one
+    no row holds; taken for a regex, the filter was refused."""
+    params = request(*EVERY_TYPE, column_search={'team': {'value': r'^C:\\$', 'regex': True}})
+    assert ids(every_type.fetch_sync(params, session)) == []
+
+
 def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
     """SPEC-D16.1: "empty" is about what is stored, not text to transform. The hook sees the other entry only."""
     seen: list[str] = []
@@ -985,7 +992,7 @@ def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
     hooked = SQLTable(people, [Column('id'), Column('email', field='email_address', search_value=stored)])
     params = request('id', 'email', column_search={'email': {'multi_values': ['', 'ann@example.org']}})
     assert ids(hooked.fetch_sync(params, session)) == [1, 2, 3]
-    assert seen == ['ann@example.org']
+    assert set(seen) == {'ann@example.org'}  # however often the query is built
 
 
 @pytest.mark.parametrize(
@@ -1417,18 +1424,18 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         # SPEC-E4.21, E4.22
         (WORDED, criterion('name', '='), 'invalid_filter', 'The filter on "name" needs a value.'),
         (WORDED, criterion('age', 'between', '1'), 'invalid_filter', 'The filter on "age" needs two values.'),
+        (
+            WORDED,
+            criterion('active', '=', 'yes'),
+            'invalid_filter',
+            'The filter on "active" needs true or false (1 or 0 also work).',
+        ),
         # PRD-F36 (SPEC-F36.1): one value more than the condition takes
         (
             WORDED,
             criterion('name', '=', 'Bob', 'Ann'),
             'invalid_filter',
             'The filter on "name" holds more values than its condition takes. Remove the filter and set it again.',
-        ),
-        (
-            WORDED,
-            criterion('active', '=', 'yes'),
-            'invalid_filter',
-            'The filter on "active" needs true or false (1 or 0 also work).',
         ),
     ],
 )
