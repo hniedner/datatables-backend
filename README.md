@@ -54,7 +54,7 @@ reports = SearchTable(
     [
         IndexColumn('id', text='keyword'),
         IndexColumn('title', text='text+keyword'),  # the dynamic-mapping default
-        IndexColumn('body', text='text'),  # analysed only: free-text query syntax, no sorting
+        IndexColumn('body', text='text'),  # analysed only: no sorting
         Column('pages', type='number'),
         Column('created', type='date'),
         Column('published', type='boolean'),  # a column is a string unless declared: the mapping is not read
@@ -62,6 +62,10 @@ reports = SearchTable(
 )
 response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 ```
+
+**Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
+finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an
+analysed-only column.
 
 **Servers.** The library is built for OpenSearch 3.1 and later. CI runs the live tests on 3.10.0 and on 2.19.7, and
 they pass on both. OpenSearch before 2.19 is not tested. 3.0 and 2.19 differ in two ways:

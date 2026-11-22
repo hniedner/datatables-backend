@@ -318,10 +318,10 @@ def test_the_global_search_fits_each_string_mapping_and_skips_numbers_and_dates(
     should = clause['bool']['should']
     assert should[0] == {'wildcard': {'id': {'value': '*a\\*b*', 'case_insensitive': True}}}
     assert should[1]['bool']['should'] == [
-        {'match': {'title': {'query': 'a*b'}}},
+        {'match_phrase': {'title': 'a*b'}},
         {'wildcard': {'title.keyword': {'value': '*a\\*b*', 'case_insensitive': True}}},
     ]
-    assert should[2] == {'match': {'body': {'query': 'a*b'}}}
+    assert should[2] == {'match_phrase': {'body': 'a*b'}}
     assert len(should) == 4  # id, title, body, author
 
 
@@ -333,10 +333,10 @@ def _in_column(word: str) -> list[dict[str, Any]]:
         return {'wildcard': {field: {'value': f'*{word}*', 'case_insensitive': True}}}
 
     def both(field: str) -> dict[str, Any]:
-        return {'bool': {'should': [{'match': {field: {'query': word}}}, wildcard(f'{field}.keyword')],
+        return {'bool': {'should': [{'match_phrase': {field: word}}, wildcard(f'{field}.keyword')],
                          'minimum_should_match': 1}}  # fmt: skip
 
-    return [wildcard('id'), both('title'), {'match': {'body': {'query': word}}}, both('meta.author')]
+    return [wildcard('id'), both('title'), {'match_phrase': {'body': word}}, both('meta.author')]
 
 
 def test_each_word_of_the_global_search_must_be_found_in_some_searched_column():
@@ -371,9 +371,9 @@ def test_a_column_search_holds_its_words_and_negations_as_plain_text_clauses():
         {
             'bool': {
                 'must': [
-                    {'match': {'body': {'query': 'granny'}}},
-                    {'bool': {'must_not': [{'match': {'body': {'query': 'green'}}}]}},
-                    {'match': {'body': {'query': '-x'}}},
+                    {'match_phrase': {'body': 'granny'}},
+                    {'bool': {'must_not': [{'match_phrase': {'body': 'green'}}]}},
+                    {'match_phrase': {'body': '-x'}},
                 ]
             }
         }
@@ -406,6 +406,20 @@ def test_a_phrase_in_a_column_search_is_a_phrase_match_on_analysed_text():
     }
 
 
+@pytest.mark.parametrize('condition', ['search', 'contains'])
+def test_a_word_the_analyser_splits_is_a_phrase_match_on_analysed_text(condition: str):
+    """SPEC-F11.7: a `match` of `a-b` is an OR of its tokens, which also finds text holding `a` alone. The word of a
+    column search and SearchBuilder `contains` compile alike; the live test shows the rows."""
+    client, params = (
+        Client(),
+        request(*NAMES, **(criterion('body', 'contains', 'a-b') if condition == 'contains' else {})),
+    )
+    if condition == 'search':
+        params.columns[2].search.value = 'a-b'
+    table.fetch_sync(params, client)
+    assert query(client) == [{'match_phrase': {'body': 'a-b'}}]
+
+
 @pytest.mark.parametrize('column', ['pages', 'created'])
 def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(column: str):
     """SPEC-F6.2: a number or a date is read as one value, so `"` would be refused as unreadable; it is no word."""
@@ -435,9 +449,7 @@ def test_column_searches_follow_the_columns_type():
     params.columns[4].search.value = '2026-02'
     table.fetch_sync(params, client)
     text, number, date = query(client)
-    assert text == {
-        'bool': {'must': [{'match': {'body': {'query': 'granny'}}}, {'match': {'body': {'query': 'smith'}}}]}
-    }
+    assert text == {'bool': {'must': [{'match_phrase': {'body': 'granny'}}, {'match_phrase': {'body': 'smith'}}]}}
     assert number == {'term': {'pages': 12}}
     assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
 

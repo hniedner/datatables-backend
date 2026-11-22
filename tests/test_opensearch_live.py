@@ -121,18 +121,31 @@ NAMES = ('id', 'title', 'body', 'pages', 'created', 'author')
 table = SearchTable(INDEX, COLUMNS)
 timed = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('seen', type='date')])
 
+# A second index, so that no count or row of the tests above changes: five documents whose one text is `a`, `b`, `a-b`,
+# `b a` and `a b`, in a field of analysed text and in a field of text+keyword (PRD-F11's phrase of tokens).
+PHRASE_INDEX = 'dtb-test-docs-phrases'  # owned by this module too: deleted and recreated on every run
+PHRASE_TEXTS = {'p1': 'a', 'p2': 'b', 'p3': 'a-b', 'p4': 'b a', 'p5': 'a b'}
+PHRASE_MAPPING = {'properties': {'id': {'type': 'keyword'}, 'only_text': {'type': 'text'}, 'both': KEYWORD_TEXT}}
+phrases = SearchTable(PHRASE_INDEX, [IndexColumn('id', text='keyword'), IndexColumn('only_text', text='text'),
+                                     IndexColumn('both')])  # fmt: skip
+PHRASE_NAMES = ('id', 'only_text', 'both')
+
 
 @pytest.fixture(scope='module')
 def client() -> Iterator[OpenSearch]:
     client = OpenSearch(hosts=[URL])
-    if client.indices.exists(index=INDEX):  # left by an interrupted run
-        client.indices.delete(index=INDEX)
+    for index in (INDEX, PHRASE_INDEX):
+        if client.indices.exists(index=index):  # left by an interrupted run
+            client.indices.delete(index=index)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': SETTINGS})
     for number, document in enumerate(DOCUMENTS, 1):
         client.index(index=INDEX, id=str(number), body=document)
-    client.indices.refresh(index=INDEX)
+    client.indices.create(index=PHRASE_INDEX, body={'mappings': PHRASE_MAPPING, 'settings': SETTINGS})
+    for key, text in PHRASE_TEXTS.items():
+        client.index(index=PHRASE_INDEX, id=key, body={'id': key, 'only_text': text, 'both': text})
+    client.indices.refresh(index=[INDEX, PHRASE_INDEX])
     yield client
-    client.indices.delete(index=INDEX)
+    client.indices.delete(index=[INDEX, PHRASE_INDEX])
     client.close()
 
 
@@ -232,6 +245,57 @@ def test_a_column_search(client: OpenSearch, column: int, value: str, expected: 
     params = request(*NAMES)
     params.columns[column].search.value = value
     assert found(table.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize('column', ['only_text', 'both'])
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        # A word the analyser splits is a phrase of its tokens (PRD-F11): p1 holds `a` alone and p4 holds the tokens in
+        # the other order, so neither is found. p5 (`a b`) has the same tokens in the same order, and is found.
+        ('a-b', ['p3', 'p5']),
+        ('!a-b', ['p1', 'p2', 'p4']),
+    ],
+)
+def test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens(
+    client: OpenSearch, column: str, text: str, expected: list[str]
+):
+    """SPEC-F11.7. As a `match` (any token) `a-b` also found p1, p2 and p4, and `!a-b` left only a row without them."""
+    params = request(*PHRASE_NAMES)
+    params.columns[PHRASE_NAMES.index(column)].search.value = text
+    assert found(phrases.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize('column', ['only_text', 'both'])
+@pytest.mark.parametrize(
+    ('condition', 'expected'),
+    [('contains', ['p3', 'p5']), ('!contains', ['p1', 'p2', 'p4'])],
+)
+def test_searchbuilder_contains_on_analysed_text_is_the_same_phrase(
+    client: OpenSearch, column: str, condition: str, expected: list[str]
+):
+    """SPEC-F11.7: SearchBuilder `contains` and a word of a column search find the same rows."""
+    assert found(phrases.fetch_sync(request(*PHRASE_NAMES, **criterion(column, condition, 'a-b')), client)) == expected
+
+
+@pytest.mark.parametrize('column', ['only_text', 'both'])
+def test_searchbuilder_contains_with_padding_finds_the_text_inside_it(client: OpenSearch, column: str):
+    """SPEC-F11.7 on a value sent as typed (#68): the analyser drops the spaces of ` a-b `, and on text+keyword the
+    wildcard `* a-b *` finds nothing, so the rows are those of `a-b`."""
+    response = phrases.fetch_sync(request(*PHRASE_NAMES, **criterion(column, 'contains', ' a-b ')), client)
+    assert found(response) == ['p3', 'p5']
+
+
+@pytest.mark.parametrize(
+    ('column', 'expected'),
+    # Main answered every row on both (run 45075131757); the target: analysed text holds no space, the wildcard `* *`
+    # finds the rows holding one, as SQL's substring does
+    [('only_text', []), ('both', ['p4', 'p5'])],
+)
+def test_searchbuilder_contains_of_one_space(client: OpenSearch, column: str, expected: list[str]):
+    """SPEC-F11.7 on a blank value sent as typed (#68): the phrase has no token, the wildcard `* *` is a space."""
+    response = phrases.fetch_sync(request(*PHRASE_NAMES, **criterion(column, 'contains', ' ')), client)
+    assert found(response) == expected
 
 
 def test_a_multi_select_matches_whole_values(client: OpenSearch):

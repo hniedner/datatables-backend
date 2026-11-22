@@ -38,7 +38,6 @@ from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
 from ._plan import refused
-from ._text_query import QueryParser
 from .cache import TotalCache
 from .columns import Column
 from .columns import ColumnType
@@ -345,16 +344,11 @@ def escape_wildcard(value: str) -> str:
     return value.replace('\\', '\\\\').replace('*', '\\*').replace('?', '\\?')
 
 
-def _string_contains(column: Column, value: str, *, parse: bool) -> dict[str, Any]:
-    """A string column contains ``value``: a wildcard on the whole string, a match on analysed text, or either."""
+def _string_contains(column: Column, value: str) -> dict[str, Any]:
+    """A string column contains ``value``: a wildcard on the whole string, a phrase of its tokens on analysed text, or
+    either. A phrase also where the analyser splits one word (``a-b``): a ``match`` would find text with ``a`` alone."""
     keyword = _keyword(column)
-    text_match = (
-        QueryParser().to_opensearch_query(value, column.source)
-        if parse
-        else {'match_phrase': {column.source: value}}
-        if ' ' in value
-        else {'match': {column.source: {'query': value}}}
-    )
+    text_match = {'match_phrase': {column.source: value}}
     if keyword is None:
         return text_match
     wildcard = _part(column, keyword, value)
@@ -377,7 +371,7 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
         case Empty():
             return _not({'exists': {'field': field}})
         case Contains():  # one word: the query syntax is no part of a search (PRD-F8)
-            return _string_contains(column, str(node.value), parse=False)
+            return _string_contains(column, str(node.value))
         case Range():
             bounds: dict[str, Any] = {}
             if node.lower is not None:
@@ -396,7 +390,7 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             keyword = _keyword(column)
             if node.where == 'any' or keyword is None:
                 # Analysed text has no whole string to anchor on, so starts and ends read as contains there
-                return _string_contains(column, str(node.value), parse=True)
+                return _string_contains(column, str(node.value))
             return _part(column, keyword, str(node.value), start=node.where == 'start', end=node.where == 'end')
         case OneOf():
             return _one_of(node)

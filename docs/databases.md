@@ -148,6 +148,16 @@ fix, so it may change.
   (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`).
 - **Requirement:** PRD-F25, PRD-E7.
 
+### A text field mapped without positions refuses a phrase
+
+A word on analysed text is a `match_phrase`, which needs the token positions the default mapping stores.
+
+- **What you see:** a `text` field mapped with `index_options` below `positions` (`docs` or `freqs`) makes the server
+  refuse the search, which reaches the application as the client's `RequestError`.
+- **Example:** a column over a `text` field with `"index_options": "freqs"`, searched for any word.
+- **How it is known:** from the server's documentation of `index_options`; not run, and not a default mapping.
+- **Requirement:** PRD-F11.
+
 ### A character that a normalizer folds to `*`, `?` or `\` can be searched as a wildcard
 
 A keyword field with a normalizer that folds to ASCII (`asciifolding`) turns some characters into `*`, `?` or `\`,
