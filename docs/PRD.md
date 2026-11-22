@@ -19,9 +19,9 @@
   PRD-F26, lines in section 5 and the sentence on milestones in section 6; revision 30, approved by the owner on
   2026-11-22, changes who may change a requirement, in the last sentences of this block; revision 31, approved by
   the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key); revision 32, approved by the
-  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17; revision 33 adds a clause to PRD-F11 (a word
-on analysed text matches as a phrase of its tokens), with its line in section 5). It replaces draft 1 (R1 to R9); section
-  10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
+  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17; revision 33 adds a clause to PRD-F11 (a
+  word on analysed text matches as a phrase of its tokens), with its line in section 5). It replaces draft 1 (R1 to
+  R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
   read. New facts about a database engine go to `docs/databases.md`, not into this document.
