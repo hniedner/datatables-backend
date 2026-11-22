@@ -94,6 +94,7 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
         # SPEC-P8.2: a JSON boolean is no integer, in each of the four places one is read
         ({'draw': True}, 'draw'),
         ({'start': True}, 'start'),
+        ({'start': False}, 'start'),  # which would read as 0, the first page
         ({'length': True}, 'length'),
         ({'columns': [{'data': 'a'}, {'data': 'b'}], 'order': [{'column': True, 'dir': 'asc'}]}, 'order'),
         ({'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'sideways'}]}, 'order'),

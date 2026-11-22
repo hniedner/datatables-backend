@@ -561,9 +561,18 @@ def test_an_order_on_analysed_text_is_refused_or_skipped_as_the_request_marks_it
 
 
 def test_analysed_text_declared_orderable_is_a_schema_error():
-    """SPEC-O5.2."""
+    """SPEC-O5.2. Declared unorderable, which it is anyway, it is no mistake."""
     with pytest.raises(SchemaError, match='body'):
         SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)])
+    SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=False)])
+
+
+def test_an_order_on_a_column_declared_unorderable_is_refused():
+    """SPEC-O1.2, SPEC-D5.1: the declaration decides on this backend too, for a column the index could sort by."""
+    fixed = SearchTable('docs', [IndexColumn('id', text='keyword', orderable=False)])
+    client = Client()
+    refused(fixed.fetch_sync(request('id', order=[{'column': 0, 'dir': 'asc'}]), client))
+    assert client.searches == []
 
 
 @pytest.mark.xfail(

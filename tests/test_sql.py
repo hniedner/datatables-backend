@@ -184,6 +184,14 @@ def test_a_descending_order_is_the_reverse_of_the_ascending_one(session: Session
     assert ids(table.fetch_sync(params, session)) == [5, 2, 4, 1, 3]
 
 
+def test_the_key_follows_the_first_of_several_order_entries(session: Session):
+    """SPEC-O3.1 with two applied entries: Ann (1) and Cy (4) tie on `age` and on `active`, and the key breaks the
+    tie as `age` runs, descending, not as the last entry does."""
+    several = SQLTable(people, [Column('id'), Column('age'), Column('active')])
+    params = request('id', 'age', 'active', order=[{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}])
+    assert ids(several.fetch_sync(params, session)) == [5, 2, 4, 1, 3]
+
+
 def test_null_placement_is_written_only_where_the_database_needs_it(session: Session):
     """PRD-O2: `id` cannot hold NULL and is ordered plainly, so an index on it still serves the order; `age` can,
     and gets its placement on a database that would put NULL elsewhere. MySQL and SQL Server do not take the clause."""
@@ -193,6 +201,13 @@ def test_null_placement_is_written_only_where_the_database_needs_it(session: Ses
     order_by = statements[-1][statements[-1].rindex('ORDER BY') :]
     written = ['NULLS FIRST'] if session.get_bind().dialect.name == 'postgresql' else []
     assert re.findall(r'NULLS \w+', order_by) == written
+    # The same `id` through a join: an outer join gives NULL for a column that holds none, so no column of a join
+    # is taken to be free of it
+    other = people.alias('other')
+    joined = SQLTable(people.join(other, people.c.age == other.c.age), [Column('id', field='dtb_test_people_id')])
+    joined.fetch_sync(request('id', order=[{'column': 0, 'dir': 'asc'}]), session)
+    order_by = statements[-1][statements[-1].rindex('ORDER BY') :]
+    assert ('NULLS FIRST' in order_by) == (session.get_bind().dialect.name == 'postgresql')
 
 
 def test_an_order_the_server_does_not_allow_is_refused(session: Session):
@@ -237,6 +252,12 @@ def test_an_order_entry_that_cannot_apply_is_skipped(
     assert ids(table.fetch_sync(request(*names, flags=flags, order=order), session)) == expected
 
 
+def test_an_order_on_an_undeclared_name_is_refused_also_when_its_data_is_empty(session: Session):
+    """SPEC-O1.5, PRD-P21: a column with a name is not one that only renders, whatever its `data` holds."""
+    params = request('', *ALL, flags={'': {'name': 'extra'}}, order=[{'column': 0, 'dir': 'asc'}])
+    refused(table.fetch_sync(params, session))
+
+
 def test_a_column_the_server_names_function_is_ordered_by(session: Session):
     """SPEC-P21.2: `function` is a column that only renders unless the server declares that name."""
     named = SQLTable(people, [Column('function', field='id'), Column('name')])
@@ -251,13 +272,15 @@ def test_a_column_ordered_twice_is_ordered_by_its_first_entry(session: Session):
 
 
 def test_a_skipped_order_entry_or_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
-    """SPEC-E13.2: a column that only renders and DataTables' default order on it are every request's traffic."""
+    """SPEC-E13.2: a column that only renders and DataTables' default order on it are every request's traffic. Each
+    skip there is, is in this request: an order on a column that only renders, on an undeclared one and on `team`,
+    which both sides mark unorderable, a column ordered twice, and the two columns the global search leaves out."""
     params = request(
         '',
         'extra',
         *ALL,
-        flags={'': {'data': None}, 'extra': {'orderable': False}},
-        order=[{'column': 0, 'dir': 'asc'}, {'column': 1, 'dir': 'asc'}],
+        flags={'': {'data': None}, 'extra': {'orderable': False}, 'team': {'orderable': False}},
+        order=[{'column': index, 'dir': 'asc'} for index in (0, 1, 8, 2, 2)],  # nameless, extra, team, id, id
         search={'value': 'ann'},
     )
     with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
@@ -266,7 +289,7 @@ def test_a_skipped_order_entry_or_column_logs_nothing(session: Session, caplog: 
 
 
 def test_a_start_at_the_bound_is_an_empty_page_with_both_counts(session: Session):
-    """SPEC-P10.1, SPEC-C3.1: the largest `start` reaches each database as an offset it takes."""
+    """SPEC-P10.1, SPEC-C3.2: the largest `start` reaches each database as an offset it takes."""
     response = table.fetch_sync(request(*ALL, start=2**53 - 1), session)
     assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (5, 5, [])
 
@@ -783,7 +806,7 @@ def test_the_global_search_skips_a_boolean_column(session: Session):
 
 
 def test_a_skipped_boolean_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
-    """SPEC-E13.2, the skips that exist today: the boolean column the global search leaves out, an idle SearchPanes
+    """SPEC-E13.2 for what is idle or left out by type: the boolean column the global search skips, an idle SearchPanes
     pane and an idle ColumnControl search, which a client sends on every request."""
     idle = {'columnControl': {'search': {'value': '', 'logic': 'contains'}}}
     body = {

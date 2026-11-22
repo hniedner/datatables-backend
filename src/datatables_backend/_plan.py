@@ -244,7 +244,8 @@ def plan(
         with mistakes.part():
             if (entry := _order_entry(item, params.columns[item.column], declared, type_of, orderable)) is None:
                 continue  # skipped, without a word: DataTables sends its default order on every request
-            if all(entry.column is not earlier.column for earlier in order):  # a column sorts by its first entry
+            # A field sorts by its first entry, also when two declared columns read it
+            if all(entry.column.source != earlier.column.source for earlier in order):
                 order.append(entry)
 
     global_search: list[Contains] = []
@@ -359,11 +360,10 @@ def _criterion(
 ) -> Criterion:
     """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
     the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
-    column's type does not take, reported without
-    the value being read (so ``contains`` with ``abc`` on a number column is no number mistake); a value of the
-    wrong format, or a date out of range, among the values there are; a value that is missing. A whole number outside
-    the range of its SQL column is found only later, when the query is built, so within one criterion a missing
-    value is reported before it."""
+    column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
+    column is no number mistake); a value of the wrong format, or a date out of range, among the values there are;
+    a value that is missing. A whole number outside the range of its SQL column is found only later, when the query
+    is built, so within one criterion a missing value is reported before it."""
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]

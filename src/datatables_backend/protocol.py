@@ -31,7 +31,8 @@ log = logging.getLogger('datatables_backend')
 
 #: The default largest page a request may ask for. DataTables' "All" sends -1 and is refused.
 MAX_PAGE_LENGTH = 1000
-#: The largest ``draw``, ``length`` and order index: DataTables' own counters are 32-bit.
+#: The largest ``draw`` and ``length``: DataTables' own counters are 32-bit. (An order index is bounded by the
+#: request's own columns.)
 MAX_PAGING_NUMBER = 2**31 - 1
 #: The largest ``start``: the largest whole number JavaScript holds exactly, which a client may page up to.
 MAX_START = 2**53 - 1

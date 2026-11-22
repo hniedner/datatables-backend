@@ -113,7 +113,8 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 - **Only declared columns can be used.** The request can search, filter and sort only on the columns the server
   declares. A filter or a sort on any other name is refused. A column the page only renders (one without a name, or
   with a name the server did not declare) is not a mistake: the global search leaves it out, and DataTables'
-  default order on it is skipped.
+  default order on it is skipped. For a column with a name the server did not declare, the order is skipped only
+  when the request marks the column unorderable; otherwise it is refused, which shows a misconfigured table.
 - **The server decides what can be sorted and searched.** A sort on a column declared `orderable=False` is refused,
   unless the request itself marks the column unorderable: DataTables sends its default order on the first column
   whatever that column allows, so such an entry is skipped. A column the request marks unorderable and the server
