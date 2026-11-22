@@ -30,6 +30,7 @@ from sqlalchemy import Integer
 from sqlalchemy import Numeric
 from sqlalchemy import SmallInteger
 from sqlalchemy import String
+from sqlalchemy import Table
 from sqlalchemy import Unicode
 from sqlalchemy import UnicodeText
 from sqlalchemy import and_
@@ -87,6 +88,9 @@ type SyncSource = Session | Connection
 
 #: SQL Server refuses a statement with more than 2,100 bound parameters; this leaves room for the driver and paging
 MSSQL_PARAMETER_BUDGET = 2000
+#: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
+#: LAST; every other database is told where NULL goes
+_NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
 
 
 @dataclass(frozen=True)
@@ -161,7 +165,7 @@ class SQLTable:
                 conditions built here. It is raised in one place, once every condition is built.
         """
         mistakes = Mistakes()
-        request = plan(params, self.columns, self._type_of, mistakes)
+        request = plan(params, self.columns, self._type_of, _orderable, mistakes)
         total = select(func.count()).select_from(self.source)
         if self.base_filter is not None:
             total = total.where(self.base_filter)
@@ -177,7 +181,7 @@ class SQLTable:
         if dialect.name == 'mssql' and _parameter_count(filtered_rows) > MSSQL_PARAMETER_BUDGET:
             filtered_rows = build(_json_in)
         filtered = select(func.count()).select_from(filtered_rows.subquery())
-        page = self._ordered(filtered_rows, request).offset(params.start).limit(params.length)
+        page = self._ordered(filtered_rows, request, dialect).offset(params.start).limit(params.length)
         return _Statements(total, filtered, page)
 
     def _sql(self, column: Column) -> ColumnElement[Any]:
@@ -254,18 +258,32 @@ class SQLTable:
             return _boolean_criterion(node, column)
         return _string_criterion(node, column, fold=_folds(node.column, column))
 
-    def _ordered(self, stmt: Select[Any], request: Plan) -> Select[Any]:
-        """The user's order, then the primary key, so the same rows come in the same order and a tie never splits
-        across pages."""
-        ordered: set[str] = set()
-        for item in request.order:
-            column = self._sql(item.column)
-            ordered.add(item.column.source)
-            stmt = stmt.order_by(column.desc() if item.descending else column.asc())
+    def _ordered(self, stmt: Select[Any], request: Plan, dialect: Dialect) -> Select[Any]:
+        """The user's order with NULL as the lowest value, then the primary key in the direction of the first
+        entry: the same rows come in the same order, a tie never splits across pages, and a descending order is the
+        exact reverse of the ascending one."""
+        descending = bool(request.order) and request.order[0].descending
+        ordered = [self._sql(item.column) for item in request.order]
+        for column, item in zip(ordered, request.order, strict=True):
+            stmt = stmt.order_by(self._by(column, item.descending, dialect))
         for key in _primary_key(self.source):
-            if key.key not in ordered:
-                stmt = stmt.order_by(key.asc())
+            # A key column the user already orders by is not named again: SQL Server refuses a column named twice.
+            # It is told by the column itself, since a join names its columns `<table>_<column>`, not by their keys
+            if all(key is not column for column in ordered):
+                stmt = stmt.order_by(self._by(key, descending, dialect))
         return stmt
+
+    def _by(self, column: ColumnElement[Any], descending: bool, dialect: Dialect) -> ColumnElement[Any]:
+        """One term of the order. Where NULL goes is written only where it must be: not on a database that orders
+        NULL lowest itself, and not for a column that holds none, since on PostgreSQL an index in the default order
+        does not serve an order that says where NULL goes. Only a column of a table, declared not nullable (a
+        primary key's are), is known to hold none: a join or a subquery can give NULL for any column, and so can an
+        expression."""
+        term = column.desc() if descending else column.asc()
+        never_null = isinstance(self.source, Table) and getattr(column, 'nullable', True) is False
+        if never_null or dialect.name in _NULL_IS_LOWEST:
+            return term
+        return term.nulls_last() if descending else term.nulls_first()
 
     # -- running ----------------------------------------------------------------------------------------------------
 
@@ -321,6 +339,11 @@ def _bind(source: AsyncSource | SyncSource) -> Any:
 
 def _dialect(source: AsyncSource | SyncSource) -> Dialect:
     return _bind(source).dialect
+
+
+def _orderable(column: Column) -> bool:
+    """Every SQL column can be sorted by unless it is declared not to."""
+    return column.orderable is not False
 
 
 def _primary_key(source: FromClause) -> list[ColumnElement[Any]]:

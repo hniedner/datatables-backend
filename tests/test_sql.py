@@ -10,6 +10,7 @@ from datetime import timedelta
 from datetime import timezone
 import logging
 import os
+import re
 from typing import Any
 import uuid
 import warnings
@@ -169,16 +170,44 @@ def test_order_follows_the_requests_columns_then_the_primary_key(session: Sessio
     assert [row for row in ids(table.fetch_sync(params, session)) if row != 3] == [1, 4, 2, 5]
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
-    reason="draft 1: NULL placement is the database's default (PostgreSQL: last ascending); PRD v2 (PRD-O2) makes it "
-    'lowest everywhere',
-    strict=True,
-    raises=AssertionError,
-)
 def test_null_comes_first_in_an_ascending_order(session: Session):
+    """SPEC-O2.1, SPEC-O2.4: PostgreSQL's proof, which puts NULL last ascending when left to itself; the other
+    databases order NULL lowest themselves."""
     params = request(*ALL, order=[{'column': 3, 'dir': 'asc'}])
     assert ids(table.fetch_sync(params, session))[0] == 3
+
+
+def test_a_descending_order_is_the_reverse_of_the_ascending_one(session: Session):
+    """SPEC-O3.1, and SPEC-O2.1 descending: Ann and Cy tie at 31, and the key breaks the tie in the order's own
+    direction, so Cy (4) comes before Ann (1). Row 3's NULL is last: PostgreSQL would put it first."""
+    params = request(*ALL, order=[{'column': 3, 'dir': 'desc'}])
+    assert ids(table.fetch_sync(params, session)) == [5, 2, 4, 1, 3]
+
+
+def test_the_key_follows_the_first_of_several_order_entries(session: Session):
+    """SPEC-O3.1 with two applied entries: Ann (1) and Cy (4) tie on `age` and on `active`, and the key breaks the
+    tie as `age` runs, descending, not as the last entry does."""
+    several = SQLTable(people, [Column('id'), Column('age'), Column('active')])
+    params = request('id', 'age', 'active', order=[{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}])
+    assert ids(several.fetch_sync(params, session)) == [5, 2, 4, 1, 3]
+
+
+def test_null_placement_is_written_only_where_the_database_needs_it(session: Session):
+    """PRD-O2: `id` cannot hold NULL and is ordered plainly, so an index on it still serves the order; `age` can,
+    and gets its placement on a database that would put NULL elsewhere. MySQL and SQL Server do not take the clause."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    table.fetch_sync(request(*ALL, order=[{'column': 0, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]), session)
+    order_by = statements[-1][statements[-1].rindex('ORDER BY') :]
+    written = ['NULLS FIRST'] if session.get_bind().dialect.name == 'postgresql' else []
+    assert re.findall(r'NULLS \w+', order_by) == written
+    # The same `id` through a join: an outer join gives NULL for a column that holds none, so no column of a join
+    # is taken to be free of it
+    other = people.alias('other')
+    joined = SQLTable(people.join(other, people.c.age == other.c.age), [Column('id', field='dtb_test_people_id')])
+    joined.fetch_sync(request('id', order=[{'column': 0, 'dir': 'asc'}]), session)
+    order_by = statements[-1][statements[-1].rindex('ORDER BY') :]
+    assert ('NULLS FIRST' in order_by) == (session.get_bind().dialect.name == 'postgresql')
 
 
 def test_an_order_the_server_does_not_allow_is_refused(session: Session):
@@ -186,10 +215,83 @@ def test_an_order_the_server_does_not_allow_is_refused(session: Session):
     refused(table.fetch_sync(request(*ALL, order=[{'column': 6, 'dir': 'asc'}]), session))
 
 
-def test_an_order_the_request_marks_unorderable_is_refused(session: Session):
-    params = request(*ALL, order=[{'column': 0, 'dir': 'asc'}])
-    params.columns[0].orderable = False
+def test_an_order_the_request_marks_unorderable_is_answered(session: Session):
+    """SPEC-O1.3: the server decides. DataTables sends its default order whatever the column's `orderable` says."""
+    params = request(*ALL, flags={'id': {'orderable': False}}, order=[{'column': 0, 'dir': 'desc'}])
+    assert ids(table.fetch_sync(params, session)) == [5, 4, 3, 2, 1]
+
+
+@pytest.mark.parametrize(
+    ('names', 'flags', 'order', 'expected'),
+    [
+        # SPEC-O1.4, SPEC-O8.3, SPEC-O3.3: unorderable on both sides. `age` is then the primary order, and the key
+        # follows its direction: following the skipped entry's would put Cy (4) before Ann (1)
+        (
+            ALL,
+            {'team': {'orderable': False}},
+            [{'column': 6, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}],
+            [3, 1, 4, 2, 5],
+        ),
+        # SPEC-O1.5, SPEC-O1.7, SPEC-O4.2: a name the server did not declare, marked unorderable. With every entry
+        # skipped the rows come in the key's ascending order, not in the skipped entry's direction
+        (('extra', *ALL), {'extra': {'orderable': False}}, [{'column': 0, 'dir': 'desc'}], [1, 2, 3, 4, 5]),
+        # SPEC-O1.6: a column that only renders, whatever its `orderable`
+        (('', *ALL), {'': {'data': None}}, [{'column': 0, 'dir': 'desc'}], [1, 2, 3, 4, 5]),
+        # SPEC-P21.2: how DataTables sends a column whose `data` is a function
+        (('function', *ALL), {}, [{'column': 0, 'dir': 'desc'}], [1, 2, 3, 4, 5]),
+    ],
+    ids=['unorderable-on-both-sides', 'undeclared-and-unorderable', 'nameless', 'function'],
+)
+def test_an_order_entry_that_cannot_apply_is_skipped(
+    session: Session,
+    names: tuple[str, ...],
+    flags: dict[str, dict[str, Any]],
+    order: list[dict[str, Any]],
+    expected: list[int],
+):
+    assert ids(table.fetch_sync(request(*names, flags=flags, order=order), session)) == expected
+
+
+def test_an_order_on_an_undeclared_name_is_refused_also_when_its_data_is_empty(session: Session):
+    """SPEC-O1.5, PRD-P21: a column with a name is not one that only renders, whatever its `data` holds."""
+    params = request('', *ALL, flags={'': {'name': 'extra'}}, order=[{'column': 0, 'dir': 'asc'}])
     refused(table.fetch_sync(params, session))
+
+
+def test_a_column_the_server_names_function_is_ordered_by(session: Session):
+    """SPEC-P21.2: `function` is a column that only renders unless the server declares that name."""
+    named = SQLTable(people, [Column('function', field='id'), Column('name')])
+    response = named.fetch_sync(request('function', 'name', order=[{'column': 0, 'dir': 'desc'}]), session)
+    assert [row['function'] for row in response.data] == [5, 4, 3, 2, 1]
+
+
+def test_a_column_ordered_twice_is_ordered_by_its_first_entry(session: Session):
+    """SPEC-O8.4: 2,000 entries on one column are one. SQLite refuses an ORDER BY of that many terms."""
+    order = [{'column': 3, 'dir': 'desc'}, *[{'column': 3, 'dir': 'asc'}] * 1999]
+    assert ids(table.fetch_sync(request(*ALL, order=order), session)) == [5, 2, 4, 1, 3]
+
+
+def test_a_skipped_order_entry_or_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
+    """SPEC-E13.2: a column that only renders and DataTables' default order on it are every request's traffic. Each
+    skip there is, is in this request: an order on a column that only renders, on an undeclared one and on `team`,
+    which both sides mark unorderable, a column ordered twice, and the two columns the global search leaves out."""
+    params = request(
+        '',
+        'extra',
+        *ALL,
+        flags={'': {'data': None}, 'extra': {'orderable': False}, 'team': {'orderable': False}},
+        order=[{'column': index, 'dir': 'asc'} for index in (0, 1, 8, 2, 2)],  # nameless, extra, team, id, id
+        search={'value': 'ann'},
+    )
+    with caplog.at_level(logging.DEBUG, logger='datatables_backend'):
+        assert ids(table.fetch_sync(params, session)) == [1, 3]
+    assert library_log(caplog) == ''
+
+
+def test_a_start_at_the_bound_is_an_empty_page_with_both_counts(session: Session):
+    """SPEC-P10.1, SPEC-C3.2: the largest `start` reaches each database as an offset it takes."""
+    response = table.fetch_sync(request(*ALL, start=2**53 - 1), session)
+    assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (5, 5, [])
 
 
 # -- searches ---
@@ -240,6 +342,24 @@ def test_an_undeclared_column_cannot_be_searched_or_sorted(session: Session):
     assert 'secret' not in reason
     refused(table.fetch_sync(request(*ALL, 'secret', order=[{'column': 7, 'dir': 'asc'}]), session))
     refused(table.fetch_sync(request(*ALL, **criterion('secret', '=', 's1')), session))
+
+
+@pytest.mark.parametrize('name', ['Name', 'name ', 'email_address'])
+def test_a_name_must_be_a_declared_name_exactly(session: Session, name: str):
+    """SPEC-P15.2: another case, a space after it, and the source field of the renamed `email` name no column."""
+    refused(table.fetch_sync(request(*ALL, name, column_search={name: {'value': 'a'}}), session))
+
+
+def test_a_columns_name_decides_before_its_data(session: Session):
+    """SPEC-P15.2: `data` says where the page reads the cell; the server matches `name` when there is one. Ordered
+    by `id`, which the column's `data` names, the rows would come 1 to 5."""
+    params = request(*ALL, flags={'id': {'name': 'age'}}, order=[{'column': 0, 'dir': 'asc'}])
+    assert ids(table.fetch_sync(params, session)) == [3, 1, 4, 2, 5]
+
+
+def test_the_global_search_leaves_out_a_column_the_server_did_not_declare(session: Session):
+    """SPEC-F41.1, SPEC-D6.3: a column the page only renders must not fail every search."""
+    assert ids(table.fetch_sync(request('extra', *ALL, search={'value': 'ANN'}), session)) == [1, 3]
 
 
 def test_a_global_search_over_no_searchable_column_is_refused(session: Session):
@@ -686,7 +806,7 @@ def test_the_global_search_skips_a_boolean_column(session: Session):
 
 
 def test_a_skipped_boolean_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
-    """SPEC-E13.2, the skips that exist today: the boolean column the global search leaves out, an idle SearchPanes
+    """SPEC-E13.2 for what is idle or left out by type: the boolean column the global search skips, an idle SearchPanes
     pane and an idle ColumnControl search, which a client sends on every request."""
     idle = {'columnControl': {'search': {'value': '', 'logic': 'contains'}}}
     body = {
@@ -1065,14 +1185,6 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'A filter is on a column the server does not offer. Remove that filter.',
         ),
-        # No statement: issue #14 removes this refusal (PRD-F41 has the global search skip such a column)
-        (
-            UNDECLARED,
-            {'search': {'value': 'x'}},
-            'invalid_filter',
-            'A column of this table is not known to the server, so the search box cannot be used. Use a column filter '
-            'instead.',
-        ),
         # SPEC-E4.13 to E4.15
         (
             WORDED,
@@ -1083,6 +1195,12 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         (
             WORDED,
             {'column_search': {'secret': {'value': 'x'}}},
+            'invalid_filter',
+            'The column "secret" cannot be filtered. Remove the filter on it.',
+        ),
+        (
+            WORDED,
+            criterion('secret', '=', 'x'),  # SPEC-F41.2: a criterion finds its column by another route
             'invalid_filter',
             'The column "secret" cannot be filtered. Remove the filter on it.',
         ),
@@ -1421,6 +1539,27 @@ def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Sess
     params = request(*ALL)
     params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob' + ' ' * 47 + 'x']
     assert ids(table.fetch_sync(params, session)) == []
+
+
+def test_an_order_by_the_key_of_a_join_names_the_key_once(session: Session):
+    """PRD-O3 on a join, whose columns are named `<table>_<column>`: the tie-breaker must know the key the user
+    already orders by. SQL Server refuses a column named twice in an ORDER BY."""
+    other = people.alias('other')
+    joined = SQLTable(people.join(other, people.c.id == other.c.id), [Column('id', field='dtb_test_people_id')])
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    assert ids(joined.fetch_sync(request('id', order=[{'column': 0, 'dir': 'desc'}]), session)) == [5, 4, 3, 2, 1]
+    assert statements[-1][statements[-1].rindex('ORDER BY') :].count('dtb_test_people.id') == 1
+
+
+def test_two_columns_on_one_field_are_ordered_by_once(session: Session):
+    """SPEC-O8.4 for two declared columns that read the same field: the second entry is the first one's repeat."""
+    twice = SQLTable(people, [Column('id'), Column('name'), Column('label', field='name')])
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    params = request('id', 'name', 'label', order=[{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}])
+    assert len(ids(twice.fetch_sync(params, session))) == 5  # answered: SQL Server refuses a column named twice
+    assert statements[-1][statements[-1].rindex('ORDER BY') :].count('dtb_test_people.name') == 1
 
 
 def test_a_join_works_as_a_source(session: Session):

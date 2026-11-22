@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 26 of 2026-11-21 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 27 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -11,8 +11,9 @@
   PRD-F9 for OpenSearch, which folds letters outside ASCII from 3.1 on, and adds PRD-Q14 for the supported
   OpenSearch servers, with lines in section 5; revision 25 is revision 24 in a new layout, one section per
   requirement, no requirement changed; revision 26, approved by the owner on 2026-11-21, states how a day and a
-  number are written, in PRD-F21, PRD-F22 and PRD-F25). It replaces draft 1 (R1 to R9); section 10 maps every
-  draft-1 item to its place here. A requirement now changes only by the owner.
+  number are written, in PRD-F21, PRD-F22 and PRD-F25; revision 27, approved by the owner on 2026-11-22, changes
+  the wording of PRD-O8, PRD-E13, PRD-P8 and PRD-P9 and the reason of PRD-O2). It replaces draft 1 (R1 to R9);
+  section 10 maps every draft-1 item to its place here. A requirement now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -158,16 +159,18 @@ bounded by PRD-P10.
 
 #### PRD-P8
 
-A paging number that is not an integer raises `MalformedRequest`.
+A paging number or an order index that is not an integer raises `MalformedRequest`; a JSON `true` or `false` is not an
+integer.
 
-- **Reason:** Paging must be exact.
+- **Reason:** Paging must be exact; a boolean read as 1 or 0 would page or sort as nobody asked.
 - **Priority:** must
 
 #### PRD-P9
 
-A negative `start` raises `MalformedRequest`.
+A negative `start` or `draw` raises `MalformedRequest`; a `draw` of 0 is accepted.
 
-- **Reason:** No page lies before the first.
+- **Reason:** No page lies before the first, and no client counts its draws below zero (SvelteDT starts at 1, READ in
+  its specs; DataTables INFERRED).
 - **Priority:** must
 
 #### PRD-P10
@@ -912,9 +915,13 @@ is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending).
 NULL is the lowest value: first ascending, last descending, on every backend. On a boolean column false sorts before
 true, so ascending is NULL, false, true.
 
-- **Reason:** One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending), as SvelteDT's
-  local source sorts empty values first. That each backend's native order already puts false before true is INFERRED,
-  not measured; the container tests measure it once PRD-F43 is implemented.
+- **Reason:** One answer on every database (their defaults differ: PostgreSQL puts NULL last ascending, and OpenSearch
+  a missing value last in either direction, INFERRED from its documentation), as SvelteDT's local source sorts empty
+  values first. Each backend's native order puts false before true (MEASURED: the tests assert it on SQLite,
+  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.10 and 2.19). On PostgreSQL a column that can hold NULL is
+  ordered with `NULLS FIRST` or `NULLS LAST`, which an index in the default order does not serve (INFERRED from
+  PostgreSQL's documentation), so an app that sorts a large table by such a column declares its index `NULLS FIRST`; a
+  column that cannot hold NULL is ordered plainly and keeps its index.
 - **Priority:** must
 
 #### PRD-O3
@@ -960,10 +967,13 @@ OpenSearch sorts a string column on its keyword field (PRD-D13).
 #### PRD-O8
 
 Order entries apply in request order, the first applied entry primary; a skipped entry (PRD-O1, PRD-P21) drops out, and
-the next applied entry takes its place.
+the next applied entry takes its place. An entry on a column that an earlier applied entry already orders by is skipped
+too, whatever its direction: it can change nothing.
 
 - **Reason:** DataTables sends a multi-column order with its primary column first (INFERRED from its multi-column
-  ordering, where shift-click adds a column after the others).
+  ordering, where shift-click adds a column after the others). A column named twice sorts by its first entry alone, and
+  leaving the second out bounds the entries applied by the declared columns: SQLite refuses an ORDER BY of 2,000 terms
+  (MEASURED 2026-11-22: a request with 1,999 order entries was answered, one with 2,000 failed in the database).
 - **Priority:** must
 
 ### 4.5 Counts and paging (C)
@@ -1206,8 +1216,8 @@ Logging uses the standard `logging` module under the logger `datatables_backend`
 Each refusal, a `MalformedRequest` raised or a user error answered (PRD-E1), logs exactly one WARNING with a fixed event
 name per case, holding no client text and only server-declared names (PRD-E10, PRD-E11). A skip the requirements allow
 logs nothing: an idle column or filter (PRD-P5), a column the global search leaves out (PRD-F32, PRD-F41, PRD-F44), an
-order entry skipped (PRD-O1), a nameless column (PRD-P21). No answer is partial: a request is answered in full or
-refused.
+order entry skipped (PRD-O1, PRD-O8), a nameless column (PRD-P21). No answer is partial: a request is answered in full
+or refused.
 
 - **Reason:** An operator sees every refusal once and can count them by event; an allowed skip is normal traffic
   (DataTables sends its default order and idle searches on every request), and logging it would bury the refusals.

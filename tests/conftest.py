@@ -150,10 +150,17 @@ async def async_session(database: tuple[str, str]) -> AsyncIterator[AsyncSession
     await engine.dispose()
 
 
-def request(*names: str, column_search: dict[str, dict[str, Any]] | None = None, **body: Any) -> DTParams:
+def request(
+    *names: str,
+    column_search: dict[str, dict[str, Any]] | None = None,
+    flags: dict[str, dict[str, Any]] | None = None,
+    **body: Any,
+) -> DTParams:
     """A request for the columns ``names``, as DataTables sends it, with ``body`` merged in. ``column_search`` gives
-    a column's search by its name (``{'age': {'value': '31'}}``), so the request is parsed with it."""
-    searches = column_search or {}
+    a column's search by its name (``{'age': {'value': '31'}}``) and ``flags`` its other fields
+    (``{'team': {'orderable': False}}``, or ``{'': {'data': None}}`` for a column that only renders), so the request
+    is parsed with them."""
+    searches, fields = column_search or {}, flags or {}
     columns = [
         {
             'data': name,
@@ -161,6 +168,7 @@ def request(*names: str, column_search: dict[str, dict[str, Any]] | None = None,
             'searchable': True,
             'orderable': True,
             'search': {'value': '', 'regex': False, **searches.get(name, {})},
+            **fields.get(name, {}),
         }
         for name in names
     ]

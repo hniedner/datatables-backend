@@ -111,7 +111,23 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 ## What the server decides
 
 - **Only declared columns can be used.** The request can search, filter and sort only on the columns the server
-  declares. Any other name is refused.
+  declares. A filter or a sort on any other name is refused. A column the page only renders (one without a name, or
+  with a name the server did not declare) is not a mistake: the global search leaves it out, and DataTables'
+  default order on it is skipped. For a column with a name the server did not declare, the order is skipped only
+  when the request marks the column unorderable; otherwise it is refused, which shows a misconfigured table.
+- **The server decides what can be sorted and searched.** A sort on a column declared `orderable=False` is refused,
+  unless the request itself marks the column unorderable: DataTables sends its default order on the first column
+  whatever that column allows, so such an entry is skipped. A column the request marks unorderable and the server
+  allows is sorted by. `orderable` is `None` by default, which means yes, **with one exception:** an OpenSearch
+  string column declared `text='text'` has no whole string to sort by, so it is unorderable, and declaring it
+  `orderable=True` raises `SchemaError`. A column named twice in an order is sorted by its first entry.
+- **NULL is the lowest value, and a descending order is the exact reverse of the ascending one.** NULL, or a
+  missing field on OpenSearch, comes first ascending and last descending on every backend. In SQL a tie is broken
+  by the primary key, in the direction of the first sort entry. **Two exceptions:** an OpenSearch table breaks no
+  ties yet, and on PostgreSQL the order of a column that can hold NULL says where NULL goes (`NULLS FIRST`,
+  `NULLS LAST`), which an index in the default order does not serve: to sort a large table by such a column,
+  declare its index `NULLS FIRST`. A column declared `nullable=False` on a table (a primary key's columns are) is
+  ordered plainly and keeps its index.
 - **The declared type decides how a filter is built.** A column is a `string`, a `number`, a `date` or a `boolean`;
   SQL reads the type from the column unless it is declared (a MySQL `TINYINT(1)` read by reflection is a number, so
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
@@ -165,8 +181,8 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
   request's own when that could be read. The FastAPI dependency answers it with 422 and
   `{"detail": {"message": ..., "draw": ...}}`.
-- **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), and LIKE and wildcard
-  characters in search values are escaped.
+- **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), `start` goes up to
+  2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped.
 
 ## Development
 
