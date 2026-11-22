@@ -10,17 +10,18 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E1.2** [all] SearchBuilder `<` `a` on `name` → `fetch` and `fetch_sync` return the answer with error_code
   `invalid_filter`; `InvalidFilter` does not propagate out of either.
 - **SPEC-E2.1** [all] Across every user-error case in the specs, `fetch` answers one of exactly `invalid_filter`,
-  `invalid_character`, `invalid_date`, `invalid_number`, `page_out_of_range`; it never answers another code
-  (`query_failed` is the app's, PRD-E5).
-- **SPEC-E2.2** [all] The five codes are stable: each case in P, D, F, O and C that names a code answers that code.
-  [review] The five are listed in the docstring of `DTResponse`.
+  `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`; it
+  never answers another code (`query_failed` is the app's, PRD-E5).
+- **SPEC-E2.2** [all] The seven codes are stable: each case in P, D, F, O and C that names a code answers that code.
+  [review] The seven are listed in the docstring of `DTResponse`.
 - **SPEC-E2.3** [review] The docstring of `DTResponse` and the README say that the list of codes is closed, that a
   code is added only in a release that says so, and that a client treats a code it does not know as a refusal of
   the request and shows `error`.
 - **SPEC-E3.1** [all] A request holding both a U+0000 in the global search and `=` `abc` on `price` →
   `invalid_character` (step 1 before step 2).
-- **SPEC-E3.2** [all] A request holding a 17-word global search and `=` `2024-13-01` on `made` → `invalid_filter`;
-  holding a SearchBuilder tree 10 groups deep counting the root and `=` `abc` on `price` → `invalid_filter`.
+- **SPEC-E3.2** [all] A request holding a 17-word global search and `=` `2024-13-01` on `made` → `too_many_words`;
+  holding a global search of 256 code points and `=` `2024-13-01` on `made` → `value_too_long`; holding a SearchBuilder
+  tree 10 groups deep counting the root and `=` `abc` on `price` → `invalid_filter`.
 - **SPEC-E3.3** [all] A request holding SearchBuilder `=` `abc` on `price` and `contains` `x` on `active` →
   `invalid_number` (step 2 before step 4); holding `=` `2024-13-01` on `made` and a column search `x` on the
   undeclared `extra` → `invalid_date`.
@@ -113,8 +114,13 @@ it, as far as that is known when the mistake is found. A text is changed only to
 - **SPEC-E4.29** [SQL Server] With `price` redeclared as a `Numeric(32, 2)`: `=` with a whole number of 39 digits,
   or `=` `1e39`, → `invalid_number` with
   `The filter on "price" needs a number with at most 38 digits before the decimal point.`
-- **SPEC-E4.30** [SQL] With `price` redeclared as a `Float`: `=` with a whole number of 309 digits →
-  `invalid_number` with `The filter on "price" needs a number of at most 308 digits.`
+- **SPEC-E4.30** [all] Search text of 256 code points → `value_too_long` with
+  `The search text holds more than 255 characters. Shorten it to at most 255.`; a column search on `name` of 256 →
+  `The search on "name" holds more than 255 characters. Shorten it to at most 255.`; a list entry or a SearchBuilder
+  value of 256 on `name` → `A value in the filter on "name" holds more than 255 characters. Shorten each value to
+  at most 255.`; 17 words → `too_many_words` with `The search text holds more than 16 words. Search for at most
+  16 words.`, and in a column search on `name` `The search on "name" holds more than 16 words. Search for at most 16
+  words.`
 - **SPEC-E4.31** [all] A SearchBuilder tree 9 groups deep → `invalid_filter` with
   `The search builder nests more than 8 groups. Nest at most 8 groups.`
 - **SPEC-E4.32** [all] A SearchBuilder tree of one group holding 65 criteria → `invalid_filter` with

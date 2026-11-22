@@ -31,6 +31,7 @@ from sqlalchemy import Table
 from sqlalchemy import Uuid
 from sqlalchemy import and_
 from sqlalchemy import cast
+from sqlalchemy import create_engine
 from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
@@ -48,6 +49,7 @@ from sqlalchemy.types import TypeDecorator
 from sqlalchemy.types import TypeEngine
 
 from datatables_backend import Column
+from datatables_backend import DTParams
 from datatables_backend import DTResponse
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
@@ -59,6 +61,8 @@ from .conftest import checked_database
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import largest_request
+from .conftest import metadata
 from .conftest import nested
 from .conftest import people
 from .conftest import request
@@ -1202,7 +1206,6 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
     [
         ('age', '>', ['1e999'], 'invalid_number'),  # SPEC-F25.1: written as a number, and no column holds infinity
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
-        ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
         # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
         ('age', '=', ['3_1'], 'invalid_number'),
         ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
@@ -1690,13 +1693,11 @@ def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value:
         assert ids(response) == []
 
 
-def test_a_whole_number_too_large_for_a_float_is_refused_with_the_digits_it_may_have(session: Session):
-    """SPEC-F25.4 and the text of SPEC-E4.30, asserted here only: a float holds every whole number of up to 308
-    digits, so one of 308 is answered and one of 309 is the user's mistake."""
+def test_the_longest_whole_number_a_request_may_hold_is_compared_as_a_float(session: Session):
+    """SPEC-F25.4: a float holds every whole number of up to 308 digits and a value is at most 255 characters
+    (PRD-F14), so the longest is answered, with no row. A longer one is `value_too_long`, which another test asserts."""
     numbers = wide(session)
-    assert ids(numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 308)), session)) == []
-    response = numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 309)), session)
-    assert refused(response, 'invalid_number') == 'The filter on "ratio" needs a number of at most 308 digits.'
+    assert ids(numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 255)), session)) == []
 
 
 def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
@@ -1832,17 +1833,22 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
     assert logged(caplog) == ['datatables_control_character']
 
 
-@pytest.mark.parametrize('bound', ['words', 'depth'])
+@pytest.mark.parametrize('bound', ['words', 'length', 'depth'])
 def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(session: Session, bound: str):
-    """SPEC-E3.2: step 1 before step 2."""
+    """SPEC-E3.2: step 1 before step 2, each bound with its own code."""
+    code = 'invalid_filter'
     if bound == 'words':
+        code = 'too_many_words'
         params = request(*ALL, search={'value': ' '.join(['w'] * 17)}, **criterion('born', '=', '2024-13-01'))
+    elif bound == 'length':
+        code = 'value_too_long'
+        params = request(*ALL, search={'value': 'w' * 256}, **criterion('born', '=', '2024-13-01'))
     else:
         tree: dict[str, Any] = {'criteria': [{'condition': '=', 'origData': 'age', 'value': ['abc']}]}
         for _ in range(9):
             tree = {'criteria': [tree]}
         params = request(*ALL, searchBuilder=tree)
-    refused(table.fetch_sync(params, session))
+    refused(table.fetch_sync(params, session), code)
 
 
 @pytest.mark.parametrize(
@@ -2001,23 +2007,68 @@ def test_row_values_come_back_as_the_database_gives_them(session: Session):
     ]
 
 
-def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
-    """SPEC-C17.1, PRD-C17: 512 values in two lists of days on columns with a time (two parameters each), 64
-    criteria of two values each and a global search, in one request. On SQL Server its parameters stay under the
-    2,100 it refuses past; a bound that grew would turn this red there."""
-    largest = SQLTable(people, [Column('id'), Column('name'), Column('seen'), Column('seen_tz')])
+def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
+    """The largest request PRD-F14 and PRD-F38 allow (`largest_request`) over a table of ``emails`` columns that
+    all read `email_address`, plus `id` and the two columns with a time: 512 values in two lists of days (two
+    parameters each), 64 criteria of two values each, 62 column searches of 16 words and a global search of 16
+    words over ``emails`` + 3 columns."""
+    columns = [Column(f'e{number}', field='email_address') for number in range(emails)]
+    largest = SQLTable(people, [Column('id'), *columns, Column('seen'), Column('seen_tz')])
     days = [(date(2000, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)] + ['2026-07-15']
     between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
-    params = request(
-        'id',
-        'name',
-        'seen',
-        'seen_tz',
-        column_search={'seen': {'multi_values': days}, 'seen_tz': {'multi_values': days}},
-        search={'value': 'ann'},
-        searchBuilder={'logic': 'AND', 'criteria': [between] * 64},
-    )
+    names = ['id', *(column.name for column in columns), 'seen', 'seen_tz']
+    params = largest_request(names, names[1:63], {'seen': days, 'seen_tz': days}, [between] * 64)
+    return largest, params
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT', 'sqlite') == 'sqlite',
+    strict=True,
+    raises=DBAPIError,
+    reason='PRD-C17, PRD-F38: SQLite refuses the request, "Expression tree is too large (maximum depth 1000)": it '
+    'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured on '
+    '2026-11-22; PostgreSQL and MySQL answer it. Issue #89 closes the gap',
+)
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
+    strict=True,
+    raises=DBAPIError,
+    reason='PRD-C17: SQL Server refuses the request, ODBC error 07002 "COUNT field incorrect": it binds 3,184 '
+    'parameters (2,144 + 16 x 65 columns of the global search) where the limit is 2,100. Measured on 2026-11-22 '
+    '(CI run 45078213951). Issue #89 closes the gap',
+)
+def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: the request of `largest_sql_request` over 62 columns. Its parameters are counted by
+    the next test; this one runs it on every database, SQL Server's limit of 2,100 included."""
+    largest, params = largest_sql_request(62)
     assert ids(largest.fetch_sync(params, session)) == [1]
+
+
+@pytest.mark.parametrize('emails', [62, 100])
+def test_the_largest_request_the_bounds_allow_binds_a_known_number_of_parameters(emails: int):
+    """PRD-C17, a measurement: the parameters of one statement of the largest request, on SQLite, as a function of
+    C, the number of columns the global search covers (``emails`` + 3). 2,144 are the lists (1,024), the criteria
+    (128) and the 62 column searches of 16 words (992); each global word adds one per column. SQL Server refuses
+    past 2,100 in one statement, so PRD-C17 is not met by the bounds alone: this test pins how far past."""
+
+    class Counted(Exception):
+        pass
+
+    seen: list[int] = []
+
+    def count(*args: Any) -> None:
+        seen.append(len(args[3]))
+        if seen[-1] > 1000:  # the filtered count: SQLite itself refuses it (the xfail above), so it is never run
+            raise Counted
+
+    engine = create_engine('sqlite://')
+    metadata.create_all(engine)
+    event.listen(engine, 'before_cursor_execute', count)
+    largest, params = largest_sql_request(emails)
+    with Session(engine) as session, pytest.raises(Counted):
+        largest.fetch_sync(params, session)
+    engine.dispose()
+    assert seen[-1] == 2144 + 16 * (emails + 3)  # the page's statement binds two more, its offset and its limit
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
@@ -2097,3 +2148,140 @@ def test_a_form_encoded_multi_values_list_is_read(session: Session):
     read as no list, this global search would be idle and answered."""
     params = parse_request([('columns[0][data]', 'name'), ('search[multi_values][]', 'Bob')])
     refused(table.fetch_sync(params, session))
+
+
+# -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
+
+SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
+OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
+    ({'column_search': {'age': {'value': '1' * 256}}}, 'value_too_long'),  # SQL searches a number's text
+    ({'column_search': {'name': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'born': {'multi_values': ['2024-01-01', '1' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'name': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
+    (criterion('name', '=', 'a' * 256), 'value_too_long'),
+    (criterion('name', 'contains', 'a' * 256), 'value_too_long'),
+    (criterion('name', 'starts', 'a' * 256), 'value_too_long'),
+    (criterion('age', '=', '1' * 256), 'value_too_long'),
+    (criterion('age', 'between', '1', '2' * 256), 'value_too_long'),
+    (criterion('born', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
+    (criterion('born', 'contains', '2024' + ' ' * 252), 'value_too_long'),
+    # the length comes before the name: `active` is no column of this table
+    (criterion('active', '=', 'true' + ' ' * 252), 'value_too_long'),
+    # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
+    (criterion('age', '=', 'x' * 300), 'value_too_long'),  # no number, and too long
+    (criterion('born', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
+    ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
+    ({'column_search': {'extra': {'value': SEVENTEEN}}}, 'too_many_words'),  # no column to lift the cap
+    ({'column_search': {'name': {'value': ' '.join(['abcdefghij'] * 30)}}}, 'value_too_long'),  # 30 words, length first
+    # PRD-E3, within one filter: a control character in any value, then the length of any value
+    ({'column_search': {'name': {'multi_values': ['a' * 256, 'b\x01']}}}, 'invalid_character'),
+    (criterion('age', 'between', '1' * 256, '2\x01'), 'invalid_character'),
+    ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
+    ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
+    ({'column_search': {'name': {'value': 'a' * 256, 'multi_values': ['x']}}}, 'value_too_long'),
+    ({'search': {'value': 'a' * 256 + '\x00'}}, 'invalid_character'),
+    ({'search': {'value': ' '.join(['abcdefghij'] * 30)}}, 'value_too_long'),  # 30 words too, and the length first
+    (
+        {'search': {'value': SEVENTEEN}, 'column_search': {'name': {'value': 'a' * 256}}},
+        'too_many_words',
+    ),  # reading order
+    ({'search': {'value': 'a' * 256}, **criterion('age', '=', 'abc')}, 'value_too_long'),
+]
+
+
+@pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
+def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
+    session: Session, body: dict[str, Any], code: str
+):
+    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.5, SPEC-E3.2): the same refusal for every kind of value and part of the
+    request, with a text that holds none of what was sent."""
+    names = (*ALL, 'extra') if 'extra' in str(body) else ALL
+    message = refused(table.fetch_sync(request(*names, **body), session), code)
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', '111', *SEVENTEEN.split()))
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'column_search': {'name': {'multi_values': ['a', 'b' * 255]}}},
+        {'column_search': {'name': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('name', 'contains', 'a' * 255),
+        criterion('age', '=', '0' * 255),  # 255 digits, a number the column holds
+        criterion('age', 'null', '1' * 300),  # a value the condition does not read is not measured
+    ],
+)
+def test_a_value_within_the_bounds_is_answered(session: Session, body: dict[str, Any]):
+    """PRD-F14: the bound is at 255 code points, not below."""
+    assert table.fetch_sync(request(*ALL, **body), session).error is None
+
+
+def test_a_surplus_value_is_not_measured_and_stays_the_mistake_it_is(session: Session):
+    """PRD-F14, PRD-F36: only the values a condition reads are measured."""
+    refused(table.fetch_sync(request(*ALL, **criterion('name', '=', 'Bob', 'a' * 300)), session))
+
+
+@pytest.mark.parametrize(
+    ('body', 'code', 'text'),
+    [
+        (
+            {'search': {'value': 'a' * 256}},
+            'value_too_long',
+            'The search text holds more than 255 characters. Shorten it to at most 255.',
+        ),
+        (
+            {'column_search': {'name': {'value': 'a' * 256}}},
+            'value_too_long',
+            'The search on "name" holds more than 255 characters. Shorten it to at most 255.',
+        ),
+        (
+            {'column_search': {'name': {'multi_values': ['a' * 256]}}},
+            'value_too_long',
+            'A value in the filter on "name" holds more than 255 characters. Shorten each value to at most 255.',
+        ),
+        (
+            criterion('name', '=', 'a' * 256),
+            'value_too_long',
+            'A value in the filter on "name" holds more than 255 characters. Shorten each value to at most 255.',
+        ),
+        (
+            {'search': {'value': SEVENTEEN}},
+            'too_many_words',
+            'The search text holds more than 16 words. Search for at most 16 words.',
+        ),
+        (
+            {'column_search': {'name': {'value': SEVENTEEN}}},
+            'too_many_words',
+            'The search on "name" holds more than 16 words. Search for at most 16 words.',
+        ),
+    ],
+)
+def test_the_text_of_each_bound_names_the_condition_and_the_fix(
+    session: Session, body: dict[str, Any], code: str, text: str
+):
+    """SPEC-E4.30: each text is fixed, names only a declared column, and says what to shorten."""
+    assert refused(table.fetch_sync(request(*ALL, **body), session), code) == text
+
+
+def test_words_are_not_counted_on_a_boolean_column(session: Session):
+    """PRD-F14: a boolean's value is one value to read, not words, so 17 of them are no `too_many_words` but the
+    value that is no boolean (PRD-E3 (4))."""
+    flags = SQLTable(people, [Column('id'), Column('active')])
+    response = flags.fetch_sync(request('id', 'active', column_search={'active': {'value': SEVENTEEN}}), session)
+    assert refused(response) == 'The filter on "active" needs true or false (1 or 0 also work).'
+
+
+def expanded(text: str) -> str:
+    return format(Decimal(text), 'f')
+
+
+def test_a_hook_that_expands_a_number_is_refused_not_failed(session: Session):
+    """PRD-D14, PRD-F25: the 255 bound is measured on the client's text, before the hook, so a hook on a number
+    column can still make `1e5000` 5,000 digits, which Python does not convert to an integer, and `1e400` 401, which
+    a `Float` column does not take. Both are the user's mistake, not a failure; they go when PRD-D14 refuses a hook
+    on a number column."""
+    hooked = SQLTable(people, [Column('id'), Column('age', search_value=expanded)])
+    params = request('id', 'age', column_search={'age': {'multi_values': ['1e5000']}})
+    assert 'must be a number' in refused(hooked.fetch_sync(params, session), 'invalid_number')
+    floats = SQLTable(wide(session).source, [Column('id'), Column('ratio', search_value=expanded)])
+    params = request('id', 'ratio', column_search={'ratio': {'multi_values': ['1e400']}})
+    assert 'at most 308 digits' in refused(floats.fetch_sync(params, session), 'invalid_number')

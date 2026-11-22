@@ -66,6 +66,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
-- **SPEC-C17.1** [SQL] The largest request PRD-F38 allows is answered, on every SQL database: two `multi_values`
-  lists of 256 days each, on two columns that hold a time (512 values, two parameters each), 64 criteria `between`
-  two numbers on a column, and a global search `ann`, all in one request → rows 1.
+- **SPEC-C17.1** [SQL] The largest request PRD-F14 and PRD-F38 allow: a global search of 16 words, 62 column
+  searches of 16 words, two `multi_values` lists of 256 days each, on two columns that hold a time (512 values, two
+  parameters each), and 64 criteria `between` two numbers on a column, all in one request → rows 1 on PostgreSQL and
+  MySQL. It binds 2,144 + 16 x C parameters, C being the columns the global search covers, so SQL Server refuses it
+  (over 2,100), and SQLite refuses its expression depth (over 1,000 conditions joined by AND); both are pinned as
+  strict expected failures (PRD-C17, docs/decisions/005-the-largest-request-the-bounds-allow.md).

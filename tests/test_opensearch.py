@@ -7,6 +7,7 @@ container tests of milestone 2; these pin down what is sent.
 from collections.abc import Mapping
 import logging
 from typing import Any
+from typing import cast
 
 import pytest
 
@@ -23,6 +24,7 @@ from datatables_backend.opensearch import SearchTable
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import largest_search_request
 from .conftest import nested
 from .conftest import request
 
@@ -429,14 +431,6 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
     assert query(client) == []
 
 
-def test_search_text_over_the_word_bound_is_refused_before_anything_is_sent():
-    """SPEC-F14.2: the bound is the plan's, so OpenSearch refuses as SQL does."""
-    client = Client()
-    text = ' '.join(f'q{n}' for n in range(17))
-    assert '16' in refused(table.fetch_sync(request(*NAMES, search={'value': text}), client))
-    assert (client.searches, client.counts) == ([], [])
-
-
 def test_a_global_search_over_numbers_and_dates_only_is_refused():
     numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
     refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
@@ -589,17 +583,14 @@ def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
     ]
 
 
-def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
-    """SPEC-F9.18: a value of up to 255 code points, the longest a search text may be (PRD-F14) and the longest
-    measured as a `regexp` on every server, is one; a longer value is the `term` it was before. The letter here is
-    outside the BMP and the rest are dots, each of which gets a backslash: the length is the value's, in code
-    points, not the pattern's."""
+def test_the_longest_value_a_request_may_hold_is_a_regexp():
+    """SPEC-F9.18: a value of 255 code points, the longest any value may be (PRD-F14) and the longest measured as a
+    `regexp` on every server, is one. The letter here is outside the BMP and the rest are dots, each of which gets
+    a backslash: the length is the value's, in code points, not the pattern's. A longer value never gets here: it is
+    refused as `value_too_long`."""
     deseret, client = chr(0x10400), Client()
-    for dots in (254, 255):
-        table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * dots)), client)
-    fits, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert fits == {'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}
-    assert too_long == {'term': {'id': {'value': deseret + '.' * 255, 'case_insensitive': True}}}
+    table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * 254)), client)
+    assert query(client) == [{'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}]
 
 
 FULLWIDTH_MARKS = [chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)]  # the fullwidth asterisk, question mark and backslash
@@ -615,15 +606,11 @@ def test_a_search_for_a_fullwidth_mark_is_a_regexp_with_the_mark_behind_a_backsl
     assert query(client) == [{'regexp': {'id': {'value': f'.*a\\{mark}b.*', 'case_insensitive': True}}}]
 
 
-def test_a_fullwidth_mark_changes_no_exact_match_and_no_value_too_long_for_a_regexp():
-    """SPEC-F9.19: an exact match is a `term`, which the server compares as a whole, so it stays one; and a search
-    of more than 255 code points keeps its `wildcard`, as SPEC-F9.18 has it for every value."""
+def test_a_fullwidth_mark_changes_no_exact_match():
+    """SPEC-F9.19: an exact match is a `term`, which the server compares as a whole, so it stays one."""
     client, mark = Client(), FULLWIDTH_MARKS[0]
     table.fetch_sync(request(*NAMES, **criterion('id', '=', f'a{mark}b')), client)
-    table.fetch_sync(request(*NAMES, **criterion('id', 'contains', mark + 'a' * 255)), client)
-    exact, too_long = (search['query']['bool']['must'][1] for search in client.searches)
-    assert exact == {'term': {'id': {'value': f'a{mark}b', 'case_insensitive': True}}}
-    assert too_long == {'wildcard': {'id': {'value': f'*{mark}{"a" * 255}*', 'case_insensitive': True}}}
+    assert query(client) == [{'term': {'id': {'value': f'a{mark}b', 'case_insensitive': True}}}]
 
 
 def test_a_value_outside_ascii_without_case_keeps_its_query():
@@ -876,3 +863,94 @@ def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
 def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
     with pytest.raises(SchemaError):
         SearchTable('docs', [IndexColumn('id', text='keyword'), Column('active', type='boolean', search_value=str)])
+
+
+def tally(query: Mapping[str, Any]) -> tuple[int, int, int]:
+    """The leaf queries, the clauses of every `bool` (a leaf or another `bool` each) and the most clauses one `bool`
+    holds, in a query: the three ways a server may count against `indices.query.bool.max_clause_count`."""
+    leaves = clauses = widest = 0
+    pending = [query]
+    while pending:
+        node = pending.pop()
+        if 'bool' not in node:
+            leaves += 1
+            continue
+        for occurrences in node['bool'].values():
+            if isinstance(occurrences, list):
+                children = cast(list[Mapping[str, Any]], occurrences)
+                clauses += len(children)
+                widest = max(widest, len(children))
+                pending.extend(children)
+    return leaves, clauses, widest
+
+
+def test_the_largest_request_the_bounds_allow_is_this_many_clauses():
+    """PRD-F38, PRD-C17, a measurement of what is sent: the request of `largest_search_request` over 64 text+keyword
+    columns. A word adds two leaves for each such column (a `match_phrase` and a `wildcard`, in a `should`), so the
+    global search is 16 x 64 x 2 = 2,048, the 62 column searches 62 x 16 x 2 = 1,984, the two lists 512 (one `term`
+    each) and the 64 criteria 128. The default `indices.query.bool.max_clause_count` is 1,024; whether the server
+    counts leaves, the clauses of every `bool` or the widest `bool` is what the live test asks."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
+    columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
+    client = Client()
+    SearchTable('docs', columns).fetch_sync(largest_search_request(), client)
+    assert tally(client.searches[0]['query']) == (4672, 6834, 256)
+
+
+# -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
+
+SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
+OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
+    ({'search': {'value': 'a' * 256}}, 'value_too_long'),
+    ({'search': {'value': SEVENTEEN}}, 'too_many_words'),
+    ({'column_search': {'title': {'value': 'a' * 256}}}, 'value_too_long'),
+    ({'column_search': {'title': {'value': SEVENTEEN}}}, 'too_many_words'),
+    ({'column_search': {'pages': {'value': '1' * 256}}}, 'value_too_long'),
+    # PRD-E3 (2): on a number or date column that is one value to match, words are no words, so the value is unreadable
+    ({'column_search': {'pages': {'value': SEVENTEEN}}}, 'invalid_number'),
+    ({'column_search': {'created': {'value': SEVENTEEN}}}, 'invalid_date'),
+    ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
+    (criterion('title', 'contains', 'a' * 256), 'value_too_long'),
+    (criterion('pages', '=', '1' * 256), 'value_too_long'),
+    (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
+    (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
+    # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
+    (criterion('pages', '=', 'x' * 300), 'value_too_long'),
+    (criterion('created', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
+    ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
+    ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
+    ({'search': {'value': 'a' * 256 + '\x00'}}, 'invalid_character'),
+    ({'search': {'value': ' '.join(['abcdefghij'] * 30)}}, 'value_too_long'),  # 30 words too, and the length first
+    ({'search': {'value': SEVENTEEN}, 'column_search': {'title': {'value': 'a' * 256}}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256}, **criterion('pages', '=', 'abc')}, 'value_too_long'),
+]
+
+
+@pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
+def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(body: dict[str, Any], code: str):
+    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.3, SPEC-E3.2): the same refusal for every kind of value and part of the
+    request, answered before the server is asked, with a text that holds none of what was sent."""
+    client = Client()
+    names = (*NAMES, 'extra') if 'extra' in str(body) else NAMES
+    message = refused(table.fetch_sync(request(*names, **body), client), code)
+    assert client.searches == []
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', *SEVENTEEN.split()))
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'search': {'value': 'a' * 255}},
+        {'search': {'value': ' '.join(SEVENTEEN.split()[:16])}},
+        {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}},
+        {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('title', 'contains', 'a' * 255),
+        criterion('pages', '=', '1' * 255),
+        criterion('pages', 'null', '1' * 300),  # a value the condition does not read is not measured
+    ],
+)
+def test_a_value_within_the_bounds_is_answered(body: dict[str, Any]):
+    """PRD-F14: the bound is at 255 code points and 16 words, not below."""
+    assert table.fetch_sync(request(*NAMES, **body), Client()).error is None

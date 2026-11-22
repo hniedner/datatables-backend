@@ -139,13 +139,23 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F13.3** [all] On a table whose every column is declared unsearchable, an empty global search → rows 1, 2,
   3, 4 (nothing is asked).
 - **SPEC-F14.1** [all] A global search of one word of 255 code points is answered; 256 → error_code
-  `invalid_filter`. The same holds for a word of 255 supplementary-plane characters (each one code point) and 256 of
+  `value_too_long`. The same holds for a word of 255 supplementary-plane characters (each one code point) and 256 of
   them.
-- **SPEC-F14.2** [all] A global search of 16 words is answered; 17 → error_code `invalid_filter`; the same for a
+- **SPEC-F14.2** [all] A global search of 16 words is answered; 17 → error_code `too_many_words`; the same for a
   column search on `name`.
-- **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `invalid_filter`; 15 words plus a
+- **SPEC-F14.3** [all] 16 words plus a quoted phrase of two words is 17 words → `too_many_words`; 15 words plus a
   quoted phrase of two words is 16 → answered (counting the phrase as two words would refuse it); 16 words plus `"`,
   `!""` and `!x` is 16 → answered.
+- **SPEC-F14.4** [all] Every value is bound at 255 code points: a column search, a `multi_values` entry, an
+  alternative of a categorical filter, a value a SearchBuilder condition reads (`=`, `contains`, `starts`, `between`'s
+  second value, a number, a date, a boolean) → answered at 255, error_code `value_too_long` at 256; the same for a
+  number of 4,301 digits and for 5,000 zeros, which are no `invalid_number`. A surplus value of a condition and the
+  value of `null` are not measured: `null` with a value of 300 code points is answered.
+- **SPEC-F14.5** [all] Step 1 is found before every refusal of step 4 in the same part of a request: 17 words with
+  `regex` true, 17 words and no searchable column, a global search of 256 code points with `multi_values`, and a
+  column search of 256 code points on a name the server does not declare, each answer the code of step 1, not
+  `invalid_filter`. Within one filter, a control character in any value comes before the length of any value, which
+  comes before the words: `multi_values` `["a" x 256, "b\x01"]` → `invalid_character`.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_character`; so do U+0009 (TAB), U+001B and
   U+007F.
 - **SPEC-F15.2** [all] U+0000 in a column search, in a SearchBuilder `=` value, in a categorical value and in a
@@ -241,8 +251,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   U+FF17) → error_code `invalid_number`.
 - **SPEC-F25.4** [SQL] A whole number outside the signed 64-bit range. With `price` redeclared as a `Float`, given
   a row whose `price` is 18446744073709551616 (2^64): `=` `18446744073709551616`, and that number as a
-  `multi_values` entry, → that row; `=` `9223372036854775808` (2^63) → none; `=` with a whole number of 308
-  digits → none, and of 309 digits → error_code `invalid_number`. With `price` an expression without a SQL type,
+  `multi_values` entry, → that row; `=` `9223372036854775808` (2^63) → none; `=` with a whole number of 255
+  digits → none (a whole number of 256 digits is `value_too_long`). With `price` an expression without a SQL type,
   declared a number: `=` `18446744073709551616` → that row. With `price` a string column declared a number that
   holds the text `18446744073709551616`: `=` `18446744073709551616` → that row (text is compared with the digits).
 - **SPEC-F25.5** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is

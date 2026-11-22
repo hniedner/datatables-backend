@@ -38,9 +38,10 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   with `draw` `x` → HTTP 422 whose `detail` holds no `draw` key.
 - **SPEC-A11.1** [FastAPI] SearchBuilder `=` `abc` on `price` → HTTP 200 with `error`, `error_code`
   `invalid_number`, `draw`, `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
-- **SPEC-A11.2** [FastAPI] Through an app over an OpenSearch table with a recording client (`page_out_of_range`
-  exists only there, PRD-C12), each of these answers HTTP 200 with its code: SearchBuilder `<` `a` on `name` →
-  `invalid_filter`; a global search holding U+0009 → `invalid_character`; `=` `2024-13-01` on `made` →
-  `invalid_date`; `=` `abc` on `price` → `invalid_number`; with
-  `max_result_window` 3 and rows 1 to 10, `start` 4, `length` 3 → `page_out_of_range`. The dependency takes no option
-  that changes the status.
+- **SPEC-A11.2** [FastAPI] Through an app over an OpenSearch table whose client is never asked (each case is refused
+  before a server is asked; `page_out_of_range` exists only there, PRD-C12), each of these answers HTTP 200 with its
+  code and the request's `draw`: SearchBuilder `<` `a` on `name` → `invalid_filter`; a global search holding U+0009 →
+  `invalid_character`; a global search of 256 code points → `value_too_long`; a global search of 17 words →
+  `too_many_words`; `=` `2024-13-01` on `made` → `invalid_date`; `=` `abc` on `price` → `invalid_number`; with
+  `max_result_window` 3, `start` 4, `length` 3 → `page_out_of_range`. The dependency takes no option that changes the
+  status.
