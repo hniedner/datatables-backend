@@ -687,7 +687,11 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         ('age', '>', ['31'], [2, 5]),
         ('age', '<=', ['31.0'], [1, 4]),
         ('age', 'between', ['40', '60'], [2, 5]),
-        ('age', '!between', ['40', '60'], [1, 4]),
+        # PRD-F37 (SPEC-F37.1, SPEC-F37.2): NULL passes every negative condition, where SQL's NOT drops it. `email`
+        # is NULL in row 2 and `''` in row 3; `age` is NULL in row 3. "Not empty" above is the one it does not pass
+        ('email', '!=', ['ann@example.org'], [2, 3, 4, 5]),
+        ('email', '!ends', ['org'], [2, 3]),
+        ('age', '!between', ['40', '60'], [1, 3, 4]),
         ('age', 'null', [], [3]),
         ('born', '=', ['1980-07-15'], [2]),
         ('born', '<', ['1980-07-15'], [5]),
@@ -1066,15 +1070,14 @@ def test_a_number_or_date_mistake_is_reported_before_a_boolean_one(
 @pytest.mark.parametrize(
     ('condition', 'values', 'expected'),
     [
-        ('!=', ['1980-07-15'], [1, 4, 5]),
-        ('!between', ['1980-01-01', '1994-03-01'], [4, 5]),
-        ('!contains', ['1980'], [1, 4, 5]),
+        ('!=', ['1980-07-15'], [1, 3, 4, 5]),
+        ('!between', ['1980-01-01', '1994-03-01'], [3, 4, 5]),
+        ('!contains', ['1980'], [1, 3, 4, 5]),
     ],
 )
 def test_negated_date_conditions(session: Session, condition: str, values: list[str], expected: list[int]):
-    """Over rows that all have a date: what a negation does with NULL is PRD v2's to settle (PRD-F37)."""
-    dated = SQLTable(people, COLUMNS, base_filter=people.c.born.is_not(None))
-    assert ids(dated.fetch_sync(request(*ALL, **criterion('born', condition, *values)), session)) == expected
+    """Each is the days outside a span. Row 3 has no date, and passes them all (PRD-F37)."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('born', condition, *values)), session)) == expected
 
 
 def test_searchbuilder_groups_nest_and_empty_groups_add_nothing(session: Session):

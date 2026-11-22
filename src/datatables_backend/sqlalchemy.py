@@ -257,12 +257,10 @@ class SQLTable:
         column = self._sql(node.column)
         match node:
             case Not():
-                positive = self._condition(node.node, in_list)
-                # PRD-F37 lets NULL satisfy every negative condition. Today only a boolean's `!=` does; the second
-                # pull request of issue 14 makes this the rule for every negation but "not empty"
-                if node.type == 'boolean' and isinstance(node.node, Equals):
-                    return or_(not_(positive), column.is_(None))
-                return not_(positive)
+                negated = not_(self._condition(node.node, in_list))
+                # NULL is not equal to, does not contain and is not between anything, so it passes every negative
+                # condition (PRD-F37), where SQL's own NOT would drop it. "Not empty" is the one it does not pass
+                return negated if isinstance(node.node, Empty) else or_(negated, column.is_(None))
             case Contains():
                 return self._contains(node)
             case Empty():
