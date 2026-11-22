@@ -75,7 +75,6 @@ from ._plan import Plan
 from ._plan import Range
 from ._plan import mistake
 from ._plan import next_day
-from ._plan import number_unreadable
 from ._plan import plan
 from ._plan import refused
 from .cache import TotalCache
@@ -100,6 +99,8 @@ type SyncSource = Session | Connection
 MSSQL_PARAMETER_BUDGET = 2000
 #: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
 MSSQL_DECIMAL_DIGITS = 38
+#: Every whole number of this many digits is below the largest float (about 1.8e308), so it has a nearest one
+FLOAT_DIGITS = 308
 #: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
 #: LAST; every other database is told where NULL goes
 _NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
@@ -277,7 +278,7 @@ class SQLTable:
             case Contains():
                 return self._contains(node)
             case Empty():
-                return _empty(column, node.type)
+                return _empty(column, node.type, dialect)
             case Equals() if node.type == 'number':
                 return column == number(node.value, listed=False)
             case Equals() if node.type == 'boolean':
@@ -301,7 +302,7 @@ class SQLTable:
                     values = [number(value, listed=True) for value in values]
                 elif node.type == 'boolean':
                     values = [_boolean(column, value) for value in values]
-                return _one_of(node, column, values, in_list)
+                return _one_of(node, column, values, in_list, dialect)
             case _:
                 assert_never(node)
 
@@ -412,20 +413,22 @@ def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: D
 
     An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
     ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is
-    unsigned (MySQL's). A ``Numeric`` column holds so many digits before the decimal point: its precision less its
-    scale, and on SQL Server never more than 38, beyond which its driver refuses the number. A whole number outside
-    either is the user's mistake.
+    unsigned (MySQL's). On SQL Server a ``Numeric`` column takes a number of at most 38 digits before the decimal
+    point, whatever the column declares: its driver refuses a longer one. A number outside either is the user's
+    mistake. No other database bounds a ``Numeric`` column here: a filter such as ``< 1000`` on a ``Numeric(5, 2)``
+    is a fair question, and they answer it.
 
-    A driver sends a whole number as a 64-bit integer, so one beyond 64 bits goes to a ``Numeric`` column as a
-    ``Decimal``, which compares exactly, and to any other column (a ``Float``, text declared a number, an
-    expression without a type) as the nearest float; one too large for a float is no finite number.
+    A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
+    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to a column that stores text as
+    its digits, since text is compared with text; to any other column (a ``Float``, an expression without a type)
+    as the nearest float, which holds a whole number of up to 308 digits.
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
     if isinstance(sql_type, Integer) and isinstance(value, float) and value.is_integer():
         value = int(value)
-    if not isinstance(value, int):  # a number with a fraction, or what a hook made of the text
+    if not isinstance(value, int | float):  # what a hook made of the text
         return value
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
@@ -433,6 +436,8 @@ def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: D
         else f'The filter on "{declared.name}" needs a number'
     )
     if isinstance(sql_type, Integer):
+        if isinstance(value, float):  # a number with a fraction, which no integer equals
+            return value
         bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
         low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
         if getattr(sql_type, 'unsigned', False):
@@ -441,24 +446,21 @@ def _number(column: ColumnElement[Any], value: Any, declared: Column, dialect: D
             raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
         return value
     exact = isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)  # a Float is a Numeric to SQLAlchemy
-    if exact:
-        digits = None if sql_type.precision is None else sql_type.precision - (sql_type.scale or 0)
-        if dialect.name == 'mssql':
-            digits = MSSQL_DECIMAL_DIGITS if digits is None else min(digits, MSSQL_DECIMAL_DIGITS)
-        if digits is not None and value and len(str(abs(value))) > digits:
-            raise mistake(
-                'datatables_number_out_of_range',
-                f'{needed} with at most {digits} digits before the decimal point.',
-                declared,
-            )
-    if -(2**63) <= value < 2**63:
+    if exact and dialect.name == 'mssql' and abs(value) >= 10**MSSQL_DECIMAL_DIGITS:
+        raise mistake(
+            'datatables_number_out_of_range',
+            f'{needed} with at most {MSSQL_DECIMAL_DIGITS} digits before the decimal point.',
+            declared,
+        )
+    if isinstance(value, float) or -(2**63) <= value < 2**63:
         return value
     if exact:
         return Decimal(value)
-    try:
-        return float(value)
-    except OverflowError:
-        raise number_unreadable(declared, listed=listed) from None
+    if isinstance(sql_type, String):
+        return str(value)
+    if len(str(abs(value))) > FLOAT_DIGITS:
+        raise mistake('datatables_number_out_of_range', f'{needed} of at most {FLOAT_DIGITS} digits.', declared)
+    return float(value)
 
 
 def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
@@ -467,16 +469,20 @@ def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
     return value if isinstance(_sql_type(column), Boolean) else int(value)
 
 
-def _empty(column: ColumnElement[Any], declared: ColumnType) -> ColumnElement[bool]:
+def _empty(column: ColumnElement[Any], declared: ColumnType, dialect: Dialect) -> ColumnElement[bool]:
     """ "Empty" (PRD-F26): no value, and the empty string too where the column stores text, whatever type it is
-    declared as. What it stores is its SQL type, seen through a ``TypeDecorator``: a string type holds text, and an
-    ``Enum`` only when ``''`` is one of its values, since PostgreSQL refuses to compare a native enum with any
-    other text. A column of another type (a ``Uuid``, a number, a date) is never compared with text. Only for an
-    expression without a SQL type does the declaration decide.
+    declared as. What it stores is its SQL type on this database, seen through every ``TypeDecorator`` around it:
+    one may store another type on another database, as SQLAlchemy's GUID recipe does (a ``CHAR`` here, a ``UUID``
+    on PostgreSQL). A string type holds text, and an ``Enum`` only when ``''`` is one of its values, since
+    PostgreSQL refuses to compare a native enum with any other text. A column of another type (a ``Uuid``, a
+    number, a date) is never compared with text. Only for an expression without a SQL type does the declaration
+    decide.
 
     The empty string is compared with what is stored, not sent through a ``TypeDecorator``, whose conversion is
     written for the values of its column and may refuse ``''``."""
-    stored = _sql_type(column)
+    stored: Any = column.type
+    while isinstance(stored, TypeDecorator):
+        stored = stored.load_dialect_impl(dialect)
     if isinstance(stored, Enum):
         holds_text = '' in stored.enums
     elif isinstance(stored, NullType):
@@ -540,21 +546,22 @@ def _days(column: ColumnElement[Any], lower: Bound | None, upper: Bound | None) 
     return _between(column, lower, upper, at)
 
 
-def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], in_list: _InList) -> ColumnElement[bool]:
+def _one_of(
+    node: OneOf, column: ColumnElement[Any], values: list[Any], in_list: _InList, dialect: Dialect
+) -> ColumnElement[bool]:
     """A list of exact values (``values``: the node's, as the column compares them), and the rows without a value
     where the list holds an empty entry (PRD-F17, PRD-F20), which is never one of the values sent. On a date
-    column the row's day is one of the list's days. A
-    column whose SQL type is a ``Date`` holds a day and nothing else, so its days are one IN list: a long list
-    stays one flat condition and takes SQL Server's JSON path (PRD-C17). A column of any other type, a datetime or
-    one only declared a date, may hold a time, so each entry gets the day's two bounds, as ``=`` gives it: two
-    parameters each, and no JSON path."""
+    column the row's day is one of the list's days. A column whose SQL type is a ``Date`` holds a day and nothing
+    else, so its days are one IN list: a long list stays one flat condition and takes SQL Server's JSON path
+    (PRD-C17). A column of any other type, a datetime or one only declared a date, may hold a time, so each entry
+    gets the day's two bounds, as ``=`` gives it: two parameters each, and no JSON path."""
     parts: list[ColumnElement[bool]] = []
     if node.type == 'date' and not isinstance(_sql_type(column), Date):
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
     elif values:
         parts.append(in_list(column, values, node.type == 'string' and _folds(node.column, column)))
     if node.empty:
-        parts.append(_empty(column, node.type))
+        parts.append(_empty(column, node.type, dialect))
     return or_(*parts)
 
 
@@ -642,13 +649,16 @@ def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> 
 
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
-    def day_text(value: Any) -> str:
-        """A day travels as its ISO text, which SQL Server casts to the column's type as it casts every value."""
+    def as_text(value: Any) -> str:
+        """A day travels as its ISO text and a ``Decimal`` as its digits; SQL Server casts either to the column's
+        type, as it casts every value."""
         if type(value) is date:  # not a datetime, which would lose its time without a word
             return value.isoformat()
+        if isinstance(value, Decimal):
+            return str(value)
         raise TypeError(f'A value of type {type(value).__name__} cannot be sent in a JSON list')
 
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=day_text), type_=String()), fold)
+    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=as_text), type_=String()), fold)
 
 
 def _parameter_count(stmt: Select[Any]) -> int:

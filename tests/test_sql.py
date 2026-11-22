@@ -34,10 +34,13 @@ from sqlalchemy import func
 from sqlalchemy import literal_column
 from sqlalchemy import select
 from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import TypeEngine
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
@@ -399,19 +402,33 @@ class Wrapped(TypeDecorator[str]):
     cache_ok = True
 
 
+class Nested(TypeDecorator[str]):
+    """A type of the app's own over another one: what is stored is two steps away."""
+
+    impl = Wrapped
+    cache_ok = True
+
+
 class Guid(TypeDecorator[str]):
-    """A UUID stored as its 32 hex digits in a `CHAR(32)`, after SQLAlchemy's documented recipe: the type converts a
-    value on its way into a statement, so `1f960000-0000-...` is compared as `1f9600000000...`, and back on its way
-    out."""
+    """A UUID after SQLAlchemy's documented recipe ("Backend-agnostic GUID Type"): PostgreSQL stores it in its own
+    `UUID` type, every other database as its 32 hex digits in a `CHAR(32)`. The type converts a value on its way
+    into a statement, so `1f960000-0000-...` is compared as `1f9600000000...` there, and back on its way out."""
 
     impl = CHAR
     cache_ok = True
 
-    def process_bind_param(self, value: str | None, dialect: object) -> str | None:
-        return None if value is None else uuid.UUID(value).hex
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(postgresql.UUID())
+        return dialect.type_descriptor(CHAR(32))
 
-    def process_result_value(self, value: str | None, dialect: object) -> str | None:
-        return None if value is None else str(uuid.UUID(value))
+    def process_bind_param(self, value: str | None, dialect: Dialect) -> str | None:
+        if value is None:
+            return None
+        return str(uuid.UUID(value)) if dialect.name == 'postgresql' else uuid.UUID(value).hex
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> str | None:
+        return None if value is None else str(uuid.UUID(str(value)))
 
 
 def ref(row: int) -> str:
@@ -432,6 +449,7 @@ def cased(session: Session) -> SQLTable:
         SQLColumn('id', Integer, primary_key=True, autoincrement=False),
         SQLColumn('kind', String(20, collation=collation)),
         SQLColumn('wrapped', Wrapped(20, collation=collation)),
+        SQLColumn('nested', Nested(20), nullable=True),
         SQLColumn('ref', Guid(32)),
         SQLColumn('secret', String(20, collation=collation)),
         SQLColumn('size', Enum('Small', 'LARGE', name='dtb_test_size'), nullable=True),
@@ -447,7 +465,16 @@ def cased(session: Session) -> SQLTable:
     ]
     session.execute(
         tags.insert(),
-        [{**row, 'wrapped': row['kind'], 'ref': ref(row['id']), 'uid': uuid.UUID(ref(row['id']))} for row in rows],
+        [
+            {
+                **row,
+                'wrapped': row['kind'],
+                'nested': row['kind'],
+                'ref': ref(row['id']),
+                'uid': uuid.UUID(ref(row['id'])),
+            }
+            for row in rows
+        ],
     )
     same_case = session.execute(select(func.count()).select_from(tags).where(tags.c.kind == 'RED')).scalar_one()
     assert same_case == 1, (
@@ -603,7 +630,8 @@ def with_blank_rows(session: Session, cased: SQLTable) -> Table:
     and `uid` are NULL in both."""
     tags = cased.source
     assert isinstance(tags, Table)
-    session.execute(tags.insert(), [{'id': 6, 'kind': '', 'wrapped': ''}, {'id': 7, 'kind': None, 'wrapped': None}])
+    blank, absent = dict.fromkeys(('kind', 'wrapped', 'nested'), ''), dict.fromkeys(('kind', 'wrapped', 'nested'))
+    session.execute(tags.insert(), [{'id': 6, **blank}, {'id': 7, **absent}])
     return tags
 
 
@@ -611,9 +639,12 @@ def with_blank_rows(session: Session, cased: SQLTable) -> Table:
     ('column', 'expected'),
     [
         ('wrapped', [6, 7]),  # a `TypeDecorator` over a string type stores text
+        ('nested', [6, 7]),  # and so does one over that
         ('day', [6, 7]),  # so does a string column, whatever it is declared as: a blank cell is empty
         ('ref', [6, 7]),  # `''` is compared with what is stored: the type `Guid` itself refuses to convert it
-        ('size', [3, 6, 7]),  # an enum without `''` among its values: PostgreSQL refuses to compare one with it
+        # An enum without `''` among its values: PostgreSQL refuses to compare a native enum with it. Only the
+        # `postgresql` leg proves this row: the other databases answer the comparison, with the same rows
+        ('size', [3, 6, 7]),
         ('uid', [6, 7]),  # a type that stores no text is never compared with `''`
     ],
 )
@@ -627,6 +658,7 @@ def test_empty_is_the_empty_string_too_where_the_column_stores_text(
         [
             Column('id'),
             Column('wrapped'),
+            Column('nested'),
             Column('ref'),
             Column('size'),
             Column('uid'),
@@ -721,6 +753,8 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         # row 2 and `''` in row 3. "Not empty" above is the one negation it does not pass
         ('email', '!=', ['ann@example.org'], [2, 3, 4, 5]),
         ('email', '!ends', ['org'], [2, 3]),
+        ('email', '!contains', ['example'], [2, 3]),
+        ('age', '!=', ['31'], [2, 3, 5]),  # SPEC-F37.2: row 3 has no age
     ],
 )
 def test_searchbuilder_conditions(
@@ -951,15 +985,17 @@ SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
         ('email', {'value': '^()$', 'regex': True}, [2, 3]),
         ('email', {'value': '^$', 'regex': True}, [2, 3]),
         ('email', {'value': '|', 'regex': True}, [2, 3]),
+        ('email', {'value': r'ann@example\.org|', 'regex': True}, [1, 2, 3]),  # at the end, unanchored
+        ('email', {'value': r'^(ann@example\.org||cy@example\.org)$', 'regex': True}, [1, 2, 3, 4]),
         ('email', {'multi_values': ['', 'ann@example.org']}, [1, 2, 3]),  # SPEC-F20.2
         ('age', {'multi_values': [' ', '31']}, [1, 3, 4]),  # white space holds nothing either (PRD-F33)
-        ('active', {'multi_values': ['', '1']}, [1, 3, 4]),  # SPEC-F44.3
+        ('active', {'multi_values': [' ', '1']}, [1, 3, 4]),  # SPEC-F44.3, SPEC-F44.4
     ],
 )
 def test_an_empty_alternative_or_entry_matches_the_rows_without_a_value(
     session: Session, column: str, search: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F17.4, SPEC-F20.2, SPEC-F33.5, SPEC-F44.3: on a column of any type. The date column's row is in
+    """SPEC-F17.4, SPEC-F20.2, SPEC-F33.5, SPEC-F44.4: on a column of any type. The date column's row is in
     test_a_list_on_a_date_column_matches_each_entry_as_a_day."""
     params = request(*EVERY_TYPE, column_search={column: search})
     assert ids(every_type.fetch_sync(params, session)) == expected
@@ -975,19 +1011,21 @@ def test_white_space_is_a_value_on_a_string_column(session: Session):
     assert ids(every_type.fetch_sync(params, session)) == found
 
 
-@pytest.mark.parametrize('pattern', ['^red|blue$', r'r\ed', r'\d'])
+@pytest.mark.parametrize('pattern', ['^red|blue$', r'r\ed'])
 def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, pattern: str):
     """SPEC-F18.1: anchors without the group anchor each value at one end only, and a backslash escapes only the
-    characters of PRD-F19: `\\e` is no `e` and `\\d` no `d`. Read as values, the first two would find rows."""
+    characters of PRD-F19: `\\e` is no `e`. Read as values, both would find rows."""
     params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
     refused(every_type.fetch_sync(params, session))
 
 
-def test_a_value_that_ends_in_an_escaped_backslash_is_read_between_the_anchors(session: Session):
-    r"""SPEC-F19.2 in the form `^v$`: the `$` after `C:\\` is the anchor, not an escaped `$`. The value `C:\` is one
-    no row holds; taken for a regex, the filter was refused."""
-    params = request(*EVERY_TYPE, column_search={'team': {'value': r'^C:\\$', 'regex': True}})
-    assert ids(every_type.fetch_sync(params, session)) == []
+@pytest.mark.parametrize('pattern', [r'^C:\\$', r'^(C:\\)$', r'C:\\'])
+def test_a_value_that_ends_in_an_escaped_backslash_is_read_in_every_form(session: Session, pattern: str):
+    r"""SPEC-F19.2: row 6 holds `C:\`. In the form `^v$` the `$` after `C:\\` is the anchor, not an escaped `$`;
+    taken for one, the filter was refused as a regex."""
+    session.execute(people.insert(), [{'id': 6, 'name': 'Eve', 'team': 'C:\\', 'secret': 's6'}])
+    params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
+    assert ids(every_type.fetch_sync(params, session)) == [6]
 
 
 def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
@@ -1011,6 +1049,7 @@ def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
         ({'search': {'value': SPACES}}, [1, 2, 3, 4, 5]),
         # With `regex: true` the spaces are a categorical value, which no row holds
         ({'column_search': {'team': {'value': SPACES, 'regex': True}}}, []),
+        ({'column_search': {'age': {'value': SPACES, 'regex': True}}}, [3]),  # SPEC-F6.4: on a number, empty
     ],
 )
 def test_search_text_of_spaces_only_adds_nothing(session: Session, body: dict[str, Any], expected: list[int]):
@@ -1474,14 +1513,16 @@ def test_a_criterion_with_more_values_than_its_condition_takes_is_refused(
     refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
 
 
-WIDE = ('id', 'ratio', 'exact', 'loose', 'count', 'untyped')
+WIDE = ('id', 'ratio', 'exact', 'digits', 'count', 'untyped')
 TWO_64 = 2**64
 
 
 def wide(session: Session) -> SQLTable:
-    """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float) and in `exact`
-    (a `Numeric(32, 2)`, so 30 digits before the point), and in `count`, an unsigned BIGINT on MySQL and a signed one elsewhere, the largest value
-    it takes; `untyped` is `ratio` as an expression without a SQL type, declared a number. Row 2 holds NULL."""
+    """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float), in `exact` (a
+    `Numeric(32, 2)`) and, as text, in `digits` (a string column declared a number). Its `count` holds the largest
+    value the column takes: the column is declared MySQL's unsigned BIGINT, which only MySQL creates unsigned, so
+    2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type, declared a
+    number. Row 2 holds NULL."""
     dialect = session.get_bind().dialect.name
     numbers = Table(
         'dtb_test_tags',
@@ -1489,7 +1530,7 @@ def wide(session: Session) -> SQLTable:
         SQLColumn('id', Integer, primary_key=True, autoincrement=False),
         SQLColumn('ratio', Float),
         SQLColumn('exact', Numeric(32, 2)),
-        SQLColumn('loose', Numeric),
+        SQLColumn('digits', String(40)),
         SQLColumn('count', mysql.BIGINT(unsigned=True)),
     )
     numbers.create(session.connection())
@@ -1497,12 +1538,22 @@ def wide(session: Session) -> SQLTable:
     session.execute(
         numbers.insert(),
         [
-            {'id': 1, 'ratio': 2.0**64, 'exact': Decimal(TWO_64), 'loose': Decimal(7), 'count': largest},
-            {'id': 2, 'ratio': None, 'exact': None, 'loose': None, 'count': None},
+            {'id': 1, 'ratio': 2.0**64, 'exact': Decimal(TWO_64), 'digits': str(TWO_64), 'count': largest},
+            {'id': 2, 'ratio': None, 'exact': None, 'digits': None, 'count': None},
         ],
     )
     source = select(*numbers.c, literal_column('ratio').label('untyped')).subquery()
-    return SQLTable(source, [*(Column(name) for name in WIDE[:-1]), Column('untyped', type='number')])
+    return SQLTable(
+        source,
+        [
+            Column('id'),
+            Column('ratio'),
+            Column('exact'),
+            Column('digits', type='number'),
+            Column('count'),
+            Column('untyped', type='number'),
+        ],
+    )
 
 
 @pytest.mark.parametrize(
@@ -1512,17 +1563,25 @@ def wide(session: Session) -> SQLTable:
         {'column_search': {'ratio': {'multi_values': [str(TWO_64)]}}},  # the list reads its values in its own place
         criterion('untyped', '=', str(TWO_64)),  # a column without a number type of its own compares as a float too
         criterion('exact', '=', str(TWO_64)),
+        criterion('digits', '=', str(TWO_64)),  # text is compared with the digits, not with a float's text
     ],
 )
-def test_a_whole_number_beyond_64_bits_is_answered_on_a_column_that_is_no_integer(
+def test_a_whole_number_outside_64_bits_is_answered_on_a_column_that_is_no_integer(
     session: Session, body: dict[str, Any]
 ):
-    """SPEC-F25.4, SPEC-F25.5: a driver sends a whole number as a 64-bit integer, so this one failed the request on SQLite,
-    PostgreSQL and SQL Server. It goes as the nearest float, and to a `Numeric` column as a decimal."""
+    """SPEC-F25.4, SPEC-F25.5: a driver sends a whole number as a 64-bit integer, so this one failed the request on
+    SQLite, PostgreSQL and SQL Server. It goes as the column compares: the nearest float, a decimal to a `Numeric`
+    column, its digits to a column that stores text."""
     assert ids(wide(session).fetch_sync(request(*WIDE, **body), session)) == [1]
 
 
-def test_a_whole_number_beyond_64_bits_is_compared_exactly_with_a_numeric_column(session: Session):
+def test_the_first_whole_number_outside_64_bits_is_answered_too(session: Session):
+    """SPEC-F25.4: 2^63 is one more than a signed 64-bit integer holds. No row holds it."""
+    params = request(*WIDE, **criterion('ratio', '=', str(2**63)))
+    assert ids(wide(session).fetch_sync(params, session)) == []
+
+
+def test_a_whole_number_outside_64_bits_is_compared_exactly_with_a_numeric_column(session: Session):
     """SPEC-F25.5: 2^64 + 1 is not the 2^64 the row holds, though as floats they are the same number. SQLite is the
     stated exception (PRD section 5): SQLAlchemy binds a decimal as a float there, so it finds the row."""
     params = request(*WIDE, **criterion('exact', '=', str(TWO_64 + 1)))
@@ -1530,49 +1589,59 @@ def test_a_whole_number_beyond_64_bits_is_compared_exactly_with_a_numeric_column
     assert ids(wide(session).fetch_sync(params, session)) == found
 
 
+def test_a_numeric_column_is_not_bounded_by_its_declared_precision(session: Session):
+    """SPEC-F25.5: `exact` holds 30 digits before the point, and "below a number of 31 digits" is still a fair
+    question, which every database answers: the row."""
+    params = request(*WIDE, **criterion('exact', '<', '9' * 31))
+    assert ids(wide(session).fetch_sync(params, session)) == [1]
+
+
 @pytest.mark.parametrize(
-    ('body', 'text'),
+    ('value', 'text'),
     [
-        (
-            criterion('exact', '=', '9' * 31),
-            'The filter on "exact" needs a number with at most 30 digits before the decimal point.',
-        ),
-        (
-            criterion('exact', 'between', '1', '9' * 31),
-            'Each value in the filter on "exact" must be a number with at most 30 digits before the decimal point.',
-        ),
+        ('9' * 39, 'The filter on "exact" needs a number with at most 38 digits before the decimal point.'),
+        ('1e39', 'The filter on "exact" needs a number with at most 38 digits before the decimal point.'),
     ],
 )
-def test_a_whole_number_with_more_digits_than_a_numeric_column_holds_is_refused(
-    session: Session, body: dict[str, Any], text: str
-):
-    """SPEC-F25.5, and the texts of SPEC-E4.29, asserted here only: the column's precision less its scale. The bound in the text is the column's, never the user's."""
-    assert refused(wide(session).fetch_sync(request(*WIDE, **body), session), 'invalid_number') == text
-
-
-def test_a_numeric_column_without_a_precision_is_bounded_only_where_the_database_bounds_it(session: Session):
-    """SPEC-F25.5: SQL Server's decimal holds 38 digits, and its driver refuses to send a longer number (MEASURED:
-    HY104), so there 39 digits are the user's mistake. PostgreSQL and MySQL take the number, and no row holds it."""
-    response = wide(session).fetch_sync(request(*WIDE, **criterion('loose', '=', '9' * 39)), session)
+def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value: str, text: str):
+    """SPEC-F25.5 and the text of SPEC-E4.29, asserted here only: SQL Server's decimal holds 38 digits before the
+    point, and its driver refuses to send a longer number (MEASURED: HY104), so there such a number is the user's
+    mistake, written as a whole number or with an exponent. The other databases take it, and no row holds it."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
     if session.get_bind().dialect.name == 'mssql':
-        refused(response, 'invalid_number')
+        assert refused(response, 'invalid_number') == text
     else:
         assert ids(response) == []
 
 
-def test_a_whole_number_too_large_for_a_float_is_no_finite_number(session: Session):
-    """SPEC-F25.4: 400 digits on a float column, as `1e999` is refused where it is read (SPEC-F25.1)."""
-    refused(wide(session).fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 400)), session), 'invalid_number')
+def test_a_whole_number_too_large_for_a_float_is_refused_with_the_digits_it_may_have(session: Session):
+    """SPEC-F25.4 and the text of SPEC-E4.30, asserted here only: a float holds every whole number of up to 308
+    digits, so one of 308 is answered and one of 309 is the user's mistake."""
+    numbers = wide(session)
+    assert ids(numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 308)), session)) == []
+    response = numbers.fetch_sync(request(*WIDE, **criterion('ratio', '=', '9' * 309)), session)
+    assert refused(response, 'invalid_number') == 'The filter on "ratio" needs a number of at most 308 digits.'
 
 
 def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
-    """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself, as declared and as
-    reflected. A negative number is outside it on every database; the largest value is found on MySQL, the only
-    database that stores it."""
+    """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself. A negative number is
+    outside it on every database; the largest value is found on MySQL, the only database that stores it."""
     numbers = wide(session)
     refused(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', '-1')), session), 'invalid_number')
     if session.get_bind().dialect.name == 'mysql':
         assert ids(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', str(TWO_64 - 1))), session)) == [1]
+
+
+@pytest.mark.skipif(
+    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
+    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
+)
+def test_a_list_sent_as_json_holds_a_whole_number_outside_64_bits_as_its_digits(session: Session):
+    """SPEC-F25.5 on the JSON path: a decimal is no JSON number, so it travels as its digits, which SQL Server casts
+    to the column's type as it casts every value."""
+    values = [str(number) for number in range(3000)] + [str(TWO_64)]
+    params = request(*WIDE, column_search={'exact': {'multi_values': values}})
+    assert ids(wide(session).fetch_sync(params, session)) == [1]
 
 
 @pytest.mark.parametrize(

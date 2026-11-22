@@ -541,8 +541,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
 
 
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
-    """The mistake of a value in a filter on ``column`` that is no number, or no finite one. A backend raises it
-    too, for a whole number its column can only take as a float and that is too large for one."""
+    """The mistake of a value in a filter on ``column`` that is no number, or no finite one."""
     needed = (
         f'Each value in the filter on "{column.name}" must be a number'
         if listed

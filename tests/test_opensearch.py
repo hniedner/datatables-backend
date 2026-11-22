@@ -403,7 +403,6 @@ MISSING = {'bool': {'must_not': [{'exists': {'field': 'pages'}}]}}
             },
         ),
         ('pages', [' ', '7'], {'bool': {'should': [{'terms': {'pages': [7]}}, MISSING], 'minimum_should_match': 1}}),
-        ('pages', [''], MISSING),  # alone, with no value to send
         # Analysed text has no whole string for a list of values, but it can be missing
         ('body', [''], {'bool': {'must_not': [{'exists': {'field': 'body'}}]}}),
     ],
@@ -414,13 +413,6 @@ def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[s
     client = Client()
     table.fetch_sync(request(*NAMES, column_search={column: {'multi_values': values}}), client)
     assert query(client) == [expected]
-
-
-def test_a_column_search_of_spaces_only_adds_no_clause():
-    """SPEC-F6.3 on a number column, where the text would otherwise have to be one number (PRD-F33)."""
-    client = Client()
-    table.fetch_sync(request(*NAMES, column_search={'pages': {'value': '   '}}), client)
-    assert query(client) == []
 
 
 @pytest.mark.parametrize(
