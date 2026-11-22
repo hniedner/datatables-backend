@@ -27,6 +27,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   → the `x “abc` row only; the quote stays as text.
 - **SPEC-F4.7** [all] Given rows whose `note` is `"a b”` and `a b”`: global search `!"a b”` excludes the row holding
   `"a b”` and keeps the row holding only `a b”`: a negated mixed pair keeps its straight quote.
+- **SPEC-F4.8** [all] Given rows whose `note` is ` a ` (spaces at both ends), `xax` and `a`: global search `" a "` →
+  the ` a ` row only: a phrase keeps the spaces inside its quotes.
 - **SPEC-F5.1** [all] Global search `!reddish` → rows 1, 3, 4.
 - **SPEC-F5.2** [all] Column search on `note` with `!pipe` → rows 1, 2, 3: row 1's NULL (missing on OS) contains no
   word, so it passes.
@@ -44,6 +46,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
   the `a` + LF + `b` row only; SearchBuilder `=` `a\nb` on `note` answers the same.
+- **SPEC-F7.3** [all] Given rows whose `note` is `aa bb`, `aabb` and `bb`: global search `aa` + U+0020, LF, CR, U+2028
+  or U+2029 + `bb` → the `aa bb` and `aabb` rows, each time: the five characters split words and nothing else does.
 - **SPEC-F8.1** [all] Global search `red OR blue` → the rows holding `red`, `or` and `blue` → none in the fixture
   (no union of `red` and `blue`).
 - **SPEC-F8.2** [all] Given a row whose `note` is `-red`: global search `-red` → that row only (not rows 1, 2, 4,

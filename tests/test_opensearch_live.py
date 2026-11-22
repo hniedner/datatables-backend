@@ -205,6 +205,11 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
         ('p?e', []),  # `?` is text: unescaped, the wildcard `*p?e*` would find "Apple pie"
         ('a*b', []),  # `*` is text too
         ('ann', ['a1']),  # the dotted author field
+        ('bread green', ['b2']),  # SPEC-F1.1: the title of b2 and its body; as one text it found d4's `green` too
+        ('green !apple', ['b2']),  # SPEC-F5.3: d4's title holds `apple`
+        ('!apple', ['b2', 'c3', 'e5']),  # SPEC-F5.1: c3 and e5 have no author, which passes
+        ('!x', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F35.2 and SPEC-F6.2: a word of one character adds nothing
+        ('"', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F6.2: no word at all
     ],
 )
 def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
@@ -214,7 +219,8 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
 @pytest.mark.parametrize(
     ('column', 'value', 'expected'),
     [
-        (2, '"granny smith" -green', ['a1']),  # a text column takes the query syntax
+        (2, 'granny apples', ['a1']),
+        (2, 'green tea', ['b2']),  # SPEC-F2.1: both words; as one text it found d4's `green` too
         (1, 'CRUMBLE', ['d4']),
         (3, '12', ['a1', 'd4']),  # a number column matches exactly
         (4, '2026-07', ['a1', 'b2']),  # a date column takes a month

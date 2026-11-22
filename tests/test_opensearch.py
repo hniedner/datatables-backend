@@ -325,6 +325,69 @@ def test_the_global_search_fits_each_string_mapping_and_skips_numbers_and_dates(
     assert len(should) == 4  # id, title, body, author
 
 
+def _in_column(word: str) -> list[dict[str, Any]]:
+    """What one word asks of each searched column of NAMES, in column order: id (keyword), title (text+keyword), body
+    (text), author (text+keyword)."""
+
+    def wildcard(field: str) -> dict[str, Any]:
+        return {'wildcard': {field: {'value': f'*{word}*', 'case_insensitive': True}}}
+
+    def both(field: str) -> dict[str, Any]:
+        return {'bool': {'should': [{'match': {field: {'query': word}}}, wildcard(f'{field}.keyword')],
+                         'minimum_should_match': 1}}  # fmt: skip
+
+    return [wildcard('id'), both('title'), {'match': {'body': {'query': word}}}, both('meta.author')]
+
+
+def test_each_word_of_the_global_search_must_be_found_in_some_searched_column():
+    """SPEC-F1.1: one clause per word, each an alternative over the columns, so the words may sit in different ones."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, search={'value': 'red 7'}), client)
+    assert query(client) == [
+        {
+            'bool': {
+                'must': [
+                    {'bool': {'should': _in_column('red'), 'minimum_should_match': 1}},
+                    {'bool': {'should': _in_column('7'), 'minimum_should_match': 1}},
+                ]
+            }
+        }
+    ]
+
+
+def test_a_negated_word_of_the_global_search_is_excluded_from_every_searched_column():
+    """SPEC-F5.1, SPEC-F5.2: a `must_not` keeps a document without the field, so a missing value passes."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, search={'value': '!pipe'}), client)
+    assert query(client) == [{'bool': {'must': [{'bool': {'must_not': [clause]}} for clause in _in_column('pipe')]}}]
+
+
+def test_a_column_search_holds_its_words_and_negations_as_plain_text_clauses():
+    """SPEC-F2.1, SPEC-F8.1: no query syntax is read; `-x` and `OR` are words."""
+    client, params = Client(), request(*NAMES)
+    params.columns[2].search.value = 'granny !green -x'
+    table.fetch_sync(params, client)
+    assert query(client) == [
+        {
+            'bool': {
+                'must': [
+                    {'match': {'body': {'query': 'granny'}}},
+                    {'bool': {'must_not': [{'match': {'body': {'query': 'green'}}}]}},
+                    {'match': {'body': {'query': '-x'}}},
+                ]
+            }
+        }
+    ]
+
+
+def test_search_text_over_the_word_bound_is_refused_before_anything_is_sent():
+    """SPEC-F14.2: the bound is the plan's, so OpenSearch refuses as SQL does."""
+    client = Client()
+    text = ' '.join(f'q{n}' for n in range(17))
+    assert '16' in refused(table.fetch_sync(request(*NAMES, search={'value': text}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
 def test_a_global_search_over_numbers_and_dates_only_is_refused():
     numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
     refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
@@ -332,13 +395,14 @@ def test_a_global_search_over_numbers_and_dates_only_is_refused():
 
 def test_column_searches_follow_the_columns_type():
     client, params = Client(), request(*NAMES)
-    params.columns[2].search.value = '"granny smith" -green'
+    params.columns[2].search.value = 'granny smith'
     params.columns[3].search.value = '12'
     params.columns[4].search.value = '2026-02'
     table.fetch_sync(params, client)
     text, number, date = query(client)
-    assert text['bool']['must'] == [{'match_phrase': {'body': 'granny smith'}}]
-    assert text['bool']['must_not'] == [{'match': {'body': {'query': 'green'}}}]
+    assert text == {
+        'bool': {'must': [{'match': {'body': {'query': 'granny'}}}, {'match': {'body': {'query': 'smith'}}}]}
+    }
     assert number == {'term': {'pages': 12}}
     assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
 
