@@ -30,6 +30,8 @@ Another.
 - **Reason:** Why.
 - **Priority:** should
 
+### 4.2 Later (L)
+
 #### PRD-L1
 
 Later.
@@ -131,6 +133,7 @@ def test_continuation_ends_at_a_blank_line(tmp_path: Path) -> None:
         '\n\nText.\n\n- **Reason:**\n- **Priority:** must\n\n',
         '\n\nText.\n\n- **Reason:** Why.\n- **Priority:** must\n\nMore.\n\n',
         '\n\nText.\n\n- **Reason:** Why,\nunindented.\n- **Priority:** must\n\n',
+        '\n\nText.\n\n- **Reason:** A.\n- **Reason:** B.\n- **Priority:** must\n\n',
     ],
 )
 def test_drifted_requirement_section_fails(tmp_path: Path, body: str) -> None:
@@ -139,14 +142,16 @@ def test_drifted_requirement_section_fails(tmp_path: Path, body: str) -> None:
     assert result.stderr == 'PRD.md:1 is not a requirement section of the expected shape\n'
 
 
-@pytest.mark.parametrize('heading', ['### PRD-F3', '#### PRD-f3', '#### PRD-F3: a title'])
+@pytest.mark.parametrize(
+    'heading', ['### PRD-F3', '#### PRD-f3', '#### PRD-F3: a title', '   #### PRD-F3', '### More on PRD-F3']
+)
 def test_drifted_requirement_heading_fails(tmp_path: Path, heading: str) -> None:
-    result = run(tmp_path, {'F.md': COMPLETE}, prd=heading + VALID + PRD)
+    result = run(tmp_path, {'F.md': COMPLETE}, prd=PRD + '\n' + heading + VALID)
     assert result.returncode == 1
-    assert result.stderr == 'PRD.md:1 is not a requirement heading of the expected shape\n'
+    assert result.stderr == f'PRD.md:{PRD.count("\n") + 2} is not a requirement heading of the expected shape\n'
 
 
-@pytest.mark.parametrize('row', ['| PRD-F3 | Text. | Why. | must |', 'PRD-F3 | Text. | Why. | must |'])
+@pytest.mark.parametrize('row', ['| PRD-F3 | Text. | Why. | must |', '| **PRD-F3** | Text. | Why. | must |'])
 def test_requirement_in_table_form_fails(tmp_path: Path, row: str) -> None:
     result = run(tmp_path, {'F.md': COMPLETE}, prd=row + '\n\n' + PRD)
     assert result.returncode == 1
@@ -309,7 +314,7 @@ def test_statement_with_no_text_is_stray(tmp_path: Path) -> None:
 
 
 def test_prose_naming_requirements_in_the_prd_is_not_a_requirement(tmp_path: Path) -> None:
-    result = run(tmp_path, {'F.md': COMPLETE}, prd='PRD-F1 and PRD-F2 are related.\n\n' + PRD)
+    result = run(tmp_path, {'F.md': COMPLETE}, prd="PRD-F1's set, `a|b` included.\n\n" + PRD)
     assert result.returncode == 0, result.stderr
 
 

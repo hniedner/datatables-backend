@@ -28,8 +28,9 @@ second paragraph under it is not read.
 - `SPEC-X1.n` states requirement `PRD-X1`; any other `PRD-...` id in its text, backticked or not, is a
   cross-reference, written as one id (`PRD-F21`), never a range.
 - Each PRD requirement is a section: the heading `#### PRD-X1`, the requirement's text, then the list items
-  `- **Reason:** ...` and `- **Priority:** must` (or `should`, `later`), the priority last;
-  `scripts/trace_check.py` reads no other form. No other heading of the PRD names a `PRD-` id.
+  `- **Reason:** ...` (its further lines indented by spaces, not a tab) and `- **Priority:** must` (or `should`,
+  `later`), the priority last; `scripts/trace_check.py` reads no other form. No other line of the PRD whose first
+  character after white space is `#` names a `PRD-` id, and no line of a requirement's text starts with `#`.
 - A statement refers to another statement in backticks (`` `SPEC-F21.2` ``) or by its bare number (F21.2). A code
   span stays on one line.
 - A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
@@ -37,9 +38,9 @@ second paragraph under it is not read.
 
 `scripts/trace_check.py` (run in CI's lint job) reports, one line each:
 
-- a PRD heading that holds `PRD-` but is not a requirement heading of the expected shape, a requirement section of
-  the wrong shape, a requirement in table form (a line whose first cell starts with `PRD-`), a requirement id
-  defined twice, or no requirement at all;
+- a PRD heading line that holds `PRD-` but is not a requirement heading of the expected shape, a requirement section
+  of the wrong shape, a requirement in table form (a line that starts with a pipe and whose first cell starts with
+  `PRD-`), a requirement id defined twice, or no requirement at all;
 - no statement at all, the text `SPEC-` outside backticks anywhere but a statement's start, or an unindented line
   right after a statement;
 - a *must* or *should* requirement with no statement (a *later* one needs none);

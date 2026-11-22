@@ -1,12 +1,18 @@
 """Check that the specs trace to the PRD: standard library only.
 
-A requirement is one PRD section. Its heading is exactly ``#### PRD-X1``, and the section runs to the next heading of
-any level. It holds the requirement's text (one paragraph or more), then a list item ``- **Reason:** text`` whose
-further lines are indented, then as its last line ``- **Priority:** must`` (or ``should`` or ``later``). Blank lines
-are not counted. Any other heading that holds ``PRD-`` is a finding, so a heading names a requirement id only when it
-is that requirement's own. A table line whose first cell starts with ``PRD-`` (decorated, linked or without the
-leading pipe), the layout before the sections, is a finding too. A requirement written in neither form (a bold line,
-a list item) is not seen; it surfaces only when a statement states it.
+A requirement is one PRD section. Its heading is exactly ``#### PRD-X1``, from the line's first column, and the
+section runs to the next heading line. It holds the requirement's text, which is one or more lines that do not start
+with the Reason or the Priority label (so several paragraphs, a list or a quote are text), then one list item
+``- **Reason:** text`` whose further lines are indented by spaces, then as its last line ``- **Priority:** must`` (or
+``should`` or ``later``). Blank lines are not counted.
+
+A heading line is any line whose first character after white space is ``#``. The rule is by line, not by Markdown:
+a ``#`` line inside a code fence, or a wrapped line of text that starts with ``#``, is a heading line too, so the
+PRD's text never starts a line with ``#``. A heading line that holds ``PRD-`` and is not a requirement's heading
+(another level, indented, with more text) is a finding, so a heading names a requirement id only when it is that
+requirement's own. A table line whose first cell starts with ``PRD-``, decorated or linked, which was the layout
+before the sections, is a finding too. A requirement written in neither form (a bold line, a list item) is not seen;
+it surfaces only when a statement states it.
 
 A spec statement is one paragraph: a list item in a ``*.md`` file directly in the specs directory (not in a
 subdirectory, and not ``README.md``) that starts ``- **SPEC-X1.n** `` followed by text, plus the indented lines that
@@ -40,11 +46,12 @@ from pathlib import Path
 import re
 import sys
 
-TABLE_ROW = re.compile(r'^\s*(?:\|\s*[*_`~\[]*PRD-|[*_`~\[]*PRD-[^|]*\|)')
+TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
+HEADING_LINE = re.compile(r'^\s*#')
 HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
 SECTION = re.compile(
     r'(?:(?!- \*\*(?:Reason|Priority):\*\*).+\n)+'
-    r'- \*\*Reason:\*\* \S.*\n(?:[ \t]+\S.*\n)*'
+    r'- \*\*Reason:\*\* .+\n(?: +.+\n)*'
     r'- \*\*Priority:\*\* (must|should|later)\n'
 )
 STATEMENT = re.compile(r'^- \*\*SPEC-([A-Z]+)(\d+)\.(\d+)\*\* (\S.*)$')
@@ -71,13 +78,13 @@ def requirements(name: str, text: str) -> tuple[list[tuple[str, str]], list[str]
     for number, line in enumerate(lines, 1):
         if TABLE_ROW.match(line):
             findings.append(f'{name}:{number} is a requirement row, not a section')
-        if not line.startswith('#') or 'PRD-' not in line:
+        if not HEADING_LINE.match(line) or 'PRD-' not in line:
             continue
         heading = HEADING.match(line)
         if not heading:
             findings.append(f'{name}:{number} is not a requirement heading of the expected shape')
             continue
-        below = takewhile(lambda after: not after.startswith('#'), lines[number:])
+        below = takewhile(lambda after: not HEADING_LINE.match(after), lines[number:])
         if section := SECTION.fullmatch(''.join(f'{part}\n' for part in below if part)):
             rows.append((heading[1], section[1]))
         else:
