@@ -392,6 +392,7 @@ jobs:
           python-version: '3.14'
       - run: uv sync --locked --group containers
       - run: uv run --frozen pytest tests/test_sql.py
+      - run: uv run --frozen python -W ignore tools/measure_14_legs.py
 
   mysql:
     runs-on: ubuntu-latest
@@ -419,6 +420,7 @@ jobs:
           python-version: '3.14'
       - run: uv sync --locked --group containers
       - run: uv run --frozen pytest tests/test_sql.py
+      - run: uv run --frozen python -W ignore tools/measure_14_legs.py
 
   sqlserver:
     runs-on: ubuntu-latest
@@ -471,6 +473,7 @@ jobs:
           connection.execute('CREATE DATABASE dtb')
           EOF
       - run: uv run --frozen pytest tests/test_sql.py
+      - run: uv run --frozen python -W ignore tools/measure_14_legs.py
 
   # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL), once on
   # each server line the library is tested on. Docker runs the digest and ignores the tag beside it, so the two move
