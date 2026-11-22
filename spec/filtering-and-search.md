@@ -314,7 +314,19 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F38.3** [all] A categorical filter or `multi_values` list of 256 values is answered; 257 → error_code
   `invalid_filter`. A categorical regex of 256 values is longer than 255 code points; that is intended, since its
   values are exact values, not search text (PRD-F7), and PRD-F38 allows 256 of them.
-- **SPEC-F38.4** [all] A tree 10,000 groups deep → error_code `invalid_filter`, with no `RecursionError`.
+- **SPEC-F38.4** [all] A tree 10,000 groups deep → `MalformedRequest`, with no `RecursionError`: the parser refuses
+  a tree deeper than it can walk (PRD-P6).
+- **SPEC-F38.5** [all] Two lists of 256 values each, on `name` and `email` (SQL) or `title` and `author` (OS), are
+  answered; with a third list of one value on `team` (SQL) or `id` (OS) → error_code `invalid_filter`: all the lists
+  of one request together hold at most 512 values.
+- **SPEC-F38.6** [all] The column `name` (SQL) or `title` (OS) named 64 times in the request, each with the search
+  `Ann`, is answered, also with 100 more columns that hold no search; named 65 times → error_code `invalid_filter`.
+  A column search that holds a value counts, and a column without one does not.
+- **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
+  database or the cluster exactly what it asks when the column is named once.
+- **SPEC-F38.8** [SQL] A SearchBuilder tree of every depth from 100 to 299 groups, each group holding a criterion and
+  the next group, is refused with error_code `invalid_filter` or with `MalformedRequest`, and no depth raises another
+  exception, `RecursionError` included. The depth where one becomes the other is the parser's and is not pinned.
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
   `invalid_filter`.
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows

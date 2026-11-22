@@ -115,6 +115,17 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `The filter on "price" needs a number with at most 38 digits before the decimal point.`
 - **SPEC-E4.30** [SQL] With `price` redeclared as a `Float`: `=` with a whole number of 309 digits →
   `invalid_number` with `The filter on "price" needs a number of at most 308 digits.`
+- **SPEC-E4.31** [all] A SearchBuilder tree 9 groups deep → `invalid_filter` with
+  `The search builder nests more than 8 groups. Nest at most 8 groups.`
+- **SPEC-E4.32** [all] A SearchBuilder tree of one group holding 65 criteria → `invalid_filter` with
+  `The search builder holds more than 64 criteria. Use at most 64 criteria.`
+- **SPEC-E4.33** [all] A column search on `name` with 257 `multi_values` → `invalid_filter` with
+  `The filter on "name" holds more than 256 values. Select at most 256 values.`; the same list on the undeclared
+  `extra` → `A column filter holds more than 256 values. Select at most 256 values.`, which does not name `extra`.
+- **SPEC-E4.34** [all] Lists of 256 values on `name` and on `team`, and a list of one value on `age` →
+  `invalid_filter` with `The filters hold more than 512 values in all. Remove some values.`
+- **SPEC-E4.35** [all] Column `name` named 65 times in the request, each with the search `Ann` → `invalid_filter` with
+  `The request searches more than 64 columns. Clear some column searches.`
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

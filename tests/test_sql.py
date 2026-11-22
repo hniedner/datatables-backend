@@ -49,6 +49,7 @@ from sqlalchemy.types import TypeEngine
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
+from datatables_backend import MalformedRequest
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
@@ -57,6 +58,9 @@ from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import checked_database
 from .conftest import criterion
+from .conftest import exact_values
+from .conftest import flat
+from .conftest import nested
 from .conftest import people
 from .conftest import request
 
@@ -1549,12 +1553,56 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'The filter on "name" holds more values than its condition takes. Remove the filter and set it again.',
         ),
+        # PRD-F38 (SPEC-E4.31 to E4.35): each bound names itself, and a list on a name that is not declared is not
+        # named
+        (
+            WORDED,
+            {'searchBuilder': nested(9, 'name')},
+            'invalid_filter',
+            'The search builder nests more than 8 groups. Nest at most 8 groups.',
+        ),
+        (
+            WORDED,
+            {'searchBuilder': flat(65, 'name')},
+            'invalid_filter',
+            'The search builder holds more than 64 criteria. Use at most 64 criteria.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'name': {'multi_values': exact_values(257, 'Ann')}}},
+            'invalid_filter',
+            'The filter on "name" holds more than 256 values. Select at most 256 values.',
+        ),
+        (
+            UNDECLARED,
+            {'column_search': {'extra': {'multi_values': exact_values(257, 'Ann')}}},
+            'invalid_filter',
+            'A column filter holds more than 256 values. Select at most 256 values.',
+        ),
+        (
+            WORDED,
+            {
+                'column_search': {
+                    'name': {'multi_values': exact_values(256, 'Ann')},
+                    'team': {'multi_values': exact_values(256, 'red')},
+                    'age': {'multi_values': ['31']},
+                }
+            },
+            'invalid_filter',
+            'The filters hold more than 512 values in all. Remove some values.',
+        ),
+        (
+            ('name',) * 65,
+            {'column_search': {'name': {'value': 'Ann'}}},
+            'invalid_filter',
+            'The request searches more than 64 columns. Clear some column searches.',
+        ),
     ],
 )
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.28: each mistake has a text of its own, which names the
+    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
     condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
     else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
@@ -1842,6 +1890,100 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
             tree = {'criteria': [tree]}
         params = request(*ALL, searchBuilder=tree)
     refused(table.fetch_sync(params, session))
+
+
+@pytest.mark.parametrize(
+    ('tree', 'answered'),
+    [
+        (nested(8, 'name'), True),
+        (nested(9, 'name'), False),
+        (flat(64, 'name'), True),
+        (flat(65, 'name'), False),
+        (nested(200, 'name'), False),  # `RecursionError` in `fetch_sync` before the bounds
+    ],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'depth-200'],
+)
+def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(
+    session: Session, tree: dict[str, Any], *, answered: bool
+):
+    """SPEC-F38.1, SPEC-F38.2: the bound is where the statements say, in each direction; a tree past it is
+    refused as `invalid_filter` and never reaches the database."""
+    response = table.fetch_sync(request(*ALL, searchBuilder=tree), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize('form', ['multi_values', 'regex'])
+@pytest.mark.parametrize(('count', 'answered'), [(256, True), (257, False)])
+def test_a_list_of_exact_values_is_answered_up_to_256_values(
+    session: Session, form: str, count: int, *, answered: bool
+):
+    """SPEC-F38.3: a `multi_values` list and a categorical regex are each bounded at 256 values."""
+    values = exact_values(count, 'Ann')
+    search = {'multi_values': values} if form == 'multi_values' else {'value': f'^({"|".join(values)})$', 'regex': True}
+    response = table.fetch_sync(request(*ALL, column_search={'name': search}), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize(('last', 'answered'), [(0, True), (1, False)], ids=['512', '513'])
+def test_the_lists_of_one_request_together_hold_at_most_512_values(session: Session, last: int, *, answered: bool):
+    """SPEC-F38.5: two lists of 256 (each within SPEC-F38.3) are answered; one more value in a third list is not.
+    A bound on each list alone lets a request send 64 lists of 256."""
+    lists = {
+        'name': exact_values(256, 'Ann'),
+        'email': exact_values(256, 'ann@example.org'),
+        'team': ['red'] if last else [],
+    }
+    searches = {name: {'multi_values': values} for name, values in lists.items() if values}
+    response = table.fetch_sync(request(*ALL, column_search=searches), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize(
+    ('searched', 'unsearched', 'answered'),
+    [(64, 0, True), (65, 0, False), (64, 100, True)],
+    ids=['64', '65', '64-among-columns-with-no-search'],
+)
+def test_a_request_searches_at_most_64_columns(session: Session, searched: int, unsearched: int, *, answered: bool):
+    """SPEC-F38.6: the count is of column searches that hold a value, so the column `name` named 65 times is 65, and
+    a column without a search is none."""
+    names = ('name',) * searched + ('id',) * unsearched
+    response = table.fetch_sync(request(*names, column_search={'name': {'value': 'Ann'}}), session)
+    if answered:
+        assert ids(response) == [1, 3]
+    else:
+        refused(response)
+
+
+def test_the_global_search_covers_a_column_once_however_often_the_request_names_it(session: Session):
+    """SPEC-F38.7: the column `name` named 1,000 times asks the database the same as when it is named once."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    table.fetch_sync(request('name', search={'value': 'ann'}), session)
+    once, statements[:] = statements[:], []
+    table.fetch_sync(request(*('name',) * 1000, search={'value': 'ann'}), session)
+    same = statements == once  # not asserted inline: a failure would print a thousand terms
+    assert same
+
+
+def test_a_tree_near_the_parsers_limit_is_refused_and_never_crashes(session: Session):
+    """SPEC-F38.8: from a depth the parser still hands over, up to one it refuses, each tree is refused as
+    `invalid_filter` or as `MalformedRequest`, and none raises `RecursionError` (165 to 254 groups did, in the plan,
+    before the bounds). The cut-over is the parser's own and depends on the Python version, so it is not pinned."""
+    for depth in range(100, 300):
+        try:
+            params = request(*ALL, searchBuilder=nested(depth, 'name'))
+        except MalformedRequest:
+            continue
+        refused(table.fetch_sync(params, session))
 
 
 @pytest.mark.parametrize(
