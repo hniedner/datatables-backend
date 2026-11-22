@@ -1910,14 +1910,15 @@ def test_the_lists_of_one_request_together_hold_at_most_512_values(session: Sess
 
 @pytest.mark.parametrize(
     ('searched', 'unsearched', 'answered'),
-    [(64, 0, True), (65, 0, False), (64, 100, True)],
+    [(64, 0, True), (65, 0, False), (64, 50, True)],
     ids=['64', '65', '64-among-columns-with-no-search'],
 )
 def test_a_request_searches_at_most_64_columns(session: Session, searched: int, unsearched: int, *, answered: bool):
     """SPEC-F38.6: the count is of column searches that hold a value, so the column `name` named 65 times is 65, and
-    a column without a search is none."""
-    names = ('name',) * searched + ('id',) * unsearched
-    response = table.fetch_sync(request(*names, column_search={'name': {'value': 'Ann'}}), session)
+    a column without a search, or with one of spaces only (PRD-F6), is none."""
+    names = ('name',) * searched + ('id', 'team') * unsearched
+    searches = {'name': {'value': 'Ann'}, 'team': {'value': '  '}}
+    response = table.fetch_sync(request(*names, column_search=searches), session)
     if answered:
         assert ids(response) == [1, 3]
     else:

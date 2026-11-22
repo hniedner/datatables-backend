@@ -648,14 +648,15 @@ def test_the_lists_of_one_request_together_hold_at_most_512_values(last: int, *,
 
 @pytest.mark.parametrize(
     ('searched', 'unsearched', 'answered'),
-    [(64, 0, True), (65, 0, False), (64, 100, True)],
+    [(64, 0, True), (65, 0, False), (64, 50, True)],
     ids=['64', '65', '64-among-columns-with-no-search'],
 )
 def test_a_request_searches_at_most_64_columns(searched: int, unsearched: int, *, answered: bool):
     """SPEC-F38.6: the count is of column searches that hold a value, so the column `title` named 65 times is 65,
-    and a column without a search is none."""
-    names = ('title',) * searched + ('id',) * unsearched
-    answered_or_refused(request(*names, column_search={'title': {'value': 'Ann'}}), answered=answered)
+    and a column without a search, or with one of spaces only (PRD-F6), is none."""
+    names = ('title',) * searched + ('id', 'author') * unsearched
+    searches = {'title': {'value': 'Ann'}, 'author': {'value': '  '}}
+    answered_or_refused(request(*names, column_search=searches), answered=answered)
 
 
 def test_the_global_search_covers_a_column_once_however_often_the_request_names_it():

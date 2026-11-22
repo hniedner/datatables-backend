@@ -319,8 +319,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   answered; with a third list of one value on `team` (SQL) or `id` (OS) → error_code `invalid_filter`: all the lists
   of one request together hold at most 512 values.
 - **SPEC-F38.6** [all] The column `name` (SQL) or `title` (OS) named 64 times in the request, each with the search
-  `Ann`, is answered, also with 100 more columns that hold no search; named 65 times → error_code `invalid_filter`.
-  A column search that holds a value counts, and a column without one does not.
+  `Ann`, is answered, also with 100 more columns, half of them with no search and half with a search of two spaces;
+  named 65 times → error_code `invalid_filter`. A column search that holds a value counts; a column without one, or
+  with spaces only (PRD-F6), does not.
 - **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
   database or the cluster exactly what it asks when the column is named once.
 - **SPEC-F38.8** [SQL] A SearchBuilder tree of every depth from 100 to 299 groups, each group holding a criterion and
