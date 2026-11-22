@@ -3,15 +3,16 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 25 of 2026-11-21 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 26 of 2026-11-21 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
   the SQL column types it folds and for OpenSearch's ASCII-only fold, with lines in section 5; revision 24 changes
   PRD-F9 for OpenSearch, which folds letters outside ASCII from 3.1 on, and adds PRD-Q14 for the supported
   OpenSearch servers, with lines in section 5; revision 25 is revision 24 in a new layout, one section per
-  requirement, no requirement changed). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its
-  place here. A requirement now changes only by the owner.
+  requirement, no requirement changed; revision 26 states how a day and a number are written, in PRD-F21, PRD-F22
+  and PRD-F25). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. A requirement
+  now changes only by the owner.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -668,10 +669,15 @@ read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an awa
 (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC
 day only when the app sets that zone to `+00:00`. A non-empty categorical value or `multi_values` entry on a date column
 is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one
-means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on OpenSearch.
+means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a missing field on OpenSearch. A day is
+written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, with an
+optional fraction): it must exist and is then ignored, since SearchBuilder sends `YYYY-MM-DD HH:mm:ss` for a column it
+formats with Moment or Luxon. White space around the value is ignored. Any other spelling is `invalid_date`, among them
+a digit outside ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
 
 - **Reason:** A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL
-  documentation, not measured here.
+  documentation, not measured here. One stated spelling is answered alike on every backend; an offset is refused rather
+  than ignored, because the instant it names can fall on another UTC day.
 - **Priority:** must
 
 #### PRD-F22
@@ -679,7 +685,8 @@ means empty (PRD-F17, PRD-F20), which on a date column is NULL on SQL and a miss
 SearchBuilder's "contains" on a date column, a criterion SearchBuilder itself does not send, and a column search on an
 OpenSearch date column (other than a categorical filter or `multi_values` list, PRD-F21), take a year, a year-month or a
 day (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) and mean that span, on every backend. For a timezone-aware column the span is in
-UTC (PRD-F21).
+UTC (PRD-F21). The year and the year-month are written in ASCII digits, and the day as PRD-F21 writes it, a time after
+it included.
 
 - **Reason:** A partial date names a span; substring matching on date text depends on the database's date format.
 - **Priority:** must
@@ -703,9 +710,12 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 #### PRD-F25
 
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
-integer range.
+integer range. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
+`.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is
+`invalid_number`, among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
-- **Reason:** A database error on an out-of-range number is a user mistake surfacing late.
+- **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
+  answered alike on every backend.
 - **Priority:** must
 
 #### PRD-F26

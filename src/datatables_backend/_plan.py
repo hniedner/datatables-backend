@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+from datetime import time
 from datetime import timedelta
 import logging
 import math
@@ -135,6 +136,14 @@ _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
 }
 _BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
+# How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
+# every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
+_NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
+_DAY = re.compile(
+    r'(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})'
+    r'(?:[ T](?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})(?::(?P<second>[0-9]{2})(?:\.[0-9]+)?)?)?'
+)
+_YEAR_OR_MONTH = re.compile(r'(?P<year>[0-9]{4})(?:-(?P<month>[0-9]{2}))?')
 
 
 @dataclass(frozen=True)
@@ -359,14 +368,20 @@ def _criterion(
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
     point, else a ``float``. ``listed`` says the text is one of several values (a list, or the two of a
-    ``between``), where the reason must not ask for one number."""
+    ``between``), where the reason must not ask for one number.
+
+    A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
+    exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
+    ``inf``), so the spelling is checked first."""
     stripped = text.strip()
-    try:
-        if stripped.lstrip('+-').isdigit():
-            return int(stripped)  # refuses two signs, a digit that is no decimal (`²`), and more digits than it reads
-        number = float(stripped)
-    except ValueError:
-        number = math.nan
+    number = math.nan
+    if _NUMBER.fullmatch(stripped):
+        try:
+            if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
+                return int(stripped)
+            number = float(stripped)
+        except ValueError:  # more digits than Python converts to an integer
+            pass
     if not math.isfinite(number):
         needed = (
             f'Each value in the filter on "{column.name}" must be a number'
@@ -400,14 +415,12 @@ def _last_day(column: Column) -> InvalidFilter:
 
 
 def parse_day(text: str, column: Column, *, listed: bool = False) -> date:
-    """The day ``text`` names in a filter on ``column`` (``YYYY-MM-DD``; a time after it is ignored). The last day
-    there is, 9999-12-31, is refused in every condition: it has no next day to bound it by, and that is the user's
-    filter, not a failed query. ``listed`` says the text is one of several values (a list, or the two of a
-    ``between``), where the reason must not ask for one date."""
-    try:
-        day = date.fromisoformat(text.strip()[:10])
-    except ValueError:
-        # The parser's message quotes the value, which may be a date of birth
+    """The day ``text`` names in a filter on ``column``, written as ``_written_day`` reads it. The last day there is,
+    9999-12-31, is refused in every condition: it has no next day to bound it by, and that is the user's filter, not
+    a failed query. ``listed`` says the text is one of several values (a list, or the two of a ``between``), where
+    the reason must not ask for one date."""
+    day = _written_day(text.strip())
+    if day is None:
         needed = (
             f'Each value in the filter on "{column.name}" must be a date'
             if listed
@@ -415,10 +428,25 @@ def parse_day(text: str, column: Column, *, listed: bool = False) -> date:
         )
         raise mistake(
             'datatables_date_unreadable', f'{needed} that exists, written as YYYY-MM-DD, like 2024-03-05.', column
-        ) from None
+        )
     if day == date.max:
         raise _last_day(column)
     return day
+
+
+def _written_day(value: str) -> date | None:
+    """The day ``value`` writes as PRD-F21 says, or None: ``YYYY-MM-DD`` in ASCII digits, and after it, at most, a
+    space or a ``T`` and a time of day that exists (``HH:MM`` or ``HH:MM:SS``, with an optional fraction), which is
+    ignored. SearchBuilder sends such a time; a zone or an offset after it is refused, since the instant it names
+    can fall on another UTC day."""
+    form = _DAY.fullmatch(value)
+    if form is None:
+        return None
+    try:
+        time(int(form['hour'] or 0), int(form['minute'] or 0), int(form['second'] or 0))
+        return date(int(form['year']), int(form['month']), int(form['day']))
+    except ValueError:  # a day or a time of day that does not exist
+        return None
 
 
 def on_day(column: Column, day: date | None) -> Criterion:
@@ -432,29 +460,29 @@ def next_day(day: date) -> date:
 
 
 def day_span(text: str, column: Column) -> DaySpan:
-    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day.
-    A span that holds the last day there is, is refused as that day is."""
+    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, both in ASCII digits,
+    or a day as ``_written_day`` reads it, so `contains` and `=` take the same day. A span that holds the last day
+    there is, is refused as that day is."""
     value = text.strip()
-    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', value)
-    try:
-        if form and form[3]:  # a full day is read as ``parse_day`` reads it, so `contains` and `=` take the same
-            start = date.fromisoformat(value)
-        else:
-            start = date(int(form[1]), int(form[2] or 1), 1) if form else None
-    except ValueError:  # the year 0000, or a month or a day that does not exist
-        start = None
-    if form is None or start is None:
-        raise mistake(
-            'datatables_date_unreadable',
-            f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
-            'or YYYY-MM-DD, like 2024-03.',
-            column,
-        )
-    if form[3]:
-        if start == date.max:
+    unreadable = mistake(
+        'datatables_date_unreadable',
+        f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
+        'or YYYY-MM-DD, like 2024-03.',
+        column,
+    )
+    form = _YEAR_OR_MONTH.fullmatch(value)
+    if form is None:
+        day = _written_day(value)
+        if day is None:
+            raise unreadable
+        if day == date.max:
             raise _last_day(column)
-        return DaySpan(start, next_day(start))
-    last = start.month if form[2] else 12
+        return DaySpan(day, next_day(day))
+    try:
+        start = date(int(form['year']), int(form['month'] or 1), 1)
+    except ValueError:  # the year 0000, or a month that does not exist
+        raise unreadable from None
+    last = start.month if form['month'] else 12
     if (start.year, last) == (date.max.year, 12):
         raise _last_day(column)
     return DaySpan(start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1))

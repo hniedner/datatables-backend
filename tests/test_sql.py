@@ -496,6 +496,16 @@ def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: 
         ('born', 'contains', ['2001-12'], [4]),
         ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
         ('born', 'contains', ['1980-07-14'], []),  # SPEC-F22.1: and of no more, so the day before Bob's holds nobody
+        # SPEC-F25.3: the spellings of a number beside plain digits: a sign, a point at the end, a point first and an
+        # exponent
+        ('age', '=', ['+31'], [1, 4]),
+        ('age', '=', ['31.'], [1, 4]),
+        ('age', '=', ['.31e2'], [1, 4]),
+        # SPEC-F21.9: a time of day after the day is ignored: after a space, with seconds and a fraction, as
+        # SearchBuilder sends it for a formatted column; after a `T`, without seconds
+        ('born', '=', ['1980-07-15 10:00:00.250'], [2]),
+        ('born', '=', ['1980-07-15T23:59'], [2]),
+        ('born', 'contains', ['1980-07-15 10:00:00'], [2]),  # SPEC-F22.5: `contains` reads a day as `=` does
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -812,16 +822,25 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [
-        ('age', '>', ['inf'], 'invalid_number'),  # SPEC-F25.1: a number Python reads, and no column holds
+        ('age', '>', ['1e999'], 'invalid_number'),  # SPEC-F25.1: written as a number, and no column holds infinity
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
-        ('age', '=', [chr(0xB2)], 'invalid_number'),  # a superscript two: a digit to `str.isdigit`, no number
         ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
+        # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
+        ('age', '=', ['3_1'], 'invalid_number'),
+        ('age', '=', ['31'.translate(FULL_WIDTH)], 'invalid_number'),
+        # SPEC-F21.10: text after the day, another ISO form, an offset (its instant may be another UTC day), and a
+        # time of day that does not exist
+        ('born', '=', ['1980-07-15xyz'], 'invalid_date'),
+        ('born', '=', ['19800715'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10:00+02:00'], 'invalid_date'),
+        ('born', '=', ['1980-07-15 24:00'], 'invalid_date'),
+        ('born', 'contains', ['1980'.translate(FULL_WIDTH)], 'invalid_date'),  # SPEC-F22.5: a year in other digits
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
         ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
         ('born', 'contains', ['2024-03-00'], 'invalid_date'),  # nor a day 00 as the first
         ('born', 'contains', ['0000'], 'invalid_date'),  # nor the year 0000 as the year 1
-        # A full day in full-width digits: `contains` reads a day as `=` does, which takes ASCII digits only
+        # SPEC-F21.10: a full day in full-width digits: `contains` reads a day as `=` does, in ASCII digits only
         ('born', 'contains', ['2024-03-05'.translate(FULL_WIDTH)], 'invalid_date'),
         ('age', 'contains', ['abc'], 'invalid_filter'),  # SPEC-E3.8: the value is never read
     ],

@@ -180,12 +180,18 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.8** [SQLite] Given a row whose `at` is written as the aware value `2024-03-06T01:00+02:00` (the instant
   2024-03-05T23:00Z): `=` `2024-03-06` matches it and `=` `2024-03-05` does not, since the offset is dropped and the
   stored `01:00` is read as UTC.
+- **SPEC-F21.9** [all] SearchBuilder `=` on `made` with `2024-03-05 10:00:00.250` or `2024-03-05T23:59` → rows 1: a
+  time of day after the day is ignored.
+- **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `20240305`, `2024-03-05T10:00+02:00` or
+  `2024-03-05 24:00` → error_code `invalid_date`; so does `contains` with the day in digits outside ASCII.
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
   `invalid_date`.
 - **SPEC-F22.3** [all] SearchBuilder `contains` `2024-03-06` on `at` → rows 2 (UTC span).
 - **SPEC-F22.4** [OS] Column search on `made` with `2024-12` → rows 2.
+- **SPEC-F22.5** [all] SearchBuilder `contains` on `made`: `2024-03-05 10:00:00` → rows 1 (the day as `=` reads it);
+  `2024` in digits outside ASCII → error_code `invalid_date`.
 - **SPEC-F23.1** [SQL] Global search `17` → rows 2; column search `7` on `price` → rows 1, 2.
 - **SPEC-F23.2** [SQL] Column search `2024-12` on `made` → rows 2; `03-05` → rows 1 (date text is `YYYY-MM-DD`).
 - **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` and `at` text).
@@ -193,10 +199,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   database error, in each of: `=`, `!=`, `<`, `<=`, `>`, `>=` with `9999-12-31`; `between` and `!between` with
   `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
 - **SPEC-F25.1** [all] SearchBuilder on `price`: `=` `abc`, `NaN`, `inf`, `-Infinity` or `1e999` → error_code
-  `invalid_number`. So do `²` (U+00B2, a digit that is no decimal digit) and a whole number of 5,000 digits: neither
-  is a failed request.
+  `invalid_number`. So does a whole number of 5,000 digits: it is no failed request.
 - **SPEC-F25.2** [SQL] On `price` (a `BigInteger`), `=` `9223372036854775808` → error_code `invalid_number`;
   `9223372036854775807` is answered. With `price` redeclared as a `SmallInteger`, `=` `32768` → `invalid_number`.
+- **SPEC-F25.3** [all] SearchBuilder `=` on `price` with `+7`, `7.` or `.7e1` → rows 1. With `1_000`, or `7` in a
+  digit outside ASCII (the full-width `７`, U+FF17) → error_code `invalid_number`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 
