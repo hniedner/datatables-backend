@@ -339,6 +339,14 @@ def test_column_searches_follow_the_columns_type():
     assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
 
 
+def test_a_date_column_search_reads_a_day_with_a_time_after_it_as_that_day():
+    """SPEC-F34.1: the time comes after a space, and it is one date term all the same, not several (PRD-F34)."""
+    client, params = Client(), request(*NAMES)
+    params.columns[4].search.value = '2026-07-15 10:00:00'
+    table.fetch_sync(params, client)
+    assert query(client) == [{'range': {'created': {'gte': '2026-07-15', 'lt': '2026-07-16', 'format': 'strict_date'}}}]
+
+
 def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_string():
     """PRD-F9 (SPEC-F9.3): a `terms` query takes no `case_insensitive`."""
     client = Client()
