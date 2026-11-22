@@ -2232,21 +2232,22 @@ def test_a_condition_binds_at_most_two_parameters(
 
 @pytest.mark.skipif(
     os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='a measurement of SQL Server 2022: its limit of 2,100 parameters in one statement',
+    reason='a measurement of SQL Server 2022: the parameters one statement may bind',
 )
-@pytest.mark.parametrize(('columns', 'answered'), [(2098, True), (2099, False)])
-def test_sql_server_answers_2098_parameters_in_the_filter_and_refuses_2099(
-    session: Session, columns: int, answered: bool
-):
+@pytest.mark.parametrize('columns', range(2080, 2100))
+def test_sql_server_answers_a_statement_of_this_many_parameters(session: Session, columns: int):
     """Issue #89, a measurement of the engine, not of this library, to be removed before the PR is ready: one word
     over ``columns`` columns binds ``columns`` parameters in the filtered count, and the page's statement two more.
-    2,098 makes 2,100 in the page, which SQL Server answers; 2,099 makes 2,101, which it refuses with 07002."""
+    Every case expects an answer, so the cases that fail mark the boundary; the message gives the parameters each
+    statement sent (total, filtered count, page) and the database's own words."""
+    sent: list[int] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: sent.append(len(args[3])))
     wide, params = wide_request(columns, search='ann')
-    if answered:
-        assert wide.fetch_sync(params, session).recordsFiltered == 1
-    else:
-        with pytest.raises(DBAPIError, match='07002'):
-            wide.fetch_sync(params, session)
+    try:
+        response = wide.fetch_sync(params, session)
+    except DBAPIError as error:
+        pytest.fail(f'refused; parameters sent per statement: {sent}; {str(error.orig)[:200]}')
+    assert response.recordsFiltered == 1
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
