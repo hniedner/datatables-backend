@@ -26,6 +26,7 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import criterion
+from .conftest import largest_search_request
 from .conftest import request
 
 URL = os.environ.get('DTB_OPENSEARCH_URL', '')
@@ -600,3 +601,19 @@ def test_searchbuilder_groups_nest(client: OpenSearch):
 def test_order(client: OpenSearch, column: int, direction: str, expected: list[str]):
     response = table.fetch_sync(request(*NAMES, order=[{'column': column, 'dir': direction}]), client)
     assert ids(response) == expected
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=RequestError,
+    reason='PRD-F38, PRD-C17, expectation to be confirmed by this run: the request holds 4,672 leaf queries, 6,834 '
+    'clauses of `bool` queries and at most 256 in one, against the default 1,024 of '
+    '`indices.query.bool.max_clause_count`; the server is expected to refuse it with a 400',
+)
+def test_the_largest_request_the_bounds_allow(client: OpenSearch):
+    """The request of `largest_search_request`, the recording test's counts (tests/test_opensearch.py), sent to a
+    real server: answered or refused, and so by which way of counting."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
+    columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
+    response = SearchTable(INDEX, columns).fetch_sync(largest_search_request(), client)
+    assert response.error is None

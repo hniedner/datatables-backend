@@ -31,6 +31,7 @@ from sqlalchemy import Table
 from sqlalchemy import Uuid
 from sqlalchemy import and_
 from sqlalchemy import cast
+from sqlalchemy import create_engine
 from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
@@ -48,6 +49,7 @@ from sqlalchemy.types import TypeDecorator
 from sqlalchemy.types import TypeEngine
 
 from datatables_backend import Column
+from datatables_backend import DTParams
 from datatables_backend import DTResponse
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
@@ -59,6 +61,8 @@ from .conftest import checked_database
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import largest_request
+from .conftest import metadata
 from .conftest import nested
 from .conftest import people
 from .conftest import request
@@ -2001,23 +2005,60 @@ def test_row_values_come_back_as_the_database_gives_them(session: Session):
     ]
 
 
-def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
-    """SPEC-C17.1, PRD-C17: 512 values in two lists of days on columns with a time (two parameters each), 64
-    criteria of two values each and a global search, in one request. On SQL Server its parameters stay under the
-    2,100 it refuses past; a bound that grew would turn this red there."""
-    largest = SQLTable(people, [Column('id'), Column('name'), Column('seen'), Column('seen_tz')])
+def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
+    """The largest request PRD-F14 and PRD-F38 allow (`largest_request`) over a table of ``emails`` columns that
+    all read `email_address`, plus `id` and the two columns with a time: 512 values in two lists of days (two
+    parameters each), 64 criteria of two values each, 62 column searches of 16 words and a global search of 16
+    words over ``emails`` + 3 columns."""
+    columns = [Column(f'e{number}', field='email_address') for number in range(emails)]
+    largest = SQLTable(people, [Column('id'), *columns, Column('seen'), Column('seen_tz')])
     days = [(date(2000, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)] + ['2026-07-15']
     between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
-    params = request(
-        'id',
-        'name',
-        'seen',
-        'seen_tz',
-        column_search={'seen': {'multi_values': days}, 'seen_tz': {'multi_values': days}},
-        search={'value': 'ann'},
-        searchBuilder={'logic': 'AND', 'criteria': [between] * 64},
-    )
+    names = ['id', *(column.name for column in columns), 'seen', 'seen_tz']
+    params = largest_request(names, names[1:63], {'seen': days, 'seen_tz': days}, [between] * 64)
+    return largest, params
+
+
+@pytest.mark.xfail(
+    os.environ.get('DTB_SQL_DIALECT', 'sqlite') == 'sqlite',
+    strict=True,
+    raises=DBAPIError,
+    reason='PRD-C17, PRD-F38: SQLite refuses the request, "Expression tree is too large (maximum depth 1000)": it '
+    'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured locally '
+    'on 2026-11-22; the other databases are asked by CI',
+)
+def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: the request of `largest_sql_request` over 62 columns. Its parameters are counted by
+    the next test; this one runs it on every database, SQL Server's limit of 2,100 included."""
+    largest, params = largest_sql_request(62)
     assert ids(largest.fetch_sync(params, session)) == [1]
+
+
+@pytest.mark.parametrize('emails', [62, 100])
+def test_the_largest_request_the_bounds_allow_binds_a_known_number_of_parameters(emails: int):
+    """PRD-C17, a measurement: the parameters of one statement of the largest request, on SQLite, as a function of
+    C, the number of columns the global search covers (``emails`` + 3). 2,144 are the lists (1,024), the criteria
+    (128) and the 62 column searches of 16 words (992); each global word adds one per column. SQL Server refuses
+    past 2,100 in one statement, so PRD-C17 is not met by the bounds alone: this test pins how far past."""
+
+    class Counted(Exception):
+        pass
+
+    seen: list[int] = []
+
+    def count(*args: Any) -> None:
+        seen.append(len(args[3]))
+        if seen[-1] > 1000:  # the filtered count: SQLite itself refuses it (the xfail above), so it is never run
+            raise Counted
+
+    engine = create_engine('sqlite://')
+    metadata.create_all(engine)
+    event.listen(engine, 'before_cursor_execute', count)
+    largest, params = largest_sql_request(emails)
+    with Session(engine) as session, pytest.raises(Counted):
+        largest.fetch_sync(params, session)
+    engine.dispose()
+    assert seen[-1] == 2144 + 16 * (emails + 3)  # the page's statement binds two more, its offset and its limit
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):

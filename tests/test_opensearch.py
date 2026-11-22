@@ -7,6 +7,7 @@ container tests of milestone 2; these pin down what is sent.
 from collections.abc import Mapping
 import logging
 from typing import Any
+from typing import cast
 
 import pytest
 
@@ -23,6 +24,7 @@ from datatables_backend.opensearch import SearchTable
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import largest_search_request
 from .conftest import nested
 from .conftest import request
 
@@ -876,3 +878,35 @@ def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
 def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
     with pytest.raises(SchemaError):
         SearchTable('docs', [IndexColumn('id', text='keyword'), Column('active', type='boolean', search_value=str)])
+
+
+def tally(query: Mapping[str, Any]) -> tuple[int, int, int]:
+    """The leaf queries, the clauses of every `bool` (a leaf or another `bool` each) and the most clauses one `bool`
+    holds, in a query: the three ways a server may count against `indices.query.bool.max_clause_count`."""
+    leaves = clauses = widest = 0
+    pending = [query]
+    while pending:
+        node = pending.pop()
+        if 'bool' not in node:
+            leaves += 1
+            continue
+        for occurrences in node['bool'].values():
+            if isinstance(occurrences, list):
+                children = cast(list[Mapping[str, Any]], occurrences)
+                clauses += len(children)
+                widest = max(widest, len(children))
+                pending.extend(children)
+    return leaves, clauses, widest
+
+
+def test_the_largest_request_the_bounds_allow_is_this_many_clauses():
+    """PRD-F38, PRD-C17, a measurement of what is sent: the request of `largest_search_request` over 64 text+keyword
+    columns. A word adds two leaves for each such column (a `match_phrase` and a `wildcard`, in a `should`), so the
+    global search is 16 x 64 x 2 = 2,048, the 62 column searches 62 x 16 x 2 = 1,984, the two lists 512 (one `term`
+    each) and the 64 criteria 128. The default `indices.query.bool.max_clause_count` is 1,024; whether the server
+    counts leaves, the clauses of every `bool` or the widest `bool` is what the live test asks."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
+    columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
+    client = Client()
+    SearchTable('docs', columns).fetch_sync(largest_search_request(), client)
+    assert tally(client.searches[0]['query']) == (4672, 6834, 256)
