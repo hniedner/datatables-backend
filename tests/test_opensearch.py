@@ -487,6 +487,30 @@ def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
     assert too_long == {'term': {'id': {'value': deseret + '.' * 255, 'case_insensitive': True}}}
 
 
+FULLWIDTH_MARKS = [chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)]  # the fullwidth asterisk, question mark and backslash
+
+
+@pytest.mark.parametrize('mark', FULLWIDTH_MARKS)
+def test_a_search_for_a_fullwidth_mark_is_a_regexp_with_the_mark_behind_a_backslash(mark: str):
+    """SPEC-F9.19: a normalizer can make the mark an ASCII `*`, `?` or `\\`, which a `wildcard` query then reads as
+    its own syntax: the search finds too much, or misses its own row. A row turns red when its mark is sent in a
+    `wildcard` again."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', 'contains', f'a{mark}b')), client)
+    assert query(client) == [{'regexp': {'id': {'value': f'.*a\\{mark}b.*', 'case_insensitive': True}}}]
+
+
+def test_a_fullwidth_mark_changes_no_exact_match_and_no_value_too_long_for_a_regexp():
+    """SPEC-F9.19: an exact match is a `term`, which the server compares as a whole, so it stays one; and a search
+    of more than 255 code points keeps its `wildcard`, as SPEC-F9.18 has it for every value."""
+    client, mark = Client(), FULLWIDTH_MARKS[0]
+    table.fetch_sync(request(*NAMES, **criterion('id', '=', f'a{mark}b')), client)
+    table.fetch_sync(request(*NAMES, **criterion('id', 'contains', mark + 'a' * 255)), client)
+    exact, too_long = (search['query']['bool']['must'][1] for search in client.searches)
+    assert exact == {'term': {'id': {'value': f'a{mark}b', 'case_insensitive': True}}}
+    assert too_long == {'wildcard': {'id': {'value': f'*{mark}{"a" * 255}*', 'case_insensitive': True}}}
+
+
 def test_a_value_outside_ascii_without_case_keeps_its_query():
     """SPEC-F9.14: a script without case has nothing to fold, so the value is sent as before."""
     client = Client()
