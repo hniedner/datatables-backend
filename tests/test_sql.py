@@ -2052,9 +2052,9 @@ def test_a_list_of_256_days_on_a_date_column_is_answered(session: Session):
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
-    """31.5 on a SMALLINT column matches nothing, as it does on every database: a conversion that failed would fail
-    the whole query."""
-    params = request(*ALL, column_search={'age': {'multi_values': ['31', '31.5']}})
+    """44.6 on a SMALLINT column matches nothing, as it does on every database: a conversion that failed would fail
+    the whole query, and one that rounded would find row 2, which holds 45 (a cast to INTEGER on PostgreSQL does)."""
+    params = request(*ALL, column_search={'age': {'multi_values': ['31', '44.6']}})
     assert ids(table.fetch_sync(params, session)) == [1, 4]
 
 
