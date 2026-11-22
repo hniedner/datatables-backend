@@ -86,14 +86,18 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 
 - **The core is code-complete** (SQL, OpenSearch, FastAPI adapter). The GitHub repo `hniedner/datatables-backend`
   is public. Publishing still needs the user's explicit OK.
-- **PRD draft 2 is approved and merged** (`docs/PRD.md`). The roadmap lives in the GitHub milestones v0.1 (PRD v2
-  behaviour), v0.2 (first release), v0.3 (first adoption) and v1.0, and their issues.
+- **PRD draft 2 is approved and merged** (`docs/PRD.md`, revision 30). The owner decides a requirement's first
+  sentence and priority, goals, public names and error codes; the reviewer decides further clauses, reasons and
+  section 5 in PR review. Engine facts go to `docs/databases.md`, measurements to `docs/decisions/`. The behaviour
+  statements live in `spec/`; `uv run --frozen python scripts/trace_check.py` checks every requirement is traced to
+  them.
 - **Done:** CI (lint, types, tests on 3.12–3.15, minimum versions, install isolation) and container tests on
-  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.10 and 2.19.
-- **Done in v0.1:** the PRD's layout (#39); how a day and a number are written, the UTC day and lists on a date
-  column (#12); ordering, undeclared columns and paging bounds (#14, part 1); the plan's typed nodes (#49).
-- **Next (v0.1):** the rest of #14, the layout of PRD section 5 (#42), the acceptance suite (#15, sources in
-  `CLAUDE.local.md`), then #26–#29.
-- **Then (v0.2):** automatic releases (#45) and the first publish (#7).
+  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.10 and 2.19; the PRD's layout (#39); dates and numbers
+  (#12); ordering, paging, the categorical grammar, empty values, NULL in negations and numbers by column type (#14
+  parts 1 and 2); the plan's typed nodes (#49).
+- **Milestones** (their names count them and are not versions): v0.1 Request rules (#14 part 3, #57); v0.2 Search
+  and hooked columns; v0.3 OpenSearch paging and first release (0.1.0, once the first adopter can move); v0.4
+  Acceptance and parsing (sources in `CLAUDE.local.md`); v0.5 Engines and automatic releases; v0.6 First adoption;
+  v1.0.
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.
