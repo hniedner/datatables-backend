@@ -139,3 +139,27 @@ fix, so it may change.
 - **How it is known:** MEASURED 2026-11-22 on OpenSearch 3.10.0 and 2.19.7
   (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`).
 - **Requirement:** PRD-F25, PRD-E7.
+
+### A character that a normalizer folds to `*`, `?` or `\` can be searched as a wildcard
+
+A keyword field with a normalizer that folds to ASCII (`asciifolding`) turns some characters into `*`, `?` or `\`,
+in what it stores and in a search pattern, where they are then the pattern's own syntax. The library does not
+read the mapping. It sends a substring search (the global search, a column search, `contains`, `starts`, `ends`
+and their negations) with a fullwidth `＊` (U+FF0A), `？` (U+FF1F) or `＼` (U+FF3C) in a form the server reads as
+that character, so it finds the rows holding the ASCII or the fullwidth character there. What is left is a limit
+of the library.
+
+- **What you see:**
+  - A character the normalizer turns into several, as `⁇` (U+2047) into `??`, matches too much in a substring
+    search. No form of query measured is right for it.
+  - Another character that a normalizer folds to `*`, `?` or `\` is not covered: only the three above are.
+  - A search text of more than 255 code points, and a search on a column with a search-value hook, are sent as
+    before, so the three marks match too much or miss their own row there.
+  - A search with one of the three marks folds letters as a regular expression does, which from OpenSearch 3.1 on
+    is a little more than other searches fold: `k` beside such a mark also finds the Kelvin sign. Not measured for
+    these values; `docs/decisions/001-opensearch-case-folding-beyond-ascii.md` holds the measurement for others.
+- **Example:** on such a field holding `axyb`, `a⁇b` and `a??b`, a search for `a⁇b` finds all three.
+- **How it is known:** MEASURED 2026-11-22 on OpenSearch 3.10.0 and 2.19.7
+  (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`); the three marks are also checked on
+  both servers by the live tests. The second and third points are read in the code, not run on a server.
+- **Requirement:** PRD-F9.

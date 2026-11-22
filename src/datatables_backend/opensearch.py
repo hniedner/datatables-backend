@@ -292,11 +292,18 @@ def _cased_beyond_ascii(value: str) -> bool:
     return any(not char.isascii() and _cased(char) for char in value)
 
 
-def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
+#: The fullwidth asterisk, question mark and backslash. A normalizer that folds to ASCII (``asciifolding``) makes
+#: them ``*``, ``?`` and ``\``, in the pattern of a ``wildcard`` query too, where they are then its own syntax; a
+#: backslash before the mark does not help there (measured, docs/decisions/003).
+_FOLDED_TO_A_WILDCARD = frozenset({chr(0xFF0A), chr(0xFF1F), chr(0xFF3C)})
+
+
+def _regexp(field: str, before: str, value: str, after: str, *, marks: bool = False) -> dict[str, Any] | None:
     """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
-    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one longer than
-    255 code points, beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most
-    768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
+    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII (and, where ``marks``
+    is asked, without a fullwidth mark that a ``wildcard`` would misread), and one longer than 255 code points,
+    beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most 768 UTF-16 units,
+    under the 1,000 of the default ``index.max_regex_length``).
 
     A character of ``value`` gets a backslash, also when it is outside ASCII: the server runs the pattern through
     the field's normalizer, which can make an ASCII bracket of a fullwidth one. The backslash makes it that
@@ -308,7 +315,8 @@ def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] |
       backslash before a letter is a class of the syntax or an error;
     - whitespace, which is no operator either: a normalizer that trims takes a space at the end of the pattern and
       would leave its backslash there, which is an error."""
-    if len(value) > MAX_REGEXP_VALUE or not _cased_beyond_ascii(value):
+    wanted = _cased_beyond_ascii(value) or (marks and not _FOLDED_TO_A_WILDCARD.isdisjoint(value))
+    if len(value) > MAX_REGEXP_VALUE or not wanted:
         return None
     literal = ''.join(char if char.isalnum() or _cased(char) or char.isspace() else f'\\{char}' for char in value)
     return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
@@ -322,13 +330,14 @@ def _term(column: Column, field: str, value: str) -> dict[str, Any]:
 
 
 def _part(column: Column, field: str, value: str, *, start: bool = False, end: bool = False) -> dict[str, Any]:
-    """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A hooked column's
-    value is what its hook made of the text, and is sent as before."""
+    """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A value with a
+    fullwidth mark that a ``wildcard`` would misread is a ``regexp`` too. A hooked column's value is what its hook
+    made of the text, and is sent as before."""
     pattern = f'{"" if start else "*"}{escape_wildcard(value)}{"" if end else "*"}'
     wildcard = {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
     if column.search_value is not None:
         return wildcard
-    return _regexp(field, '' if start else '.*', value, '' if end else '.*') or wildcard
+    return _regexp(field, '' if start else '.*', value, '' if end else '.*', marks=True) or wildcard
 
 
 def escape_wildcard(value: str) -> str:
