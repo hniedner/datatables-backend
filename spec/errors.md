@@ -10,10 +10,10 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E1.2** [all] SearchBuilder `<` `a` on `name` → `fetch` and `fetch_sync` return the answer with error_code
   `invalid_filter`; `InvalidFilter` does not propagate out of either.
 - **SPEC-E2.1** [all] Across every user-error case in the specs, `fetch` answers one of exactly `invalid_filter`,
-  `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`; it
-  never answers another code (`query_failed` is the app's, PRD-E5).
-- **SPEC-E2.2** [all] The seven codes are stable: each case in P, D, F, O and C that names a code answers that code.
-  [review] The seven are listed in the docstring of `DTResponse`.
+  `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`,
+  `page_out_of_range`; it never answers another code (`query_failed` is the app's, PRD-E5).
+- **SPEC-E2.2** [all] The eight codes are stable: each case in P, D, F, O and C that names a code answers that code.
+  [review] The eight are listed in the docstring of `DTResponse`.
 - **SPEC-E2.3** [review] The docstring of `DTResponse` and the README say that the list of codes is closed, that a
   code is added only in a release that says so, and that a client treats a code it does not know as a refusal of
   the request and shows `error`.
@@ -37,6 +37,11 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   read: SearchBuilder `contains` `abc` on `price` → `invalid_filter`, not `invalid_number`; a column search on
   `price` with the value `abc` and `multi_values` `["x"]` → `invalid_filter` (the reviewer's decision of
   2026-11-21).
+- **SPEC-E3.9** [SQL] Over a table of 960 columns that read `email_address` and `id`, which the request marks not
+  searchable, a global search `ann` (960 conditions) with these in the SearchBuilder tree: `=` `1` on `id` and `=`
+  `abc` on `id` → `request_too_large` (961 conditions, step 1, before the number mistake of step 2); `=` `abc` on `id`
+  alone → `invalid_number` (the part with a mistake is not counted, so 960); `=` `1` on `id` and a column search of
+  256 characters on `e0` → `value_too_long` (the budget is the last mistake of step 1).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value. A limit
   the server holds (an integer column's bounds, the result window, the year 9999 of the last day there is) is the
@@ -132,6 +137,10 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `invalid_filter` with `The filters hold more than 512 values in all. Remove some values.`
 - **SPEC-E4.35** [all] Column `name` named 65 times in the request, each with the search `Ann` → `invalid_filter` with
   `The request searches more than 64 columns. Clear some column searches.`
+- **SPEC-E4.36** [SQL] A global search `ann` over 961 columns → `request_too_large` with `The request is too large: it
+  holds more than 960 conditions (each search word counts once per column searched, each selected value and each
+  range once). Search for fewer words, search fewer columns, or select fewer values.`, which holds neither `ann` nor
+  a column's name.
 - **SPEC-E5.1** [core] `DTResponse.query_failed(5)` gives `draw` 5, `error_code` `query_failed`, a non-empty `error`,
   `recordsTotal` 0, `recordsFiltered` 0 and `data` `[]`.
 - **SPEC-E5.2** [all] When the connection or client raises during `fetch`, the call raises; it never returns

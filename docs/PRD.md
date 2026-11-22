@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 34 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 35 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -23,7 +23,9 @@
   word on analysed text matches as a phrase of its tokens), with its line in section 5; revision 34 gives the bounds
   of PRD-F14 their own codes, `value_too_long` and `too_many_words`, as the owner decided on 2026-11-22, in PRD-F14,
   PRD-E2, PRD-E3 and PRD-A11, extends the 255-code-point bound to every value the client sends, and drops PRD-F25's
-  rule of 308 digits, which that bound makes unreachable, with lines in section 5). It replaces draft 1 (R1 to
+  rule of 308 digits, which that bound makes unreachable, with lines in section 5; revision 35 gives PRD-C17 its
+  budget of 960 conditions, the owner's sentence of 2026-11-22 and the new code `request_too_large`, in PRD-C17,
+  PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -865,7 +867,7 @@ A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria i
 `multi_values` list holds at most 256 values, and all lists of one request together at most 512; a request holds at
 most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`, except a tree
 deeper than the parser reads, which is malformed (PRD-P6). The global search covers each declared column once, however
-often the request names it.
+often the request names it. All the conditions of a request together are bounded by PRD-C17.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must
@@ -1143,9 +1145,18 @@ A cached total ends by its TTL or by an explicit call; the library registers no 
 
 #### PRD-C17
 
-The bounds of PRD-F38 keep the parameters the library binds for one request within every supported database's limit.
+One budget of conditions per request, the same on every backend, keeps every request the library builds within
+every supported database's limits.
 
-- **Reason:** A request a client can send must never fail on a database's parameter limit.
+One word on one column, one list value and one range each count one condition, and a request of more than 960 is
+refused with `request_too_large` before anything is queried (PRD-E3). The global search counts a word once for each
+column it covers, so alone it allows 16 words over 60 columns, 8 over 120, 4 over 240, 2 over 480 and 1 over 960;
+every column search word, list value, range and criterion takes one from that. A `base_filter` and an expression
+column add conditions of their own, which the budget does not count.
+
+- **Reason:** A request a client can send must never fail on a database's limit: SQL Server's parameters or SQLite's
+  expression depth. The number is measured, not computed (`docs/decisions/005-the-largest-request-the-bounds-allow.md`),
+  and the table above is what it allows of a wide table's global search, which costs words times columns.
 - **Priority:** must
 
 ### 4.6 Errors (E)
@@ -1159,10 +1170,10 @@ A request the user can fix is answered, not raised: the response carries an `err
 
 #### PRD-E2
 
-The user-error codes are `invalid_filter`, `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`,
-`invalid_number` and `page_out_of_range`, documented and stable. The list is closed: a release answers only the codes
-its documentation lists, and a code is added only in a release that says so. A client treats a code it does not know as
-a refusal of the request and shows `error`.
+The user-error codes are `invalid_filter`, `invalid_character`, `value_too_long`, `too_many_words`,
+`request_too_large`, `invalid_date`, `invalid_number` and `page_out_of_range`, documented and stable. The list is
+closed: a release answers only the codes its documentation lists, and a code is added only in a release that says so. A
+client treats a code it does not know as a refusal of the request and shows `error`.
 
 - **Reason:** A frontend maps codes to its own messages; SvelteDT can show the reason at the field. A control character
   has a code of its own because the user cannot see it, so a frontend needs to say more than "invalid filter" (owner's
@@ -1176,7 +1187,10 @@ The code follows the first mistake in this order: (1) a control character (PRD-F
 structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first mistake is the one found first in the
 order the request is read, the global search, then the column searches in the request's order, then the SearchBuilder
 tree (its structure, then its criteria in document order), and within one filter a control character in any of its
-values, then any value's length, then the words; (2) a value whose format a date or number column cannot read is
+values, then any value's length, then the words; last in step 1, after all of those, a request of more than 960
+conditions (PRD-C17) is `request_too_large`, counted over the parts the plan holds, so a part left out for a mistake
+is not counted, and a request over the budget only through such a part is answered with that mistake, and with
+`request_too_large` once it is fixed; (2) a value whose format a date or number column cannot read is
 `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or
 number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and
 `invalid_number` for a number its SQL column does not take (PRD-F25: outside an integer's range, signed or unsigned, or
@@ -1408,9 +1422,9 @@ integer (PRD-P10), and leaves it out when `draw` itself is the malformed part.
 #### PRD-A11
 
 The FastAPI dependency answers an answered user error (`invalid_filter`, `invalid_character`, `value_too_long`,
-`too_many_words`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying `error` and
-`error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to change the
-status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10).
+`too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`, `page_out_of_range`) with HTTP 200, carrying
+`error` and `error_code` beside `draw`, `recordsTotal`, `recordsFiltered` and an empty `data`. There is no option to
+change the status; an app that wants a 4xx maps the response in its own route. A malformed request stays 422 (PRD-A10).
 
 - **Reason:** DataTables reads the error only from a successful response (READ, DataTables 3.1.5 `dataTables.mjs`:
   `buildAjax`'s success callback reads `json.error` at :5512; its `error` handler at :5552 fires `xhr` with a null
@@ -1590,6 +1604,7 @@ where a database decides. Each difference is stated here; every other answer is 
 | A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused with `too_many_words`; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
 | A value over 255 code points is refused with `value_too_long` on every backend. | Every backend | PRD-F14 |
+| A request of more than 960 conditions (a word counts once per column searched, a list value and a range once each) is refused with `request_too_large` on every backend; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-C17 |
 | On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither. | SQL and OpenSearch | PRD-F11 |
 | On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
 | On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
@@ -1644,9 +1659,9 @@ first release is published as version 0.1.0.
   answers an empty page with counts (PRD-C3); SQLite no longer listed as binding IN lists as JSON (PRD-C17).
 - API: a non-empty body is read instead of the query string, and a body that decodes to a JSON object is read as JSON
   whatever its Content-Type (PRD-A9, changed from draft 1's R8).
-- Errors: `invalid_character`, `value_too_long`, `too_many_words`, `invalid_date`, `invalid_number` and
-  `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2, PRD-E3), and texts that say what is wrong and
-  how to fix it (PRD-E4); the response's unused `metadata` field goes (PRD-R5).
+- Errors: `invalid_character`, `value_too_long`, `too_many_words`, `request_too_large`, `invalid_date`, `invalid_number`
+  and `page_out_of_range` beside `invalid_filter`, with a precedence (PRD-E2, PRD-E3), and texts that say what is wrong
+  and how to fix it (PRD-E4); the response's unused `metadata` field goes (PRD-R5).
 - New: an integer `data` (PRD-P20), a `null` `data` and nameless columns (PRD-P21), declared OpenSearch field kinds
   (PRD-D13), the hook-column rules (PRD-D14 to PRD-D18), the text-only OpenSearch refusals (PRD-D19), a hooked
   OpenSearch column's keyword field (PRD-D20), the structure bounds (PRD-F38), object `data` (PRD-P18),
@@ -1685,7 +1700,7 @@ first release is published as version 0.1.0.
 
 | Risk | Mitigation |
 |---|---|
-| Smart search per word multiplies the LIKE terms (words x columns) on large tables. | PRD-F14 bounds the words; the container tests measure PostgreSQL, SQL Server and MySQL plans. |
+| Smart search per word multiplies the LIKE terms (words x columns) on large tables. | PRD-F14 bounds the words and PRD-C17 the conditions of a request, 960 in all; the container tests measure PostgreSQL, SQL Server and MySQL plans. |
 | Accent folding and text order differ per database, so server and local results differ. | Section 5 states it; the specs state each database's behaviour; PRD-D10 gives apps their database's means. |
 | Reverse-sort paging (PRD-C10) is wrong under ties or a changing index. | It depends on PRD-O3's unique tie-breaker and PRD-C13, and needs the container proof (section 6). |
 
@@ -1723,7 +1738,7 @@ first release is published as version 0.1.0.
 | R6 SQL counts, paging, columns | PRD-C1, C2, C4, C5, C6 |
 | R6 OpenSearch counts | PRD-C7, C8, C9 |
 | R6 total cache | PRD-C14, C15, C16 |
-| R6 SQL Server parameter limit | PRD-C17 (SQLite JSON binding dropped) |
+| R6 SQL Server parameter limit | PRD-C17 (SQLite JSON binding dropped; the bounds of PRD-F38 alone did not keep within it, so PRD-C17 became a budget) |
 | R7 rows and response | PRD-R1 to R6 |
 | R8 API shape | PRD-A1 to A10 (A9 changed) |
 | R9 distribution, extras | PRD-Q1, Q2 |

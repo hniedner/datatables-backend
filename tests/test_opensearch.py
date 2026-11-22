@@ -24,7 +24,6 @@ from datatables_backend.opensearch import SearchTable
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
-from .conftest import largest_search_request
 from .conftest import nested
 from .conftest import request
 
@@ -884,17 +883,34 @@ def tally(query: Mapping[str, Any]) -> tuple[int, int, int]:
     return leaves, clauses, widest
 
 
-def test_the_largest_request_the_bounds_allow_is_this_many_clauses():
-    """PRD-F38, PRD-C17, a measurement of what is sent: the request of `largest_search_request` over 64 text+keyword
-    columns. A word adds two leaves for each such column (a `match_phrase` and a `wildcard`, in a `should`), so the
-    global search is 16 x 64 x 2 = 2,048, the 62 column searches 62 x 16 x 2 = 1,984, the two lists 512 (one `term`
-    each) and the 64 criteria 128. The default `indices.query.bool.max_clause_count` is 1,024; whether the server
-    counts leaves, the clauses of every `bool` or the widest `bool` is what the live test asks."""
-    columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
-    columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
+# -- the budget of conditions (PRD-C17, issue #89) ---
+
+BUDGET = 960  # PRD-C17: measured in docs/decisions/005
+
+
+def test_the_widest_bool_of_a_request_of_the_budget_holds_at_most_the_default_clause_limit():
+    """SPEC-C17.3, PRD-C17: one word of the global search over BUDGET text+keyword columns is one `should` for each column, each a
+    `bool` of its own of two clauses (`match_phrase` and `wildcard`), so the widest `bool` holds BUDGET clauses, within
+    the default `indices.query.bool.max_clause_count` of 1,024, which a server counts per `bool` (decision 005). It
+    catches a budget set above the limit, or a change that puts the clauses of a word in one `bool`."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
     client = Client()
-    SearchTable('docs', columns).fetch_sync(largest_search_request(), client)
-    assert tally(client.searches[0]['query']) == (4672, 6834, 256)
+    SearchTable('docs', columns).fetch_sync(request(*(c.name for c in columns), search={'value': 'ann'}), client)
+    leaves, _, widest = tally(client.searches[0]['query'])
+    assert (leaves, widest) == (2 * BUDGET, BUDGET)
+
+
+def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
+    """SPEC-C17.2, PRD-C17, PRD-E2: one word over BUDGET + 1 columns holds one condition too many. It is answered
+    `request_too_large`, and nothing is sent to the cluster. It catches a budget that is not counted on this backend,
+    or counted after the search has gone out."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET + 1)]
+    client = Client()
+    response = SearchTable('docs', columns).fetch_sync(
+        request(*(c.name for c in columns), search={'value': 'ann'}), client
+    )
+    assert response.error_code == 'request_too_large'
+    assert (client.searches, client.counts) == ([], [])
 
 
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---

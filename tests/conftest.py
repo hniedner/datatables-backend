@@ -179,35 +179,6 @@ def request(
 LARGEST_WORDS = 'ann an nn a n ex xa am mp pl le or rg org ple example'
 
 
-def largest_request(
-    names: list[str], searched: list[str], listed: dict[str, list[str]], criteria: list[dict[str, Any]]
-) -> DTParams:
-    """The largest request PRD-F14 and PRD-F38 allow, over the columns ``names``: the global search of 16 words, a
-    column search of 16 words on each of ``searched``, a list on each column of ``listed`` (``searched`` and
-    ``listed`` together are the 64 column searches), and the SearchBuilder criteria ``criteria`` (64)."""
-    assert len(searched) + len(listed) == 64
-    assert len(LARGEST_WORDS.split()) == 16
-    return request(
-        *names,
-        column_search={
-            **{name: {'value': LARGEST_WORDS} for name in searched},
-            **{name: {'multi_values': values} for name, values in listed.items()},
-        },
-        search={'value': LARGEST_WORDS},
-        searchBuilder={'logic': 'AND', 'criteria': criteria},
-    )
-
-
-def largest_search_request() -> DTParams:
-    """`largest_request` for an OpenSearch table of 64 text+keyword columns: `t0` to `t61` read `title` and each gets
-    a column search of 16 words; `l0` and `l1` read `label` and each lists 256 values, which a case-folding column
-    sends as one `term` query for each; 64 `contains` criteria on `t0`. The global search covers all 64."""
-    texts = [f't{number}' for number in range(62)]
-    values = [f'v{number}' for number in range(256)]
-    contains = {'condition': 'contains', 'origData': 't0', 'value': ['w']}
-    return largest_request([*texts, 'l0', 'l1'], texts, {'l0': values, 'l1': values}, [contains] * 64)
-
-
 def criterion(column: str, condition: str, *values: str) -> dict[str, Any]:
     return {
         'searchBuilder': {

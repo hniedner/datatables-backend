@@ -31,13 +31,14 @@ from sqlalchemy import Table
 from sqlalchemy import Uuid
 from sqlalchemy import and_
 from sqlalchemy import cast
-from sqlalchemy import create_engine
 from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
 from sqlalchemy import select
+from sqlalchemy.dialects import mssql
 from sqlalchemy.dialects import mysql
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,12 +58,11 @@ from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import LARGEST_WORDS
 from .conftest import checked_database
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
-from .conftest import largest_request
-from .conftest import metadata
 from .conftest import nested
 from .conftest import people
 from .conftest import request
@@ -2007,68 +2007,210 @@ def test_row_values_come_back_as_the_database_gives_them(session: Session):
     ]
 
 
-def largest_sql_request(emails: int) -> tuple[SQLTable, DTParams]:
-    """The largest request PRD-F14 and PRD-F38 allow (`largest_request`) over a table of ``emails`` columns that
-    all read `email_address`, plus `id` and the two columns with a time: 512 values in two lists of days (two
-    parameters each), 64 criteria of two values each, 62 column searches of 16 words and a global search of 16
-    words over ``emails`` + 3 columns."""
-    columns = [Column(f'e{number}', field='email_address') for number in range(emails)]
-    largest = SQLTable(people, [Column('id'), *columns, Column('seen'), Column('seen_tz')])
+# -- the budget of conditions (PRD-C17, issue #89) ---------------------------------------------------------------------
+
+#: PRD-C17's budget: the conditions one request may hold. The number is measured (docs/decisions/005): a request of
+#: this many must be answered by every supported database, and one more is refused before any query.
+BUDGET = 960
+
+
+def wide_request(columns: int, *, search: str, **body: Any) -> tuple[SQLTable, DTParams]:
+    """A table of ``columns`` columns that all read `email_address`, and a request whose global search of ``search``
+    covers every one of them."""
+    wide = SQLTable(people, [Column(f'e{number}', field='email_address') for number in range(columns)])
+    return wide, request(*(f'e{number}' for number in range(columns)), search={'value': search}, **body)
+
+
+def worst_binds_request(*, one_more: bool = False) -> tuple[SQLTable, DTParams]:
+    """BUDGET conditions that bind nearly the most parameters: 511 days in two lists on columns that may hold a time
+    (two each), 64 ranges (two each), and 385 words of column searches (one each), which is 1,535 parameters. One
+    day short of the most the bounds allow (1,536), so that ``one_more`` can add an empty entry to a full list, which
+    is 512 entries in all, the bound of PRD-F38, and so BUDGET + 1 conditions."""
+    emails = [f'e{number}' for number in range(25)]
+    wide = SQLTable(
+        people,
+        [Column('id'), *(Column(name, field='email_address') for name in emails), Column('seen'), Column('seen_tz')],
+    )
     days = [(date(2000, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)] + ['2026-07-15']
     between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
-    names = ['id', *(column.name for column in columns), 'seen', 'seen_tz']
-    params = largest_request(names, names[1:63], {'seen': days, 'seen_tz': days}, [between] * 64)
-    return largest, params
+    names = ['id', *emails, 'seen', 'seen_tz']
+    searched = {name: {'value': LARGEST_WORDS if number < 24 else 'ann'} for number, name in enumerate(emails)}
+    listed = {'seen': {'multi_values': days}, 'seen_tz': {'multi_values': [*days[1:], ''] if one_more else days[1:]}}
+    criteria = {'logic': 'AND', 'criteria': [between] * 64}
+    return wide, request(*names, column_search={**searched, **listed}, searchBuilder=criteria)
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT', 'sqlite') == 'sqlite',
-    strict=True,
-    raises=DBAPIError,
-    reason='PRD-C17, PRD-F38: SQLite refuses the request, "Expression tree is too large (maximum depth 1000)": it '
-    'holds more than 1,000 conditions joined by AND (62 column searches of 16 words, and more). Measured on '
-    '2026-11-22; PostgreSQL and MySQL answer it. Issue #89 closes the gap',
+def test_a_request_of_the_most_binds_the_budget_allows_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: BUDGET conditions of the kind that bind two parameters each (days of a column that may
+    hold a time, ranges) up to the bounds, which is 1,535 and, with the page's two, within SQL Server's measured
+    2,097. It catches a budget that counts a condition as less than the parameters it binds."""
+    wide, params = worst_binds_request()
+    assert ids(wide.fetch_sync(params, session)) == [1]
+
+
+def test_a_request_of_the_deepest_expression_the_budget_allows_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: one negated word of the global search over BUDGET columns, the deepest expression a
+    request of BUDGET conditions makes (a chain of BUDGET terms, each `NOT ... OR ... IS NULL`), which SQLite refuses
+    from "maximum depth 1000". It catches a budget set so high that the expression outgrows SQLite's depth."""
+    wide, params = wide_request(BUDGET, search='!ann')
+    response = wide.fetch_sync(params, session)
+    assert response.error is None
+    assert response.recordsFiltered == 4  # a row without an email passes a negation
+
+
+@pytest.mark.parametrize(
+    'shape',
+    [
+        pytest.param(lambda: wide_request(BUDGET + 1, search='ann'), id='one word over a column too many'),
+        pytest.param(lambda: wide_request(BUDGET + 1, search='!ann'), id='a negated word over a column too many'),
+        pytest.param(
+            lambda: worst_binds_request(one_more=True), id='the most binds the budget allows, and an empty entry'
+        ),
+    ],
 )
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
-    strict=True,
-    raises=DBAPIError,
-    reason='PRD-C17: SQL Server refuses the request, ODBC error 07002 "COUNT field incorrect": it binds 3,184 '
-    'parameters (2,144 + 16 x 65 columns of the global search) where the limit is 2,100. Measured on 2026-11-22 '
-    '(CI run 45078213951). Issue #89 closes the gap',
+def test_a_request_one_condition_over_the_budget_is_refused_before_any_query(
+    session: Session, shape: Callable[[], tuple[SQLTable, DTParams]]
+):
+    """SPEC-C17.2, PRD-C17, PRD-E2: a request of BUDGET + 1 conditions is answered `request_too_large` with nothing
+    run, on every database. The first shape counts the words of the global search; the second a negated word, which
+    SQLite's depth would refuse at 992 columns, a client-causable failure; the third adds days of lists and ranges
+    and an empty entry of a list, so it catches a budget that leaves those kinds out of the count, which SQL Server's
+    limit would show only later. It also catches a budget that is counted after a statement has gone out."""
+    sent: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: sent.append(args[2]))
+    wide, params = shape()
+    response = wide.fetch_sync(params, session)
+    assert response.error_code == 'request_too_large'
+    assert response.data == []
+    assert sent == []
+
+
+def test_the_budget_message_defines_a_condition_and_says_how_to_fix_it(session: Session):
+    """SPEC-E4.36, PRD-E4: the reason says what is too large, what counts as a condition and what to change, in the
+    words of a person at the table, and quotes neither the search nor a column's name. It catches a reason a user
+    cannot act on, or one that echoes the request."""
+    wide, params = wide_request(BUDGET + 1, search='ann')
+    error = wide.fetch_sync(params, session).error
+    assert error == (
+        'The request is too large: it holds more than 960 conditions (each search word counts once per column '
+        'searched, each selected value and each range once). Search for fewer words, search fewer columns, or select '
+        'fewer values.'
+    )
+    assert 'ann' not in error
+    assert 'e0' not in error
+
+
+@pytest.mark.parametrize(
+    ('criteria', 'column_search', 'code'),
+    [
+        pytest.param(['1', 'abc'], {}, 'request_too_large', id='the budget before a number mistake of step 2'),
+        pytest.param(['abc'], {}, 'invalid_number', id='a part with a mistake is not counted'),
+        pytest.param(['1'], {'e0': {'value': 'a' * 256}}, 'value_too_long', id='the budget after a mistake of step 1'),
+    ],
 )
-def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
-    """SPEC-C17.1, PRD-C17: the request of `largest_sql_request` over 62 columns. Its parameters are counted by
-    the next test; this one runs it on every database, SQL Server's limit of 2,100 included."""
-    largest, params = largest_sql_request(62)
-    assert ids(largest.fetch_sync(params, session)) == [1]
+def test_the_budget_is_the_last_mistake_of_step_1(
+    session: Session, criteria: list[str], column_search: dict[str, Any], code: str
+):
+    """SPEC-E3.9, PRD-E3: BUDGET conditions of the global search, `id` out of it, and criteria on `id`. A request over
+    the budget is answered with it unless a mistake of step 1 was found first, and before a mistake of step 2; a
+    criterion with a mistake is left out of the plan and so is not counted. It catches a budget checked at another
+    place in the order, or one that counts a part the plan dropped."""
+    wide = SQLTable(people, [Column('id'), *(Column(f'e{number}', field='email_address') for number in range(BUDGET))])
+    names = ['id', *(f'e{number}' for number in range(BUDGET))]
+    tree = {
+        'logic': 'AND',
+        'criteria': [{'condition': '=', 'origData': 'id', 'value': [value]} for value in criteria],
+    }
+    params = request(
+        *names,
+        flags={'id': {'searchable': False}},
+        search={'value': 'ann'},
+        column_search=column_search,
+        searchBuilder=tree,
+    )
+    assert wide.fetch_sync(params, session).error_code == code
 
 
-@pytest.mark.parametrize('emails', [62, 100])
-def test_the_largest_request_the_bounds_allow_binds_a_known_number_of_parameters(emails: int):
-    """PRD-C17, a measurement: the parameters of one statement of the largest request, on SQLite, as a function of
-    C, the number of columns the global search covers (``emails`` + 3). 2,144 are the lists (1,024), the criteria
-    (128) and the 62 column searches of 16 words (992); each global word adds one per column. SQL Server refuses
-    past 2,100 in one statement, so PRD-C17 is not met by the bounds alone: this test pins how far past."""
+@pytest.mark.parametrize('dialect', [sqlite.dialect, postgresql.dialect, mysql.dialect, mssql.dialect])
+@pytest.mark.parametrize(
+    ('body', 'conditions'),
+    [
+        pytest.param({'search': {'value': 'ann'}}, 7, id='a word of the global search, once per column'),
+        pytest.param({'search': {'value': '!ann'}}, 7, id='a negated word of the global search'),
+        pytest.param({'column_search': {'email': {'value': 'ann'}}}, 1, id='a word of a column search'),
+        pytest.param({'column_search': {'name': {'multi_values': list('abcde')}}}, 5, id='five strings'),
+        pytest.param({'column_search': {'name': {'multi_values': ['a', '']}}}, 2, id='a string and an empty entry'),
+        pytest.param({'column_search': {'age': {'multi_values': list('12345')}}}, 5, id='five numbers'),
+        pytest.param(
+            {'column_search': {'born': {'multi_values': [f'2024-01-0{day}' for day in range(1, 6)]}}},
+            5,
+            id='five days of a Date column',
+        ),
+        pytest.param(
+            {'column_search': {'seen': {'multi_values': [f'2024-01-0{day}' for day in range(1, 6)]}}},
+            5,
+            id='five days of a column that may hold a time',
+        ),
+        *(
+            pytest.param(criterion(column, condition, *values), 1, id=f'{column} {condition}')
+            for column, condition, values in [
+                ('name', 'contains', ('a',)),
+                ('name', '!contains', ('a',)),
+                ('name', 'starts', ('a',)),
+                ('name', 'ends', ('a',)),
+                ('name', '=', ('a',)),
+                ('name', '!=', ('a',)),
+                ('name', 'null', ()),
+                ('name', '!null', ()),
+                ('age', '=', ('1',)),
+                ('age', '<=', ('1',)),
+                ('age', '>', ('1',)),
+                ('age', 'between', ('1', '2')),
+                ('age', '!between', ('1', '2')),
+                ('born', '=', ('2024-01-01',)),
+                ('born', '<', ('2024-01-01',)),
+                ('born', 'contains', ('2024',)),
+                ('seen', 'between', ('2024-01-01', '2024-02-01')),
+                ('seen', '!between', ('2024-01-01', '2024-02-01')),
+            ]
+        ),
+    ],
+)
+def test_a_condition_binds_at_most_two_parameters(
+    dialect: Callable[[], Dialect], body: dict[str, Any], conditions: int
+):
+    """SPEC-C17.4, PRD-C17: the budget counts a condition as one, which holds only while a condition binds at most two
+    parameters (a day of a column that may hold a time, a range): the budget times two, and the page's two, must stay
+    within SQL Server's 2,100. It catches a new kind of condition, or a change to one, that binds three, which the
+    SQL Server leg shows only if the largest request holds that kind."""
+    sent: list[int] = []
 
-    class Counted(Exception):
-        pass
+    class Recorder:
+        """A source that runs nothing: it counts the parameters of each statement as `dialect` would send them."""
 
-    seen: list[int] = []
+        def __init__(self) -> None:
+            self.dialect = dialect()
 
-    def count(*args: Any) -> None:
-        seen.append(len(args[3]))
-        if seen[-1] > 1000:  # the filtered count: SQLite itself refuses it (the xfail above), so it is never run
-            raise Counted
+        def execute(self, statement: Any) -> Any:
+            compiled = statement.compile(dialect=self.dialect, compile_kwargs={'render_postcompile': True})
+            sent.append(len(compiled.params))
+            return self
 
-    engine = create_engine('sqlite://')
-    metadata.create_all(engine)
-    event.listen(engine, 'before_cursor_execute', count)
-    largest, params = largest_sql_request(emails)
-    with Session(engine) as session, pytest.raises(Counted):
-        largest.fetch_sync(params, session)
-    engine.dispose()
-    assert seen[-1] == 2144 + 16 * (emails + 3)  # the page's statement binds two more, its offset and its limit
+        def scalar_one(self) -> int:
+            return 0
+
+        def mappings(self) -> Any:
+            return self
+
+        def all(self) -> list[Any]:
+            return []
+
+    source: Any = Recorder()
+    table.fetch_sync(request(*ALL, **body), source)
+    total, filtered, page = sent
+    assert total == 0
+    assert 0 < filtered <= 2 * conditions
+    assert page == filtered + 2
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):

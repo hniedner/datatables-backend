@@ -58,6 +58,9 @@ MAX_CRITERIA = 64  # in the whole tree
 MAX_LIST_VALUES = 256  # in one categorical filter or `multi_values` list
 MAX_VALUES = 512  # in all the lists of one request
 MAX_COLUMN_SEARCHES = 64  # column searches that hold a value
+#: The budget of conditions of one request (PRD-C17): one word on one column, one list value and one range each count
+#: one. Measured in docs/decisions/005: a request of this many is answered by every supported database.
+MAX_CONDITIONS = 960
 # The bounds of a value and of search text (PRD-F14)
 MAX_VALUE_LENGTH = 255  # code points of any value the client sends, as sent
 MAX_SEARCH_WORDS = 16  # counted after the split; a word that reduces to nothing is not counted
@@ -70,6 +73,11 @@ SEARCH_TOO_LONG = (
 )
 SEARCH_TOO_MANY_WORDS = (
     f'The search text holds more than {MAX_SEARCH_WORDS} words. Search for at most {MAX_SEARCH_WORDS} words.'
+)
+REQUEST_TOO_LARGE = (
+    f'The request is too large: it holds more than {MAX_CONDITIONS} conditions (each search word counts once per '
+    'column searched, each selected value and each range once). Search for fewer words, search fewer columns, or '
+    'select fewer values.'
 )
 SORT_NOT_OFFERED = 'The table was asked to sort by a column the server does not offer. Sort by another column.'
 FILTER_NOT_OFFERED = 'A filter is on a column the server does not offer. Remove that filter.'
@@ -93,6 +101,7 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_too_many_column_searches': ('invalid_filter', 1),
     'datatables_value_too_long': ('value_too_long', 1),
     'datatables_too_many_words': ('too_many_words', 1),
+    'datatables_request_too_large': ('request_too_large', 1),  # last of step 1: it is checked after all the others
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),
@@ -377,7 +386,28 @@ def plan(
         with mistakes.part():
             _within_the_bounds(params.searchBuilder)  # before `node` recurses into it
             search_builder = node(params.searchBuilder)
+    # Last, so that within step 1 every other mistake is found first (PRD-E3). A part left out for a mistake is not
+    # counted: such a request is answered with that mistake, and with this one once it is fixed
+    built = [global_search, *column_searches, search_builder]
+    if sum(_conditions(part) for part in built if part is not None) > MAX_CONDITIONS:
+        with mistakes.part():
+            raise mistake('datatables_request_too_large', REQUEST_TOO_LARGE)
     return Plan(global_search, tuple(column_searches), search_builder, tuple(order))
+
+
+def _conditions(node: Filter | Group) -> int:
+    """The conditions ``node`` holds, as the budget counts them (PRD-C17): a word on a column, a value of a list (the
+    empty entry too) and a range each count one, whatever the database makes of them. The tree is at most
+    ``MAX_DEPTH`` groups deep, so the recursion is short."""
+    match node:
+        case Group():
+            return sum(_conditions(item) for item in node.items)
+        case Not():
+            return _conditions(node.node)
+        case OneOf():
+            return max(1, len(node.values) + node.empty)
+        case _:
+            return 1
 
 
 def _global_search(

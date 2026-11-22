@@ -39,20 +39,19 @@ No entry yet.
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F20, PRD-F26.
 
-### The largest request the bounds allow binds more than 2,100 parameters
+### A statement of more than 2,097 parameters is refused
 
-This is a limit of the library, not of SQL Server: the bounds of PRD-F38 keep the values of a request in check, not
-the parameters, since search text is split into words.
-
-- **What you see:** SQL Server refuses a statement with more than 2,100 parameters. A request at all the bounds binds
-  2,144 + 16 x C of them, C being the number of columns the global search covers, so it is refused at any C: the
-  server fails the request (ODBC error 07002, `COUNT field incorrect`; pinned as a strict expected failure of the
-  test of SPEC-C17.1). A request of a few words binds far fewer. A `base_filter` or an expression column that binds
-  parameters of its own adds to the count.
-- **Example:** a global search of 16 words, 62 column searches of 16 words, two lists of 256 days and 64 criteria.
-- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022
-  (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
-- **Requirement:** PRD-C17, which the bounds do not meet yet; issue #89 closes the gap.
+- **What you see:** SQL Server 2022 with ODBC Driver 18 answered a statement of 2,097 bound parameters and refused
+  2,098 (error 8003 from the server). The budget of PRD-C17 keeps the largest statement of a request, the page's,
+  at 1,538 parameters (two for each day of a list on a column that may hold a time and for each range, one for every
+  other condition, and the page's offset and limit), which leaves 559 for a `base_filter` and for expression
+  columns. Those bind in all three statements (the total, the filtered count and the page) and are stated here, not
+  budgeted: a `base_filter` that binds more than 559 parameters can make a request at the budget fail on SQL Server.
+- **Example:** the global search `ann` over 2,098 columns binds 2,098 parameters in the filtered count and is refused;
+  over 2,097 columns the count is answered and its page, which binds two more, is refused.
+- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022 with ODBC Driver 18 (CI runs 45083578654 and
+  45083913250, `docs/decisions/005-the-largest-request-the-bounds-allow.md`).
+- **Requirement:** PRD-C17.
 
 ### A decimal holds 38 digits at most
 
@@ -78,17 +77,18 @@ the parameters, since search text is split into words.
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F25.
 
-### The largest request the bounds allow is refused for its expression depth
-
-This is a limit of the library, not of SQLite: a request is not bounded in the conditions joined by AND.
+### An expression deeper than 1,000 is refused
 
 - **What you see:** SQLite refuses a statement whose expression is deeper than 1,000 ("Expression tree is too large
-  (maximum depth 1000)"). A request of 62 column searches of 16 words and more joins over 1,000 conditions by AND, so
-  the server fails the request. PostgreSQL and MySQL answer it.
-- **Example:** the request of the entry on SQL Server above.
-- **How it is known:** MEASURED 2026-11-22 (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the exact
-  number of conditions was not measured.
-- **Requirement:** PRD-C17, PRD-F38; issue #89 closes the gap.
+  (maximum depth 1000)"). SQLite reads a chain of conditions joined by AND or OR from the left, so each adds a level.
+  Across the shapes of a request measured (a chain of words, the global search over many columns, negated words,
+  criteria, nested groups, lists of days), the depth was at most 9 above the number of conditions, so the budget of
+  960 conditions stays inside it. A `base_filter` or an expression column that is deep adds levels of its own, stated
+  here, not budgeted. A SQLite build may set another depth (`SQLITE_MAX_EXPR_DEPTH`): documented, not run.
+- **Example:** a negated word of the global search over 991 columns is answered and over 992 is refused.
+- **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1 with Python 3.14.7, the build limit 1,000 read from the
+  error text (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
+- **Requirement:** PRD-C17.
 
 ## Every SQL database
 
@@ -186,3 +186,36 @@ of the library.
   (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`); the three marks are also checked on
   both servers by the live tests. The second and third points are read in the code, not run on a server.
 - **Requirement:** PRD-F9.
+
+### OpenSearch's default limit of fields caps the searchable columns before the budget does
+
+- **What you see:** an index takes 1,000 fields by default (`index.mapping.total_fields.limit`), and a text+keyword
+  field is two of them (the field and its multi-field). A table of searchable columns on distinct fields therefore
+  reaches that limit, about 500 text+keyword columns, before the budget of 960 conditions. The budget itself keeps the
+  widest `bool` the library builds at 960 clauses, within the default `indices.query.bool.max_clause_count` of 1,024,
+  which a server counts per `bool`.
+- **Example:** the live test of the budget reads 960 columns that name one field, so it does not try the field limit.
+- **How it is known:** the clause limit MEASURED 2026-11-22 on OpenSearch 3.10.0 and 2.19.7
+  (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the field limit: documented, not run.
+- **Requirement:** PRD-C17.
+
+## Every backend
+
+### A global search costs one condition per word and column, and the budget does not count what the adopter adds
+
+- **What you see:** a request holds at most 960 conditions (PRD-C17): one word on one column, one list value and one
+  range each count one, and a larger request is refused with `request_too_large`. A wide table's global search is the
+  cost of words times the columns it covers. When nothing else is asked, the global search allows:
+
+  | Words | 16 | 8 | 4 | 2 | 1 |
+  |---|---|---|---|---|---|
+  | Columns it covers | 60 | 120 | 240 | 480 | 960 |
+
+  Every word of a column search, list value, range and criterion takes one from that. The columns are those that take
+  part in the global search: declared searchable and searchable as text (a boolean is not, nor is a number or a date
+  on OpenSearch). A hooked column counts one however many words the text holds. A `base_filter` and an expression
+  column add to what the database receives and are stated here, not budgeted.
+- **Example:** 16 words over a table of 61 searchable columns hold 976 conditions and are refused; 15 words hold 915.
+- **How it is known:** the number is MEASURED (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the
+  table is its arithmetic.
+- **Requirement:** PRD-C17, PRD-E2.

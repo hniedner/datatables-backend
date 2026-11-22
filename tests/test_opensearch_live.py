@@ -26,7 +26,6 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import criterion
-from .conftest import largest_search_request
 from .conftest import request
 
 URL = os.environ.get('DTB_OPENSEARCH_URL', '')
@@ -603,13 +602,15 @@ def test_order(client: OpenSearch, column: int, direction: str, expected: list[s
     assert ids(response) == expected
 
 
-def test_the_largest_request_the_bounds_allow(client: OpenSearch):
-    """PRD-F38, PRD-C17, a regression guard: the request of `largest_search_request` holds 4,672 leaf queries, 6,834
-    clauses of `bool` queries and at most 256 in one `bool` (tests/test_opensearch.py). Measured on 3.10.0 and 2.19.7
-    (docs/decisions/005), both answer it, though the default `indices.query.bool.max_clause_count` is 1,024: the
-    limit is counted per `bool`, as a control showed (1,024 clauses in one `bool` answered, 1,025 refused), and the
-    widest `bool` the library builds holds 256. A bound that grew past what the servers answer turns this red."""
-    columns = [IndexColumn(f't{number}', field='title') for number in range(62)]
-    columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
-    response = SearchTable(INDEX, columns).fetch_sync(largest_search_request(), client)
+BUDGET = 960  # PRD-C17: measured in docs/decisions/005
+
+
+def test_a_request_of_the_budget_is_answered(client: OpenSearch):
+    """SPEC-C17.1, PRD-C17, a guard: one word of the global search over BUDGET text+keyword columns, which reach one
+    field so that the index's own limit of fields is not what is tried (docs/databases.md). The widest `bool` holds
+    BUDGET clauses (tests/test_opensearch.py), within the default `indices.query.bool.max_clause_count` of 1,024. It
+    catches a budget set past what the server answers, on 3.10 and on 2.19."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
+    names = [column.name for column in columns]
+    response = SearchTable(INDEX, columns).fetch_sync(request(*names, search={'value': 'x'}), client)
     assert response.error is None
