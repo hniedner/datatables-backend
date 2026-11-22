@@ -41,6 +41,7 @@ from sqlalchemy import func
 from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy import select
+from sqlalchemy import type_coerce
 from sqlalchemy.dialects.mssql import DATETIMEOFFSET
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Dialect
@@ -55,6 +56,8 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
+from sqlalchemy.types import NullType
+from sqlalchemy.types import TypeDecorator
 
 from ._plan import Bound
 from ._plan import Capabilities
@@ -262,8 +265,8 @@ class SQLTable:
                 return not_(positive)
             case Contains():
                 return self._contains(node)
-            case Empty():  # a number or a date is never compared with text
-                return _empty(column) if node.type in ('string', 'number') else column.is_(None)
+            case Empty():
+                return _empty(column, node.type)
             case Equals() if node.type == 'number':
                 return column == _number(column, node.value, node.column, listed=False)
             case Equals() if node.type == 'boolean':
@@ -420,11 +423,26 @@ def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:
     return value if isinstance(_sql_type(column), Boolean) else int(value)
 
 
-def _empty(column: ColumnElement[Any]) -> ColumnElement[bool]:
-    """ "Empty": no value, and on a text column also the empty string. A number or date is never compared with text."""
-    if _is_text(column):
-        return or_(column.is_(None), column == '')
-    return column.is_(None)
+def _empty(column: ColumnElement[Any], declared: ColumnType) -> ColumnElement[bool]:
+    """ "Empty" (PRD-F26): no value, and the empty string too where the column stores text, whatever type it is
+    declared as. What it stores is its SQL type, seen through a ``TypeDecorator``: a string type holds text, and an
+    ``Enum`` only when ``''`` is one of its values, since PostgreSQL refuses to compare a native enum with any
+    other text. A column of another type (a ``Uuid``, a number, a date) is never compared with text. Only for an
+    expression without a SQL type does the declaration decide.
+
+    The empty string is compared with what is stored, not sent through a ``TypeDecorator``, whose conversion is
+    written for the values of its column and may refuse ``''``."""
+    stored = _sql_type(column)
+    if isinstance(stored, Enum):
+        holds_text = '' in stored.enums
+    elif isinstance(stored, NullType):
+        holds_text = declared == 'string'
+    else:
+        holds_text = isinstance(stored, String)
+    if not holds_text:
+        return column.is_(None)
+    text = type_coerce(column, stored) if isinstance(column.type, TypeDecorator) else column
+    return or_(column.is_(None), text == '')
 
 
 def _between(

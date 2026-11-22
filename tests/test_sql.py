@@ -24,6 +24,7 @@ from sqlalchemy import Integer
 from sqlalchemy import MetaData
 from sqlalchemy import String
 from sqlalchemy import Table
+from sqlalchemy import Uuid
 from sqlalchemy import cast
 from sqlalchemy import event
 from sqlalchemy import func
@@ -418,7 +419,8 @@ def ref(row: int) -> str:
 def cased(session: Session) -> SQLTable:
     """A table whose text columns are case-sensitive on every database: `kind` holds `red` in two cases, `wrapped`
     the same values behind a `TypeDecorator`, `ref` a UUID the type `Guid` converts, `secret` is stored transformed
-    (a search-value hook prefixes `enc:`), and `size` is an enum (a native type on PostgreSQL and MySQL)."""
+    (a search-value hook prefixes `enc:`), `size` is an enum (a native type on PostgreSQL and MySQL), and `uid` is
+    the row's UUID in SQLAlchemy's own `Uuid` type, for which the table declares no column."""
     collation = CASE_SENSITIVE.get(session.get_bind().dialect.name)
     tags = Table(
         'dtb_test_tags',
@@ -429,6 +431,7 @@ def cased(session: Session) -> SQLTable:
         SQLColumn('ref', Guid(32)),
         SQLColumn('secret', String(20, collation=collation)),
         SQLColumn('size', Enum('Small', 'LARGE', name='dtb_test_size'), nullable=True),
+        SQLColumn('uid', Uuid, nullable=True),
     )
     tags.create(session.connection())
     rows = [
@@ -438,7 +441,10 @@ def cased(session: Session) -> SQLTable:
         {'id': 4, 'kind': 'RED', 'secret': 'enc:Delta', 'size': 'Small'},
         {'id': 5, 'kind': 'ÄPFEL', 'secret': 'enc:Eta', 'size': 'LARGE'},
     ]
-    session.execute(tags.insert(), [{**row, 'wrapped': row['kind'], 'ref': ref(row['id'])} for row in rows])
+    session.execute(
+        tags.insert(),
+        [{**row, 'wrapped': row['kind'], 'ref': ref(row['id']), 'uid': uuid.UUID(ref(row['id']))} for row in rows],
+    )
     same_case = session.execute(select(func.count()).select_from(tags).where(tags.c.kind == 'RED')).scalar_one()
     assert same_case == 1, (
         'The column `kind` is not case-sensitive in this database, so the tests of this fixture would pass on it '
@@ -586,6 +592,70 @@ def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: 
     is cast to text first on every database."""
     params = request(*CASED, column_search={'size': {'multi_values': ['small']}})
     assert ids(cased.fetch_sync(params, session)) == [1, 4]
+
+
+def with_blank_rows(session: Session, cased: SQLTable) -> Table:
+    """The `cased` table with two more rows: row 6 holds `''` in `kind` and `wrapped`, row 7 NULL; `ref`, `size`
+    and `uid` are NULL in both."""
+    tags = cased.source
+    assert isinstance(tags, Table)
+    session.execute(tags.insert(), [{'id': 6, 'kind': '', 'wrapped': ''}, {'id': 7, 'kind': None, 'wrapped': None}])
+    return tags
+
+
+@pytest.mark.parametrize(
+    ('column', 'expected'),
+    [
+        ('wrapped', [6, 7]),  # a `TypeDecorator` over a string type stores text
+        ('day', [6, 7]),  # so does a string column, whatever it is declared as: a blank cell is empty
+        ('ref', [6, 7]),  # `''` is compared with what is stored: the type `Guid` itself refuses to convert it
+        ('size', [3, 6, 7]),  # an enum without `''` among its values: PostgreSQL refuses to compare one with it
+        ('uid', [6, 7]),  # a type that stores no text is never compared with `''`
+    ],
+)
+def test_empty_is_the_empty_string_too_where_the_column_stores_text(
+    session: Session, cased: SQLTable, column: str, expected: list[int]
+):
+    """PRD-F26: what the column stores decides, seen through a `TypeDecorator`, not what it is declared as."""
+    tags = with_blank_rows(session, cased)
+    stored = SQLTable(
+        tags,
+        [
+            Column('id'),
+            Column('wrapped'),
+            Column('ref'),
+            Column('size'),
+            Column('uid'),
+            Column('day', field='kind', type='date'),
+        ],
+    )
+    assert ids(stored.fetch_sync(request('id', column, **criterion(column, 'null')), session)) == expected
+
+
+@pytest.mark.parametrize(('column', 'expected'), [('text', [6, 7]), ('day', [7])])
+def test_empty_on_an_expression_without_a_type_follows_its_declaration(
+    session: Session, cased: SQLTable, column: str, expected: list[int]
+):
+    """PRD-F26: the library cannot know what such an expression stores. Declared a string (the default) it is
+    compared with `''`; declared a date it is not, as a date expression would refuse the comparison."""
+    tags = with_blank_rows(session, cased)
+    untyped = select(tags.c.id, literal_column('wrapped').label('text')).subquery()
+    declared = SQLTable(untyped, [Column('id'), Column('text'), Column('day', field='text', type='date')])
+    assert ids(declared.fetch_sync(request('id', column, **criterion(column, 'null')), session)) == expected
+
+
+def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_values(session: Session):
+    """PRD-F26: an enum that names `''` as a value can hold it, so there it is empty."""
+    levels = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('level', Enum('', 'high', name='dtb_test_level'), nullable=True),
+    )
+    levels.create(session.connection())
+    session.execute(levels.insert(), [{'id': 1, 'level': 'high'}, {'id': 2, 'level': ''}, {'id': 3, 'level': None}])
+    levelled = SQLTable(levels, [Column('id'), Column('level')])
+    assert ids(levelled.fetch_sync(request('id', 'level', **criterion('level', 'null')), session)) == [2, 3]
 
 
 # -- SearchBuilder ---
