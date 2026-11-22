@@ -79,6 +79,7 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_values_refused': ('invalid_filter', 4),  # a list of values where none belongs
     'datatables_condition_refused': ('invalid_filter', 4),
     'datatables_value_missing': ('invalid_filter', 4),
+    'datatables_value_surplus': ('invalid_filter', 4),  # more values than the condition takes
     'datatables_boolean_unreadable': ('invalid_filter', 4),
     'datatables_page_out_of_range': ('page_out_of_range', 5),
 }
@@ -433,8 +434,10 @@ def _criterion(
     the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
     column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
     column is no number mistake); a value of the wrong format, or a date out of range, among the values there are;
-    a value that is missing. A whole number outside the range of its SQL column is found only later, when the query
-    is built, so within one criterion a missing value is reported before it."""
+    a value that is missing, or more values than the condition takes (PRD-F36), which are never read: ``null`` and
+    ``!null`` take none and ignore whatever they carry. A whole number outside the range of its SQL column is found
+    only later, when the query is built, so within one criterion a missing or surplus value is reported before
+    it."""
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]
@@ -466,6 +469,13 @@ def _criterion(
         raise mistake(
             'datatables_value_missing',
             f'The filter on "{column.name}" needs {"two values" if needed == 2 else "a value"}.',
+            column,
+        )
+    if needed and len(item.value) > needed:  # the values beyond those the condition takes are never read
+        raise mistake(
+            'datatables_value_surplus',
+            f'The filter on "{column.name}" holds more values than its condition takes. Remove the filter and set '
+            'it again.',
             column,
         )
     positive = _positive(column, kind, condition, values)

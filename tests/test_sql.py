@@ -1410,6 +1410,13 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         # SPEC-E4.21, E4.22
         (WORDED, criterion('name', '='), 'invalid_filter', 'The filter on "name" needs a value.'),
         (WORDED, criterion('age', 'between', '1'), 'invalid_filter', 'The filter on "age" needs two values.'),
+        # PRD-F36 (SPEC-F36.1): one value more than the condition takes
+        (
+            WORDED,
+            criterion('name', '=', 'Bob', 'Ann'),
+            'invalid_filter',
+            'The filter on "name" holds more values than its condition takes. Remove the filter and set it again.',
+        ),
         (
             WORDED,
             criterion('active', '=', 'yes'),
@@ -1426,6 +1433,22 @@ def test_a_user_error_says_what_is_wrong_and_what_to_do(
     else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
+
+
+@pytest.mark.parametrize(
+    ('column', 'condition', 'values', 'code'),
+    [
+        ('age', 'between', ['30', '40', '50'], 'invalid_filter'),  # SPEC-F36.1, beside the two a `between` takes
+        ('name', '=', ['Bob', 'a\x00'], 'invalid_filter'),  # the surplus value is not read: no invalid_character
+        ('age', '=', ['abc', '1'], 'invalid_number'),  # the value the condition reads is checked first (PRD-E3)
+    ],
+)
+def test_a_criterion_with_more_values_than_its_condition_takes_is_refused(
+    session: Session, column: str, condition: str, values: list[str], code: str
+):
+    """PRD-F36: using the first value alone would answer another question than the one asked. The text is in
+    test_a_user_error_says_what_is_wrong_and_what_to_do."""
+    refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
 
 
 @pytest.mark.parametrize(
