@@ -208,8 +208,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `2024-03-05T10:00Z`, `20240305`,
   `2024-03-05T10:00+02:00`, `2024-03-05 24:00`, `2024-03-05T10`, a time in digits outside ASCII or only white space
   → error_code `invalid_date`; so does `contains` with the day in digits outside ASCII.
-- **SPEC-F21.11** [SQL] A `multi_values` list of 3,000 days and `2024-03-05` on `made` → rows 1 (PRD-C17: on a
-  column that holds no time the days are one list, which SQL Server takes as JSON).
+- **SPEC-F21.11** [SQL] A `multi_values` list of 256 days, `2024-03-05` among them, on `made`, a column that holds no
+  time → rows 1 (the days are one IN list).
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
@@ -244,8 +244,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   18446744073709551616: `=` `18446744073709551616` → that row; `<` with a whole number of 31 digits → that row (the
   declared precision bounds nothing). `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite]
   → that row (PRD section 5). `=` with a whole number of 39 digits, and `=` `1e39`, [SQLite, PostgreSQL, MySQL] →
-  none; [SQL Server] → error_code `invalid_number`. [SQL Server] `multi_values` of 3,000 numbers and
-  `18446744073709551616`, long enough to be sent as JSON, → that row.
+  none; [SQL Server] → error_code `invalid_number`.
 - **SPEC-F25.6** [SQL] With `price` redeclared as MySQL's unsigned `BIGINT`: `=` `-1` → error_code `invalid_number`.
   [MySQL] Given a row whose `price` is 18446744073709551615: `=` `18446744073709551615` → that row.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.

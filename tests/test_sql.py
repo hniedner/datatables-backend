@@ -651,41 +651,6 @@ def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, c
     assert ids(cased.fetch_sync(params, session)) == []
 
 
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable):
-    values = [f'n{index}' for index in range(3000)] + ['rEd']
-    params = request(*CASED, column_search={'kind': {'multi_values': values}})
-    assert ids(cased.fetch_sync(params, session)) == [1, 4]
-
-
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-@pytest.mark.parametrize(
-    ('column', 'value', 'expected'),
-    [
-        ('plain', 'rEd', []),
-        ('plain', 'RED', [4]),
-        ('wrapped', 'RED', [4]),  # the collation is declared on the type a `TypeDecorator` wraps
-        # 32 characters on a CHAR(32): a cast to a bare CHAR would cut the value to 30. The list is sent as the
-        # client wrote it, so the stored form is what matches here
-        ('ref', uuid.UUID(ref(1)).hex, [1]),
-    ],
-)
-def test_a_list_sent_as_json_on_a_column_without_the_fold_follows_its_collation(
-    session: Session, cased: SQLTable, column: str, value: str, expected: list[int]
-):
-    """The JSON list casts each value to text without a length or a collation; the column's own collation,
-    case-sensitive here, still compares."""
-    values = [f'n{index}' for index in range(3000)] + [value]
-    params = request(*CASED, column_search={column: {'multi_values': values}})
-    assert ids(cased.fetch_sync(params, session)) == expected
-
-
 def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: SQLTable):
     """PostgreSQL stores an `Enum` as a type of its own, which has no `lower()`, and MySQL as an `ENUM`; the column
     is cast to text first on every database."""
@@ -1744,18 +1709,6 @@ def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
         assert ids(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', str(TWO_64 - 1))), session)) == [1]
 
 
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-def test_a_list_sent_as_json_holds_a_whole_number_outside_64_bits_as_its_digits(session: Session):
-    """SPEC-F25.5 on the JSON path: a decimal is no JSON number, so it travels as its digits, which SQL Server casts
-    to the column's type as it casts every value."""
-    values = [str(number) for number in range(3000)] + [str(TWO_64)]
-    params = request(*WIDE, column_search={'exact': {'multi_values': values}})
-    assert ids(wide(session).fetch_sync(params, session)) == [1]
-
-
 @pytest.mark.parametrize(
     ('first', 'second'),
     [
@@ -2065,53 +2018,43 @@ def test_row_values_come_back_as_the_database_gives_them(session: Session):
     ]
 
 
-def test_many_multi_select_values_still_run(session: Session):
-    """Thousands of values bind normally on SQLite; SQL Server would get one JSON parameter instead."""
-    params = request(*ALL)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob']
-    assert ids(table.fetch_sync(params, session)) == [2]
+def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: 512 values in two lists of days on columns with a time (two parameters each), 64
+    criteria of two values each and a global search, in one request. On SQL Server its parameters stay under the
+    2,100 it refuses past; a bound that grew would turn this red there."""
+    largest = SQLTable(people, [Column('id'), Column('name'), Column('seen'), Column('seen_tz')])
+    days = [(date(2000, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)] + ['2026-07-15']
+    between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
+    params = request(
+        'id',
+        'name',
+        'seen',
+        'seen_tz',
+        column_search={'seen': {'multi_values': days}, 'seen_tz': {'multi_values': days}},
+        search={'value': 'ann'},
+        searchBuilder={'logic': 'AND', 'criteria': [between] * 64},
+    )
+    assert ids(largest.fetch_sync(params, session)) == [1]
 
 
-def test_a_boolean_filter_beside_many_multi_select_values_still_runs(session: Session):
-    """Past SQL Server's parameter limit every list of the statement travels as JSON, the boolean column's too, and
-    both of its values are cast to the column's type there (`BIT`). Row 5 is false but not among the names, and row
-    3 is among them but NULL."""
-    params = request(*FLAGGED)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Ann', 'Bob', 'anna_100%', 'Cy']
-    params.columns[2].search.value = '^(true|0)$'
-    params.columns[2].search.regex = True
-    assert ids(flagged.fetch_sync(params, session)) == [1, 2, 4]
-
-
-def test_many_multi_select_values_on_a_number_column_still_run(session: Session):
-    """Past SQL Server's 2,100-parameter limit the values travel as JSON and are cast to the column's number type."""
-    params = request(*ALL)
-    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
-    assert ids(table.fetch_sync(params, session)) == [1, 4]
-
-
-def test_many_days_on_a_date_column_still_run(session: Session):
-    """SPEC-F21.11, PRD-C17 for a list of days. A `Date` column compares them as one list: as a range for each day,
-    3,000 of them nest deeper than SQLite's expression tree allows (1,000) and take 6,000 parameters on SQL Server
-    (2,100). There the days travel as JSON and are cast to the column's `DATE`."""
-    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's
+def test_a_list_of_256_days_on_a_date_column_is_answered(session: Session):
+    """SPEC-F21.11: a `Date` column compares the days of a list as one IN list."""
+    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)]  # nobody's
     params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
     assert ids(table.fetch_sync(params, session)) == [2]
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
-    """31.5 on a SMALLINT column: SQL Server's JSON path casts with TRY_CAST, so it matches nothing, as a bound
-    parameter does on every other database (a plain conversion would fail the whole query)."""
-    params = request(*ALL)
-    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31', '31.5']
+    """31.5 on a SMALLINT column matches nothing, as it does on every database: a conversion that failed would fail
+    the whole query."""
+    params = request(*ALL, column_search={'age': {'multi_values': ['31', '31.5']}})
     assert ids(table.fetch_sync(params, session)) == [1, 4]
 
 
 def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):
     """`name` is VARCHAR(50). Cut to 50 characters this value is 'Bob' and spaces, which SQL Server compares equal to
-    'Bob'; SQL Server's JSON path must cast to an unbounded text type."""
-    params = request(*ALL)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob' + ' ' * 47 + 'x']
+    'Bob'."""
+    params = request(*ALL, column_search={'name': {'multi_values': ['Bob' + ' ' * 47 + 'x']}})
     assert ids(table.fetch_sync(params, session)) == []
 
 
