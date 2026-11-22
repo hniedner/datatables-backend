@@ -47,9 +47,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
   its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
   answers 4; after the test waits past the TTL, the next request counts again and answers 5.
-- **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
-  source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
-  sent a global search `e` → `recordsTotal` 3 and 1.
+- **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
+  tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
+  and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
   holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.3** [all] Two tables over `items`, one with no base filter and one with the base filter `price` not
