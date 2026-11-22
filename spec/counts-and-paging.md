@@ -47,16 +47,21 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
   its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
   answers 4; after the test waits past the TTL, the next request counts again and answers 5.
-- **SPEC-C15.1** [SQL] Given a `tenant` column holding 1 in rows 1, 2, 3 and 2 in row 4: two tables over the same
-  source whose base filters differ only in the bound value (`tenant = 1`, `tenant = 2`) and share one cache, each
-  sent a global search `e` → `recordsTotal` 3 and 1.
+- **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
+  tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
+  and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
   holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.3** [all] Two tables over `items`, one with no base filter and one with the base filter `price` not
-  null, given the same app-supplied cache key and one `TotalCache`, each sent a global search `red`: the first
-  answers `recordsTotal` 4; the second answers 4 (the first's total, not its own 3) and runs no total count.
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
+- **SPEC-C15.5** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
+  tables with no base filter, each over a subquery of the same table whose `WHERE` differs only in the bound value
+  (`team = 'red'`, `team = 'green'`), sharing one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
+- **SPEC-C15.6** [SQL] As `SPEC-C15.5`, the source being a join of the table with itself whose `ON` clause differs
+  only in the bound value (`team = 'red'`, `team = 'green'`) → `recordsTotal` 2 and 1.
+- **SPEC-C15.7** [SQL] A table of 5 rows with a `TotalCache` and a base filter that is true for every row, built
+  from a construct SQLAlchemy can compile for the database under test and not for its default dialect → a request
+  answers `recordsTotal` 5.
 - **SPEC-C16.1** [all] With a `TotalCache` (TTL far longer than the test) and a global search `red`: the first
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).

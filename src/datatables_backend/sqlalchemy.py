@@ -191,7 +191,7 @@ class SQLTable:
 
         filtered_rows = build(_bound_in)
         mistakes.raise_first()  # from here on the request holds no mistake, so a second build finds none either
-        if dialect.name == 'mssql' and _parameter_count(filtered_rows) > MSSQL_PARAMETER_BUDGET:
+        if dialect.name == 'mssql' and _parameter_count(filtered_rows, dialect) > MSSQL_PARAMETER_BUDGET:
             filtered_rows = build(_json_in)
         filtered = select(func.count()).select_from(filtered_rows.subquery())
         page = self._ordered(filtered_rows, request, dialect).offset(params.start).limit(params.length)
@@ -335,17 +335,16 @@ class SQLTable:
 
     # -- running ----------------------------------------------------------------------------------------------------
 
-    def _total_key(self, source: AsyncSource | SyncSource) -> str:
-        """The database (its URL without the password), the source and the base filter with its values."""
-        url = _bind(source).engine.url.render_as_string(hide_password=True)
-        key = f'{url} {self.source}'
-        if self.base_filter is not None:
-            compiled = self.base_filter.compile()
-            key += f' WHERE {compiled} {sorted(compiled.params.items(), key=lambda item: item[0])}'
-        return key
+    def _total_key(self, source: AsyncSource | SyncSource, total: Select[Any]) -> str:
+        """The database (its URL without the password) and the count as this database runs it, with every bound
+        value of the source and the base filter: two scopes that differ only in a value never share a total."""
+        bind = _bind(source)
+        compiled = total.compile(dialect=bind.dialect)
+        values = sorted(compiled.params.items(), key=lambda item: item[0])
+        return f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values!r}'
 
     async def _total(self, source: AsyncSource, statements: _Statements) -> int:
-        key = self._total_key(source) if self.total_cache else ''
+        key = self._total_key(source, statements.total) if self.total_cache else ''
         if self.total_cache and (cached := self.total_cache.get(key)) is not None:
             return cached
         count = (await source.execute(statements.total)).scalar_one()
@@ -354,7 +353,7 @@ class SQLTable:
         return count
 
     def _total_sync(self, source: SyncSource, statements: _Statements) -> int:
-        key = self._total_key(source) if self.total_cache else ''
+        key = self._total_key(source, statements.total) if self.total_cache else ''
         if self.total_cache and (cached := self.total_cache.get(key)) is not None:
             return cached
         count = source.execute(statements.total).scalar_one()
@@ -659,13 +658,17 @@ def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> C
     return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=as_text), type_=String()), fold)
 
 
-def _parameter_count(stmt: Select[Any]) -> int:
-    from sqlalchemy.engine.default import DefaultDialect  # noqa: PLC0415
-
-    compiled = cast(
-        SQLCompiler,
-        stmt.compile(dialect=DefaultDialect(paramstyle='qmark'), compile_kwargs={'render_postcompile': True}),
-    )
+# Not measured: it runs only on SQL Server; every test of the sqlserver leg runs it
+def _parameter_count(stmt: Select[Any], dialect: Dialect) -> int:  # pragma: no cover
+    """The parameters ``stmt`` sends on the session's database, each value of a list counted. It is compiled by the
+    session's own dialect, which alone knows every construct of its database and how this server is sent a
+    statement. A driver that names its parameters (pymssql) cannot be counted by position, so a dialect of the same
+    kind that numbers them stands in; it knows no server version and may count a few too many, never too few."""
+    positional = dialect
+    if not dialect.positional:
+        kind: Any = type(dialect)  # the `Dialect` interface declares no constructor; SQL Server's dialects take this
+        positional = kind(paramstyle='qmark')
+    compiled = cast(SQLCompiler, stmt.compile(dialect=positional, compile_kwargs={'render_postcompile': True}))
     return len(compiled.positiontup or ())
 
 
