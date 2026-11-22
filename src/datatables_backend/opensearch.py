@@ -21,19 +21,21 @@ from typing import Literal
 from typing import Protocol
 from typing import cast
 
-from ._plan import NO_SEARCHABLE_COLUMN
-from ._plan import AnyOf
+from ._plan import Bound
+from ._plan import Capabilities
 from ._plan import Contains
-from ._plan import Criterion
-from ._plan import DaySpan
+from ._plan import Empty
+from ._plan import Equals
+from ._plan import Filter
 from ._plan import Group
 from ._plan import Mistakes
+from ._plan import Not
+from ._plan import OneOf
+from ._plan import Part
 from ._plan import Plan
-from ._plan import day_span
+from ._plan import Range
 from ._plan import mistake
 from ._plan import next_day
-from ._plan import on_day
-from ._plan import parse_number
 from ._plan import plan
 from ._plan import refused
 from ._text_query import QueryParser
@@ -158,19 +160,15 @@ class SearchTable:
                 one place, once every clause is built.
         """
         mistakes = Mistakes()
-        request = plan(params, self.columns, _type_of, _orderable, mistakes)
+        request = plan(params, self.columns, _describe, mistakes)
         must: list[dict[str, Any]] = [self.base_filter] if self.base_filter else []
         if request.global_search:
-            should = [_global_clause(search) for search in request.global_search if search.type == 'string']
-            with mistakes.part():
-                if not should:  # numbers and dates take no free text; an empty should would match every document
-                    raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
-                must.append(_any(should))
+            must.append(_any([_global_clause(search) for search in request.global_search]))
         for column_search in request.column_searches:
             with mistakes.part():
-                must.append(_column_clause(column_search))
+                must.append(_compile(column_search))
         if request.search_builder is not None:
-            must.append(_node(request.search_builder))
+            must.append(_compile(request.search_builder))
         with mistakes.part():
             if params.start + params.length > self.max_result_window:
                 raise mistake(
@@ -253,9 +251,13 @@ def _sortable(column: Column) -> bool:
     return _type_of(column) != 'string' or _keyword(column) is not None
 
 
-def _orderable(column: Column) -> bool:
-    """A column can be sorted by unless it is declared not to, or left undeclared and not sortable."""
-    return _sortable(column) if column.orderable is None else column.orderable
+def _describe(column: Column) -> Capabilities:
+    """A column can be sorted by unless it is declared not to, or left undeclared and not sortable. Only a string
+    takes part in the global search, and a column search on a number or a date is one value: OpenSearch cannot match
+    a number or a date as text without a script (PRD-F32, PRD-F33, PRD-F34)."""
+    kind = _type_of(column)
+    orderable = _sortable(column) if column.orderable is None else column.orderable
+    return Capabilities(kind, orderable, searched=kind == 'string', value_search=True)
 
 
 def _any(clauses: list[dict[str, Any]]) -> dict[str, Any]:
@@ -354,124 +356,64 @@ def _global_clause(search: Contains) -> dict[str, Any]:
     return _string_contains(search.column, str(search.value), parse=False)
 
 
-def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
-    column = search.column
-    if isinstance(search, AnyOf):
-        if search.type == 'boolean':
-            return {'terms': {column.source: list(search.values)}}
-        if search.type == 'number':
-            return {
-                'terms': {column.source: [parse_number(str(value), column, listed=True) for value in search.values]}
-            }
-        if search.type == 'date':  # each entry as its own criterion: `=` for a day, a missing field for none
-            return _any([_node(on_day(column, day)) for day in search.values])
-        field = _keyword(column)
-        if field is None:  # analysed text holds no whole string to match exactly
-            raise mistake(
-                'datatables_search_refused',
-                f'The column "{column.name}" can be searched only for text it contains, not for a list of exact '
-                'values. Type the text to search for instead.',
-                column,
-            )
-        if not _folds(column):
-            return {'terms': {field: list(search.values)}}
-        # A terms query takes no case_insensitive, so a list of strings is one term query for each value
-        return _any([_term(column, field, str(value)) for value in search.values])
-    match search.type:
-        case 'number':
-            return {'term': {column.source: parse_number(str(search.value), column)}}
-        case 'date':
-            span = day_span(str(search.value), column)
-            return _days(column.source, span.start.isoformat(), span.end.isoformat())
-        case 'string':
-            return _string_contains(column, str(search.value), parse=True)
-        case 'boolean':  # pragma: no cover - unreachable: the plan makes a boolean column's search an AnyOf
-            raise AssertionError(search.type)
-
-
-def _days(field: str, start: str | None, end: str | None) -> dict[str, Any]:
-    """Days from ``start`` up to, not including, ``end`` (either may be open)."""
-    bounds = {key: value for key, value in (('gte', start), ('lt', end)) if value is not None}
-    return {'range': {field: {**bounds, 'format': 'strict_date'}}}
-
-
-def _node(node: Criterion | Group) -> dict[str, Any]:
+def _compile(node: Filter | Group) -> dict[str, Any]:
+    """The clause of one node of the plan."""
     if isinstance(node, Group):
-        clauses = [_node(item) for item in node.items]
+        clauses = [_compile(item) for item in node.items]
         return {'bool': {'must': clauses}} if node.logic == 'AND' else _any(clauses)
-    if node.condition in ('null', '!null'):
-        exists = {'exists': {'field': node.column.source}}
-        return _not(exists) if node.condition == 'null' else exists
-    match node.type:
-        case 'number':
-            return _number_criterion(node)
-        case 'date':
-            return _date_criterion(node)
-        case 'boolean':  # '=' or '!=': a must_not keeps a document without the field
-            term = {'term': {node.column.source: node.values[0]}}
-            return term if node.condition == '=' else _not(term)
-        case 'string':
-            return _string_criterion(node)
+    column, field = node.column, node.column.source
+    match node:
+        case Not(node=Empty()):  # "not empty" is asked for directly, not as the negation of a negation
+            return {'exists': {'field': field}}
+        case Not():  # a must_not keeps a document without the field, so a missing value passes (PRD-F37)
+            return _not(_compile(node.node))
+        case Empty():
+            return _not({'exists': {'field': field}})
+        case Contains():
+            return _string_contains(column, str(node.value), parse=True)
+        case Range():
+            bounds: dict[str, Any] = {}
+            if node.lower is not None:
+                bounds['gte' if node.lower.included else 'gt'] = node.lower.value
+            if node.upper is not None:
+                bounds['lte' if node.upper.included else 'lt'] = node.upper.value
+            if node.type == 'date':  # days, in the one format every date field reads
+                bounds = {**{key: day.isoformat() for key, day in bounds.items()}, 'format': 'strict_date'}
+            return {'range': {field: bounds}}
+        case Equals() if node.type != 'string':
+            return {'term': {field: node.value}}
+        case Equals():
+            keyword = _keyword(column)
+            return _term(column, keyword, str(node.value)) if keyword else {'match_phrase': {field: str(node.value)}}
+        case Part():
+            keyword = _keyword(column)
+            if node.where == 'any' or keyword is None:
+                # Analysed text has no whole string to anchor on, so starts and ends read as contains there
+                return _string_contains(column, str(node.value), parse=True)
+            return _part(column, keyword, str(node.value), start=node.where == 'start', end=node.where == 'end')
+        case OneOf():
+            return _one_of(node)
 
 
-def _number_criterion(node: Criterion) -> dict[str, Any]:
-    field, values = node.column.source, node.values
-    match node.condition:
-        case '=' | '!=':
-            term = {'term': {field: values[0]}}
-            return term if node.condition == '=' else _not(term)
-        case 'between' | '!between':
-            inside = {'range': {field: {'gte': values[0], 'lte': values[1]}}}
-            return inside if node.condition == 'between' else _not(inside)
-        case _:
-            operator = {'<': 'lt', '<=': 'lte', '>': 'gt', '>=': 'gte'}[node.condition]
-            return {'range': {field: {operator: values[0]}}}
-
-
-def _date_criterion(node: Criterion) -> dict[str, Any]:
-    """Dates compare by day, as on SQL. A negated condition is a ``must_not``, which keeps documents without the
-    field; SQL leaves out a row whose value is NULL."""
-    field, values = node.column.source, node.values
-
-    def day(index: int, *, after: bool = False) -> str:
-        return (next_day(values[index]) if after else values[index]).isoformat()
-
-    match node.condition:
-        case 'contains' | '!contains':
-            span = cast(DaySpan, values[0])
-            inside = _days(field, span.start.isoformat(), span.end.isoformat())
-            return inside if node.condition == 'contains' else _not(inside)
-        case '=' | '!=':
-            inside = _days(field, day(0), day(0, after=True))
-            return inside if node.condition == '=' else _not(inside)
-        case 'between' | '!between':
-            inside = _days(field, day(0), day(1, after=True))
-            return inside if node.condition == 'between' else _not(inside)
-        case '<':
-            return _days(field, None, day(0))
-        case '<=':
-            return _days(field, None, day(0, after=True))
-        case '>':
-            return _days(field, day(0, after=True), None)
-        case _:  # '>='
-            return _days(field, day(0), None)
-
-
-def _string_criterion(node: Criterion) -> dict[str, Any]:
-    column, value = node.column, str(node.values[0])
-    keyword = _keyword(column)
-    negated = node.condition.startswith('!')
-    match node.condition.lstrip('!'):
-        case '=':
-            clause = _term(column, keyword, value) if keyword else {'match_phrase': {column.source: value}}
-        case 'contains':
-            clause = _string_contains(column, value, parse=True)
-        case 'starts' | 'ends' if keyword is not None:
-            starts = node.condition.lstrip('!') == 'starts'
-            clause = _part(column, keyword, value, start=starts, end=not starts)
-        case _:  # starts or ends on analysed text: it has no whole string to anchor on, so it reads as contains
-            clause = _string_contains(column, value, parse=True)
-    return _not(clause) if negated else clause
+def _one_of(node: OneOf) -> dict[str, Any]:
+    column = node.column
+    if node.type == 'date':  # each day as the range `=` gives it, and a missing field for an empty entry
+        days = [_compile(Range(column, 'date', Bound(day, True), Bound(next_day(day), False))) for day in node.values]
+        return _any([*days, *([_compile(Empty(column, 'date'))] if node.empty else [])])
+    if node.type != 'string':
+        return {'terms': {column.source: list(node.values)}}
+    field = _keyword(column)
+    if field is None:  # analysed text holds no whole string to match exactly
+        raise mistake(
+            'datatables_search_refused',
+            f'The column "{column.name}" can be searched only for text it contains, not for a list of exact '
+            'values. Type the text to search for instead.',
+            column,
+        )
+    if not _folds(column):
+        return {'terms': {field: list(node.values)}}
+    # A terms query takes no case_insensitive, so a list of strings is one term query for each value
+    return _any([_term(column, field, str(value)) for value in node.values])
 
 
 def _sort(request: Plan) -> list[dict[str, Any]]:
