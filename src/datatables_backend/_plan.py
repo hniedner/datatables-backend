@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+from datetime import time
 from datetime import timedelta
 import logging
 import math
@@ -135,6 +136,14 @@ _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
 }
 _BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
+# How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
+# every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
+_NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
+_DAY = re.compile(
+    r'(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})'
+    r'(?:[ T](?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})(?::(?P<second>[0-9]{2})(?:\.[0-9]+)?)?)?'
+)
+_YEAR_OR_MONTH = re.compile(r'(?P<year>[0-9]{4})(?:-(?P<month>[0-9]{2}))?')
 
 
 @dataclass(frozen=True)
@@ -157,7 +166,9 @@ class Contains:
 @dataclass(frozen=True)
 class AnyOf:
     """A multi-select: the column equals one of ``values``. On a boolean column they are ``bool``, and a plain column
-    search is one too, since a boolean has no text to contain anything."""
+    search is one too, since a boolean has no text to contain anything. On a date column they are days, each matched
+    as ``=`` matches it, and None for an empty entry, which means empty (PRD-F21); ``on_day`` gives each as a
+    criterion."""
 
     column: Column
     type: ColumnType
@@ -344,7 +355,7 @@ def _criterion(
     elif condition in ('contains', '!contains'):
         values = tuple(day_span(text, column) for text in texts)
     else:
-        values = tuple(parse_day(text, column) for text in texts)
+        values = parse_days(texts, column, listed=needed == 2)
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
         raise mistake(
             'datatables_value_missing',
@@ -357,21 +368,31 @@ def _criterion(
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
     point, else a ``float``. ``listed`` says the text is one of several values (a list, or the two of a
-    ``between``), where the reason must not ask for one number."""
+    ``between``), where the reason must not ask for one number.
+
+    A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
+    exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
+    ``inf``), so the spelling is checked first."""
     stripped = text.strip()
-    if stripped.lstrip('+-').isdigit():
-        return int(stripped)
-    try:
-        number = float(stripped)
-    except ValueError:
-        number = math.nan
-    if not math.isfinite(number):
+
+    def unreadable() -> InvalidFilter:
         needed = (
             f'Each value in the filter on "{column.name}" must be a number'
             if listed
             else f'The filter on "{column.name}" needs one number'
         )
-        raise mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
+        return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
+
+    if not _NUMBER.fullmatch(stripped):
+        raise unreadable()
+    if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
+        try:
+            return int(stripped)
+        except ValueError:  # more digits than Python converts to an integer
+            raise unreadable() from None
+    number = float(stripped)
+    if not math.isfinite(number):
+        raise unreadable()
     return number
 
 
@@ -397,53 +418,88 @@ def _last_day(column: Column) -> InvalidFilter:
     )
 
 
-def parse_day(text: str, column: Column) -> date:
-    """The day ``text`` names in a filter on ``column`` (``YYYY-MM-DD``; a time after it is ignored). The last day
-    there is, 9999-12-31, is refused in every condition: it has no next day to bound it by, and that is the user's
-    filter, not a failed query."""
-    try:
-        day = date.fromisoformat(text.strip()[:10])
-    except ValueError:
-        # The parser's message quotes the value, which may be a date of birth
-        raise mistake(
-            'datatables_date_unreadable',
-            f'The filter on "{column.name}" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
-            column,
-        ) from None
-    if day == date.max:
+def parse_days(
+    texts: Sequence[str], column: Column, *, listed: bool, blank_is_empty: bool = False
+) -> tuple[date | None, ...]:
+    """The days ``texts`` name in a filter on ``column``, each written as ``_written_day`` reads it, white space
+    around it ignored. ``listed`` says they are several values (a list, or the two of a ``between``), where the
+    reason must not ask for one date. With ``blank_is_empty`` a text that holds nothing is None, an empty entry of a
+    list; otherwise no day is None.
+
+    Every text's format is checked before any day's range, so the format is the mistake answered wherever it
+    stands (PRD-E3). The last day there is, 9999-12-31, is refused in every condition: it has no next day to bound
+    it by, and that is the user's filter, not a failed query."""
+    days: list[date | None] = []
+    for text in texts:
+        value = text.strip()
+        if blank_is_empty and not value:
+            days.append(None)
+            continue
+        day = _written_day(value)
+        if day is None:
+            needed = (
+                f'Each value in the filter on "{column.name}" must be a date'
+                if listed
+                else f'The filter on "{column.name}" needs a date'
+            )
+            raise mistake(
+                'datatables_date_unreadable', f'{needed} that exists, written as YYYY-MM-DD, like 2024-03-05.', column
+            )
+        days.append(day)
+    if date.max in days:
         raise _last_day(column)
-    return day
+    return tuple(days)
+
+
+def _written_day(value: str) -> date | None:
+    """The day ``value`` writes as PRD-F21 says, or None: ``YYYY-MM-DD`` in ASCII digits, and after it, at most, a
+    space or a ``T`` and a time of day that exists (``HH:MM`` or ``HH:MM:SS``, the seconds with an optional
+    fraction), which is ignored. SearchBuilder sends such a time; a zone or an offset after it is refused, since the
+    instant it names can fall on another UTC day."""
+    form = _DAY.fullmatch(value)
+    if form is None:
+        return None
+    try:
+        time(int(form['hour'] or 0), int(form['minute'] or 0), int(form['second'] or 0))
+        return date(int(form['year']), int(form['month']), int(form['day']))
+    except ValueError:  # a day or a time of day that does not exist
+        return None
+
+
+def on_day(column: Column, day: date | None) -> Criterion:
+    """One entry of a list on a date column as the criterion that matches it: ``=`` for a day, "empty" for None."""
+    if day is None:
+        return Criterion(column, 'date', 'null', ())
+    return Criterion(column, 'date', '=', (day,))
 
 
 def next_day(day: date) -> date:
-    """The day after ``day``, which ``parse_day`` and ``day_span`` made sure exists."""
+    """The day after ``day``, which ``parse_days`` and ``day_span`` made sure exists."""
     return day + timedelta(days=1)
 
 
 def day_span(text: str, column: Column) -> DaySpan:
-    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, ``YYYY-MM-DD`` a day.
-    A span that holds the last day there is, is refused as that day is."""
+    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, both in ASCII digits,
+    or a day as ``_written_day`` reads it, so `contains` and `=` take the same day. A span that holds the last day
+    there is, is refused as that day is."""
     value = text.strip()
-    form = re.fullmatch(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?', value)
+    form = _YEAR_OR_MONTH.fullmatch(value)
     try:
-        if form and form[3]:  # a full day is read as ``parse_day`` reads it, so `contains` and `=` take the same
-            start = date.fromisoformat(value)
-        else:
-            start = date(int(form[1]), int(form[2] or 1), 1) if form else None
-    except ValueError:  # the year 0000, or a month or a day that does not exist
+        start = date(int(form['year']), int(form['month'] or 1), 1) if form else _written_day(value)
+    except ValueError:  # the year 0000, or a month that does not exist
         start = None
-    if form is None or start is None:
+    if start is None:
         raise mistake(
             'datatables_date_unreadable',
             f'The filter on "{column.name}" needs a year, a month or a day that exists, written as YYYY, YYYY-MM '
             'or YYYY-MM-DD, like 2024-03.',
             column,
         )
-    if form[3]:
+    if form is None:
         if start == date.max:
             raise _last_day(column)
         return DaySpan(start, next_day(start))
-    last = start.month if form[2] else 12
+    last = start.month if form['month'] else 12
     if (start.year, last) == (date.max.year, 12):
         raise _last_day(column)
     return DaySpan(start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1))
@@ -453,7 +509,8 @@ def _column_search(
     search: Search, column: Column, kind: ColumnType, hooked: Callable[[Column, str], Any]
 ) -> Contains | AnyOf:
     """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains.
-    On a boolean column a plain value is an exact value too."""
+    On a boolean column a plain value is an exact value too. On a date column each entry of a list is a day, and
+    the column's ``search_value`` hook is not applied to it, as it is not applied to a criterion's date."""
     if search.multi_values and search.value:
         # Only a client that builds its own request sends both, so this one tells the integrator what to send
         raise mistake(
@@ -480,6 +537,8 @@ def _column_search(
         return Contains(column, kind, hooked(column, search.value))
     if kind == 'boolean':
         return AnyOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
+    if kind == 'date':  # read here, so an unreadable entry is found before a backend builds anything
+        return AnyOf(column, kind, parse_days(texts, column, listed=True, blank_is_empty=True))
     return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 

@@ -32,6 +32,7 @@ from ._plan import Plan
 from ._plan import day_span
 from ._plan import mistake
 from ._plan import next_day
+from ._plan import on_day
 from ._plan import parse_number
 from ._plan import plan
 from ._plan import refused
@@ -345,7 +346,9 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
             return {
                 'terms': {column.source: [parse_number(str(value), column, listed=True) for value in search.values]}
             }
-        field = column.source if search.type == 'date' else _keyword(column)
+        if search.type == 'date':  # each entry as its own criterion: `=` for a day, a missing field for none
+            return _any([_node(on_day(column, day)) for day in search.values])
+        field = _keyword(column)
         if field is None:  # analysed text holds no whole string to match exactly
             raise mistake(
                 'datatables_search_refused',
@@ -353,7 +356,7 @@ def _column_clause(search: Contains | AnyOf) -> dict[str, Any]:
                 'values. Type the text to search for instead.',
                 column,
             )
-        if search.type == 'date' or not _folds(column):
+        if not _folds(column):
             return {'terms': {field: list(search.values)}}
         # A terms query takes no case_insensitive, so a list of strings is one term query for each value
         return _any([_term(column, field, str(value)) for value in search.values])

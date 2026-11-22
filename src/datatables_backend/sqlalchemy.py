@@ -39,6 +39,7 @@ from sqlalchemy import func
 from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy import select
+from sqlalchemy.dialects.mssql import DATETIMEOFFSET
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import CompileError
@@ -62,6 +63,7 @@ from ._plan import Mistakes
 from ._plan import Plan
 from ._plan import mistake
 from ._plan import next_day
+from ._plan import on_day
 from ._plan import parse_number
 from ._plan import plan
 from ._plan import refused
@@ -202,6 +204,9 @@ class SQLTable:
         for search in request.column_searches:
             if isinstance(search, AnyOf):
                 column = self._sql(search.column)
+                if search.type == 'date':
+                    conditions.append(_on_days(search, column, in_list))
+                    continue
                 with mistakes.part():
                     if search.type == 'boolean':
                         values = [_boolean(column, value) for value in search.values]
@@ -223,8 +228,9 @@ class SQLTable:
     def _contains(self, search: Contains) -> ColumnElement[bool]:
         column = self._sql(search.column)
         pattern = f'%{escape_like(str(search.value))}%'
-        if isinstance(_sql_type(column), Date | DateTime):
-            return _day_text(column).ilike(pattern, escape='\\')
+        sql_type = _sql_type(column)
+        if isinstance(sql_type, Date | DateTime):
+            return _day_text(_utc(column) if _aware(sql_type) else column).ilike(pattern, escape='\\')
         return _text(column).ilike(pattern, escape='\\')
 
     def _node(self, node: Criterion | Group, mistakes: Mistakes) -> ColumnElement[bool] | None:
@@ -462,7 +468,7 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
     """Dates compare by day, whether the column holds dates or datetimes; a negated condition leaves out NULL."""
     sql_type = _sql_type(column)
     with_time = isinstance(sql_type, DateTime)
-    aware = with_time and bool(getattr(sql_type, 'timezone', False))
+    aware = _aware(sql_type)
 
     def at(day: date) -> date | datetime:
         if not with_time:
@@ -498,6 +504,60 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
             return inside if node.condition == 'between' else not_(inside)
         case _:  # the plan admits no other condition for a date
             raise AssertionError(node.condition)
+
+
+def _on_days(search: AnyOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
+    """A list on a date column: the row's day is one of its days, or the row has none where the list holds an empty
+    entry (PRD-F21). A column whose SQL type is a ``Date`` holds a day and nothing else, so its days are one IN
+    list: a long list stays one flat condition and takes SQL Server's JSON path (PRD-C17). A column of any other
+    type, a datetime or one only declared a date, may hold a time, so each entry gets the day's two bounds, as ``=``
+    gives it: two parameters each, and no JSON path."""
+    days = [day for day in search.values if day is not None]
+    parts: list[ColumnElement[bool]] = []
+    if not isinstance(_sql_type(column), Date):
+        parts += [_date_criterion(on_day(search.column, day), column) for day in days]
+    elif days:
+        parts.append(in_list(column, days, False))
+    if len(days) < len(search.values):
+        parts.append(column.is_(None))
+    return or_(*parts)
+
+
+def _aware(sql_type: Any) -> bool:
+    """Whether a column of this type carries a time zone (PRD-F21): a ``DateTime(timezone=True)``, or SQL Server's
+    own ``DATETIMEOFFSET``, which a reflected table has and which does not set that flag."""
+    return isinstance(sql_type, DATETIMEOFFSET) or (
+        isinstance(sql_type, DateTime) and bool(getattr(sql_type, 'timezone', False))
+    )
+
+
+class _utc(FunctionElement[datetime]):  # noqa: N801
+    """A timezone-aware column as its UTC time, where the database would otherwise give its day in another zone
+    (PRD-F42): PostgreSQL in the session's, SQL Server in the offset the value was stored with. Elsewhere it is the
+    column itself: SQLite and a MySQL ``DATETIME`` store no offset, and a MySQL ``TIMESTAMP`` is read through the
+    session's ``time_zone``, which the app sets (PRD-F21)."""
+
+    type = DateTime()
+    inherit_cache = True
+
+
+@compiles(_utc)
+def _utc_default(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+    return compiler.process(element.clauses, **kw)
+
+
+# Not measured: coverage is taken on the SQLite leg and this runs only on PostgreSQL, where
+# test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day runs it
+@compiles(_utc, 'postgresql')
+def _utc_postgresql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
+    return f"({compiler.process(element.clauses, **kw)} AT TIME ZONE 'UTC')"
+
+
+# Not measured: coverage is taken on the SQLite leg and this runs only on SQL Server, where
+# test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day runs it
+@compiles(_utc, 'mssql')
+def _utc_mssql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
+    return f"SWITCHOFFSET({compiler.process(element.clauses, **kw)}, '+00:00')"
 
 
 class _day_text(FunctionElement[str]):  # noqa: N801
@@ -547,7 +607,13 @@ def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> 
 
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values)), type_=String()), fold)
+    def day_text(value: Any) -> str:
+        """A day travels as its ISO text, which SQL Server casts to the column's type as it casts every value."""
+        if type(value) is date:  # not a datetime, which would lose its time without a word
+            return value.isoformat()
+        raise TypeError(f'A value of type {type(value).__name__} cannot be sent in a JSON list')
+
+    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=day_text), type_=String()), fold)
 
 
 def _parameter_count(stmt: Select[Any]) -> int:

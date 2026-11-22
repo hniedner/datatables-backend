@@ -496,6 +496,18 @@ def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: 
         ('born', 'contains', ['2001-12'], [4]),
         ('born', 'contains', ['1980-07-15'], [2]),  # a full day is a span of one day
         ('born', 'contains', ['1980-07-14'], []),  # SPEC-F22.1: and of no more, so the day before Bob's holds nobody
+        # SPEC-F25.3: the spellings of a number beside plain digits: a sign, a point at the end, a point first and an
+        # exponent
+        ('age', '=', ['+31'], [1, 4]),
+        ('age', '=', ['31.'], [1, 4]),
+        ('age', '=', ['.31E+2'], [1, 4]),
+        ('age', '=', [' 31 '], [1, 4]),  # white space around a value is ignored, here and for the dates below
+        ('born', 'contains', [' 1980 '], [2]),
+        # SPEC-F21.9: a time of day after the day is ignored: after a space, with seconds and a fraction, as
+        # SearchBuilder sends it for a formatted column; after a `T`, without seconds
+        ('born', '=', ['1980-07-15 10:00:00.250'], [2]),
+        ('born', '=', ['1980-07-15T23:59'], [2]),
+        ('born', 'contains', ['1980-07-15 10:00:00'], [2]),  # SPEC-F22.5: `contains` reads a day as `=` does
         ('seen', '=', ['2026-07-15'], [1]),  # a datetime column compares by day
         ('seen', '>', ['2026-07-15'], [2]),
         ('seen', '>=', ['2026-07-15'], [1, 2]),
@@ -532,35 +544,70 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     )
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'postgresql',
-    reason="draft 1: PostgreSQL's day text of a timestamptz is its day in the session zone; PRD v2 (PRD-F42) makes "
-    'it the UTC day',
-    strict=True,
-    raises=AssertionError,
-)
 def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
+    """SPEC-F42.1, PostgreSQL's proof: in the job's session zone (UTC+14) the day text of row 1, 23:59 UTC on the
+    15th, is the 16th, and row 5's is the 15th. A column search runs the same expression; the test below goes
+    through one."""
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-07-15'}), session)) == [1]
 
 
-@pytest.mark.xfail(
-    os.environ.get('DTB_SQL_DIALECT') == 'mssql',
-    reason='draft 1: DATETIMEOFFSET day text in its stored offset; PRD v2 (PRD-F42) makes it the UTC day',
-    strict=True,
-    raises=AssertionError,
-)
-def test_the_global_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
-    """2026-08-01 23:00 at -05:00 is 2026-08-02 04:00 UTC. The row is added in this test's transaction only. SQLite
-    and MySQL store no offset (PRD v2, PRD-F21), so there it is written as its UTC time, as such a column holds it.
-    On PostgreSQL this test passes because the session's +14 puts 04:00 UTC on the same day; PostgreSQL's own check
-    is the strict xfail of `test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day`."""
+def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(session: Session):
+    """SPEC-F42.2, SQL Server's proof, on the table as the database describes it: 2026-08-01 23:00 at -05:00 is
+    2026-08-02 04:00 UTC, and the day text of a `DATETIMEOFFSET` is the day in the offset it was stored with. A
+    reflected `DATETIMEOFFSET` is SQLAlchemy's SQL Server type, which does not say `timezone=True`, so this is also
+    the proof that such a column is known to carry a zone.
+
+    The row is added in this test's transaction only. SQLite and MySQL store no offset (PRD-F21), so there it is
+    written as its UTC time, as such a column holds it, and the test only shows the search works. On PostgreSQL it
+    passes with the session-zone text as well, since UTC+14 puts 04:00 UTC on the same day: PostgreSQL's proof is
+    the test above."""
     stored = datetime(2026, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
     if session.get_bind().dialect.name not in ('postgresql', 'mssql'):
         stored = stored.astimezone(UTC)
     session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'seen_tz': stored})
-    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
-    assert ids(aware.fetch_sync(request('id', 'seen_tz', search={'value': '2026-08-02'}), session)) == [6]
+    reflected = Table(people.name, MetaData(), autoload_with=session.connection())
+    aware = SQLTable(reflected, [Column('id'), Column('seen_tz')])
+    params = request('id', 'seen_tz', column_search={'seen_tz': {'value': '2026-08-02'}})
+    assert ids(aware.fetch_sync(params, session)) == [6]
+
+
+def test_the_day_text_of_a_column_without_a_zone_is_the_day_it_stores(session: Session):
+    """PRD-F42 changes only a timezone-aware column. PostgreSQL's proof: were a `timestamp` taken to UTC like a
+    `timestamptz`, the job's session zone (UTC+14) would render row 1, stored as 23:59 on the 15th, on the 16th,
+    and row 5, stored as 20:00 on the 14th, on the 15th."""
+    naive = SQLTable(people, [Column('id'), Column('seen')])
+    assert ids(naive.fetch_sync(request('id', 'seen', search={'value': '2026-07-15'}), session)) == [1]
+
+
+@pytest.mark.parametrize(
+    ('column', 'search', 'expected'),
+    [
+        # A column with a time, through the categorical regex: each entry is its day, not the instant of midnight,
+        # and on a timezone-aware column the day is bounded by UTC midnights
+        ('seen_tz', {'value': '^(2026-07-15|2025-01-01)$', 'regex': True}, [1, 4]),
+        # SPEC-F21.7 beside a day on a date column: an entry of only white space is empty, the row without a date,
+        # and joins the day, around which white space is ignored as around any value
+        ('born', {'multi_values': [' ', ' 1980-07-15 ']}, [2, 3]),
+    ],
+)
+def test_a_list_on_a_date_column_matches_each_entry_as_a_day(
+    session: Session, column: str, search: dict[str, Any], expected: list[int]
+):
+    """SPEC-F21.5, SPEC-F21.7, and SPEC-F21.9's white space: a categorical value or `multi_values` entry is a day
+    and matches as `=` does."""
+    dated = SQLTable(people, [Column('id'), Column('born'), Column('seen_tz')])
+    params = request('id', 'born', 'seen_tz', column_search={column: search})
+    assert ids(dated.fetch_sync(params, session)) == expected
+
+
+def test_a_list_on_a_column_only_declared_a_date_matches_by_day_too(session: Session):
+    """SPEC-F21.5 on an expression without a SQL type, declared a date, whose values hold a time: an entry is the
+    day `=` matches, not a value the column must equal."""
+    source = select(people.c.id, literal_column('seen').label('stamp')).subquery()
+    stamped = SQLTable(source, [Column('id'), Column('stamp', type='date')])
+    params = request('id', 'stamp', column_search={'stamp': {'multi_values': ['2026-07-15']}})
+    assert ids(stamped.fetch_sync(params, session)) == [1]
 
 
 # -- a boolean column ---
@@ -671,7 +718,9 @@ def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
 
 
 @pytest.mark.xfail(
-    reason='PRD-F20, PRD-F17: an empty multi_values entry does not mean empty yet, on any column type (SPEC-F44.3)',
+    reason='PRD-F20, PRD-F17: an empty multi_values entry means empty only on a date column yet (SPEC-F21.7). A '
+    'boolean column refuses it with invalid_filter, as here, and a number column with invalid_number (SPEC-F44.3, '
+    'issue #14)',
     strict=True,
     raises=AssertionError,
 )
@@ -793,14 +842,31 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [
-        ('age', '>', ['inf'], 'invalid_number'),  # SPEC-F25.1: a number Python reads, and no column holds
+        ('age', '>', ['1e999'], 'invalid_number'),  # SPEC-F25.1: written as a number, and no column holds infinity
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
+        ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
+        # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
+        ('age', '=', ['3_1'], 'invalid_number'),
+        ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
+        ('age', '=', ['31'.translate(FULL_WIDTH)], 'invalid_number'),
+        # SPEC-F21.10: text after the day, another ISO form, an offset (its instant may be another UTC day), and a
+        # time of day that does not exist
+        ('born', '=', ['1980-07-15xyz'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10:00Z'], 'invalid_date'),
+        ('born', '=', ['  '], 'invalid_date'),  # only in a list is a blank value an empty entry
+        ('born', '=', ['19800715'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10:00+02:00'], 'invalid_date'),
+        ('born', '=', ['1980-07-15 24:00'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10'], 'invalid_date'),  # an hour is no time of day
+        ('born', '=', ['1980-07-15T' + '10:00'.translate(FULL_WIDTH)], 'invalid_date'),  # the time in other digits
+        ('born', 'contains', ['1980'.translate(FULL_WIDTH)], 'invalid_date'),  # SPEC-F22.5: a year in other digits
+        ('born', 'contains', ['1980-07-15xyz'], 'invalid_date'),  # and a day as `=` reads it, to its end
         ('born', 'contains', ['9999-12'], 'invalid_date'),  # SPEC-F24.1: a month that holds the last day
         ('born', 'contains', ['9999-12-31'], 'invalid_date'),  # and the day, whose next day would overflow
         ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
         ('born', 'contains', ['2024-03-00'], 'invalid_date'),  # nor a day 00 as the first
         ('born', 'contains', ['0000'], 'invalid_date'),  # nor the year 0000 as the year 1
-        # A full day in full-width digits: `contains` reads a day as `=` does, which takes ASCII digits only
+        # SPEC-F21.10: a full day in full-width digits: `contains` reads a day as `=` does, in ASCII digits only
         ('born', 'contains', ['2024-03-05'.translate(FULL_WIDTH)], 'invalid_date'),
         ('age', 'contains', ['abc'], 'invalid_filter'),  # SPEC-E3.8: the value is never read
     ],
@@ -812,6 +878,15 @@ def test_a_value_the_column_cannot_take_is_refused_with_its_code_without_echoing
     and the text never holds the value."""
     message = refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
     assert all(value not in message for value in values)
+
+
+def test_a_whole_number_is_compared_as_the_integer_it_writes(session: Session):
+    """SPEC-F25.2: a whole number written without a point, signed or not, reaches the query as an integer. Read as
+    a float, which holds 53 bits, -9223372036854775807 is -9223372036854775808: in the column's range, and no row."""
+    source = select(people.c.id, (cast(people.c.id, BigInteger) - 9223372036854775807 - 1).label('big')).subquery()
+    wide = SQLTable(source, [Column('id'), Column('big')])
+    params = request('id', 'big', **criterion('big', '=', '-9223372036854775807'))
+    assert ids(wide.fetch_sync(params, session)) == [1]
 
 
 def test_the_last_month_before_the_last_day_is_answered(session: Session):
@@ -924,6 +999,20 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             criterion('born', '=', '15/07/1980'),
             'invalid_date',
             'The filter on "born" needs a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+        ),
+        # SPEC-E4.27, and SPEC-F21.6's code: a list of days, and the two of a `between`, are not told to be one date
+        (
+            WORDED,
+            {'column_search': {'born': {'multi_values': ['1980-07-15', '2024-13-01']}}},  # a day that does not exist
+            'invalid_date',
+            'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
+        ),
+        (
+            WORDED,
+            # PRD-E3 within one filter: the second value's format is answered, not the first value's range
+            criterion('born', 'between', '9999-12-31', 'abc'),
+            'invalid_date',
+            'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
         ),
         (WORDED, criterion('born', 'contains', '1980-13'), 'invalid_date', SPAN),
         # A day that does not exist: `contains` also takes a year or a month, so its text must say so
@@ -1070,9 +1159,10 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 and SPEC-E4.26: each mistake has a text of its own, which names the condition and the
-    fix, and a column only by the name the server declared. A text is asserted here and nowhere else. The rows are
-    also the proof of their codes: SPEC-E1.2, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-F39.1, SPEC-F40.1."""
+    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.27: each mistake has a text of its own, which names the
+    condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
+    else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
+    SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
@@ -1306,6 +1396,15 @@ def test_many_multi_select_values_on_a_number_column_still_run(session: Session)
     params = request(*ALL)
     params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
     assert ids(table.fetch_sync(params, session)) == [1, 4]
+
+
+def test_many_days_on_a_date_column_still_run(session: Session):
+    """SPEC-F21.11, PRD-C17 for a list of days. A `Date` column compares them as one list: as a range for each day,
+    3,000 of them nest deeper than SQLite's expression tree allows (1,000) and take 6,000 parameters on SQL Server
+    (2,100). There the days travel as JSON and are cast to the column's `DATE`."""
+    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's
+    params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
+    assert ids(table.fetch_sync(params, session)) == [2]
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):

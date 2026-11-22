@@ -339,6 +339,14 @@ def test_column_searches_follow_the_columns_type():
     assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
 
 
+def test_a_date_column_search_reads_a_day_with_a_time_after_it_as_that_day():
+    """SPEC-F34.1: the time comes after a space, and it is one date term all the same, not several (PRD-F34)."""
+    client, params = Client(), request(*NAMES)
+    params.columns[4].search.value = '2026-07-15 10:00:00'
+    table.fetch_sync(params, client)
+    assert query(client) == [{'range': {'created': {'gte': '2026-07-15', 'lt': '2026-07-16', 'format': 'strict_date'}}}]
+
+
 def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_string():
     """PRD-F9 (SPEC-F9.3): a `terms` query takes no `case_insensitive`."""
     client = Client()
@@ -356,11 +364,22 @@ def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_
     ]
 
 
-def test_a_list_on_a_date_column_stays_one_terms_query():
-    """A day has no case: no `case_insensitive` term reaches a date field."""
+def test_a_list_on_a_date_column_is_a_day_range_for_each_entry():
+    """SPEC-F21.5, SPEC-F21.7: an entry is the day `=` matches, not a term (an instant on a date-time field), and an
+    empty entry a missing field."""
     client = Client()
-    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16']}}), client)
-    assert query(client) == [{'terms': {'created': ['2026-07-16']}}]
+    table.fetch_sync(request(*NAMES, column_search={'created': {'multi_values': ['2026-07-16', '']}}), client)
+    assert query(client) == [
+        {
+            'bool': {
+                'should': [
+                    {'range': {'created': {'gte': '2026-07-16', 'lt': '2026-07-17', 'format': 'strict_date'}}},
+                    {'bool': {'must_not': [{'exists': {'field': 'created'}}]}},
+                ],
+                'minimum_should_match': 1,
+            }
+        }
+    ]
 
 
 @pytest.mark.parametrize(

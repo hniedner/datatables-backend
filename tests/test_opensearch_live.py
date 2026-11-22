@@ -59,6 +59,7 @@ MAPPING = {
         'body': {'type': 'text'},
         'pages': {'type': 'integer'},
         'created': {'type': 'date', 'format': 'strict_date'},
+        'seen': {'type': 'date'},  # a date-time field, in the default format; searched only by the table `timed`
         'meta': {'properties': {'author': KEYWORD_TEXT}},
         'active': {'type': 'boolean'},
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
@@ -93,9 +94,11 @@ DOCUMENTS: list[dict[str, Any]] = [
      'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST},
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
-     'meta': {'author': 'Cy'}, 'active': True, 'label': [REPEATED_LETTER, DOTTED, LONGEST_PATTERN, 'bär']},
+     'meta': {'author': 'Cy'}, 'active': True, 'label': [REPEATED_LETTER, DOTTED, LONGEST_PATTERN, 'bär'],
+     'seen': '2026-08-02T22:00:00-05:00'},  # written on the 2nd, and 03:00 UTC on the 3rd
     {'id': 'e5', 'title': 'Date loaf', 'body': 'medjool dates', 'pages': 60, 'created': '2026-02-10',
-     'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL'},
+     'meta': {'author': 'Dee'}, 'active': False, 'label': 'ÄPFEL',
+     'seen': '2026-08-01T23:00:00-05:00'},  # written on the 1st, and 04:00 UTC on the 2nd
 ]  # fmt: skip
 COLUMNS = [
     IndexColumn('id', text='keyword'),
@@ -107,6 +110,7 @@ COLUMNS = [
 ]
 NAMES = ('id', 'title', 'body', 'pages', 'created', 'author')
 table = SearchTable(INDEX, COLUMNS)
+timed = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('seen', type='date')])
 
 
 @pytest.fixture(scope='module')
@@ -268,6 +272,15 @@ def test_searchbuilder_conditions(
     client: OpenSearch, column: str, condition: str, values: list[str], expected: list[str]
 ):
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
+
+
+def test_a_day_on_a_date_time_field_is_its_utc_day(client: OpenSearch):
+    """SPEC-F21.2 on a date-time field, measured: OpenSearch holds an instant, and a day bounds it in UTC
+    (PRD-F21). e5 was written on the 1st at -05:00, which is the 2nd in UTC; d4 was written on the 2nd, which is
+    the 3rd in UTC, so a day read as written answers d4 instead. An entry of a list sends the same range
+    (tests/test_opensearch.py)."""
+    params = request('id', 'seen', **criterion('seen', '=', '2026-08-02'))
+    assert found(timed.fetch_sync(params, client)) == ['e5']
 
 
 # -- exact matches in any case (PRD-F9) ---
