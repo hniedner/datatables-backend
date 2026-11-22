@@ -44,6 +44,7 @@ from .protocol import DTParams
 from .protocol import DTResponse
 from .protocol import InvalidFilter
 from .protocol import PartialResultError
+from .protocol import SchemaError
 from .rows import RowHooks
 
 log = logging.getLogger('datatables_backend')
@@ -108,6 +109,11 @@ class SearchTable:
         self.total_cache = total_cache
         self.max_result_window = max_result_window
         self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
+        unsortable = [column.name for column in self.columns if column.orderable and not _sortable(column)]
+        if unsortable:
+            raise SchemaError(
+                f'{", ".join(unsortable)}: analysed text has no whole string to sort by, so it cannot be orderable'
+            )
 
     async def fetch(self, params: DTParams, client: AsyncClient) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
@@ -152,7 +158,7 @@ class SearchTable:
                 one place, once every clause is built.
         """
         mistakes = Mistakes()
-        request = plan(params, self.columns, _type_of, mistakes)
+        request = plan(params, self.columns, _type_of, _orderable, mistakes)
         must: list[dict[str, Any]] = [self.base_filter] if self.base_filter else []
         if request.global_search:
             should = [_global_clause(search) for search in request.global_search if search.type == 'string']
@@ -239,6 +245,17 @@ def _keyword(column: Column) -> str | None:
             return f'{column.source}.keyword'
         case 'text':
             return None
+
+
+def _sortable(column: Column) -> bool:
+    """Whether the index holds something to sort the column by: not for a string that is analysed text only, on
+    which OpenSearch refuses the whole search."""
+    return _type_of(column) != 'string' or _keyword(column) is not None
+
+
+def _orderable(column: Column) -> bool:
+    """A column can be sorted by unless it is declared not to, or left undeclared and not sortable."""
+    return _sortable(column) if column.orderable is None else column.orderable
 
 
 def _any(clauses: list[dict[str, Any]]) -> dict[str, Any]:
@@ -458,14 +475,13 @@ def _string_criterion(node: Criterion) -> dict[str, Any]:
 
 
 def _sort(request: Plan) -> list[dict[str, Any]]:
+    """The user's order, a document without the field as the lowest value: left to itself OpenSearch puts it last
+    in either direction. A string is sorted by its keyword field; the plan lets no analysed-only text through."""
     sort: list[dict[str, Any]] = []
     for item in request.order:
-        field = _keyword(item.column) if item.type == 'string' else item.column.source
-        if field is None:
-            # OpenSearch refuses the whole search on a sort by analysed text: the order is dropped instead
-            log.warning('datatables_sort_dropped', extra={'column': item.column.name})
-            continue
-        sort.append({field: {'order': 'desc' if item.descending else 'asc'}})
+        field = (_keyword(item.column) if item.type == 'string' else None) or item.column.source
+        placed = {'order': 'desc', 'missing': '_last'} if item.descending else {'order': 'asc', 'missing': '_first'}
+        sort.append({field: placed})
     return sort
 
 

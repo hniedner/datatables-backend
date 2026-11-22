@@ -23,7 +23,9 @@ class Column:
             MySQL ``TINYINT(1)`` read by reflection is a number, so declare it ``'boolean'``), OpenSearch assumes a
             string, so a field with a boolean mapping is declared ``'boolean'``.
         searchable: Whether the global search and column searches may use it.
-        orderable: Whether the client may sort on it.
+        orderable: Whether the client may sort on it. ``None`` lets the backend decide: yes, except for an OpenSearch
+            string column that is analysed text only, which has no whole string to sort by (declaring that one
+            orderable raises ``SchemaError``).
         search_value: Transforms a string the user searches this column for before it reaches the query, for example
             to encrypt or encode it the way the source stores it.
         fold_case: Whether an exact match on a string column (SearchBuilder's ``=`` and ``!=``, a multi-select, a
@@ -40,7 +42,7 @@ class Column:
     field: str | None = None
     type: ColumnType | None = None
     searchable: bool = True
-    orderable: bool = True
+    orderable: bool | None = None
     search_value: Callable[[str], Any] | None = None
     fold_case: bool = True
 

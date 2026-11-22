@@ -539,11 +539,43 @@ def test_an_undeclared_field_is_refused_before_anything_is_sent():
 # -- sorting ---
 
 
-def test_sorting_uses_the_whole_string_and_drops_analysed_text():
+def test_sorting_uses_the_whole_string_and_puts_a_missing_value_lowest():
+    """SPEC-O7.1, SPEC-O2.1: left to itself OpenSearch puts a document without the field last in either direction."""
     client = Client()
-    order = [{'column': 1, 'dir': 'desc'}, {'column': 2, 'dir': 'asc'}, {'column': 3, 'dir': 'asc'}]
+    order = [{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]
     table.fetch_sync(request(*NAMES, order=order), client)
-    assert client.searches[0]['sort'] == [{'title.keyword': {'order': 'desc'}}, {'pages': {'order': 'asc'}}]
+    assert client.searches[0]['sort'] == [
+        {'title.keyword': {'order': 'desc', 'missing': '_last'}},
+        {'pages': {'order': 'asc', 'missing': '_first'}},
+    ]
+
+
+def test_an_order_on_analysed_text_is_refused_or_skipped_as_the_request_marks_it():
+    """SPEC-O5.1: `body` has no whole string to sort by, and OpenSearch fails a search that sorts by analysed text."""
+    client = Client()
+    order = [{'column': 2, 'dir': 'asc'}, {'column': 3, 'dir': 'asc'}]
+    refused(table.fetch_sync(request(*NAMES, order=order), client))
+    assert client.searches == []
+    table.fetch_sync(request(*NAMES, flags={'body': {'orderable': False}}, order=order), client)
+    assert client.searches[0]['sort'] == [{'pages': {'order': 'asc', 'missing': '_first'}}]
+
+
+def test_analysed_text_declared_orderable_is_a_schema_error():
+    """SPEC-O5.2."""
+    with pytest.raises(SchemaError, match='body'):
+        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)])
+
+
+@pytest.mark.xfail(
+    reason='PRD-O3, PRD-O4, PRD-D11, issue #29: an OpenSearch table declares no unique key yet, so no tie-breaker '
+    'follows the order and a request without an order is sent without a sort',
+    strict=True,
+    raises=AssertionError,
+)
+def test_ties_are_broken_by_a_unique_key():
+    client = Client()
+    table.fetch_sync(request(*NAMES), client)
+    assert client.searches[0].get('sort') == [{'id': {'order': 'asc'}}]
 
 
 # -- a boolean column ---

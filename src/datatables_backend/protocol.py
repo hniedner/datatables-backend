@@ -18,6 +18,7 @@ from typing import cast
 
 from pydantic import AfterValidator
 from pydantic import BaseModel
+from pydantic import BeforeValidator
 from pydantic import ConfigDict
 from pydantic import Discriminator
 from pydantic import Field
@@ -30,8 +31,10 @@ log = logging.getLogger('datatables_backend')
 
 #: The default largest page a request may ask for. DataTables' "All" sends -1 and is refused.
 MAX_PAGE_LENGTH = 1000
-#: DataTables' own counters are 32-bit; a larger paging number is the client's mistake, not an offset to bind.
+#: The largest ``draw``, ``length`` and order index: DataTables' own counters are 32-bit.
 MAX_PAGING_NUMBER = 2**31 - 1
+#: The largest ``start``: the largest whole number JavaScript holds exactly, which a client may page up to.
+MAX_START = 2**53 - 1
 
 #: The codes of a mistake the user can fix; stable, since a frontend maps them to its own messages
 type ErrorCode = Literal['invalid_filter', 'invalid_character', 'invalid_date', 'invalid_number', 'page_out_of_range']
@@ -121,10 +124,21 @@ class DTColumn(_Model):
         return self.name or self.data or ''
 
 
+def _no_boolean(value: Any) -> Any:
+    """Pydantic reads ``true`` as 1 where an integer belongs, which would page or sort as nobody asked."""
+    if value is True or value is False:
+        raise ValueError('a boolean is not an integer')
+    return value
+
+
+#: A paging number or an order index: an integer, and never a JSON boolean
+_Integer = Annotated[int, BeforeValidator(_no_boolean)]
+
+
 class DTOrder(_Model):
     """One sort instruction: an index into the request's own ``columns`` and a direction."""
 
-    column: int
+    column: _Integer
     dir: Literal['asc', 'desc'] = 'asc'
 
 
@@ -167,15 +181,15 @@ def _no_selection(panes: dict[str, Any]) -> dict[str, Any]:
     return panes
 
 
-type Draw = Annotated[int, Field(le=MAX_PAGING_NUMBER)]
+type Draw = Annotated[_Integer, Field(ge=0, le=MAX_PAGING_NUMBER)]
 
 
 class DTParams(_Model):
     """A parsed DataTables request."""
 
     draw: Draw = 0
-    start: int = Field(default=0, ge=0, le=MAX_PAGING_NUMBER)
-    length: int = Field(default=10, ge=1, le=MAX_PAGING_NUMBER)
+    start: _Integer = Field(default=0, ge=0, le=MAX_START)
+    length: _Integer = Field(default=10, ge=1, le=MAX_PAGING_NUMBER)
     columns: list[DTColumn] = []
     order: list[DTOrder] = []
     search: Search = Search()
@@ -255,7 +269,8 @@ class PartialResultError(RuntimeError):
 
 
 class SchemaError(RuntimeError):
-    """A declared column does not exist in the source: the server's mistake, not the user's."""
+    """The table's declaration cannot be served (a column the source lacks, analysed text declared orderable): the
+    server's mistake, not the user's, raised when the table is built."""
 
 
 _HEAD = re.compile(r'[^.\[\]]*')

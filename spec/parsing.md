@@ -40,7 +40,10 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   place of an index) → `MalformedRequest`.
 - **SPEC-P8.1** [core] `start` as the form text `1.5`, `abc` or empty, as the JSON number `1.5`, and `length` as the
   form text `10.0` or the JSON number `10.5` → `MalformedRequest`.
+- **SPEC-P8.2** [core] The JSON boolean `true` as `draw`, `start`, `length` or `order[0][column]` →
+  `MalformedRequest` naming that parameter (read as an integer it would be 1).
 - **SPEC-P9.1** [core] `start` `-1` → `MalformedRequest`; `start` `0` parses.
+- **SPEC-P9.2** [core] `draw` `-1` → `MalformedRequest`; `draw` `0` parses.
 - **SPEC-P10.1** [core] `start` 9007199254740991 parses; 9007199254740992 → `MalformedRequest`.
 - **SPEC-P10.2** [core] `draw` 2147483647 parses; 2147483648 → `MalformedRequest`.
 - **SPEC-P11.1** [core] A lone surrogate U+D800 in `search[value]` (the JSON escape `\ud800`) or in a column's
@@ -55,6 +58,10 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   `"yes"` → `MalformedRequest`.
 - **SPEC-P15.1** [all] A column with `data` `name` and an empty `name` is the declared column `name`: a column search
   `pear` on it → rows 2.
+- **SPEC-P15.2** [all] A request column is the declared column whose name equals its `name`, or its `data` when
+  `name` is empty, compared exactly: another case (`Name`), a space after it (`name `), or the source field of a
+  renamed column name no declared column, so a column search with a value on each → error_code `invalid_filter`.
+  With `name` `price` and `data` `id`, the column is `price`: an order desc on it → rows 2, 3, 1, 4.
 - **SPEC-P16.1** [all] `order[0][column]` 3 with `order[0][name]` `id`, on a request whose column 3 is `price`,
   orders by `price`: asc → rows 4, 1, 3, 2 (the index decides).
 - **SPEC-P17.1** [core] `parse_request` returns a `DTParams` whose columns are `DTColumn`, orders `DTOrder`, search a

@@ -88,8 +88,14 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
         ({'length': -1}, 'length'),  # DataTables' "All"
         ({'length': 1001}, 'at most 1000'),
         ({'start': -5}, 'start'),
-        ({'start': 2**31}, 'start'),
+        ({'start': 2**53}, 'start'),  # SPEC-P10.1: one above the largest start
         ({'start': 'ten'}, 'start'),
+        ({'draw': -1}, 'draw'),  # SPEC-P9.2
+        # SPEC-P8.2: a JSON boolean is no integer, in each of the four places one is read
+        ({'draw': True}, 'draw'),
+        ({'start': True}, 'start'),
+        ({'length': True}, 'length'),
+        ({'columns': [{'data': 'a'}, {'data': 'b'}], 'order': [{'column': True, 'dir': 'asc'}]}, 'order'),
         ({'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'sideways'}]}, 'order'),
         ({'columns': 'name'}, 'columns'),
         ({'searchBuilder': {'criteria': [{'condition': 'like', 'origData': 'a'}]}}, 'searchBuilder'),
@@ -156,9 +162,10 @@ def test_a_malformed_request_carries_the_draw_it_could_read(request_data: Any, d
     assert refused.value.draw == draw
 
 
-def test_the_largest_draw_is_read():
-    """SPEC-P10.2's other half: the bound refuses nothing a client sends."""
-    assert parse_request({'draw': 2147483647}).draw == 2147483647
+@pytest.mark.parametrize(('parameter', 'value'), [('draw', 2147483647), ('draw', 0), ('start', 2**53 - 1)])
+def test_a_paging_number_at_its_bound_is_read(parameter: str, value: int):
+    """SPEC-P10.2's and SPEC-P10.1's other half, and SPEC-P9.2's: a bound refuses nothing a client sends."""
+    assert getattr(parse_request({parameter: value}), parameter) == value
 
 
 def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:

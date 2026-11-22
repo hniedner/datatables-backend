@@ -489,14 +489,12 @@ def test_searchbuilder_groups_nest(client: OpenSearch):
     ('column', 'direction', 'expected'),
     [
         (1, 'asc', ['a1', 'b2', 'c3', 'e5', 'd4']),  # the whole title, by code point: capitals first
-        (4, 'desc', ['b2', 'a1', 'e5', 'd4', 'c3']),  # a missing date last (OpenSearch's default)
+        # SPEC-O2.2: a missing value is the lowest, so c3 is last descending and first ascending, where OpenSearch
+        # left to itself would put it last too
+        (4, 'desc', ['b2', 'a1', 'e5', 'd4', 'c3']),
+        (4, 'asc', ['c3', 'd4', 'e5', 'a1', 'b2']),
     ],
 )
 def test_order(client: OpenSearch, column: int, direction: str, expected: list[str]):
     response = table.fetch_sync(request(*NAMES, order=[{'column': column, 'dir': direction}]), client)
     assert ids(response) == expected
-
-
-def test_an_order_on_analysed_text_is_dropped_and_the_draw_still_answers(client: OpenSearch):
-    response = table.fetch_sync(request(*NAMES, order=[{'column': 2, 'dir': 'asc'}]), client)
-    assert found(response) == ['a1', 'b2', 'c3', 'd4', 'e5']

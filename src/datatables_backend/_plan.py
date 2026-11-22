@@ -26,6 +26,8 @@ import unicodedata
 from .columns import Column
 from .columns import ColumnType
 from .protocol import Condition
+from .protocol import DTColumn
+from .protocol import DTOrder
 from .protocol import DTParams
 from .protocol import DTResponse
 from .protocol import ErrorCode
@@ -48,11 +50,6 @@ SEARCH_REGEX = 'The search box does not take regular expressions. Search for pla
 SEARCH_VALUES = 'The search box takes text, not a list of values. Send the text as the search value.'
 NO_SEARCHABLE_COLUMN = (
     'No column of this table can be searched from the search box. Clear it and use a column filter instead.'
-)
-# Issue #14 removes this one: PRD-F41 has the global search skip a request-searchable column the server did not
-# declare
-SEARCH_NOT_OFFERED = (
-    'A column of this table is not known to the server, so the search box cannot be used. Use a column filter instead.'
 )
 SORT_NOT_OFFERED = 'The table was asked to sort by a column the server does not offer. Sort by another column.'
 FILTER_NOT_OFFERED = 'A filter is on a column the server does not offer. Remove that filter.'
@@ -217,9 +214,14 @@ class Plan:
 
 
 def plan(
-    params: DTParams, columns: Sequence[Column], type_of: Callable[[Column], ColumnType], mistakes: Mistakes
+    params: DTParams,
+    columns: Sequence[Column],
+    type_of: Callable[[Column], ColumnType],
+    orderable: Callable[[Column], bool],
+    mistakes: Mistakes,
 ) -> Plan:
-    """Check ``params`` against ``columns`` and return what it asks for.
+    """Check ``params`` against ``columns`` and return what it asks for. ``type_of`` and ``orderable`` give a
+    column's type and whether it can be sorted by where its declaration leaves that to the backend.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -240,15 +242,10 @@ def plan(
     order: list[Order] = []
     for item in params.order:
         with mistakes.part():
-            requested = params.columns[item.column]  # parse_request refused an index outside the columns
-            column = lookup(requested.key, SORT_NOT_OFFERED)
-            if not (requested.orderable and column.orderable):
-                raise mistake(
-                    'datatables_order_refused',
-                    f'The table cannot be sorted by "{column.name}". Sort by another column.',
-                    column,
-                )
-            order.append(Order(column, type_of(column), item.dir == 'desc'))
+            if (entry := _order_entry(item, params.columns[item.column], declared, type_of, orderable)) is None:
+                continue  # skipped, without a word: DataTables sends its default order on every request
+            if all(entry.column is not earlier.column for earlier in order):  # a column sorts by its first entry
+                order.append(entry)
 
     global_search: list[Contains] = []
     with mistakes.part():
@@ -261,11 +258,12 @@ def plan(
                 raise mistake('datatables_regex_refused', SEARCH_REGEX)
             found: list[Contains] = []
             for requested in params.columns:
-                if requested.searchable and requested.key:
-                    column = lookup(requested.key, SEARCH_NOT_OFFERED)
-                    # A boolean column takes no part: "true" as search text is nothing a user reads in the cell
-                    if column.searchable and type_of(column) != 'boolean':
-                        found.append(Contains(column, type_of(column), hooked(column, params.search.value)))
+                # A column the server did not declare takes no part, like one that only renders: refusing it would
+                # fail every search of a table that shows such a column
+                column = declared.get(requested.key) if requested.searchable else None
+                # Nor does a boolean column: "true" as search text is nothing a user reads in the cell
+                if column is not None and column.searchable and type_of(column) != 'boolean':
+                    found.append(Contains(column, type_of(column), hooked(column, params.search.value)))
             if not found:
                 raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
             global_search = found  # only once the whole search stands
@@ -277,13 +275,7 @@ def plan(
             continue
         with mistakes.part():
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
-            column = lookup(requested.key, FILTER_NOT_OFFERED)
-            if not column.searchable:
-                raise mistake(
-                    'datatables_search_refused',
-                    f'The column "{column.name}" cannot be filtered. Remove the filter on it.',
-                    column,
-                )
+            column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
             column_searches.append(_column_search(search, column, type_of(column), hooked))
 
     def node(item: SearchGroup | SearchCriterion) -> Criterion | Group | None:
@@ -298,6 +290,48 @@ def plan(
 
     search_builder = node(params.searchBuilder) if params.searchBuilder else None
     return Plan(tuple(global_search), tuple(column_searches), search_builder, tuple(order))
+
+
+def _order_entry(
+    item: DTOrder,
+    requested: DTColumn,
+    declared: Mapping[str, Column],
+    type_of: Callable[[Column], ColumnType],
+    orderable: Callable[[Column], bool],
+) -> Order | None:
+    """One order entry, None for one that is skipped, or the mistake it reports. The server decides what can be
+    sorted by; the request's ``orderable`` only says whether an entry that cannot apply is a mistake or DataTables'
+    default order, which it sends whatever the column's ``orderable`` says.
+
+    Skipped: an entry on a column that only renders (no name, or ``function``, how DataTables sends a function
+    ``data``, unless the server declares that name), and one the request marks unorderable on a name the server did
+    not declare or declares unorderable."""
+    column = declared.get(requested.key)
+    if column is None:
+        nameless = not requested.name and requested.data in (None, '', 'function')
+        if nameless or not requested.orderable:
+            return None
+        raise mistake('datatables_name_not_declared', SORT_NOT_OFFERED)  # never by its name: the client's text
+    if not orderable(column):
+        if not requested.orderable:
+            return None
+        raise mistake(
+            'datatables_order_refused',
+            f'The table cannot be sorted by "{column.name}". Sort by another column.',
+            column,
+        )
+    return Order(column, type_of(column), item.dir == 'desc')
+
+
+def _filterable(column: Column) -> Column:
+    """``column``, which a column search or a criterion is on, unless the server declares it unsearchable."""
+    if not column.searchable:
+        raise mistake(
+            'datatables_search_refused',
+            f'The column "{column.name}" cannot be filtered. Remove the filter on it.',
+            column,
+        )
+    return column
 
 
 def _control_character(texts: Iterable[str]) -> bool:
@@ -324,7 +358,8 @@ def _criterion(
     hooked: Callable[[Column, str], Any],
 ) -> Criterion:
     """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
-    the condition reads; a name that is not declared; a condition the column's type does not take, reported without
+    the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
+    column's type does not take, reported without
     the value being read (so ``contains`` with ``abc`` on a number column is no number mistake); a value of the
     wrong format, or a date out of range, among the values there are; a value that is missing. A whole number outside
     the range of its SQL column is found only later, when the query is built, so within one criterion a missing
@@ -336,7 +371,7 @@ def _criterion(
     _no_control_character(texts, column)
     if column is None:  # never logged or answered by its name: that is the client's text
         raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
-    kind = type_of(column)
+    kind = type_of(_filterable(column))
     if condition not in _CONDITIONS[kind]:
         # The condition is one of the protocol's literals, never free text
         raise mistake(

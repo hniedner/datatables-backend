@@ -55,3 +55,5 @@ lists rows in the order they come back.
 - **SPEC-O8.2** [all] Order `price` asc then `active` desc → rows 4, 1, 3, 2: the first entry is primary.
 - **SPEC-O8.3** [all] Order `secret` asc marked `orderable: false` (skipped: unorderable on both sides), then `price`
   desc → rows 2, 3, 1, 4: `price` is the primary order.
+- **SPEC-O8.4** [all] Order `price` desc, then `price` asc → rows 2, 3, 1, 4, as `price` desc alone: a column is
+  ordered by its first entry. An order of 2,000 entries on `price` is answered the same.
