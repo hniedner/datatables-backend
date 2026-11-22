@@ -18,13 +18,13 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv audit --locked` checks every package in `uv.lock` against the OSV advisory database, as the `Audit` workflow
   does daily; its header in `.github/workflows/audit.yml` says how a finding is dealt with.
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
-  `uv run pytest tests/test_sql.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a database called `dtb`,
-  `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and `postgresql+psycopg_async://...`) and
-  `DTB_SQL_DIALECT` its dialect, and on PostgreSQL `PGTZ` and `TZ` naming zones far from UTC (CI uses
-  `Pacific/Kiritimati` and `America/Adak`), or the timezone test fails; or `uv run pytest
-  tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC Driver 18. The
-  SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test owns the index
-  `dtb-test-docs`: each run drops them first.
+  `uv run pytest tests/test_sql.py tests/test_sql_search.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a
+  database called `dtb`, `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and
+  `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its dialect, and on PostgreSQL `PGTZ` and `TZ` naming
+  zones far from UTC (CI uses `Pacific/Kiritimati` and `America/Adak`), or the timezone test fails; or
+  `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC
+  Driver 18. The SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test
+  owns the indices `dtb-test-docs` and `dtb-test-docs-phrases`: each run drops them first.
 
 The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names. Without
 it they fail closed ("could not check"), so set it before committing; never read or print the list. CI skips them, and
@@ -86,7 +86,7 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 
 - **The core is code-complete** (SQL, OpenSearch, FastAPI adapter). The GitHub repo `hniedner/datatables-backend`
   is public. Publishing still needs the user's explicit OK.
-- **PRD draft 2 is approved and merged** (`docs/PRD.md`, revision 30). The owner decides a requirement's first
+- **PRD draft 2 is approved and merged** (`docs/PRD.md`). The owner decides a requirement's first
   sentence and priority, goals, public names and error codes; the reviewer decides further clauses, reasons and
   section 5 in PR review. Engine facts go to `docs/databases.md`, measurements to `docs/decisions/`. The behaviour
   statements live in `spec/`; `uv run --frozen python scripts/trace_check.py` checks every requirement is traced to
