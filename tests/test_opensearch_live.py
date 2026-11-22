@@ -274,16 +274,13 @@ def test_searchbuilder_conditions(
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
 
 
-@pytest.mark.parametrize(
-    'body',
-    [criterion('seen', '=', '2026-08-02'), {'column_search': {'seen': {'multi_values': ['2026-08-02']}}}],
-    ids=['criterion', 'list'],
-)
-def test_a_day_on_a_date_time_field_is_its_utc_day(client: OpenSearch, body: dict[str, Any]):
-    """SPEC-F21.2 and SPEC-F21.5 on a date-time field, measured: OpenSearch holds an instant, and a day bounds it
-    in UTC (PRD-F21). e5 was written on the 1st at -05:00, which is the 2nd in UTC; d4 was written on the 2nd,
-    which is the 3rd in UTC, so a day read as written answers d4 instead."""
-    assert found(timed.fetch_sync(request('id', 'seen', **body), client)) == ['e5']
+def test_a_day_on_a_date_time_field_is_its_utc_day(client: OpenSearch):
+    """SPEC-F21.2 on a date-time field, measured: OpenSearch holds an instant, and a day bounds it in UTC
+    (PRD-F21). e5 was written on the 1st at -05:00, which is the 2nd in UTC; d4 was written on the 2nd, which is
+    the 3rd in UTC, so a day read as written answers d4 instead. An entry of a list sends the same range
+    (tests/test_opensearch.py)."""
+    params = request('id', 'seen', **criterion('seen', '=', '2026-08-02'))
+    assert found(timed.fetch_sync(params, client)) == ['e5']
 
 
 # -- exact matches in any case (PRD-F9) ---

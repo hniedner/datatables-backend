@@ -544,7 +544,8 @@ def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(s
     """SPEC-F42.2, SQL Server's proof, on the table as the database describes it: 2026-08-01 23:00 at -05:00 is
     2026-08-02 04:00 UTC, and the day text of a `DATETIMEOFFSET` is the day in the offset it was stored with. A
     reflected `DATETIMEOFFSET` is SQLAlchemy's SQL Server type, which does not say `timezone=True`, so this is also
-    the proof that such a column is known to carry a zone.
+    the proof that such a column is known to carry a zone. The `=` at the end guards the bounds a criterion sends
+    to such a column, which carry UTC now; it is no proof of the zone, since bounds without one are read as UTC.
 
     The row is added in this test's transaction only. SQLite and MySQL store no offset (PRD-F21), so there it is
     written as its UTC time, as such a column holds it, and the test only shows the search works. On PostgreSQL it
@@ -558,6 +559,7 @@ def test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day(s
     aware = SQLTable(reflected, [Column('id'), Column('seen_tz')])
     params = request('id', 'seen_tz', column_search={'seen_tz': {'value': '2026-08-02'}})
     assert ids(aware.fetch_sync(params, session)) == [6]
+    assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', '=', '2026-08-02')), session)) == [6]
 
 
 @pytest.mark.parametrize(

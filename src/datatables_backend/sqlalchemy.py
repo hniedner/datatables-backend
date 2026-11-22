@@ -530,13 +530,17 @@ def _utc_default(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
     return compiler.process(element.clauses, **kw)
 
 
+# Not measured: coverage is taken on the SQLite leg and this runs only on PostgreSQL, where
+# test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day runs it
 @compiles(_utc, 'postgresql')
-def _utc_postgresql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+def _utc_postgresql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
     return f"({compiler.process(element.clauses, **kw)} AT TIME ZONE 'UTC')"
 
 
+# Not measured: coverage is taken on the SQLite leg and this runs only on SQL Server, where
+# test_a_column_search_finds_a_value_stored_at_another_offset_by_its_utc_day runs it
 @compiles(_utc, 'mssql')
-def _utc_mssql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:
+def _utc_mssql(element: _utc, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
     return f"SWITCHOFFSET({compiler.process(element.clauses, **kw)}, '+00:00')"
 
 
