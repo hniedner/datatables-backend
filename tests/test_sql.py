@@ -2056,6 +2056,8 @@ def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session)
     the whole query, and one that rounded would find row 2, which holds 45 (a cast to INTEGER on PostgreSQL does)."""
     params = request(*ALL, column_search={'age': {'multi_values': ['31', '44.6']}})
     assert ids(table.fetch_sync(params, session)) == [1, 4]
+    alone = request(*ALL, column_search={'age': {'multi_values': ['44.6']}})  # nothing left to compare with
+    assert ids(table.fetch_sync(alone, session)) == []
 
 
 def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):

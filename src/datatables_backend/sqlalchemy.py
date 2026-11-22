@@ -33,6 +33,7 @@ from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import and_
 from sqlalchemy import cast as sql_cast
+from sqlalchemy import false
 from sqlalchemy import func
 from sqlalchemy import literal
 from sqlalchemy import not_
@@ -538,8 +539,12 @@ def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], dialect:
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
     elif node.type == 'number' and values:
         # Each number is bound as the column's own type. SQLAlchemy would type it by its Python type: the first
-        # entry of `1, 18446744073709551616` made every entry an INTEGER on PostgreSQL, and SQLite binds no Decimal
-        parts.append(column.in_([literal(value, column.type) for value in values]))
+        # entry of `1, 18446744073709551616` made every entry an INTEGER on PostgreSQL, and SQLite binds no Decimal.
+        # A number with a fraction equals no whole number, and a cast to INTEGER would round it to one, so on an
+        # integer column it is left out, as `=` leaves it to match nothing
+        whole = isinstance(_sql_type(column), Integer)
+        held = [value for value in values if not (whole and isinstance(value, float))]
+        parts.append(column.in_([literal(value, column.type) for value in held]) if held else false())
     elif values:
         if node.type == 'string' and _folds(node.column, column):
             parts.append(_lower(column).in_([func.lower(value) for value in values]))
