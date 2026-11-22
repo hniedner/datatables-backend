@@ -21,6 +21,7 @@ import logging
 import math
 import re
 from typing import Any
+from typing import Literal
 import unicodedata
 
 from .columns import Column
@@ -144,16 +145,22 @@ _YEAR_OR_MONTH = re.compile(r'(?P<year>[0-9]{4})(?:-(?P<month>[0-9]{2}))?')
 
 
 @dataclass(frozen=True)
-class DaySpan:
-    """The days a date "contains" names: ``start`` up to, not including, ``end`` (a year, a month or a day)."""
+class Capabilities:
+    """What a backend can do with a column, which the plan needs to know to decide for every backend alike.
 
-    start: date
-    end: date
+    ``type`` is how its filters are built. ``orderable`` says whether it can be sorted by, ``searched`` whether it
+    takes part in the global search, and ``value_search`` whether a column search on a number or date column is one
+    value to match (OpenSearch, which has no text of a number to search in) rather than text (SQL)."""
+
+    type: ColumnType
+    orderable: bool
+    searched: bool
+    value_search: bool
 
 
 @dataclass(frozen=True)
 class Contains:
-    """A substring search on one column. ``value`` is the user's text after the column's ``search_value`` hook."""
+    """A search for text in one column. ``value`` is the user's text after the column's ``search_value`` hook."""
 
     column: Column
     type: ColumnType
@@ -161,26 +168,81 @@ class Contains:
 
 
 @dataclass(frozen=True)
-class AnyOf:
-    """A multi-select: the column equals one of ``values``. On a boolean column they are ``bool``, and a plain column
-    search is one too, since a boolean has no text to contain anything. On a date column they are days, each matched
-    as ``=`` matches it, and None for an empty entry, which means empty (PRD-F21); ``on_day`` gives each as a
-    criterion."""
+class Equals:
+    """The column equals ``value``: text after the hook, a number (``int`` or ``float``) or a ``bool``."""
 
     column: Column
     type: ColumnType
-    values: tuple[Any, ...]
+    value: Any
 
 
 @dataclass(frozen=True)
-class Criterion:
-    """A SearchBuilder condition. ``values`` are parsed for the column's type: text (after the hook), numbers
-    (``int`` or ``float``), dates, one ``DaySpan`` for a date "contains", or a ``bool``."""
+class OneOf:
+    """A multi-select: the column equals one of ``values``, parsed as for ``Equals``; on a date column they are
+    days, each matched as ``=`` matches a day. ``empty`` says the list also holds an empty entry, which matches a
+    row without a value (PRD-F21)."""
 
     column: Column
     type: ColumnType
-    condition: Condition
     values: tuple[Any, ...]
+    empty: bool = False
+
+
+@dataclass(frozen=True)
+class Part:
+    """A string column holds ``value``: anywhere, or at its ``start`` or its ``end``."""
+
+    column: Column
+    type: ColumnType
+    value: Any
+    where: Literal['any', 'start', 'end']
+
+
+@dataclass(frozen=True)
+class Bound:
+    """One end of a ``Range``: a number, or a day."""
+
+    value: int | float | date
+    included: bool
+
+
+@dataclass(frozen=True)
+class Range:
+    """The column lies between ``lower`` and ``upper``; either may be open. The bounds of a number are included or
+    not as the condition says. A condition on a date is always whole days: from a day, included, up to a day, not
+    included, so ``=`` is the day and the one after it."""
+
+    column: Column
+    type: ColumnType
+    lower: Bound | None
+    upper: Bound | None
+
+
+@dataclass(frozen=True)
+class Empty:
+    """The column has no value (PRD-F26)."""
+
+    column: Column
+    type: ColumnType
+
+
+@dataclass(frozen=True)
+class Not:
+    """A negative condition: every row ``node`` does not match. Each backend compiles it in one place."""
+
+    node: Equals | Part | Range | Empty
+
+    @property
+    def column(self) -> Column:
+        return self.node.column
+
+    @property
+    def type(self) -> ColumnType:
+        return self.node.type
+
+
+#: One condition on one column
+type Filter = Contains | Equals | OneOf | Part | Range | Empty | Not
 
 
 @dataclass(frozen=True)
@@ -188,7 +250,7 @@ class Group:
     """A SearchBuilder group that holds at least one criterion."""
 
     logic: str
-    items: tuple[Criterion | Group, ...]
+    items: tuple[Filter | Group, ...]
 
 
 @dataclass(frozen=True)
@@ -203,8 +265,8 @@ class Plan:
     """What one request asks for. ``global_search`` is joined by OR; everything else by AND."""
 
     global_search: tuple[Contains, ...]
-    column_searches: tuple[Contains | AnyOf, ...]
-    search_builder: Criterion | Group | None
+    column_searches: tuple[Filter, ...]
+    search_builder: Filter | Group | None
     order: tuple[Order, ...]
 
     @property
@@ -216,12 +278,13 @@ class Plan:
 def plan(
     params: DTParams,
     columns: Sequence[Column],
-    type_of: Callable[[Column], ColumnType],
-    orderable: Callable[[Column], bool],
+    describe: Callable[[Column], Capabilities],
     mistakes: Mistakes,
 ) -> Plan:
-    """Check ``params`` against ``columns`` and return what it asks for. ``type_of`` and ``orderable`` give a
-    column's type and whether it can be sorted by where its declaration leaves that to the backend.
+    """Check ``params`` against ``columns`` and return what it asks for. ``describe`` says what the backend can do
+    with a column, so that a skip or a refusal is decided here, for every backend alike. Two refusals are left to a
+    backend, which alone knows what they need: SQL's of a number outside its column's range, and OpenSearch's of a
+    list of exact values on analysed text.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -242,7 +305,7 @@ def plan(
     order: list[Order] = []
     for item in params.order:
         with mistakes.part():
-            if (entry := _order_entry(item, params.columns[item.column], declared, type_of, orderable)) is None:
+            if (entry := _order_entry(item, params.columns[item.column], declared, describe)) is None:
                 continue  # skipped, without a word: DataTables sends its default order on every request
             # A field sorts by its first entry, also when two declared columns read it
             if all(entry.column.source != earlier.column.source for earlier in order):
@@ -262,14 +325,15 @@ def plan(
                 # A column the server did not declare takes no part, like one that only renders: refusing it would
                 # fail every search of a table that shows such a column
                 column = declared.get(requested.key) if requested.searchable else None
-                # Nor does a boolean column: "true" as search text is nothing a user reads in the cell
-                if column is not None and column.searchable and type_of(column) != 'boolean':
-                    found.append(Contains(column, type_of(column), hooked(column, params.search.value)))
+                # Nor does a column the backend cannot search for text: a boolean on every backend ("true" as search
+                # text is nothing a user reads in the cell), a number or a date on OpenSearch
+                if column is not None and column.searchable and (able := describe(column)).searched:
+                    found.append(Contains(column, able.type, hooked(column, params.search.value)))
             if not found:
                 raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
             global_search = found  # only once the whole search stands
 
-    column_searches: list[Contains | AnyOf] = []
+    column_searches: list[Filter] = []
     for requested in params.columns:
         search = requested.search
         if not (search.value or search.multi_values):
@@ -277,12 +341,12 @@ def plan(
         with mistakes.part():
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
             column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
-            column_searches.append(_column_search(search, column, type_of(column), hooked))
+            column_searches.append(_column_search(search, column, describe(column), hooked))
 
-    def node(item: SearchGroup | SearchCriterion) -> Criterion | Group | None:
+    def node(item: SearchGroup | SearchCriterion) -> Filter | Group | None:
         if isinstance(item, SearchCriterion):
             with mistakes.part():
-                return _criterion(item, declared, type_of, hooked)
+                return _criterion(item, declared, describe, hooked)
             return None  # a criterion with a mistake is left out, like an empty group
         built = [part for part in (node(child) for child in item.criteria) if part is not None]
         if not built:
@@ -297,8 +361,7 @@ def _order_entry(
     item: DTOrder,
     requested: DTColumn,
     declared: Mapping[str, Column],
-    type_of: Callable[[Column], ColumnType],
-    orderable: Callable[[Column], bool],
+    describe: Callable[[Column], Capabilities],
 ) -> Order | None:
     """One order entry, None for one that is skipped, or the mistake it reports. The server decides what can be
     sorted by; the request's ``orderable`` only says whether an entry that cannot apply is a mistake or DataTables'
@@ -313,7 +376,8 @@ def _order_entry(
         if nameless or not requested.orderable:
             return None
         raise mistake('datatables_name_not_declared', SORT_NOT_OFFERED)  # never by its name: the client's text
-    if not orderable(column):
+    able = describe(column)
+    if not able.orderable:
         if not requested.orderable:
             return None
         raise mistake(
@@ -321,7 +385,7 @@ def _order_entry(
             f'The table cannot be sorted by "{column.name}". Sort by another column.',
             column,
         )
-    return Order(column, type_of(column), item.dir == 'desc')
+    return Order(column, able.type, item.dir == 'desc')
 
 
 def _filterable(column: Column) -> Column:
@@ -355,9 +419,9 @@ def _no_control_character(texts: Iterable[str], column: Column | None) -> None:
 def _criterion(
     item: SearchCriterion,
     declared: Mapping[str, Column],
-    type_of: Callable[[Column], ColumnType],
+    describe: Callable[[Column], Capabilities],
     hooked: Callable[[Column, str], Any],
-) -> Criterion:
+) -> Filter:
     """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
     the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
     column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
@@ -371,7 +435,7 @@ def _criterion(
     _no_control_character(texts, column)
     if column is None:  # never logged or answered by its name: that is the client's text
         raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
-    kind = type_of(_filterable(column))
+    kind = describe(_filterable(column)).type
     if condition not in _CONDITIONS[kind]:
         # The condition is one of the protocol's literals, never free text
         raise mistake(
@@ -380,15 +444,15 @@ def _criterion(
             'Choose another condition.',
             column,
         )
-    values: tuple[Any, ...]
+    values: Sequence[Any]
     if kind == 'string':
-        values = tuple(hooked(column, text) for text in texts)
+        values = [hooked(column, text) for text in texts]
     elif kind == 'number':
-        values = tuple(parse_number(text, column, listed=needed == 2) for text in texts)
+        values = [parse_number(text, column, listed=needed == 2) for text in texts]
     elif kind == 'boolean':
-        values = tuple(parse_boolean(text, column) for text in texts)
+        values = [parse_boolean(text, column) for text in texts]
     elif condition in ('contains', '!contains'):
-        values = tuple(day_span(text, column) for text in texts)
+        values = [_day_span(text, column) for text in texts]
     else:
         values = parse_days(texts, column, listed=needed == 2)
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
@@ -397,7 +461,44 @@ def _criterion(
             f'The filter on "{column.name}" needs {"two values" if needed == 2 else "a value"}.',
             column,
         )
-    return Criterion(column, kind, condition, values)
+    positive = _positive(column, kind, condition, values)
+    return Not(positive) if condition.startswith('!') else positive
+
+
+def _positive(
+    column: Column, kind: ColumnType, condition: Condition, values: Sequence[Any]
+) -> Equals | Part | Range | Empty:
+    """What a condition matches, or for a negative one what it does not. A date is matched by whole days (PRD-F21):
+    each condition is the days from one, included, up to another, not included."""
+    if kind == 'date' and condition not in ('null', '!null'):
+        start: date | None
+        end: date | None
+        if condition in ('contains', '!contains'):
+            start, end = values[0]
+        else:
+            first, last = values[0], values[-1]
+            start = None if condition in ('<', '<=') else next_day(first) if condition == '>' else first
+            end = None if condition in ('>', '>=') else first if condition == '<' else next_day(last)
+        return Range(
+            column, kind, None if start is None else Bound(start, True), None if end is None else Bound(end, False)
+        )
+    match condition:
+        case 'null' | '!null':
+            return Empty(column, kind)
+        case '=' | '!=':
+            return Equals(column, kind, values[0])
+        case 'contains' | '!contains':
+            return Part(column, kind, values[0], 'any')
+        case 'starts' | '!starts':
+            return Part(column, kind, values[0], 'start')
+        case 'ends' | '!ends':
+            return Part(column, kind, values[0], 'end')
+        case 'between' | '!between':
+            return Range(column, kind, Bound(values[0], True), Bound(values[1], True))
+        case '<' | '<=':
+            return Range(column, kind, None, Bound(values[0], condition == '<='))
+        case '>' | '>=':
+            return Range(column, kind, Bound(values[0], condition == '>='), None)
 
 
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
@@ -501,22 +602,15 @@ def _written_day(value: str) -> date | None:
         return None
 
 
-def on_day(column: Column, day: date | None) -> Criterion:
-    """One entry of a list on a date column as the criterion that matches it: ``=`` for a day, "empty" for None."""
-    if day is None:
-        return Criterion(column, 'date', 'null', ())
-    return Criterion(column, 'date', '=', (day,))
-
-
 def next_day(day: date) -> date:
-    """The day after ``day``, which ``parse_days`` and ``day_span`` made sure exists."""
+    """The day after ``day``, which ``parse_days`` and ``_day_span`` made sure exists."""
     return day + timedelta(days=1)
 
 
-def day_span(text: str, column: Column) -> DaySpan:
-    """The days a date "contains" on ``column`` names: ``YYYY`` a year, ``YYYY-MM`` a month, both in ASCII digits,
-    or a day as ``_written_day`` reads it, so `contains` and `=` take the same day. A span that holds the last day
-    there is, is refused as that day is."""
+def _day_span(text: str, column: Column) -> tuple[date, date]:
+    """The days a date "contains" on ``column`` names, from the first up to, not including, the second: ``YYYY`` a
+    year, ``YYYY-MM`` a month, both in ASCII digits, or a day as ``_written_day`` reads it, so `contains` and `=`
+    take the same day. A span that holds the last day there is, is refused as that day is."""
     value = text.strip()
     form = _YEAR_OR_MONTH.fullmatch(value)
     try:
@@ -533,19 +627,20 @@ def day_span(text: str, column: Column) -> DaySpan:
     if form is None:
         if start == date.max:
             raise _last_day(column)
-        return DaySpan(start, next_day(start))
+        return start, next_day(start)
     last = start.month if form['month'] else 12
     if (start.year, last) == (date.max.year, 12):
         raise _last_day(column)
-    return DaySpan(start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1))
+    return start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1)
 
 
-def _column_search(
-    search: Search, column: Column, kind: ColumnType, hooked: Callable[[Column, str], Any]
-) -> Contains | AnyOf:
+def _column_search(search: Search, column: Column, able: Capabilities, hooked: Callable[[Column, str], Any]) -> Filter:
     """One column's search: a list of exact values (``multi_values`` or a multi-select regex), or text it contains.
-    On a boolean column a plain value is an exact value too. On a date column each entry of a list is a day, and
-    the column's ``search_value`` hook is not applied to it, as it is not applied to a criterion's date."""
+    On a boolean column a plain value is an exact value too, and so is one on a number or date column where the
+    backend has no text of it to search in: one number, or the span a year, a month or a day names. On a date
+    column each entry of a list is a day, and the column's ``search_value`` hook is not applied to it, as it is not
+    applied to a criterion's date."""
+    kind = able.type
     if search.multi_values and search.value:
         # Only a client that builds its own request sends both, so this one tells the integrator what to send
         raise mistake(
@@ -568,13 +663,23 @@ def _column_search(
         texts = alternatives
     elif kind == 'boolean':
         texts = [search.value]
+    elif able.value_search and kind == 'number':
+        return Equals(column, kind, parse_number(str(hooked(column, search.value)), column))
+    elif able.value_search and kind == 'date':
+        start, end = _day_span(str(hooked(column, search.value)), column)
+        return Range(column, kind, Bound(start, True), Bound(end, False))
     else:
         return Contains(column, kind, hooked(column, search.value))
     if kind == 'boolean':
-        return AnyOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
-    if kind == 'date':  # read here, so an unreadable entry is found before a backend builds anything
-        return AnyOf(column, kind, parse_days(texts, column, listed=True, blank_is_empty=True))
-    return AnyOf(column, kind, tuple(hooked(column, text) for text in texts))
+        return OneOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
+    if kind == 'date':  # an empty entry of the list is no day: it matches a row without a date
+        days = parse_days(texts, column, listed=True, blank_is_empty=True)
+        return OneOf(column, kind, tuple(day for day in days if day is not None), empty=None in days)
+    if kind == 'number':
+        return OneOf(
+            column, kind, tuple(parse_number(str(hooked(column, text)), column, listed=True) for text in texts)
+        )
+    return OneOf(column, kind, tuple(hooked(column, text) for text in texts))
 
 
 def _alternatives(pattern: str) -> list[str] | None:
