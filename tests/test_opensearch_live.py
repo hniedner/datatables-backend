@@ -613,3 +613,17 @@ def test_the_largest_request_the_bounds_allow(client: OpenSearch):
     columns += [IndexColumn(f'l{number}', field='label') for number in range(2)]
     response = SearchTable(INDEX, columns).fetch_sync(largest_search_request(), client)
     assert response.error is None
+
+
+BUDGET = 960  # PRD-C17: measured in docs/decisions/005
+
+
+def test_a_request_of_the_budget_is_answered(client: OpenSearch):
+    """SPEC-C17.1, PRD-C17, a guard: one word of the global search over BUDGET text+keyword columns, which reach one
+    field so that the index's own limit of fields is not what is tried (docs/databases.md). The widest `bool` holds
+    BUDGET clauses (tests/test_opensearch.py), within the default `indices.query.bool.max_clause_count` of 1,024. It
+    catches a budget set past what the server answers, on 3.10 and on 2.19."""
+    columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
+    names = [column.name for column in columns]
+    response = SearchTable(INDEX, columns).fetch_sync(request(*names, search={'value': 'x'}), client)
+    assert response.error is None
