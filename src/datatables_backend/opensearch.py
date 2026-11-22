@@ -351,6 +351,8 @@ def _string_contains(column: Column, value: str, *, parse: bool) -> dict[str, An
     text_match = (
         QueryParser().to_opensearch_query(value, column.source)
         if parse
+        else {'match_phrase': {column.source: value}}
+        if ' ' in value
         else {'match': {column.source: {'query': value}}}
     )
     if keyword is None:

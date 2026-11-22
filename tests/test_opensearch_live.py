@@ -220,6 +220,7 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
     ('column', 'value', 'expected'),
     [
         (2, 'granny apples', ['a1']),
+        (2, '"green tea"', ['b2']),  # SPEC-F4.1: a phrase; d4's body holds `green` only
         (2, 'green tea', ['b2']),  # SPEC-F2.1: both words; as one text it found d4's `green` too
         (1, 'CRUMBLE', ['d4']),
         (3, '12', ['a1', 'd4']),  # a number column matches exactly

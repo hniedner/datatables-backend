@@ -474,6 +474,8 @@ def _is_search(search: Search) -> bool:
     categorical value, or a list."""
     if not (search.value or search.multi_values):
         return False
+    if not (search.regex or search.multi_values) and len(search.value) > MAX_SEARCH_LENGTH:
+        return True  # blank or not, it is refused as too long (PRD-F14)
     return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
 
 
@@ -833,8 +835,12 @@ def _column_search(
             f'The filter on "{column.name}" holds both text and a list of values. Send only one of them.',
             column,
         )
+    searched_words: list[tuple[str, bool]] = []
     if not (search.multi_values or search.regex):
         _within_the_length(search.value, column)
+        searched_words = _words(search.value)
+        if not searched_words:  # no word is no search, on a column of any type (PRD-F6)
+            return None
     texts: Sequence[str]
     if search.multi_values:
         texts = search.multi_values
@@ -856,9 +862,6 @@ def _column_search(
         start, end = _day_span(str(hooked(column, search.value)), column)
         return Range(column, kind, Bound(start, True), Bound(end, False))
     else:
-        searched_words = _words(search.value)
-        if not searched_words:
-            return None
         if column.search_value:  # matched for the whole text, with no word cap, until PRD-D17 (#28)
             return Contains(column, kind, hooked(column, search.value))
         _within_the_words(searched_words, column)

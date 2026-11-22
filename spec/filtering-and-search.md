@@ -291,7 +291,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `recordsFiltered` 3; global search `red` → rows 1, 2, `recordsTotal` 3, `recordsFiltered` 2.
 - **SPEC-F32.1** [OS] Global search `17` → none; `2024` → none (the number and date columns are skipped).
 - **SPEC-F33.1** [OS] Column search on `price`: `7` → rows 1 (not 17).
-- **SPEC-F33.2** [OS] Column search on `price`: `7 8`, `!7`, `"7"` and `abc` → error_code `invalid_number`.
+- **SPEC-F33.2** [OS] Column search on `price`: `7 8`, `!78`, `"7"` and `abc` → error_code `invalid_number`.
 - **SPEC-F33.3** [all] Categorical `^(7|8)$` and `multi_values` `["7", "8"]` on `price` → rows 1, 3.
 - **SPEC-F33.4** [all] `multi_values` `["x"]` on `price` → error_code `invalid_number`; `[""]` → rows 4.
 - **SPEC-F33.5** [all] `multi_values` `[" ", "7"]` on `price` → rows 1, 4 (white space is an empty entry).

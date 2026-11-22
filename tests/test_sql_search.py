@@ -169,6 +169,14 @@ def test_text_that_reduces_to_no_word_finds_every_row(session: Session, kind: An
     assert found(session, ['x', None, '5"'], kind(text)) == [1, 2, 3]
 
 
+@pytest.mark.parametrize('name', ['active', 'age', 'born'])
+@pytest.mark.parametrize('text', ['"', '!x'])
+def test_text_with_no_word_adds_nothing_on_a_column_of_any_type(session: Session, name: str, text: str):
+    """SPEC-F6.2 for PRD-F6's "column of any type": a boolean column must not ask for `true` or `false` of it."""
+    typed = SQLTable(people, [Column('id'), Column(name)])
+    assert ids(typed.fetch_sync(request('id', name, **column(text, name)), session)) == [1, 2, 3, 4, 5]
+
+
 def test_a_search_with_no_word_asks_for_no_searchable_column(session: Session):
     """SPEC-F6.2 with PRD-F13: a refusal for lack of a column is for a search that has a word."""
     assert ids(unsearchable.fetch_sync(request('id', 'team', **glob('!x')), session)) == [1, 2, 3, 4, 5]
@@ -210,6 +218,8 @@ TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hook
         ('all', column(words(17), 'name'), '16'),
         ('all', glob('a' * 255), None),
         ('all', glob('a' * 256), '255'),
+        ('all', glob(' ' * 256), '255'),  # the raw text is measured, blank or not
+        ('all', column(' ' * 256, 'name'), '255'),
         ('all', glob(EMOJI * 255), None),  # code points, not UTF-16 units or bytes
         ('all', glob(EMOJI * 256), '255'),
         ('all', column('a' * 256, 'name'), '255'),

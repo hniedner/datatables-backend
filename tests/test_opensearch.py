@@ -273,7 +273,7 @@ def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
     ('column', 'value', 'code'),
     [
         ('pages', '7 8', 'invalid_number'),  # several words
-        ('pages', '!7', 'invalid_number'),
+        ('pages', '!78', 'invalid_number'),  # a negated word of two characters is a word
         ('created', '!2024', 'invalid_date'),
         ('created', '2024-13', 'invalid_date'),
     ],
@@ -378,6 +378,41 @@ def test_a_column_search_holds_its_words_and_negations_as_plain_text_clauses():
             }
         }
     ]
+
+
+def test_a_phrase_in_a_column_search_is_a_phrase_match_on_analysed_text():
+    """SPEC-F4.1: a phrase is one word inside one column. `match` would find text holding only one of its words."""
+    client, params = Client(), request(*NAMES)
+    params.columns[1].search.value = '"red apple"'
+    params.columns[2].search.value = '"granny smith" !"green tea"'
+    table.fetch_sync(params, client)
+    title, body = query(client)
+    assert title == {
+        'bool': {
+            'should': [
+                {'match_phrase': {'title': 'red apple'}},
+                {'wildcard': {'title.keyword': {'value': '*red apple*', 'case_insensitive': True}}},
+            ],
+            'minimum_should_match': 1,
+        }
+    }
+    assert body == {
+        'bool': {
+            'must': [
+                {'match_phrase': {'body': 'granny smith'}},
+                {'bool': {'must_not': [{'match_phrase': {'body': 'green tea'}}]}},
+            ]
+        }
+    }
+
+
+@pytest.mark.parametrize('column', ['pages', 'created'])
+def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(column: str):
+    """SPEC-F6.2: a number or a date is read as one value, so `"` would be refused as unreadable; it is no word."""
+    client, params = Client(), request(*NAMES)
+    params.columns[NAMES.index(column)].search.value = '"'
+    assert table.fetch_sync(params, client).error is None
+    assert query(client) == []
 
 
 def test_search_text_over_the_word_bound_is_refused_before_anything_is_sent():
