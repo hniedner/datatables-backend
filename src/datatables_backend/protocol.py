@@ -43,6 +43,7 @@ type ErrorCode = Literal[
     'invalid_character',
     'value_too_long',
     'too_many_words',
+    'request_too_large',
     'invalid_date',
     'invalid_number',
     'page_out_of_range',
@@ -213,9 +214,10 @@ class DTParams(_Model):
 class DTResponse(_Model):
     """The answer DataTables expects. ``error_code`` says which kind of failure ``error`` reports.
 
-    The library answers a mistake the user can fix with one of seven codes: ``invalid_character`` (a control
+    The library answers a mistake the user can fix with one of eight codes: ``invalid_character`` (a control
     character, which the user cannot see, in a search or filter value), ``value_too_long`` (a value of more than
-    255 code points), ``too_many_words`` (search text of more than 16 words), ``invalid_date`` (a date it cannot
+    255 code points), ``too_many_words`` (search text of more than 16 words), ``request_too_large`` (a request of
+    more than 960 conditions: words times columns searched, values and ranges), ``invalid_date`` (a date it cannot
     read, or the last day there is), ``invalid_number`` (a number it cannot read, or one outside the column's
     range), ``page_out_of_range``, and ``invalid_filter`` for any other. ``error`` says what is wrong and what to do
     about it. ``query_failed`` is only ever set by an app, through ``DTResponse.query_failed``.

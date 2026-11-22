@@ -181,12 +181,13 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   `error` text that says what is wrong and what to do about it. The text never quotes the input, and names a column only
   by its declared name. The codes are `invalid_character` for a control character such as a tab, which the user cannot
   see, `value_too_long` for a value of more than 255 characters (code points), `too_many_words` for search text of more
-  than 16 words, `invalid_number` or `invalid_date` for a value the column cannot read or hold, `page_out_of_range` for
+  than 16 words, `request_too_large` for a request of more than 960 conditions (a search word counts once for each
+  column searched, a selected value and a range once each; 16 words over 60 columns reach it), `invalid_number` or `invalid_date` for a value the column cannot read or hold, `page_out_of_range` for
   an OpenSearch page beyond the result window, and `invalid_filter` for any other (an unknown column, a value that is
   not a boolean, a condition the column's type does not take, a regex search). When a request holds several, a control
   character, a value that is too long, text of too many words and a structure over the bounds are answered first (the
   first the request holds in reading order: the global search, then the column searches, then the SearchBuilder tree),
-  then a number or date mistake, then any other, and the page last. The list of codes is closed: a code is added only in
+  and a request of too many conditions after them, then a number or date mistake, then any other, and the page last. The list of codes is closed: a code is added only in
   a release that says so, and a client that reads a code it does not know treats it as a refusal of the request and
   shows `error`. Every other failure raises, so the app decides how to report it; `DTResponse.query_failed(draw)` gives
   the usual shape.
@@ -197,8 +198,11 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
 - **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), `start` goes up to
   2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped. A request
   holds at most 256 values in one list and 512 in all its lists, at most 64 column searches, and a SearchBuilder tree
-  of at most 8 groups deep and 64 criteria, which keeps its parameters within every supported database's limit; one
-  beyond them is answered with `invalid_filter`. If you need more, please report it.
+  of at most 8 groups deep and 64 criteria; one beyond them is answered with `invalid_filter`. One budget of 960
+  conditions per request, the same on every backend, keeps every request within every supported database's limits (a
+  request over it is answered with `request_too_large` before anything is queried); a `base_filter` and expression
+  columns add to what the database receives and are not counted, see `docs/databases.md` for what that leaves. If you
+  need more, please report it.
 
 ## Development
 

@@ -45,3 +45,5 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `too_many_words`; `=` `2024-13-01` on `made` → `invalid_date`; `=` `abc` on `price` → `invalid_number`; with
   `max_result_window` 3, `start` 4, `length` 3 → `page_out_of_range`. The dependency takes no option that changes the
   status.
+- **SPEC-A11.3** [FastAPI] Through an app over an OpenSearch table of 61 text columns, a global search of 16 words
+  (976 conditions) → HTTP 200 with error_code `request_too_large` and the request's `draw`.

@@ -92,3 +92,21 @@ def test_a_user_error_of_each_code_answers_http_200_with_its_code(extra: dict[st
     response = client.post('/docs', json={'draw': 3, 'columns': columns, **extra})
     assert response.status_code == 200
     assert (response.json()['draw'], response.json()['error_code']) == (3, code)
+
+
+wide = SearchTable('docs', [Column(f't{number}', field='title') for number in range(61)])
+
+
+@app.post('/wide')
+def answer_wide(params: DataTablesParams) -> DTResponse:
+    return wide.fetch_sync(params, no_server)
+
+
+def test_a_request_over_the_budget_answers_http_200_with_its_code():
+    """SPEC-A11.3, PRD-A11, PRD-C17: 16 words over 61 columns are 976 conditions. It catches an adapter that answers
+    a code it does not know with another status, which no other case here shows: the code is new."""
+    columns = [{'data': f't{number}', 'searchable': True, 'orderable': True} for number in range(61)]
+    body = {'draw': 4, 'columns': columns, 'search': {'value': ' '.join(f'w{number}' for number in range(16))}}
+    response = client.post('/wide', json=body)
+    assert response.status_code == 200
+    assert (response.json()['draw'], response.json()['error_code']) == (4, 'request_too_large')
