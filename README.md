@@ -124,12 +124,15 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   MySQL `TIMESTAMP` gives the UTC day only when the session `time_zone` is `+00:00`. A multi-select or
   `multi_values` list on a date column matches each entry as `=` does, and an empty `multi_values` entry means the
   rows without a date.
-- **A day and a number have one spelling.** A number is an optional sign, digits with an optional decimal point and
-  an optional exponent, in ASCII: `7`, `-7.5`, `.5`, `1e3`. A day is `YYYY-MM-DD` in ASCII digits; a time of day may
-  follow it after a space or a `T` (`2024-03-05 10:00:00`, as SearchBuilder sends it for a formatted column) and is
-  ignored. White space around either is ignored. Anything else is `invalid_number` or `invalid_date`: digits of
-  another script, `1_000`, `20240305`. **A zone or an offset after the time is refused, not ignored** (`...T10:00Z`,
-  `...T10:00+02:00`): the instant it names can fall on another UTC day than the one written, so send the day.
+- **A day and a number have one spelling** where a value is read as one: in a SearchBuilder condition, in a
+  multi-select or `multi_values` list, and in an OpenSearch column search on a date or number column. (A plain text
+  search in SQL matches a date's or number's text and refuses nothing.) A number is an optional sign, digits with an
+  optional decimal point and an optional exponent, in ASCII: `7`, `-7.5`, `.5`, `1e3`. A day is `YYYY-MM-DD` in ASCII
+  digits; a time of day may follow it after a space or a `T` (`2024-03-05 10:00:00`, as SearchBuilder sends it for a
+  formatted column): it must exist and is then ignored. White space around either is ignored. Any other spelling is
+  `invalid_number` or `invalid_date`: digits of another script, `1_000`, `20240305`. **A zone or an offset after the
+  time is refused, not ignored** (`...T10:00Z`, `...T10:00+02:00`): the instant it names can fall on another UTC day
+  than the one written, so send the day.
 - **Text matches in any case.** A search, and an exact match on a string column (SearchBuilder's `=` and `!=`, a
   multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation. In
   SQL, which columns count as string columns for an exact match is narrower than it sounds: see "Only a plain

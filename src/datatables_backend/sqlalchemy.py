@@ -508,12 +508,13 @@ def _date_criterion(node: Criterion, column: ColumnElement[Any]) -> ColumnElemen
 
 def _on_days(search: AnyOf, column: ColumnElement[Any], in_list: _InList) -> ColumnElement[bool]:
     """A list on a date column: the row's day is one of its days, or the row has none where the list holds an empty
-    entry (PRD-F21). A column that holds no time compares its days as one IN list, so a long list stays one flat
-    condition and takes SQL Server's JSON path (PRD-C17). A column with a time needs the day's two bounds for each
-    entry, as ``=`` does: two parameters each, and no JSON path."""
+    entry (PRD-F21). A column whose SQL type is a ``Date`` holds a day and nothing else, so its days are one IN
+    list: a long list stays one flat condition and takes SQL Server's JSON path (PRD-C17). A column of any other
+    type, a datetime or one only declared a date, may hold a time, so each entry gets the day's two bounds, as ``=``
+    gives it: two parameters each, and no JSON path."""
     days = [day for day in search.values if day is not None]
     parts: list[ColumnElement[bool]] = []
-    if isinstance(_sql_type(column), DateTime):
+    if not isinstance(_sql_type(column), Date):
         parts += [_date_criterion(on_day(search.column, day), column) for day in days]
     elif days:
         parts.append(in_list(column, days, False))
@@ -533,7 +534,8 @@ def _aware(sql_type: Any) -> bool:
 class _utc(FunctionElement[datetime]):  # noqa: N801
     """A timezone-aware column as its UTC time, where the database would otherwise give its day in another zone
     (PRD-F42): PostgreSQL in the session's, SQL Server in the offset the value was stored with. Elsewhere it is the
-    column itself: MySQL and SQLite store no offset."""
+    column itself: SQLite and a MySQL ``DATETIME`` store no offset, and a MySQL ``TIMESTAMP`` is read through the
+    session's ``time_zone``, which the app sets (PRD-F21)."""
 
     type = DateTime()
     inherit_cache = True
@@ -605,10 +607,13 @@ def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> 
 
 # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
 def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
-    # A day travels as its ISO text, which SQL Server casts to the column's type as it casts every value
-    return _JsonValuesIn(
-        column, bindparam(None, json.dumps(list(values), default=date.isoformat), type_=String()), fold
-    )
+    def day_text(value: Any) -> str:
+        """A day travels as its ISO text, which SQL Server casts to the column's type as it casts every value."""
+        if type(value) is date:  # not a datetime, which would lose its time without a word
+            return value.isoformat()
+        raise TypeError(f'A value of type {type(value).__name__} cannot be sent in a JSON list')
+
+    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=day_text), type_=String()), fold)
 
 
 def _parameter_count(stmt: Select[Any]) -> int:

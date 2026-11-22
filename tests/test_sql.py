@@ -594,10 +594,20 @@ def test_the_day_text_of_a_column_without_a_zone_is_the_day_it_stores(session: S
 def test_a_list_on_a_date_column_matches_each_entry_as_a_day(
     session: Session, column: str, search: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F21.5, SPEC-F21.7: a categorical value or `multi_values` entry is a day and matches as `=` does."""
-    dated = SQLTable(people, [Column('id'), Column('born'), Column('seen'), Column('seen_tz')])
-    params = request('id', 'born', 'seen', 'seen_tz', column_search={column: search})
+    """SPEC-F21.5, SPEC-F21.7, and SPEC-F21.9's white space: a categorical value or `multi_values` entry is a day
+    and matches as `=` does."""
+    dated = SQLTable(people, [Column('id'), Column('born'), Column('seen_tz')])
+    params = request('id', 'born', 'seen_tz', column_search={column: search})
     assert ids(dated.fetch_sync(params, session)) == expected
+
+
+def test_a_list_on_a_column_only_declared_a_date_matches_by_day_too(session: Session):
+    """SPEC-F21.5 on an expression without a SQL type, declared a date, whose values hold a time: an entry is the
+    day `=` matches, not a value the column must equal."""
+    source = select(people.c.id, literal_column('seen').label('stamp')).subquery()
+    stamped = SQLTable(source, [Column('id'), Column('stamp', type='date')])
+    params = request('id', 'stamp', column_search={'stamp': {'multi_values': ['2026-07-15']}})
+    assert ids(stamped.fetch_sync(params, session)) == [1]
 
 
 # -- a boolean column ---
@@ -708,8 +718,9 @@ def test_a_column_search_on_a_boolean_column_matches_its_values_exactly(
 
 
 @pytest.mark.xfail(
-    reason='PRD-F20, PRD-F17: an empty multi_values entry does not mean empty yet on a boolean, string or number '
-    'column (SPEC-F44.3, issue #14); on a date column it does (SPEC-F21.7)',
+    reason='PRD-F20, PRD-F17: an empty multi_values entry means empty only on a date column yet (SPEC-F21.7). A '
+    'boolean column refuses it with invalid_filter, as here, and a number column with invalid_number (SPEC-F44.3, '
+    'issue #14)',
     strict=True,
     raises=AssertionError,
 )
@@ -836,10 +847,13 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
         ('age', '=', ['9' * 5000], 'invalid_number'),  # more digits than Python converts to an integer
         # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
         ('age', '=', ['3_1'], 'invalid_number'),
+        ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
         ('age', '=', ['31'.translate(FULL_WIDTH)], 'invalid_number'),
         # SPEC-F21.10: text after the day, another ISO form, an offset (its instant may be another UTC day), and a
         # time of day that does not exist
         ('born', '=', ['1980-07-15xyz'], 'invalid_date'),
+        ('born', '=', ['1980-07-15T10:00Z'], 'invalid_date'),
+        ('born', '=', ['  '], 'invalid_date'),  # only in a list is a blank value an empty entry
         ('born', '=', ['19800715'], 'invalid_date'),
         ('born', '=', ['1980-07-15T10:00+02:00'], 'invalid_date'),
         ('born', '=', ['1980-07-15 24:00'], 'invalid_date'),
@@ -979,7 +993,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         # SPEC-E4.27, and SPEC-F21.6's code: a list of days, and the two of a `between`, are not told to be one date
         (
             WORDED,
-            {'column_search': {'born': {'multi_values': ['1980-07-15', '05.03.2024']}}},
+            {'column_search': {'born': {'multi_values': ['1980-07-15', '2024-13-01']}}},  # a day that does not exist
             'invalid_date',
             'Each value in the filter on "born" must be a date that exists, written as YYYY-MM-DD, like 2024-03-05.',
         ),
@@ -1375,10 +1389,10 @@ def test_many_multi_select_values_on_a_number_column_still_run(session: Session)
 
 
 def test_many_days_on_a_date_column_still_run(session: Session):
-    """SPEC-F21.11, PRD-C17 for a list of days. A column that holds no time compares them as one list: as a range for each day,
+    """SPEC-F21.11, PRD-C17 for a list of days. A `Date` column compares them as one list: as a range for each day,
     3,000 of them nest deeper than SQLite's expression tree allows (1,000) and take 6,000 parameters on SQL Server
     (2,100). There the days travel as JSON and are cast to the column's `DATE`."""
-    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's day
+    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's
     params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
     assert ids(table.fetch_sync(params, session)) == [2]
 

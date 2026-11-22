@@ -11,9 +11,9 @@ Owner's decision of 2026-11-21:
 - A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and
   an optional exponent (`1e3`). White space around it is ignored. Any other spelling is `invalid_number`.
 - A day is written `YYYY-MM-DD` in ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or
-  `HH:MM:SS`, the seconds with an optional fraction). It must exist and is then ignored. White space around the value is ignored.
-  Any other spelling is `invalid_date`: a zone or an offset after the time among them, because the instant it names
-  can fall on another UTC day than the one written.
+  `HH:MM:SS`, the seconds with an optional fraction). It must exist and is then ignored. White space around the
+  value is ignored. Any other spelling is `invalid_date`: a zone or an offset after the time among them, because the
+  instant it names can fall on another UTC day than the one written.
 - A year and a year-month (PRD-F22) are written in ASCII digits, and a day there as anywhere.
 
 One stated spelling is answered alike on every backend. Before, the spellings were whatever Python's `int`, `float`
@@ -49,9 +49,10 @@ SvelteDT 1.0 sends no date value and parses no number or day from text (READ by 
 ## What changed
 
 RUN on 2026-11-21 through `parse_request` and `fetch_sync`, on SQLite and a recording OpenSearch client, with the
-library at `f463272` (before) and at `66a3fcf`, the commit that brought the rule (after). A categorical filter or
-`multi_values` list on a date column reads each entry as `=` does since `cf2b298`, so the rows for `=` hold for its
-entries.
+library at `f463272` (before) and at `66a3fcf`, the commit that brought the rule (after). The review's later commits
+changed the code around the readers, not what they accept: the same run after each of them gave the same "after"
+for every row. A categorical filter or `multi_values` list on a date column reads each entry as `=` does since
+`cf2b298`, so the rows for `=` hold for its entries.
 
 | Spelling | Before | After |
 | --- | --- | --- |
@@ -70,4 +71,5 @@ The 5,000 digits fail in Python, which by default converts at most 4,300 digits 
 
 A number is read in one function and a day in one (`parse_number` and `_written_day` in `_plan.py`), which every
 condition, list and column search goes through. Each of their patterns matches a text in one way only; on a text of a
-million characters that does not fit, each answers within 0.06 s (RUN on the development machine).
+million characters that does not fit, each answers within 0.06 s (RUN on 2026-11-21 on the development machine, with
+the patterns of `66a3fcf`, which the later commits did not change).
