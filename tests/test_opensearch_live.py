@@ -320,9 +320,9 @@ whole_label = SearchTable(
 def test_the_longest_search_text_is_answered_in_any_case(client: OpenSearch, condition: str):
     """PRD-F14, PRD-F9 (SPEC-F9.17): a measurement of the server, not of the `regexp` form: what it does with the
     longest text of ASCII letters a search may hold, as a case-insensitive `term` (`=`) and a case-insensitive
-    `wildcard` (`contains`; `starts` and `ends` are the same kind of query). OpenSearch's documentation warns that on 2.x
-    and earlier the cost of a case-insensitive query can grow exponentially with the number of characters. A row
-    turns red when a server refuses or fails such a query at 255 letters, or stops folding at that length."""
+    `wildcard` (`contains`; `starts` and `ends` are the same kind of query). OpenSearch's documentation warns that
+    on 2.x and earlier the cost of a case-insensitive query can grow exponentially with the number of characters. A
+    row turns red when a server refuses or fails such a query at 255 letters, or stops folding at that length."""
     params = request(*LABEL_NAMES, **criterion('label', condition, LONGEST.lower()))
     assert found(whole_label.fetch_sync(params, client)) == ['c3']
 

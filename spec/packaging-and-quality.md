@@ -35,3 +35,6 @@ fetch; the tag names where each is checked (see `README.md`).
   types, tests, install-isolation, minimum-versions, postgresql, mysql, sqlserver and opensearch, and it is the only
   required status check on `main`.
 - **SPEC-Q13.1** [review] The wheel's metadata `License-Expression` is `MIT` and the wheel ships `LICENSE`.
+- **SPEC-Q14.1** [CI opensearch] Each leg of the `opensearch` job runs `tests/test_opensearch_live.py` against its
+  server and fails unless the server reports the leg's version. [review] The legs are one 3.x release and one 2.19
+  release, each image pinned by digest, and `gate` needs the job.

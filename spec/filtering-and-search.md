@@ -65,13 +65,37 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   on `secret` with `alpha` → none; with `Alpha` → rows 1 (the library adds no folding on a hooked column, so its
   case-sensitive collation compares, PRD-D17).
 - **SPEC-F9.9** [OS container] Global search `äpfel` → rows 4: a whole word, which the analysed text of `name`
-  folds (OQ4 in `README.md`).
-- **SPEC-F9.10** [OS container] Global search `äpf` → none; `ÄPF` → rows 4: a substring is matched on the whole
-  string, where OpenSearch folds ASCII letters only (OQ4).
-- **SPEC-F9.11** [OS container] SearchBuilder `=` `äpfel` on `name` → none; `=` `ÄPFEL` → rows 4: an exact match
-  folds ASCII letters only on OpenSearch (OQ4).
+  folds (OQ4 in `README.md`). (On a server from 3.1 on the keyword field's regular expression finds the row as
+  well, so only a server before 3.1 proves the analysed fold: in CI the 2.19 leg.)
+- **SPEC-F9.10** [OS container] Global search `äpf` → rows 4 from OpenSearch 3.1 on, none on 3.0 and 2.19; `ÄPF` →
+  rows 4 on every version: a substring with a cased character outside ASCII is matched on the whole string by a
+  case-insensitive regular expression, which folds such a letter from 3.1 on (OQ4).
+- **SPEC-F9.11** [OS container] SearchBuilder `=` `äpfel` on `name` → rows 4 from OpenSearch 3.1 on, none on 3.0 and
+  2.19; `=` `ÄPFEL` → rows 4 on every version. Given one more row whose `name` is `bär`: `=` `BÄR` → that row from
+  3.1 on, none on 3.0 and 2.19 (OQ4).
 - **SPEC-F9.12** [SQLite, PostgreSQL] Given `colour` declared as the expression `upper(colour)`: with a string
   type, SearchBuilder `=` `rEd` → rows 1, 4; without a type, `=` `rEd` → none and `=` `RED` → rows 1, 4.
+- **SPEC-F9.13** [OS] A value with a character outside ASCII that has a case (a letter, a circled letter, a Roman
+  numeral), small or capital, first or not (`ä.b`, `b.ä`, `B.Ä`, a circled `ⓓ` alone), is sent as a `regexp` query
+  with `case_insensitive`: the whole value for `=`, open at both ends for `contains`, at its end for `starts`, at
+  its start for `ends`. A negated condition is the same query in a `must_not`: `!starts` `ä` is the `must_not` of
+  `ä.*`. Every character of the value that is neither alphanumeric, nor cased, nor whitespace, a fullwidth bracket
+  as well as `.`, is behind a backslash; a cased character that is no letter (the circled `ⓓ`) and whitespace (a
+  space, an ideographic space) are sent bare. Each value of a list gets its own query.
+- **SPEC-F9.14** [OS] A value outside ASCII without case (`日本.`) is sent as the `term` an ASCII value gets.
+- **SPEC-F9.15** [OS] With `ä` on a column declared `fold_case=False`: `=` is a plain `term`, and `ends` a `regexp`,
+  as on any column.
+- **SPEC-F9.16** [OS container] ASCII punctuation in a value beside a cased character outside ASCII is matched as
+  written: `=` with every ASCII character that is not a letter or a digit, line feed, carriage return and the space
+  included, finds only the row holding them; `=` with `@`, `\` or `~` between two letters finds only its row.
+- **SPEC-F9.17** [OS container] On each server of PRD-Q14: `=` and `contains` with 255 ASCII letters in another case
+  than stored → the row; `contains` with a value of 255 code points whose letter is outside ASCII → the row, for
+  one letter repeated 255 times, for a letter outside the BMP and 254 dots (a pattern of 514 UTF-16 units), and for
+  a letter outside the BMP and 254 characters outside the BMP that each get a backslash (768 units, the longest
+  pattern a value makes).
+- **SPEC-F9.18** [OS] A value longer than 255 code points is sent as the `term` or `wildcard` it would be without
+  its cased character outside ASCII: a letter outside the BMP and 254 dots, 255 code points, is a `regexp`; with 255
+  dots, 256 code points, a `term`.
 - **SPEC-F10.1** [SQLite, PostgreSQL with its default collation] Global search `apfel` → none: the library folds no
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,
