@@ -60,7 +60,7 @@ An unreadable PRD or specs directory is a usage error.
 - `[core]`: backend-independent; checks `parse_request` or a model alone.
 - `[FastAPI]`: through a FastAPI app using the library's dependency, with its `TestClient`, over the SQLite `items`
   fixture unless the statement names another backend.
-- `[CI job]`: checked by that CI job (`install-isolation`, `minimum-versions`, `tests`, `gate`).
+- `[CI job]`: checked by that CI job (`install-isolation`, `minimum-versions`, `tests`, `gate`, `opensearch`).
 - `[review]`: checked by reading the code, the CI configuration, the built wheel or the repository settings; no
   automated check names it yet.
 
@@ -141,12 +141,18 @@ value. "A row holding `w`" means a row with `w` in some searchable column.
 - **Declared key** (reviewer's decision, 2026-11-20): when a table declares a unique key, that key is the
   tie-breaker of PRD-O3, even when SQLAlchemy reports a primary key for the source, since PRD-O3 asks for a
   tie-breaker on a unique key and a join's reduced SQLAlchemy primary key need not be unique (O3.5).
-- **OQ4** (PRD-F9; measured on OpenSearch 3.9.0 and decided by the owner on 2026-11-21): non-ASCII case folding on
-  OpenSearch. A string `contains` on a `text+keyword` column is a `match` on the analysed text or a
-  `case_insensitive` wildcard on the keyword field, and an exact match is a `case_insensitive` term. The standard
-  analyser folds a whole word, non-ASCII letters included (F9.9); `case_insensitive` folds ASCII letters only, so
-  a substring (F9.10) and an exact match (F9.11) in another case do not find a non-ASCII letter. The library states
-  this and asks for no normalizer in the consumer's mapping.
+- **OQ4** (PRD-F9; measured on OpenSearch 2.19.7 and 3.0.0 to 3.10.0 and decided by the owner on 2026-11-21):
+  non-ASCII case folding on OpenSearch. A string `contains` on a `text+keyword` column is a `match` on the analysed
+  text or a case-insensitive query on the keyword field, and an exact match is a case-insensitive query on it. The
+  standard analyser folds a whole word, letters outside ASCII included (F9.9). `case_insensitive` folds ASCII
+  letters only on a `term` and a `wildcard` query, on every version; on a `regexp` query it folds letters outside
+  ASCII from 3.1.0 on (Lucene 10.2.1), and not on 3.0.0 (Lucene 10.1.0) or 2.19.7 (Lucene 9.12.3). So a value with
+  a cased character outside ASCII is sent as a `regexp` (F9.13), and a substring (F9.10) and an exact match (F9.11)
+  in another case find it from 3.1 on. A value without such a letter stays a `term` or a `wildcard` and folds ASCII
+  letters only: `k` does not find the Kelvin sign, `s` not the long s. A substring or an exact match with `i` does
+  not find a dotted capital `İ` in any of the three forms; the analysed word does. The library asks for no
+  normalizer in the consumer's mapping. The measurements are in
+  `docs/decisions/001-opensearch-case-folding-beyond-ascii.md`.
 
 ## Open questions
 

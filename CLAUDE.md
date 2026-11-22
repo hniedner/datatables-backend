@@ -75,16 +75,22 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
   xfail naming the expected exception, citing the PRD requirement; nothing is skipped silently. Before relying on a
   new test, check that it fails when the behaviour is broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
+- Design test: maximum functionality with maximum portability and no surprise for the adopter. An exception is
+  stated in the PRD and the README with its reason. Nothing asks the consumer to change a schema or a mapping.
+- Optimise for the current release of OpenSearch and SQLAlchemy, with a bias to the most used one. An older
+  supported release may need configuration or pay a stated performance or feature penalty.
+- A decision that is not a requirement, and the measurements behind a requirement, go to
+  `docs/decisions/NNN-title.md`; the PRD's rationale stays short and points there.
 
-## Status (2026-11-20)
+## Status (2026-11-21)
 
 - **Milestone 1 (v0.1) is code-complete.** The GitHub repo `hniedner/datatables-backend` is public. Publishing still
   needs the user's explicit OK.
 - **PRD draft 2 is approved and merged** (`docs/PRD.md`). The roadmap lives in the GitHub milestones v0.1, v0.2, v0.3
   and v1.0 and their issues.
 - **Done:** CI (lint, types, tests on 3.12–3.15, minimum versions, install isolation) and container tests on
-  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.9.
-- **Next (v0.2):** specs with a trace check (#9), then the PRD v2 changes test-first (#10–#14) and the acceptance
-  suite (#15, sources in `CLAUDE.local.md`).
+  PostgreSQL 18, MySQL 8.4, SQL Server 2022 and OpenSearch 3.10 and 2.19.
+- **Next (v0.2):** the PRD's layout (#39), then the PRD v2 changes test-first (#12, #14, #26–#29) and the
+  acceptance suite (#15, sources in `CLAUDE.local.md`).
 - **Retired predecessor:** `sqlalchemy2-datatables` 0.7.0 is on PyPI. Its GitHub repo is archived, and its README
   and its `DeprecationWarning` link to this repo.

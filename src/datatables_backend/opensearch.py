@@ -255,15 +255,60 @@ def _folds(column: Column) -> bool:
     return column.fold_case and column.search_value is None
 
 
+# Code points: PRD-F14's longest search text, and the longest value measured as a regexp on every server.
+MAX_REGEXP_VALUE = 255
+
+
+def _cased(char: str) -> bool:
+    """Whether ``char`` has another case, as this interpreter's Unicode tables have it."""
+    return char.lower() != char or char.upper() != char
+
+
+def _cased_beyond_ascii(value: str) -> bool:
+    """Whether ``value`` holds a character outside ASCII that has another case. On a ``term`` and a ``wildcard``
+    query OpenSearch's ``case_insensitive`` folds ASCII letters only; on a ``regexp`` query it folds such a
+    character too, from OpenSearch 3.1 on (PRD-F9). Every other value keeps the query it had, by decision: a
+    ``regexp`` would fold a few characters more for it (the Kelvin sign to ``k``)."""
+    return any(not char.isascii() and _cased(char) for char in value)
+
+
+def _regexp(field: str, before: str, value: str, after: str) -> dict[str, Any] | None:
+    """The whole string is ``value`` in any case, between the patterns ``before`` and ``after``; None for a value
+    that keeps its ``term`` or ``wildcard`` query: one without a cased character outside ASCII, and one longer than
+    255 code points, beyond which no value was measured as a ``regexp`` on every server (a pattern is then at most
+    768 UTF-16 units, under the 1,000 of the default ``index.max_regex_length``).
+
+    A character of ``value`` gets a backslash, also when it is outside ASCII: the server runs the pattern through
+    the field's normalizer, which can make an ASCII bracket of a fullwidth one. The backslash makes it that
+    character and nothing else, except where a normalizer turns one character into several (PRD section 5 states
+    that limit). Three kinds of character get none:
+
+    - an alphanumeric one, which is no operator of the syntax;
+    - a cased one that is not alphanumeric (a circled letter): a normalizer can make it an ASCII letter, and a
+      backslash before a letter is a class of the syntax or an error;
+    - whitespace, which is no operator either: a normalizer that trims takes a space at the end of the pattern and
+      would leave its backslash there, which is an error."""
+    if len(value) > MAX_REGEXP_VALUE or not _cased_beyond_ascii(value):
+        return None
+    literal = ''.join(char if char.isalnum() or _cased(char) or char.isspace() else f'\\{char}' for char in value)
+    return {'regexp': {field: {'value': f'{before}{literal}{after}', 'case_insensitive': True}}}
+
+
 def _term(column: Column, field: str, value: str) -> dict[str, Any]:
     """The whole string equals ``value``, in any case where the column folds."""
-    if _folds(column):
-        return {'term': {field: {'value': value, 'case_insensitive': True}}}
-    return {'term': {field: value}}
+    if not _folds(column):
+        return {'term': {field: value}}
+    return _regexp(field, '', value, '') or {'term': {field: {'value': value, 'case_insensitive': True}}}
 
 
-def _wildcard(field: str, pattern: str) -> dict[str, Any]:
-    return {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+def _part(column: Column, field: str, value: str, *, start: bool = False, end: bool = False) -> dict[str, Any]:
+    """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A hooked column's
+    value is what its hook made of the text, and is sent as before."""
+    pattern = f'{"" if start else "*"}{escape_wildcard(value)}{"" if end else "*"}'
+    wildcard = {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+    if column.search_value is not None:
+        return wildcard
+    return _regexp(field, '' if start else '.*', value, '' if end else '.*') or wildcard
 
 
 def escape_wildcard(value: str) -> str:
@@ -281,7 +326,7 @@ def _string_contains(column: Column, value: str, *, parse: bool) -> dict[str, An
     )
     if keyword is None:
         return text_match
-    wildcard = _wildcard(keyword, f'*{escape_wildcard(value)}*')
+    wildcard = _part(column, keyword, value)
     if _kind(column) == 'keyword':
         return wildcard
     return _any([text_match, wildcard])
@@ -402,9 +447,8 @@ def _string_criterion(node: Criterion) -> dict[str, Any]:
         case 'contains':
             clause = _string_contains(column, value, parse=True)
         case 'starts' | 'ends' if keyword is not None:
-            escaped = escape_wildcard(value)
-            pattern = f'{escaped}*' if node.condition.lstrip('!') == 'starts' else f'*{escaped}'
-            clause = _wildcard(keyword, pattern)
+            starts = node.condition.lstrip('!') == 'starts'
+            clause = _part(column, keyword, value, start=starts, end=not starts)
         case _:  # starts or ends on analysed text: it has no whole string to anchor on, so it reads as contains
             clause = _string_contains(column, value, parse=True)
     return _not(clause) if negated else clause

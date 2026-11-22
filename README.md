@@ -63,6 +63,40 @@ reports = SearchTable(
 response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 ```
 
+**Servers.** The library is built for OpenSearch 3.1 and later. CI runs the live tests on 3.10.0 and on 2.19.7, and
+they pass on both. OpenSearch before 2.19 is not tested. 3.0 and 2.19 differ in two ways:
+
+- **3.0 and 2.19 fold ASCII letters only** in a substring search and an exact match (see "Text matches in any
+  case").
+- **2.19 is slow on case-insensitive exact matches of long values.** A list of 256 values of 255 ASCII letters took
+  2.5 and 3.8 s in two runs on 2.19.7, and 0.16 and 0.20 s on 3.10.0; one such value, 14 ms and 1 ms. The answers
+  are the same on both. A column declared `fold_case=False` sends its exact matches plain, 2 ms for the same list,
+  and gives up the fold for them: they then match case as the field's mapping decides.
+
+**What the fold of letters outside ASCII costs.** A value with such a letter is a regular-expression query. On
+3.10.0 a list of 256 such values of 255 letters took 0.37 s, where the same list as term queries, which do not fold
+those letters, took 0.06 s; a global search of 16 such words took 166 ms, against 111 ms as wildcards. On 2.19.7 the
+list took 2.8 s as regular expressions and 2.7 s as terms. (All figures: 512 MB of heap, about 2,000 documents on
+one shard, the least of 5 runs: the cost of the query, not of a large index.)
+
+**On every version**, a substring search is a wildcard or regular-expression query, and so is an exact match whose
+value has a cased character outside ASCII (on a column that folds, up to 255 code points): the cluster must allow
+them (`search.allow_expensive_queries`, on by default), and `index.max_regex_length` (1,000 by default, counted in
+UTF-16 units) must not be set under a regular expression's length, which is up to 768. A cluster that refuses the
+query raises, as any server failure does. These limits hold on every version, 3.0 and 2.19 included:
+
+- A value without a cased character outside ASCII folds ASCII letters only: `k` does not find the Kelvin sign, `s`
+  not the long s. A substring or an exact match with `i` does not find a dotted capital `İ`.
+- A value longer than 255 code points folds ASCII letters only.
+- **A normalizer that rewrites a character into punctuation.** On a keyword field with such a normalizer
+  (`asciifolding` does it to `⒜`, `⑴`, `⁇`), a value that holds a cased character outside ASCII and such a
+  character can fail, miss its own row or match other rows. A `lowercase` normalizer is not affected.
+- **A normalizer that trims.** On a keyword field with a `trim` normalizer, a search text with a cased character
+  outside ASCII and a space at its start or end finds fewer rows than the same text without the space: the space is
+  kept where the search is open (`contains`, a global or column search, `starts` with a space at the end, `ends`
+  with one at the start). `Müller ` with the space finds only values that hold `Müller ` followed by more text. An
+  exact match, and the anchored end of `starts` and `ends`, are trimmed as the field is.
+
 ## FastAPI
 
 ```python
@@ -86,8 +120,10 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
   multi-select, a `multi_values` list), ignores case on every backend, also under a case-sensitive collation. In
   SQL, which columns count as string columns for an exact match is narrower than it sounds: see "Only a plain
   string column is folded" below. **Two exceptions, for letters outside ASCII:** SQLite folds ASCII letters only, and
-  so does OpenSearch for a substring and for an exact match (`äpf` and `=` `äpfel` do not find `ÄPFEL`; the whole
-  word `äpfel` does, on an analysed field). The library asks for no change to a schema or mapping to do more.
+  so does OpenSearch before 3.1 for a substring and for an exact match (`äpf` and `=` `äpfel` find `ÄPFEL` from
+  OpenSearch 3.1 on, not on 3.0 or 2.19; the whole word `äpfel` finds it on every version, on an analysed field).
+  Some values fold ASCII letters only on every OpenSearch version: see "On every version" in the OpenSearch
+  section. The library asks for no change to a schema or mapping to do more.
 - **An exact match can be sent plain.** It folds case by default, which a plain index on the column cannot serve:
   declare an indexed column with `fold_case=False`, and its exact matches are sent plain and follow the column's
   collation or the field's mapping. A column with a `search_value` hook is compared that way too.

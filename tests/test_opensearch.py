@@ -382,6 +382,96 @@ def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfo
     ]
 
 
+@pytest.mark.parametrize(
+    ('condition', 'value', 'pattern'),
+    [
+        ('contains', 'ä.b', '.*ä\\.b.*'),
+        ('starts', 'b.ä', 'b\\.ä.*'),  # the letter is not the first character
+        ('ends', 'B.Ä', '.*B\\.Ä'),  # nor a small one
+        ('=', f'ä{chr(0xFF08)}', f'ä\\{chr(0xFF08)}'),  # a fullwidth bracket, which a normalizer can make a `(`
+        ('=', chr(0x24D3), chr(0x24D3)),  # a circled d, cased and no letter: a normalizer can make it `d`, and `\d`
+        # Whitespace, here a space and an ideographic space: a normalizer that trims would leave a backslash at the
+        # end of the pattern
+        ('=', f'ä {chr(0x3000)}', f'ä {chr(0x3000)}'),
+    ],
+)
+def test_a_value_with_a_cased_letter_outside_ascii_is_a_regexp_in_any_case(condition: str, value: str, pattern: str):
+    """PRD-F9 (SPEC-F9.13): `case_insensitive` folds such a letter on a `regexp` query only. Every character of the
+    value that is neither alphanumeric, nor cased, nor whitespace gets a backslash, and the pattern is open where
+    the condition is."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', condition, value)), client)
+    assert query(client) == [{'regexp': {'id': {'value': pattern, 'case_insensitive': True}}}]
+
+
+def test_a_negated_starts_is_anchored_at_the_start():
+    """SPEC-F9.13: `!starts` is the query of `starts` in a `must_not`, open at its end and not at its start."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', '!starts', 'ä')), client)
+    assert query(client) == [{'bool': {'must_not': [{'regexp': {'id': {'value': 'ä.*', 'case_insensitive': True}}}]}}]
+
+
+def test_each_value_of_a_list_gets_the_query_its_letters_ask_for():
+    """SPEC-F9.13: a list is one query for each value, a `regexp` for the value with a cased letter outside ASCII."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={'id': {'multi_values': ['ä', 'b']}}), client)
+    (clause,) = query(client)
+    assert clause['bool']['should'] == [
+        {'regexp': {'id': {'value': 'ä', 'case_insensitive': True}}},
+        {'term': {'id': {'value': 'b', 'case_insensitive': True}}},
+    ]
+
+
+def test_a_value_longer_than_a_search_text_may_be_keeps_its_query():
+    """SPEC-F9.18: a value of up to 255 code points, the longest a search text may be (PRD-F14) and the longest
+    measured as a `regexp` on every server, is one; a longer value is the `term` it was before. The letter here is
+    outside the BMP and the rest are dots, each of which gets a backslash: the length is the value's, in code
+    points, not the pattern's."""
+    deseret, client = chr(0x10400), Client()
+    for dots in (254, 255):
+        table.fetch_sync(request(*NAMES, **criterion('id', '=', deseret + '.' * dots)), client)
+    fits, too_long = (search['query']['bool']['must'][1] for search in client.searches)
+    assert fits == {'regexp': {'id': {'value': deseret + '\\.' * 254, 'case_insensitive': True}}}
+    assert too_long == {'term': {'id': {'value': deseret + '.' * 255, 'case_insensitive': True}}}
+
+
+def test_a_value_outside_ascii_without_case_keeps_its_query():
+    """SPEC-F9.14: a script without case has nothing to fold, so the value is sent as before."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('id', '=', '日本.')), client)
+    assert query(client) == [{'term': {'id': {'value': '日本.', 'case_insensitive': True}}}]
+
+
+@pytest.mark.parametrize(
+    ('unfolded', 'condition', 'clause'),
+    [
+        (Column('secret', fold_case=False), '=', {'term': {'secret.keyword': 'ä'}}),  # PRD-D21: exact matches only
+        (
+            Column('secret', fold_case=False),  # its searches fold as on any column
+            'ends',
+            {'regexp': {'secret.keyword': {'value': '.*ä', 'case_insensitive': True}}},
+        ),
+        (
+            # Today's result, until issue #28: PRD-D18 asks for this condition to be refused on a hooked column,
+            # which is not met yet. Every search of a hooked column changes with #28, so no other path stands in.
+            Column('secret', search_value=str.upper),
+            'starts',
+            {'wildcard': {'secret.keyword': {'value': 'Ä*', 'case_insensitive': True}}},
+        ),
+    ],
+)
+def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
+    unfolded: Column, condition: str, clause: dict[str, Any]
+):
+    """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
+    as before, and a search on it folds. A hooked column's search is sent as it was before the `regexp` form: the
+    row pins that, not the search itself, which PRD-D18 does away with."""
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    client = Client()
+    plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)
+    assert client.searches[-1]['query']['bool']['must'] == [clause]
+
+
 # -- SearchBuilder ---
 
 

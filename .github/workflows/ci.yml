@@ -472,12 +472,26 @@ jobs:
           EOF
       - run: uv run --frozen pytest tests/test_sql.py
 
-  # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL).
+  # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL), once on
+  # each server line the library is tested on. Docker runs the digest and ignores the tag beside it, so the two move
+  # together. These tracked places name a version a leg runs: docs/PRD.md (PRD-F9, PRD-Q14),
+  # docs/decisions/001-opensearch-case-folding-beyond-ascii.md, spec/README.md (OQ4), tests/test_opensearch_live.py,
+  # README.md and CLAUDE.md. Check them when a leg's version changes: several record a measurement on that version,
+  # which holds for another one only once it is measured again.
   opensearch:
+    name: opensearch (${{ matrix.version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '3.10.0'
+            image: opensearchproject/opensearch:3.10.0@sha256:02d6d6e40c820ae08233b60540aa5d3d9364d64e2dc724e38d6c8c794879b2a0
+          - version: '2.19.7'
+            image: opensearchproject/opensearch:2.19.7@sha256:d89333b6bd4a13b9a95aef7f373c0a6e73440f59bc0d8d1460f9b347289ed0ef
     services:
       opensearch:
-        image: opensearchproject/opensearch:3.9.0@sha256:3bf4fe26aeb9f7b03c0ebcb1302bb24e855ee6b89fd926d26a71a83ef6f7e076
+        image: ${{ matrix.image }}
         env:
           discovery.type: single-node
           DISABLE_SECURITY_PLUGIN: 'true'
@@ -487,6 +501,7 @@ jobs:
     env:
       DTB_OPENSEARCH_URL: http://localhost:9200
       DTB_REQUIRE_OPENSEARCH: '1'  # without the URL the module fails instead of skipping every test
+      DTB_OPENSEARCH_VERSION: ${{ matrix.version }}  # a test fails unless the server reports this version
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -502,7 +517,8 @@ jobs:
             sleep 2
           done
           exit 1
-      - run: uv run --frozen pytest tests/test_opensearch_live.py
+      # -v: the log names each test and its outcome on this leg's server.
+      - run: uv run --frozen pytest -v tests/test_opensearch_live.py
 
   # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
   # if every needed job (every matrix leg included) succeeded.
