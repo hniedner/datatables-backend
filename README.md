@@ -188,7 +188,10 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   request's own when that could be read. The FastAPI dependency answers it with 422 and
   `{"detail": {"message": ..., "draw": ...}}`.
 - **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), `start` goes up to
-  2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped.
+  2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped. A request
+  holds at most 256 values in one list and 512 in all its lists, at most 64 column searches, and a SearchBuilder tree
+  of at most 8 groups deep and 64 criteria, which keeps its parameters within every supported database's limit; one
+  beyond them is answered with `invalid_filter`. If you need more, please report it.
 
 ## Development
 

@@ -184,6 +184,30 @@ def criterion(column: str, condition: str, *values: str) -> dict[str, Any]:
     }
 
 
+def leaf(column: str) -> dict[str, Any]:
+    return {'condition': '=', 'origData': column, 'value': ['Ann']}
+
+
+def nested(depth: int, column: str) -> dict[str, Any]:
+    """A SearchBuilder tree ``depth`` groups deep, the root counted as 1, AND and OR alternating. Each group holds a
+    criterion beside the next group, so the plan cannot collapse it: this is the shape that raised `RecursionError`
+    at 200 groups before PRD-F38's bounds."""
+    tree: dict[str, Any] = {'logic': 'AND', 'criteria': [leaf(column)]}
+    for level in range(depth - 1):
+        tree = {'logic': 'OR' if level % 2 == 0 else 'AND', 'criteria': [leaf(column), tree]}
+    return tree
+
+
+def flat(count: int, column: str) -> dict[str, Any]:
+    """A SearchBuilder tree of one group holding ``count`` criteria."""
+    return {'logic': 'AND', 'criteria': [leaf(column) for _ in range(count)]}
+
+
+def exact_values(count: int, first: str) -> list[str]:
+    """``count`` values, ``first`` among them and the rest matching nothing."""
+    return [first, *(f'v{number}' for number in range(count - 1))]
+
+
 BRACKETED = [
     ('draw', '4'),
     ('start', '0'),

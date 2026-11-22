@@ -57,6 +57,9 @@ from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import checked_database
 from .conftest import criterion
+from .conftest import exact_values
+from .conftest import flat
+from .conftest import nested
 from .conftest import people
 from .conftest import request
 
@@ -645,41 +648,6 @@ def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sen
 def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, cased: SQLTable):
     params = request(*CASED, column_search={'secret': {'value': 'alpha'}})
     assert ids(cased.fetch_sync(params, session)) == []
-
-
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-def test_a_list_sent_as_json_ignores_case_too(session: Session, cased: SQLTable):
-    values = [f'n{index}' for index in range(3000)] + ['rEd']
-    params = request(*CASED, column_search={'kind': {'multi_values': values}})
-    assert ids(cased.fetch_sync(params, session)) == [1, 4]
-
-
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-@pytest.mark.parametrize(
-    ('column', 'value', 'expected'),
-    [
-        ('plain', 'rEd', []),
-        ('plain', 'RED', [4]),
-        ('wrapped', 'RED', [4]),  # the collation is declared on the type a `TypeDecorator` wraps
-        # 32 characters on a CHAR(32): a cast to a bare CHAR would cut the value to 30. The list is sent as the
-        # client wrote it, so the stored form is what matches here
-        ('ref', uuid.UUID(ref(1)).hex, [1]),
-    ],
-)
-def test_a_list_sent_as_json_on_a_column_without_the_fold_follows_its_collation(
-    session: Session, cased: SQLTable, column: str, value: str, expected: list[int]
-):
-    """The JSON list casts each value to text without a length or a collation; the column's own collation,
-    case-sensitive here, still compares."""
-    values = [f'n{index}' for index in range(3000)] + [value]
-    params = request(*CASED, column_search={column: {'multi_values': values}})
-    assert ids(cased.fetch_sync(params, session)) == expected
 
 
 def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: SQLTable):
@@ -1549,12 +1517,56 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'The filter on "name" holds more values than its condition takes. Remove the filter and set it again.',
         ),
+        # PRD-F38 (SPEC-E4.31 to E4.35): each bound names itself, and a list on a name that is not declared is not
+        # named
+        (
+            WORDED,
+            {'searchBuilder': nested(9, 'name')},
+            'invalid_filter',
+            'The search builder nests more than 8 groups. Nest at most 8 groups.',
+        ),
+        (
+            WORDED,
+            {'searchBuilder': flat(65, 'name')},
+            'invalid_filter',
+            'The search builder holds more than 64 criteria. Use at most 64 criteria.',
+        ),
+        (
+            WORDED,
+            {'column_search': {'name': {'multi_values': exact_values(257, 'Ann')}}},
+            'invalid_filter',
+            'The filter on "name" holds more than 256 values. Select at most 256 values.',
+        ),
+        (
+            UNDECLARED,
+            {'column_search': {'extra': {'multi_values': exact_values(257, 'Ann')}}},
+            'invalid_filter',
+            'A column filter holds more than 256 values. Select at most 256 values.',
+        ),
+        (
+            WORDED,
+            {
+                'column_search': {
+                    'name': {'multi_values': exact_values(256, 'Ann')},
+                    'team': {'multi_values': exact_values(256, 'red')},
+                    'age': {'multi_values': ['31']},
+                }
+            },
+            'invalid_filter',
+            'The filters hold more than 512 values in all. Remove some values.',
+        ),
+        (
+            ('name',) * 65,
+            {'column_search': {'name': {'value': 'Ann'}}},
+            'invalid_filter',
+            'The request searches more than 64 columns. Clear some column searches.',
+        ),
     ],
 )
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22 and SPEC-E4.25 to SPEC-E4.28: each mistake has a text of its own, which names the
+    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
     condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
     else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
@@ -1687,6 +1699,13 @@ def test_a_whole_number_too_large_for_a_float_is_refused_with_the_digits_it_may_
     assert refused(response, 'invalid_number') == 'The filter on "ratio" needs a number of at most 308 digits.'
 
 
+def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
+    """SPEC-F25.7: a list entry is sent to a decimal column as a single value is. SQLite binds no `Decimal` and
+    raised `ProgrammingError` for the entry; it compares a `Numeric` as a float, so it gets the nearest float."""
+    params = request(*WIDE, column_search={'exact': {'multi_values': ['1', str(TWO_64)]}})
+    assert ids(wide(session).fetch_sync(params, session)) == [1]
+
+
 def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
     """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself. A negative number is
     outside it on every database; the largest value is found on MySQL, the only database that stores it."""
@@ -1694,18 +1713,6 @@ def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
     refused(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', '-1')), session), 'invalid_number')
     if session.get_bind().dialect.name == 'mysql':
         assert ids(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', str(TWO_64 - 1))), session)) == [1]
-
-
-@pytest.mark.skipif(
-    os.environ.get('DTB_SQL_DIALECT') != 'mssql',
-    reason='only SQL Server sends a long list as JSON (PRD-C17); on the other databases this repeats the list above',
-)
-def test_a_list_sent_as_json_holds_a_whole_number_outside_64_bits_as_its_digits(session: Session):
-    """SPEC-F25.5 on the JSON path: a decimal is no JSON number, so it travels as its digits, which SQL Server casts
-    to the column's type as it casts every value."""
-    values = [str(number) for number in range(3000)] + [str(TWO_64)]
-    params = request(*WIDE, column_search={'exact': {'multi_values': values}})
-    assert ids(wide(session).fetch_sync(params, session)) == [1]
 
 
 @pytest.mark.parametrize(
@@ -1825,13 +1832,21 @@ def test_a_control_character_comes_before_a_number_mistake_and_is_the_one_logged
     assert logged(caplog) == ['datatables_control_character']
 
 
-@pytest.mark.xfail(
-    reason='PRD-F14, PRD-F38: search text of more than 16 words and a SearchBuilder tree more than 8 groups deep are '
-    'not refused yet, so the date or number mistake beside them is the one answered (SPEC-E3.2, issue #27)',
-    strict=True,
-    raises=AssertionError,
+@pytest.mark.parametrize(
+    'bound',
+    [
+        pytest.param(
+            'words',
+            marks=pytest.mark.xfail(
+                reason='PRD-F14: search text of more than 16 words is not refused yet, so the date mistake beside it '
+                'is the one answered (SPEC-E3.2, issue #69)',
+                strict=True,
+                raises=AssertionError,
+            ),
+        ),
+        'depth',
+    ],
 )
-@pytest.mark.parametrize('bound', ['words', 'depth'])
 def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(session: Session, bound: str):
     """SPEC-E3.2: step 1 before step 2."""
     if bound == 'words':
@@ -1842,6 +1857,91 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
             tree = {'criteria': [tree]}
         params = request(*ALL, searchBuilder=tree)
     refused(table.fetch_sync(params, session))
+
+
+@pytest.mark.parametrize(
+    ('tree', 'answered'),
+    [
+        (nested(8, 'name'), True),
+        (nested(9, 'name'), False),
+        (flat(64, 'name'), True),
+        (flat(65, 'name'), False),
+        # The 65 are counted over the whole tree, and 9 groups side by side are not 9 deep
+        ({'logic': 'AND', 'criteria': [flat(32, 'name'), flat(33, 'name')]}, False),
+        ({'logic': 'AND', 'criteria': [flat(1, 'name') for _ in range(9)]}, True),
+    ],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'criteria-65-in-two-groups', 'nine-groups-side-by-side'],
+)
+def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(
+    session: Session, tree: dict[str, Any], *, answered: bool
+):
+    """SPEC-F38.1, SPEC-F38.2: the bound is where the statements say, in each direction; a tree past it is
+    refused as `invalid_filter` and never reaches the database."""
+    response = table.fetch_sync(request(*ALL, searchBuilder=tree), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize('form', ['multi_values', 'regex'])
+@pytest.mark.parametrize(('count', 'answered'), [(256, True), (257, False)])
+def test_a_list_of_exact_values_is_answered_up_to_256_values(
+    session: Session, form: str, count: int, *, answered: bool
+):
+    """SPEC-F38.3: a `multi_values` list and a categorical regex are each bounded at 256 values."""
+    values = exact_values(count, 'Ann')
+    search = {'multi_values': values} if form == 'multi_values' else {'value': f'^({"|".join(values)})$', 'regex': True}
+    response = table.fetch_sync(request(*ALL, column_search={'name': search}), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize(('last', 'answered'), [(0, True), (1, False)], ids=['512', '513'])
+def test_the_lists_of_one_request_together_hold_at_most_512_values(session: Session, last: int, *, answered: bool):
+    """SPEC-F38.5: two lists of 256 (each within SPEC-F38.3) are answered; one more value in a third list is not.
+    A bound on each list alone lets a request send 64 lists of 256."""
+    lists = {
+        'name': exact_values(256, 'Ann'),
+        'email': exact_values(256, 'ann@example.org'),
+        'team': ['red'] if last else [],
+    }
+    searches = {name: {'multi_values': values} for name, values in lists.items() if values}
+    response = table.fetch_sync(request(*ALL, column_search=searches), session)
+    if answered:
+        assert ids(response) == [1]
+    else:
+        refused(response)
+
+
+@pytest.mark.parametrize(
+    ('searched', 'unsearched', 'answered'),
+    [(64, 0, True), (65, 0, False), (64, 50, True)],
+    ids=['64', '65', '64-among-columns-with-no-search'],
+)
+def test_a_request_searches_at_most_64_columns(session: Session, searched: int, unsearched: int, *, answered: bool):
+    """SPEC-F38.6: the count is of column searches that hold a value, so the column `name` named 65 times is 65, and
+    a column without a search, or with one of spaces only (PRD-F6), is none."""
+    names = ('name',) * searched + ('id', 'team') * unsearched
+    searches = {'name': {'value': 'Ann'}, 'team': {'value': '  '}}
+    response = table.fetch_sync(request(*names, column_search=searches), session)
+    if answered:
+        assert ids(response) == [1, 3]
+    else:
+        refused(response)
+
+
+def test_the_global_search_covers_a_column_once_however_often_the_request_names_it(session: Session):
+    """SPEC-F38.7: the column `name` named 1,000 times asks the database the same as when it is named once."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    table.fetch_sync(request('name', search={'value': 'ann'}), session)
+    once, statements[:] = statements[:], []
+    table.fetch_sync(request(*('name',) * 1000, search={'value': 'ann'}), session)
+    same = statements == once  # not asserted inline: a failure would print a thousand terms
+    assert same
 
 
 @pytest.mark.parametrize(
@@ -1915,53 +2015,54 @@ def test_row_values_come_back_as_the_database_gives_them(session: Session):
     ]
 
 
-def test_many_multi_select_values_still_run(session: Session):
-    """Thousands of values bind normally on SQLite; SQL Server would get one JSON parameter instead."""
-    params = request(*ALL)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob']
-    assert ids(table.fetch_sync(params, session)) == [2]
-
-
-def test_a_boolean_filter_beside_many_multi_select_values_still_runs(session: Session):
-    """Past SQL Server's parameter limit every list of the statement travels as JSON, the boolean column's too, and
-    both of its values are cast to the column's type there (`BIT`). Row 5 is false but not among the names, and row
-    3 is among them but NULL."""
-    params = request(*FLAGGED)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Ann', 'Bob', 'anna_100%', 'Cy']
-    params.columns[2].search.value = '^(true|0)$'
-    params.columns[2].search.regex = True
-    assert ids(flagged.fetch_sync(params, session)) == [1, 2, 4]
-
-
-def test_many_multi_select_values_on_a_number_column_still_run(session: Session):
-    """Past SQL Server's 2,100-parameter limit the values travel as JSON and are cast to the column's number type."""
-    params = request(*ALL)
-    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31']
-    assert ids(table.fetch_sync(params, session)) == [1, 4]
-
-
-def test_many_days_on_a_date_column_still_run(session: Session):
-    """SPEC-F21.11, PRD-C17 for a list of days. A `Date` column compares them as one list: as a range for each day,
-    3,000 of them nest deeper than SQLite's expression tree allows (1,000) and take 6,000 parameters on SQL Server
-    (2,100). There the days travel as JSON and are cast to the column's `DATE`."""
-    days = [(date(2010, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(3000)]  # nobody's
-    params = request(*ALL, column_search={'born': {'multi_values': [*days, '1980-07-15']}})
-    assert ids(table.fetch_sync(params, session)) == [2]
+def test_the_largest_request_the_bounds_allow_is_answered(session: Session):
+    """SPEC-C17.1, PRD-C17: 512 values in two lists of days on columns with a time (two parameters each), 64
+    criteria of two values each and a global search, in one request. On SQL Server its parameters stay under the
+    2,100 it refuses past; a bound that grew would turn this red there."""
+    largest = SQLTable(people, [Column('id'), Column('name'), Column('seen'), Column('seen_tz')])
+    days = [(date(2000, 1, 1) + timedelta(days=offset)).isoformat() for offset in range(255)] + ['2026-07-15']
+    between = {'condition': 'between', 'origData': 'id', 'value': ['0', '99']}
+    params = request(
+        'id',
+        'name',
+        'seen',
+        'seen_tz',
+        column_search={'seen': {'multi_values': days}, 'seen_tz': {'multi_values': days}},
+        search={'value': 'ann'},
+        searchBuilder={'logic': 'AND', 'criteria': [between] * 64},
+    )
+    assert ids(largest.fetch_sync(params, session)) == [1]
 
 
 def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session):
-    """31.5 on a SMALLINT column: SQL Server's JSON path casts with TRY_CAST, so it matches nothing, as a bound
-    parameter does on every other database (a plain conversion would fail the whole query)."""
-    params = request(*ALL)
-    params.columns[3].search.multi_values = [str(age) for age in range(1000, 3100)] + ['31', '31.5']
+    """44.6 on a SMALLINT column matches nothing, as it does on every database: a conversion that failed would fail
+    the whole query, and one that rounded would find row 2, which holds 45 (a cast to INTEGER on PostgreSQL does)."""
+    params = request(*ALL, column_search={'age': {'multi_values': ['31', '44.6']}})
     assert ids(table.fetch_sync(params, session)) == [1, 4]
+    alone = request(*ALL, column_search={'age': {'multi_values': ['44.6']}})  # nothing left to compare with
+    assert ids(table.fetch_sync(alone, session)) == []
+
+
+@pytest.mark.skipif(
+    os.environ.get('DTB_SQL_DIALECT', 'sqlite') != 'sqlite',
+    reason='a column declared a number that the database holds as a Boolean or a Date is refused by PostgreSQL (boolean '
+    '= integer) and SQL Server (date and int) themselves, for a list as for `=` (the leg runs showed it): a wrong '
+    'declaration, not a request. SQLite compares across types',
+)
+@pytest.mark.parametrize('column', ['active', 'born'], ids=['boolean', 'date'])
+def test_a_number_list_on_a_column_of_another_type_matches_nothing(session: Session, column: str):
+    """SPEC-F25.8: a column declared a number that SQLite holds as a Boolean or a Date compares a list entry as `=`
+    does, so `2` finds no row. Binding it as the column's type made the type refuse it: `StatementError` on the
+    Boolean, `TypeError` on the Date."""
+    odd = SQLTable(people, [Column('id'), Column(column, type='number')])
+    params = request('id', column, column_search={column: {'multi_values': ['2']}})
+    assert ids(odd.fetch_sync(params, session)) == []
 
 
 def test_a_value_longer_than_the_string_column_is_not_cut_to_match(session: Session):
     """`name` is VARCHAR(50). Cut to 50 characters this value is 'Bob' and spaces, which SQL Server compares equal to
-    'Bob'; SQL Server's JSON path must cast to an unbounded text type."""
-    params = request(*ALL)
-    params.columns[1].search.multi_values = [f'n{index}' for index in range(3000)] + ['Bob' + ' ' * 47 + 'x']
+    'Bob'."""
+    params = request(*ALL, column_search={'name': {'multi_values': ['Bob' + ' ' * 47 + 'x']}})
     assert ids(table.fetch_sync(params, session)) == []
 
 

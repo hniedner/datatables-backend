@@ -15,12 +15,10 @@ from datetime import UTC
 from datetime import date
 from datetime import datetime
 from decimal import Decimal
-import json
 import logging
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import assert_never
-from typing import cast
 
 from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
@@ -33,12 +31,11 @@ from sqlalchemy import Numeric
 from sqlalchemy import SmallInteger
 from sqlalchemy import String
 from sqlalchemy import Table
-from sqlalchemy import Unicode
-from sqlalchemy import UnicodeText
 from sqlalchemy import and_
-from sqlalchemy import bindparam
 from sqlalchemy import cast as sql_cast
+from sqlalchemy import false
 from sqlalchemy import func
+from sqlalchemy import literal
 from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy import select
@@ -46,17 +43,14 @@ from sqlalchemy import type_coerce
 from sqlalchemy.dialects.mssql import DATETIMEOFFSET
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Dialect
-from sqlalchemy.exc import CompileError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import FromClause
 from sqlalchemy.sql import Select
+from sqlalchemy.sql import operators
 from sqlalchemy.sql.compiler import SQLCompiler
-from sqlalchemy.sql.compiler import StrSQLCompiler
-from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
-from sqlalchemy.sql.visitors import InternalTraversal
 from sqlalchemy.types import NullType
 from sqlalchemy.types import TypeDecorator
 
@@ -95,8 +89,6 @@ log = logging.getLogger('datatables_backend')
 type AsyncSource = AsyncSession | AsyncConnection
 type SyncSource = Session | Connection
 
-#: SQL Server refuses a statement with more than 2,100 bound parameters; this leaves room for the driver and paging
-MSSQL_PARAMETER_BUDGET = 2000
 #: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
 MSSQL_DECIMAL_DIGITS = 38
 #: Every whole number of this many digits is below the largest float (about 1.8e308), so it has a nearest one
@@ -183,16 +175,13 @@ class SQLTable:
         if self.base_filter is not None:
             total = total.where(self.base_filter)
 
-        def build(in_list: _InList) -> Select[Any]:
-            stmt = select(*(self._sql(column).label(column.name) for column in self.columns)).select_from(self.source)
-            if self.base_filter is not None:
-                stmt = stmt.where(self.base_filter)
-            return stmt.where(*self._conditions(request, in_list, dialect, mistakes))
-
-        filtered_rows = build(_bound_in)
-        mistakes.raise_first()  # from here on the request holds no mistake, so a second build finds none either
-        if dialect.name == 'mssql' and _parameter_count(filtered_rows, dialect) > MSSQL_PARAMETER_BUDGET:
-            filtered_rows = build(_json_in)
+        filtered_rows = select(*(self._sql(column).label(column.name) for column in self.columns)).select_from(
+            self.source
+        )
+        if self.base_filter is not None:
+            filtered_rows = filtered_rows.where(self.base_filter)
+        filtered_rows = filtered_rows.where(*self._conditions(request, dialect, mistakes))
+        mistakes.raise_first()
         filtered = select(func.count()).select_from(filtered_rows.subquery())
         page = self._ordered(filtered_rows, request, dialect).offset(params.start).limit(params.length)
         return _Statements(total, filtered, page)
@@ -218,9 +207,7 @@ class SQLTable:
             return 'date'
         return 'string'
 
-    def _conditions(
-        self, request: Plan, in_list: _InList, dialect: Dialect, mistakes: Mistakes
-    ) -> list[ColumnElement[bool]]:
+    def _conditions(self, request: Plan, dialect: Dialect, mistakes: Mistakes) -> list[ColumnElement[bool]]:
         """The request's conditions. One that holds a mistake (a number the column cannot hold) is left out, and
         the mistake kept in ``mistakes``."""
         conditions: list[ColumnElement[bool]] = []
@@ -230,7 +217,7 @@ class SQLTable:
         if request.search_builder is not None:
             filters.append(request.search_builder)
         for node in filters:
-            built = self._compile(node, in_list, dialect, mistakes)
+            built = self._compile(node, dialect, mistakes)
             if built is not None:
                 conditions.append(built)
         return conditions
@@ -243,22 +230,20 @@ class SQLTable:
             return _day_text(_utc(column) if _aware(sql_type) else column).ilike(pattern, escape='\\')
         return _text(column).ilike(pattern, escape='\\')
 
-    def _compile(
-        self, node: Filter | Group, in_list: _InList, dialect: Dialect, mistakes: Mistakes
-    ) -> ColumnElement[bool] | None:
+    def _compile(self, node: Filter | Group, dialect: Dialect, mistakes: Mistakes) -> ColumnElement[bool] | None:
         """The condition of one node of the plan; None for a condition that holds a mistake (a number outside the
         column's range, kept in ``mistakes``) and for a group left with none."""
         if isinstance(node, Group):
-            built = (self._compile(item, in_list, dialect, mistakes) for item in node.items)
+            built = (self._compile(item, dialect, mistakes) for item in node.items)
             parts = [part for part in built if part is not None]
             if not parts:
                 return None
             return and_(*parts) if node.logic == 'AND' else or_(*parts)
         with mistakes.part():
-            return self._condition(node, in_list, dialect)
+            return self._condition(node, dialect)
         return None
 
-    def _condition(self, node: Filter, in_list: _InList, dialect: Dialect) -> ColumnElement[bool]:
+    def _condition(self, node: Filter, dialect: Dialect) -> ColumnElement[bool]:
         """One condition on one column.
 
         Raises:
@@ -271,7 +256,7 @@ class SQLTable:
 
         match node:
             case Not():
-                negated = not_(self._condition(node.node, in_list, dialect))
+                negated = not_(self._condition(node.node, dialect))
                 # NULL is not equal to, does not contain and is not between anything, so it passes every negative
                 # condition (PRD-F37), where SQL's own NOT would drop it. "Not empty" is the one it does not pass
                 return negated if isinstance(node.node, Empty) else or_(negated, column.is_(None))
@@ -302,7 +287,7 @@ class SQLTable:
                     values = [number(value, listed=True) for value in values]
                 elif node.type == 'boolean':
                     values = [_boolean(column, value) for value in values]
-                return _one_of(node, column, values, in_list, dialect)
+                return _one_of(node, column, values, dialect)
             case _:
                 assert_never(node)
 
@@ -543,20 +528,30 @@ def _days(column: ColumnElement[Any], lower: Bound | None, upper: Bound | None) 
     return _between(column, lower, upper, at)
 
 
-def _one_of(
-    node: OneOf, column: ColumnElement[Any], values: list[Any], in_list: _InList, dialect: Dialect
-) -> ColumnElement[bool]:
+def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], dialect: Dialect) -> ColumnElement[bool]:
     """A list of exact values (``values``: the node's, as the column compares them), and the rows without a value
     where the list holds an empty entry (PRD-F17, PRD-F20), which is never one of the values sent. On a date
     column the row's day is one of the list's days. A column whose SQL type is a ``Date`` holds a day and nothing
-    else, so its days are one IN list: a long list stays one flat condition and takes SQL Server's JSON path
-    (PRD-C17). A column of any other type, a datetime or one only declared a date, may hold a time, so each entry
-    gets the day's two bounds, as ``=`` gives it: two parameters each, and no JSON path."""
+    else, so its days are one IN list. A column of any other type, a datetime or one only declared a date, may hold
+    a time, so each entry gets the day's two bounds, as ``=`` gives it: two parameters each, which PRD-F38's
+    bounds keep within every database's limit (PRD-C17)."""
     parts: list[ColumnElement[bool]] = []
     if node.type == 'date' and not isinstance(_sql_type(column), Date):
         parts += [_days(column, Bound(day, True), Bound(next_day(day), False)) for day in node.values]
+    elif node.type == 'number' and values:
+        # Each number is typed as `=` types it, by the column's own rules for a value of its Python type.
+        # SQLAlchemy would type a whole list by its first entry: `1, 18446744073709551616` made both an INTEGER on
+        # PostgreSQL, and SQLite binds no Decimal. A number with a fraction equals no whole number, and a cast to
+        # INTEGER would round it to one, so on an integer column it is left out, as `=` leaves it to match nothing
+        whole = isinstance(_sql_type(column), Integer)
+        held = [value for value in values if not (whole and isinstance(value, float))]
+        typed = [literal(value, column.type.coerce_compared_value(operators.eq, value)) for value in held]
+        parts.append(column.in_(typed) if held else false())
     elif values:
-        parts.append(in_list(column, values, node.type == 'string' and _folds(node.column, column)))
+        if node.type == 'string' and _folds(node.column, column):
+            parts.append(_lower(column).in_([func.lower(value) for value in values]))
+        else:
+            parts.append(column.in_(values))
     if node.empty:
         parts.append(_empty(column, node.type, dialect))
     return or_(*parts)
@@ -630,93 +625,3 @@ def _day_text_postgresql(element: _day_text, compiler: SQLCompiler, **kw: Any) -
 @compiles(_day_text, 'mariadb')
 def _day_text_mysql(element: _day_text, compiler: SQLCompiler, **kw: Any) -> str:
     return f"DATE_FORMAT({compiler.process(element.clauses, **kw)}, '%%Y-%%m-%%d')"
-
-
-# -- IN lists within SQL Server's parameter limit ---------------------------------------------------------------------
-
-#: An IN list over a column and its values; the flag says whether both sides are compared in lower case.
-type _InList = Callable[[ColumnElement[Any], Sequence[Any], bool], ColumnElement[bool]]
-
-
-def _bound_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:
-    if fold:
-        return _lower(column).in_([func.lower(value) for value in values])
-    return column.in_(values)
-
-
-# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
-def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> ColumnElement[bool]:  # pragma: no cover
-    def as_text(value: Any) -> str:
-        """A day travels as its ISO text and a ``Decimal`` as its digits; SQL Server casts either to the column's
-        type, as it casts every value."""
-        if type(value) is date:  # not a datetime, which would lose its time without a word
-            return value.isoformat()
-        if isinstance(value, Decimal):
-            return str(value)
-        raise TypeError(f'A value of type {type(value).__name__} cannot be sent in a JSON list')
-
-    return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=as_text), type_=String()), fold)
-
-
-# Not measured: it runs only on SQL Server; every test of the sqlserver leg runs it
-def _parameter_count(stmt: Select[Any], dialect: Dialect) -> int:  # pragma: no cover
-    """The parameters ``stmt`` sends on the session's database, each value of a list counted. It is compiled by the
-    session's own dialect, which alone knows every construct of its database and how this server is sent a
-    statement. A driver that names its parameters (pymssql) cannot be counted by position, so a dialect of the same
-    kind that numbers them stands in; it knows no server version and may count a few too many, never too few."""
-    positional = dialect
-    if not dialect.positional:
-        kind: Any = type(dialect)  # the `Dialect` interface declares no constructor; SQL Server's dialects take this
-        positional = kind(paramstyle='qmark')
-    compiled = cast(SQLCompiler, stmt.compile(dialect=positional, compile_kwargs={'render_postcompile': True}))
-    return len(compiled.positiontup or ())
-
-
-class _JsonValuesIn(ColumnElement[bool]):
-    """``column IN (<the values of one bound JSON array>)``, expanded by SQL Server (``OPENJSON``), the only database
-    it is built for. With ``fold``, the column and each value are compared in lower case."""
-
-    __visit_name__ = 'json_values_in'
-    inherit_cache = True
-    _traverse_internals = [  # noqa: RUF012
-        ('column', InternalTraversal.dp_clauseelement),
-        ('parameter', InternalTraversal.dp_clauseelement),
-        ('fold', InternalTraversal.dp_boolean),
-    ]
-    type = Boolean()
-    _is_implicitly_boolean = True
-
-    # Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
-    def __init__(  # pragma: no cover
-        self, column: ColumnElement[Any], parameter: BindParameter[str], fold: bool
-    ) -> None:
-        self.column = column
-        self.parameter = parameter
-        self.fold = fold
-
-
-@compiles(_JsonValuesIn)
-def _compile_json_in(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:
-    column, parameter = compiler.process(element.column, **kw), compiler.process(element.parameter, **kw)
-    if isinstance(compiler, StrSQLCompiler):  # str(statement): a placeholder, never the values
-        return f'{column} IN (<values of the JSON array {parameter}>)'
-    raise CompileError(f'A filter on this many values is not supported on {compiler.dialect.name}')
-
-
-# Not measured: it runs only on SQL Server; the sqlserver leg's long-list tests run it
-@compiles(_JsonValuesIn, 'mssql')
-def _compile_json_in_mssql(element: _JsonValuesIn, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
-    column_type = _sql_type(element.column)  # the type a TypeDecorator wraps says what kind of value is stored
-    if isinstance(column_type, String):
-        # No length, so a longer value is not cut down to one that matches (a bare CHAR is 30 characters), and no
-        # COLLATE, which a cast does not take: the column's own collation still compares
-        cast_as = 'NVARCHAR(max)' if isinstance(column_type, Unicode | UnicodeText) else 'VARCHAR(max)'
-    else:
-        cast_as = compiler.dialect.type_compiler_instance.process(column_type)
-    # TRY_CAST: a value that does not convert matches nothing, as a mismatched bound parameter would
-    value = f'TRY_CAST(value AS {cast_as})'
-    target = element.column
-    if element.fold:
-        target, value = _lower(target), f'lower({value})'
-    column, parameter = compiler.process(target, **kw), compiler.process(element.parameter, **kw)
-    return f'{column} IN (SELECT {value} FROM OPENJSON(CAST({parameter} AS NVARCHAR(max))))'  # noqa: S608

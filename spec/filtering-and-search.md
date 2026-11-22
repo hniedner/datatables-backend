@@ -208,8 +208,6 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `2024-03-05T10:00Z`, `20240305`,
   `2024-03-05T10:00+02:00`, `2024-03-05 24:00`, `2024-03-05T10`, a time in digits outside ASCII or only white space
   → error_code `invalid_date`; so does `contains` with the day in digits outside ASCII.
-- **SPEC-F21.11** [SQL] A `multi_values` list of 3,000 days and `2024-03-05` on `made` → rows 1 (PRD-C17: on a
-  column that holds no time the days are one list, which SQL Server takes as JSON).
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
@@ -244,10 +242,14 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   18446744073709551616: `=` `18446744073709551616` → that row; `<` with a whole number of 31 digits → that row (the
   declared precision bounds nothing). `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite]
   → that row (PRD section 5). `=` with a whole number of 39 digits, and `=` `1e39`, [SQLite, PostgreSQL, MySQL] →
-  none; [SQL Server] → error_code `invalid_number`. [SQL Server] `multi_values` of 3,000 numbers and
-  `18446744073709551616`, long enough to be sent as JSON, → that row.
+  none; [SQL Server] → error_code `invalid_number`.
 - **SPEC-F25.6** [SQL] With `price` redeclared as MySQL's unsigned `BIGINT`: `=` `-1` → error_code `invalid_number`.
   [MySQL] Given a row whose `price` is 18446744073709551615: `=` `18446744073709551615` → that row.
+- **SPEC-F25.7** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
+  18446744073709551616: a `multi_values` list of `1` and `18446744073709551616` → that row, on SQLite too (which
+  sends the nearest float).
+- **SPEC-F25.8** [SQLite] With `active`, a Boolean column, and with `born`, a Date column, each declared a number: a
+  `multi_values` list of `2` → answered, no row. (PostgreSQL and SQL Server refuse such a comparison themselves.)
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
@@ -309,12 +311,24 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   rows 1, 2, 3; `!ends` `y` → rows 1, 2, 4. Row 1 (NULL or missing) satisfies each.
 - **SPEC-F37.2** [all] On `price`: `!=` `7` → rows 2, 3, 4; `!between` `0` and `100` → rows 4.
 - **SPEC-F38.1** [all] A SearchBuilder tree 8 groups deep, the root group counted as depth 1, is answered; 9 deep →
-  error_code `invalid_filter`.
-- **SPEC-F38.2** [all] 64 criteria in all are answered; 65 → error_code `invalid_filter`.
+  error_code `invalid_filter`. A root group holding 9 groups side by side, each with one criterion, is answered: they
+  are 2 deep.
+- **SPEC-F38.2** [all] 64 criteria in all are answered; 65 → error_code `invalid_filter`, also when they are spread
+  over two groups of 32 and 33 in the root.
 - **SPEC-F38.3** [all] A categorical filter or `multi_values` list of 256 values is answered; 257 → error_code
   `invalid_filter`. A categorical regex of 256 values is longer than 255 code points; that is intended, since its
   values are exact values, not search text (PRD-F7), and PRD-F38 allows 256 of them.
-- **SPEC-F38.4** [all] A tree 10,000 groups deep → error_code `invalid_filter`, with no `RecursionError`.
+- **SPEC-F38.4** [all] A tree 10,000 groups deep → `MalformedRequest`, with no `RecursionError`: the parser refuses
+  a tree deeper than it can walk (PRD-P6).
+- **SPEC-F38.5** [all] Two lists of 256 values each, on `name` and `email` (SQL) or `title` and `author` (OS), are
+  answered; with a third list of one value on `team` (SQL) or `id` (OS) → error_code `invalid_filter`: all the lists
+  of one request together hold at most 512 values.
+- **SPEC-F38.6** [all] The column `name` (SQL) or `title` (OS) named 64 times in the request, each with the search
+  `Ann`, is answered, also with 100 more columns, half of them with no search and half with a search of two spaces;
+  named 65 times → error_code `invalid_filter`. A column search that holds a value counts; a column without one, or
+  with spaces only (PRD-F6), does not.
+- **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
+  database or the cluster exactly what it asks when the column is named once.
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
   `invalid_filter`.
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows

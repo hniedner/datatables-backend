@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 31 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 32 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -18,8 +18,9 @@
   review of the same change, changes PRD-F20, PRD-F25, PRD-D19, PRD-E3 and PRD-E4, the reasons of PRD-F25 and
   PRD-F26, lines in section 5 and the sentence on milestones in section 6; revision 30, approved by the owner on
   2026-11-22, changes who may change a requirement, in the last sentences of this block; revision 31, approved by
-  the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key)). It replaces draft 1 (R1 to
-  R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
+  the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key); revision 32, approved by the
+  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17). It replaces draft 1 (R1 to R9); section
+  10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
   read. New facts about a database engine go to `docs/databases.md`, not into this document.
@@ -848,8 +849,11 @@ backend.
 
 #### PRD-F38
 
-A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all, and a categorical filter or
-`multi_values` list holds at most 256 values; beyond any bound the request is refused with `invalid_filter`.
+A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all; a categorical filter or
+`multi_values` list holds at most 256 values, and all lists of one request together at most 512; a request holds at
+most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`, except a tree
+deeper than the parser reads, which is malformed (PRD-P6). The global search covers each declared column once, however
+often the request names it.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must
@@ -1127,10 +1131,9 @@ A cached total ends by its TTL or by an explicit call; the library registers no 
 
 #### PRD-C17
 
-On SQL Server, when a query's bound parameters would exceed the 2100-parameter limit, each IN list is sent as one JSON
-parameter (`OPENJSON`); other dialects, SQLite included, bind normally.
+The bounds of PRD-F38 keep the parameters the library binds for one request within every supported database's limit.
 
-- **Reason:** Large categorical filters must not fail on a driver limit.
+- **Reason:** A request a client can send must never fail on a database's parameter limit.
 - **Priority:** must
 
 ### 4.6 Errors (E)
@@ -1573,7 +1576,6 @@ where a database decides. Each difference is stated here; every other answer is 
 | Search text of more than 16 words is refused; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
 | On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`); SQL matches substrings. | SQL and OpenSearch | PRD-F11 |
 | On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number and refuses a whole number of 400 digits in the same way. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
-| On SQL Server a list long enough to be sent as JSON on an expression column without a SQL type cannot be compiled, so the request fails as a server failure, a limit of this library, for which PRD-C17 does not hold; giving the expression a type (`type_coerce` or `cast`) avoids it (issue #52). | SQL Server and the other databases | PRD-C17 |
 | On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
 | A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
 | On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F20, PRD-F26 |

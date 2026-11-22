@@ -39,18 +39,13 @@ No entry yet.
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F20, PRD-F26.
 
-### A very long list on an expression without a SQL type cannot be sent
+### Your own parameters count toward the 2,100 limit
 
-This is a limit of the library, not of SQL Server: PRD-C17 does not hold for such a column. Issue #52 holds the
-fix, so it may change.
-
-- **What you see:** a request whose lists hold more than about 2,000 values in all is sent with each list as one
-  JSON value (PRD-C17). For a column that is an expression without a SQL type, that statement cannot be built, and
-  the request fails as a server failure.
-- **Example:** a column declared over `literal_column('upper(name)')` with a `multi_values` list of 2,200 values.
-  Give the expression a type to avoid it: `type_coerce(literal_column('upper(name)'), String)`, or a `cast`.
-- **How it is known:** seen 2026-11-22 by compiling the statement for the `mssql` dialect (SQLAlchemy raises
-  `CompileError`); not run on a server.
+- **What you see:** SQL Server refuses a statement with more than 2,100 parameters. The bounds of a request
+  (PRD-F38) keep what the library binds for it to about 1,200, plus one for each column the global search covers, but
+  a `base_filter` or an expression column that binds parameters of its own adds to them.
+- **Example:** a `base_filter` that holds a list of 1,000 values, beside a request of the largest size.
+- **How it is known:** by arithmetic from the bounds; the largest request (SPEC-C17.1) runs on this leg.
 - **Requirement:** PRD-C17.
 
 ### A decimal holds 38 digits at most
@@ -124,6 +119,19 @@ filter, and it sees nothing else.
 - **How it is known:** read in the code (the key is built from the index name and the base filter); not run on a
   server.
 - **Requirement:** PRD-C15.
+
+### A request at the bounds can pass the cluster's clause limit
+
+This is a limit of the library, not of OpenSearch: the bounds of PRD-F38 do not count clauses.
+
+- **What you see:** OpenSearch refuses a query with more than 1,024 clauses by default
+  (`indices.query.bool.max_clause_count`). A request within every bound can still pass it: two lists of 256 values, 64
+  criteria of three words each and 62 column searches of three words each make about 1,029 by the reviewer's count. The
+  request fails as a server failure.
+- **Example:** two `multi_values` lists of 256 strings, with a column search of three words on 62 more columns.
+- **How it is known:** counted from the query the library builds; not run on a cluster. Raise the cluster's limit, or
+  report a need for lower bounds.
+- **Requirement:** PRD-F38.
 
 ### A number outside the range of its field fails the request
 

@@ -52,6 +52,16 @@ SEARCH_VALUES = 'The search box takes text, not a list of values. Send the text 
 NO_SEARCHABLE_COLUMN = (
     'No column of this table can be searched from the search box. Clear it and use a column filter instead.'
 )
+# The bounds of a request's structure (PRD-F38). A request beyond one is refused as a whole, before it is read further
+MAX_DEPTH = 8  # groups of a SearchBuilder tree, the root counted as 1
+MAX_CRITERIA = 64  # in the whole tree
+MAX_LIST_VALUES = 256  # in one categorical filter or `multi_values` list
+MAX_VALUES = 512  # in all the lists of one request
+MAX_COLUMN_SEARCHES = 64  # column searches that hold a value
+SEARCH_DEPTH = f'The search builder nests more than {MAX_DEPTH} groups. Nest at most {MAX_DEPTH} groups.'
+SEARCH_CRITERIA = f'The search builder holds more than {MAX_CRITERIA} criteria. Use at most {MAX_CRITERIA} criteria.'
+TOO_MANY_VALUES = f'The filters hold more than {MAX_VALUES} values in all. Remove some values.'
+TOO_MANY_COLUMN_SEARCHES = f'The request searches more than {MAX_COLUMN_SEARCHES} columns. Clear some column searches.'
 SORT_NOT_OFFERED = 'The table was asked to sort by a column the server does not offer. Sort by another column.'
 FILTER_NOT_OFFERED = 'A filter is on a column the server does not offer. Remove that filter.'
 _HOLDS: Mapping[ColumnType, str] = {
@@ -67,6 +77,11 @@ _HOLDS: Mapping[ColumnType, str] = {
 #: ``datatables_length_refused``.
 MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_control_character': ('invalid_character', 1),
+    'datatables_tree_too_deep': ('invalid_filter', 1),
+    'datatables_too_many_criteria': ('invalid_filter', 1),
+    'datatables_list_too_long': ('invalid_filter', 1),
+    'datatables_too_many_values': ('invalid_filter', 1),
+    'datatables_too_many_column_searches': ('invalid_filter', 1),
     'datatables_number_unreadable': ('invalid_number', 2),
     'datatables_date_unreadable': ('invalid_date', 2),
     'datatables_number_out_of_range': ('invalid_number', 3),
@@ -326,27 +341,31 @@ def plan(
             if params.search.regex:
                 raise mistake('datatables_regex_refused', SEARCH_REGEX)
             found: list[Contains] = []
+            covered: set[str] = set()  # a column the request names again is searched once (PRD-F38)
             for requested in params.columns:
                 # A column the server did not declare takes no part, like one that only renders: refusing it would
                 # fail every search of a table that shows such a column
                 column = declared.get(requested.key) if requested.searchable else None
                 # Nor does a column the backend cannot search for text: a boolean on every backend ("true" as search
                 # text is nothing a user reads in the cell), a number or a date on OpenSearch
-                if column is not None and column.searchable and (able := describe(column)).searched:
+                if (
+                    column is not None
+                    and column.searchable
+                    and (able := describe(column)).searched
+                    and column.name not in covered
+                ):
+                    covered.add(column.name)
                     found.append(Contains(column, able.type, hooked(column, params.search.value)))
             if not found:
                 raise mistake('datatables_no_searchable_column', NO_SEARCHABLE_COLUMN)
             global_search = found  # only once the whole search stands
 
     column_searches: list[Filter] = []
-    for requested in params.columns:
+    listed = 0
+    for requested in _searched(params, mistakes):
         search = requested.search
-        if not (search.value or search.multi_values):
-            continue
-        # Text of spaces only adds nothing, on a column of any type (PRD-F6). As a regex it is a categorical value
-        if not (search.regex or search.multi_values or search.value.strip(_SPACES)):
-            continue
         with mistakes.part():
+            listed = _within_the_lists(search, declared.get(requested.key), listed)
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
             column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
             column_searches.append(_column_search(search, column, describe(column), hooked))
@@ -361,8 +380,79 @@ def plan(
             return None  # an empty group adds nothing
         return built[0] if len(built) == 1 else Group(item.logic, tuple(built))
 
-    search_builder = node(params.searchBuilder) if params.searchBuilder else None
+    search_builder = None
+    if params.searchBuilder:
+        with mistakes.part():
+            _within_the_bounds(params.searchBuilder)  # before `node` recurses into it
+            search_builder = node(params.searchBuilder)
     return Plan(tuple(global_search), tuple(column_searches), search_builder, tuple(order))
+
+
+def _is_search(search: Search) -> bool:
+    """Whether a column search holds anything: a value that is not spaces only (PRD-F6), which as a regex is a
+    categorical value, or a list."""
+    if not (search.value or search.multi_values):
+        return False
+    return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
+
+
+def _searched(params: DTParams, mistakes: Mistakes) -> list[DTColumn]:
+    """The request's columns that hold a search, none if there are more than PRD-F38 allows: the request is refused
+    as a whole, and nothing of it is read."""
+    held = [requested for requested in params.columns if _is_search(requested.search)]
+    if len(held) <= MAX_COLUMN_SEARCHES:
+        return held
+    with mistakes.part():
+        raise mistake('datatables_too_many_column_searches', TOO_MANY_COLUMN_SEARCHES)
+    return []
+
+
+def _list_size(search: Search) -> int:
+    """The exact values a column search lists: its ``multi_values``, or the alternatives of a categorical regex; none
+    for any other search. A regex that is no categorical form is refused where it is read."""
+    if search.multi_values:
+        return len(search.multi_values)
+    alternatives = _alternatives(search.value) if search.regex else None
+    return len(alternatives) if alternatives is not None else 0
+
+
+def _within_the_lists(search: Search, column: Column | None, listed: int) -> int:
+    """The values listed so far, ``listed``, and those of ``search``, if they are within PRD-F38's bounds. ``column``
+    is the declared column the search is on, which the reason names; None for a name the server did not declare,
+    which it never does."""
+    size = _list_size(search)
+    if size > MAX_LIST_VALUES:
+        where = f'The filter on "{column.name}"' if column else 'A column filter'
+        raise mistake(
+            'datatables_list_too_long',
+            f'{where} holds more than {MAX_LIST_VALUES} values. Select at most {MAX_LIST_VALUES} values.',
+            column,
+        )
+    if listed + size > MAX_VALUES:
+        raise mistake('datatables_too_many_values', TOO_MANY_VALUES)
+    return listed + size
+
+
+def _within_the_bounds(root: SearchGroup) -> None:
+    """Raise the mistake of a SearchBuilder tree beyond PRD-F38's bounds. No call recurses, so no depth can exhaust
+    the stack: the depth is checked first and stops at the first group below level ``MAX_DEPTH``, and the criteria
+    are counted only in a tree that passed, stopping at one too many."""
+    groups = [(root, 1)]
+    while groups:
+        group, depth = groups.pop()
+        if depth > MAX_DEPTH:
+            raise mistake('datatables_tree_too_deep', SEARCH_DEPTH)
+        groups.extend((child, depth + 1) for child in group.criteria if isinstance(child, SearchGroup))
+    criteria = 0
+    pending = [root]
+    while pending:
+        for child in pending.pop().criteria:
+            if isinstance(child, SearchGroup):
+                pending.append(child)
+                continue
+            criteria += 1
+            if criteria > MAX_CRITERIA:
+                raise mistake('datatables_too_many_criteria', SEARCH_CRITERIA)
 
 
 def _order_entry(

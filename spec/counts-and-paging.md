@@ -66,8 +66,6 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
-- **SPEC-C17.1** [SQL Server] On a table of rows 1 to 3 with string columns `c1` to `c9`, each holding `r<id>`: a
-  `multi_values` list on each column of `r1` and 255 values that match nothing (2,304 values, within PRD-F38 per
-  list) → rows 1; recording shows each IN list sent as one `OPENJSON` parameter.
-- **SPEC-C17.2** [SQLite, PostgreSQL, MySQL] The request of C17.1 (2,304 values) binds each value as its own
-  parameter (no JSON parameter) and answers the same rows.
+- **SPEC-C17.1** [SQL] The largest request PRD-F38 allows is answered, on every SQL database: two `multi_values`
+  lists of 256 days each, on two columns that hold a time (512 values, two parameters each), 64 criteria `between`
+  two numbers on a column, and a global search `ann`, all in one request → rows 1.

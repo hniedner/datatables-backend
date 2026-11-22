@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from datatables_backend import Column
+from datatables_backend import DTParams
 from datatables_backend import DTResponse
 from datatables_backend import PartialResultError
 from datatables_backend import RowHooks
@@ -20,6 +21,9 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import criterion
+from .conftest import exact_values
+from .conftest import flat
+from .conftest import nested
 from .conftest import request
 
 SHARDS = {'total': 2, 'successful': 2, 'failed': 0}
@@ -591,6 +595,78 @@ def test_an_undeclared_field_is_refused_before_anything_is_sent():
     refused(table.fetch_sync(request(*NAMES, **criterion('secret', '=', 'x')), client))
     refused(table.fetch_sync(request(*NAMES, **criterion('title.keyword', '=', 'x')), client))
     assert client.searches == []
+
+
+# -- the bounds of PRD-F38 ---
+
+
+def answered_or_refused(params: DTParams, *, answered: bool) -> None:
+    """A request within the bounds is sent; one beyond them is refused as `invalid_filter` before anything is."""
+    client = Client()
+    response = table.fetch_sync(params, client)
+    if answered:
+        assert response.error is None
+        assert client.searches
+    else:
+        refused(response)
+        assert client.searches == []
+
+
+@pytest.mark.parametrize(
+    ('tree', 'answered'),
+    [
+        (nested(8, 'title'), True),
+        (nested(9, 'title'), False),
+        (flat(64, 'title'), True),
+        (flat(65, 'title'), False),
+        # The 65 are counted over the whole tree, and 9 groups side by side are not 9 deep
+        ({'logic': 'AND', 'criteria': [flat(32, 'title'), flat(33, 'title')]}, False),
+        ({'logic': 'AND', 'criteria': [flat(1, 'title') for _ in range(9)]}, True),
+    ],
+    ids=['depth-8', 'depth-9', 'criteria-64', 'criteria-65', 'criteria-65-in-two-groups', 'nine-groups-side-by-side'],
+)
+def test_a_search_builder_tree_is_answered_up_to_8_groups_deep_and_64_criteria(tree: dict[str, Any], *, answered: bool):
+    """SPEC-F38.1, SPEC-F38.2: a tree past a bound is refused, and nothing is sent."""
+    answered_or_refused(request(*NAMES, searchBuilder=tree), answered=answered)
+
+
+@pytest.mark.parametrize('form', ['multi_values', 'regex'])
+@pytest.mark.parametrize(('count', 'answered'), [(256, True), (257, False)])
+def test_a_list_of_exact_values_is_answered_up_to_256_values(form: str, count: int, *, answered: bool):
+    """SPEC-F38.3: a `multi_values` list and a categorical regex are each bounded at 256 values."""
+    values = exact_values(count, 'Ann')
+    search = {'multi_values': values} if form == 'multi_values' else {'value': f'^({"|".join(values)})$', 'regex': True}
+    answered_or_refused(request(*NAMES, column_search={'title': search}), answered=answered)
+
+
+@pytest.mark.parametrize(('last', 'answered'), [(0, True), (1, False)], ids=['512', '513'])
+def test_the_lists_of_one_request_together_hold_at_most_512_values(last: int, *, answered: bool):
+    """SPEC-F38.5: two lists of 256 are answered; one more value in a third list is not."""
+    lists = {'title': exact_values(256, 'Ann'), 'author': exact_values(256, 'Ann'), 'id': ['a1'] if last else []}
+    searches = {name: {'multi_values': values} for name, values in lists.items() if values}
+    answered_or_refused(request(*NAMES, column_search=searches), answered=answered)
+
+
+@pytest.mark.parametrize(
+    ('searched', 'unsearched', 'answered'),
+    [(64, 0, True), (65, 0, False), (64, 50, True)],
+    ids=['64', '65', '64-among-columns-with-no-search'],
+)
+def test_a_request_searches_at_most_64_columns(searched: int, unsearched: int, *, answered: bool):
+    """SPEC-F38.6: the count is of column searches that hold a value, so the column `title` named 65 times is 65,
+    and a column without a search, or with one of spaces only (PRD-F6), is none."""
+    names = ('title',) * searched + ('id', 'author') * unsearched
+    searches = {'title': {'value': 'Ann'}, 'author': {'value': '  '}}
+    answered_or_refused(request(*names, column_search=searches), answered=answered)
+
+
+def test_the_global_search_covers_a_column_once_however_often_the_request_names_it():
+    """SPEC-F38.7: the column `title` named 1,000 times asks the cluster the same as when it is named once."""
+    once, many = Client(), Client()
+    table.fetch_sync(request('title', search={'value': 'ann'}), once)
+    table.fetch_sync(request(*('title',) * 1000, search={'value': 'ann'}), many)
+    same = many.searches == once.searches  # not asserted inline: a failure would print a thousand clauses
+    assert same
 
 
 # -- sorting ---

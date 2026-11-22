@@ -137,8 +137,8 @@ def deeply_nested_json() -> dict[str, Any]:
     ids=['flat-key', 'json'],
 )
 def test_a_request_nested_deeper_than_it_can_be_walked_is_malformed(request_data: Any):
-    """PRD-P6: it is refused like any other structure that cannot be read, with its draw, and never surfaces as a
-    `RecursionError`."""
+    """PRD-P6, SPEC-F38.4: it is refused like any other structure that cannot be read, with its draw, and never
+    surfaces as a `RecursionError`."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request(request_data)
     assert refused.value.draw == 9
