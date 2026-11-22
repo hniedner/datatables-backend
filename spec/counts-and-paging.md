@@ -57,11 +57,11 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   answers `recordsTotal` 4; the second answers 4 (the first's total, not its own 3) and runs no total count.
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
-- **SPEC-C15.5** [SQL] The rows and requests of `SPEC-C15.1`, with no base filter and the scope in the source
-  instead: two tables over a subquery of the source whose `WHERE` differs only in the bound value (`tenant = 1`,
-  `tenant = 2`), sharing one cache → `recordsTotal` 3 and 1.
+- **SPEC-C15.5** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
+  tables with no base filter, each over a subquery of the same table whose `WHERE` differs only in the bound value
+  (`team = 'red'`, `team = 'green'`), sharing one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
 - **SPEC-C15.6** [SQL] As `SPEC-C15.5`, the source being a join of the table with itself whose `ON` clause differs
-  only in the bound value (`tenant = 1`, `tenant = 2`) → `recordsTotal` 3 and 1.
+  only in the bound value (`team = 'red'`, `team = 'green'`) → `recordsTotal` 2 and 1.
 - **SPEC-C15.7** [SQL] A table of 5 rows with a `TotalCache` and a base filter that is true for every row, built
   from a construct SQLAlchemy can compile for the database under test and not for its default dialect → a request
   answers `recordsTotal` 5.

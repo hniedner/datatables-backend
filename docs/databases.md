@@ -93,7 +93,37 @@ number before any database sees it. Issue #56 holds the fix, so it may change.
   backend sees it); not run on a server.
 - **Requirement:** PRD-F25.
 
+### A shared `TotalCache` cannot tell two scopes apart that the session sets
+
+This is a limit of the library, not a rule of the databases: the cache keeps a total under the database's URL and
+the count statement with its bound values, and it sees nothing else.
+
+- **What you see:** two requests whose rows differ only by the state of their database session share one cached
+  `recordsTotal`, so one scope can be shown the total of another. That state is row-level security or `SET ROLE`
+  on PostgreSQL, a tenant per schema through `search_path` or SQLAlchemy's `schema_translate_map`, and `USE` of
+  another database on MySQL or SQL Server. A scope written into the source or the base filter is told apart. Give
+  each such scope a `TotalCache` of its own.
+- **Example:** one engine, one `SQLTable` with a cache, and `SET ROLE` per request with a row-level security
+  policy: the second role is answered the first role's total until the TTL ends.
+- **How it is known:** read in the code (the key is built from the URL and the compiled count); not run on a
+  server.
+- **Requirement:** PRD-C15.
+
 ## OpenSearch
+
+### A shared `TotalCache` cannot tell two clusters or two users apart
+
+This is a limit of the library, not of OpenSearch: the cache keeps a total under the index's name and the base
+filter, and it sees nothing else.
+
+- **What you see:** two clusters that hold an index of the same name, and two users whose documents differ by
+  document-level security, share one cached `recordsTotal`. Give each cluster, and each such user or role, a
+  `TotalCache` of its own.
+- **Example:** one `SearchTable` over `docs` with a cache, used with the clients of two clusters: the second
+  cluster is answered the first cluster's total until the TTL ends.
+- **How it is known:** read in the code (the key is built from the index name and the base filter); not run on a
+  server.
+- **Requirement:** PRD-C15.
 
 ### A number outside the range of its field fails the request
 

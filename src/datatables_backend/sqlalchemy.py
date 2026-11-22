@@ -341,7 +341,7 @@ class SQLTable:
         bind = _bind(source)
         compiled = total.compile(dialect=bind.dialect)
         values = sorted(compiled.params.items(), key=lambda item: item[0])
-        return f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values}'
+        return f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values!r}'
 
     async def _total(self, source: AsyncSource, statements: _Statements) -> int:
         key = self._total_key(source, statements.total) if self.total_cache else ''
