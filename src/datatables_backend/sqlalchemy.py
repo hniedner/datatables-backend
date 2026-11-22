@@ -191,7 +191,7 @@ class SQLTable:
 
         filtered_rows = build(_bound_in)
         mistakes.raise_first()  # from here on the request holds no mistake, so a second build finds none either
-        if dialect.name == 'mssql' and _parameter_count(filtered_rows) > MSSQL_PARAMETER_BUDGET:
+        if dialect.name == 'mssql' and _parameter_count(filtered_rows, dialect) > MSSQL_PARAMETER_BUDGET:
             filtered_rows = build(_json_in)
         filtered = select(func.count()).select_from(filtered_rows.subquery())
         page = self._ordered(filtered_rows, request, dialect).offset(params.start).limit(params.length)
@@ -658,13 +658,14 @@ def _json_in(column: ColumnElement[Any], values: Sequence[Any], fold: bool) -> C
     return _JsonValuesIn(column, bindparam(None, json.dumps(list(values), default=as_text), type_=String()), fold)
 
 
-def _parameter_count(stmt: Select[Any]) -> int:
-    from sqlalchemy.engine.default import DefaultDialect  # noqa: PLC0415
-
-    compiled = cast(
-        SQLCompiler,
-        stmt.compile(dialect=DefaultDialect(paramstyle='qmark'), compile_kwargs={'render_postcompile': True}),
-    )
+# Not measured: it runs only on SQL Server; every test of the sqlserver leg runs it
+def _parameter_count(stmt: Select[Any], dialect: Dialect) -> int:  # pragma: no cover
+    """The parameters ``stmt`` sends on the session's database, each value of a list counted. It is compiled by the
+    session's own kind of dialect, which alone knows every construct of its database, told to number its parameters
+    by position so they can be counted."""
+    kind: Any = type(dialect)  # the `Dialect` interface declares no constructor; every SQL Server dialect takes this
+    positional = kind(paramstyle='qmark')
+    compiled = cast(SQLCompiler, stmt.compile(dialect=positional, compile_kwargs={'render_postcompile': True}))
     return len(compiled.positiontup or ())
 
 
