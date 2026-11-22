@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 31 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 32 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -18,8 +18,9 @@
   review of the same change, changes PRD-F20, PRD-F25, PRD-D19, PRD-E3 and PRD-E4, the reasons of PRD-F25 and
   PRD-F26, lines in section 5 and the sentence on milestones in section 6; revision 30, approved by the owner on
   2026-11-22, changes who may change a requirement, in the last sentences of this block; revision 31, approved by
-  the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key)). It replaces draft 1 (R1 to
-  R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
+  the owner on 2026-11-22, changes the first sentence of PRD-C15 (no app-supplied key); revision 32, approved by the
+  owner on 2026-11-22, changes the first sentences of PRD-F38 and PRD-C17). It replaces draft 1 (R1 to R9); section
+  10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
   read. New facts about a database engine go to `docs/databases.md`, not into this document.
