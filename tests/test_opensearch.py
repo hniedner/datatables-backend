@@ -382,6 +382,39 @@ def test_a_list_on_a_date_column_is_a_day_range_for_each_entry():
     ]
 
 
+MISSING = {'bool': {'must_not': [{'exists': {'field': 'pages'}}]}}
+
+
+@pytest.mark.parametrize(
+    ('column', 'values', 'expected'),
+    [
+        # Beside a value: a string folds, so each value is a term query; a number is one terms query
+        (
+            'title',
+            ['', 'a'],
+            {
+                'bool': {
+                    'should': [
+                        {'term': {'title.keyword': {'value': 'a', 'case_insensitive': True}}},
+                        {'bool': {'must_not': [{'exists': {'field': 'title'}}]}},
+                    ],
+                    'minimum_should_match': 1,
+                }
+            },
+        ),
+        ('pages', [' ', '7'], {'bool': {'should': [{'terms': {'pages': [7]}}, MISSING], 'minimum_should_match': 1}}),
+        # Analysed text has no whole string for a list of values, but it can be missing
+        ('body', [''], {'bool': {'must_not': [{'exists': {'field': 'body'}}]}}),
+    ],
+)
+def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[str], expected: dict[str, Any]):
+    """SPEC-F20.2, SPEC-F33.4, SPEC-F33.5: the entry is never sent as a value. On a number column white
+    space is such an entry too."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, column_search={column: {'multi_values': values}}), client)
+    assert query(client) == [expected]
+
+
 @pytest.mark.parametrize(
     'unfolded',
     [

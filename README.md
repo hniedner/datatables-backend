@@ -110,6 +110,10 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 
 ## What the server decides
 
+The library does not change how a database compares values. Where a database's own rule changes what a user sees
+(trailing spaces on SQL Server and under a MySQL PAD SPACE collation, SQLite's inexact decimals), and where the
+library itself has a limit on one engine, [docs/databases.md](docs/databases.md) says so, engine by engine.
+
 - **Only declared columns can be used.** The request can search, filter and sort only on the columns the server
   declares. A filter or a sort on any other name is refused. A column the page only renders (one without a name, or
   with a name the server did not declare) is not a mistake: the global search leaves it out, and DataTables'

@@ -392,6 +392,20 @@ def test_a_long_list_of_exact_values_is_answered(client: OpenSearch):
     assert found(table.fetch_sync(params, client)) == ['a1']
 
 
+@pytest.mark.xfail(
+    reason="PRD-E7, issue #47: a number outside the range of the field's own mapping (`pages` is an `integer`) is "
+    'refused by the server with a 400 ("out of range for an integer"), so the request fails where the user\'s '
+    'mistake should be answered with invalid_number. PRD section 5 states the limit until the issue is closed',
+    strict=True,
+    raises=RequestError,
+)
+def test_a_number_outside_the_range_of_its_field_is_the_users_mistake(client: OpenSearch):
+    """The library does not read the mapping (PRD-D8), so it cannot know the field's range; SQL knows its
+    column's."""
+    params = request(*NAMES, **criterion('pages', '=', str(2**64)))
+    assert table.fetch_sync(params, client).error_code == 'invalid_number'
+
+
 # The two tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared
 # boolean (PRD-D8), so PRD-F43 does not change their outcomes. The cases with the column declared boolean follow them.
 

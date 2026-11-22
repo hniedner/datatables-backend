@@ -35,6 +35,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F6.2** [all] Each of `"`, `"""`, `!""`, `""`, `!`, `!x` and three spaces, as the global search, as a
   column search on `name` and as a column search on `note`, → rows 1, 2, 3, 4, with no error (on `note`, an empty
   word kept as a condition would drop row 1's NULL).
+- **SPEC-F6.3** [all] A value made of U+0020, LF, CR, U+2028 and U+2029 and nothing else, as the global search and as
+  a column search on `active`, → rows 1, 2, 3, 4.
+- **SPEC-F6.4** [all] With `regex: true`, the value of F6.3 is a categorical value: as a column search on `colour`
+  → none (the exact value, which no row holds); on `price` → rows 4 (on a column that is no string it holds
+  nothing, so it means empty).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
@@ -148,6 +153,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F17.2** [all] With `regex: true`: `^(|red)$` on `colour` → rows 1, 4 (no row is empty).
 - **SPEC-F17.3** [all] With `regex: true`: `^()$` on `note`, a group holding only the empty alternative, → rows 1, 2
   on SQL (NULL, `''`) and rows 1 on OS (missing).
+- **SPEC-F17.4** [all] With `regex: true` on `note`: `^$` and a bare `|` → rows 1, 2 on SQL and rows 1 on OS, as F17.3
+  gives; `x_y|` and `^(x_y||zzz)$` → rows 1, 2, 3 on SQL and rows 1, 3 on OS, as F17.1 gives.
 - **SPEC-F18.1** [all] With `regex: true`, each of `^a|b$`, `a.b`, `a*`, `(a)`, `[ab]`, `a{2}`, `\d`, `\w`, `\n`,
   `a+`, `a?` and `^(a|b)` → error_code `invalid_filter`.
 - **SPEC-F18.2** [all] A global search with `search[regex]` true and a value holding at least one word, `red` or
@@ -159,10 +166,15 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F19.1** [all] With `regex: true`, every character of `/ . * + ? | ( ) [ ] { } \ $ ^ -` escaped by a
   backslash inside `^(...)$` matches itself: given a row whose `note` is `/.*+?|()[]{}\$^-` (the whole set),
   `^(\/\.\*\+\?\|\(\)\[\]\{\}\\\$\^\-)$` → that row only.
+- **SPEC-F19.2** [all] With `regex: true`, given a row whose `note` is `C:\`: each of `^C:\\$`, `^(C:\\)$` and `C:\\`
+  → that row (after an escaped backslash the `$` is the anchor).
 - **SPEC-F20.1** [all] `multi_values` `["red", "blue"]` on `colour` → rows 1, 3, 4.
 - **SPEC-F20.2** [all] `multi_values` `["", "x_y"]` on `note` → rows 1, 3 on OS; rows 1, 2, 3 on SQL.
 - **SPEC-F20.3** [all] A column search on `colour` with an empty value and an empty `multi_values` list is idle →
   rows 1, 2, 3, 4.
+- **SPEC-F20.4** [SQL] `multi_values` `[" "]` on `note` → never row 1: on a string column a space is a value, not an
+  empty entry. [SQLite, PostgreSQL] and [MySQL, default collation] → none. [SQL Server] → row 2, whose `''` SQL
+  Server compares equal to a space (PRD section 5).
 
 ## Dates
 
@@ -215,8 +227,31 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.3** [all] SearchBuilder `=` on `price` reads `+7`, `7.`, `.7E+1` and `7` with white space around it as
   the number 7. With `1_000`, a second sign (`--7.5`), or `7` in a digit outside ASCII (the full-width `７`,
   U+FF17) → error_code `invalid_number`.
+- **SPEC-F25.4** [SQL] A whole number outside the signed 64-bit range. With `price` redeclared as a `Float`, given
+  a row whose `price` is 18446744073709551616 (2^64): `=` `18446744073709551616`, and that number as a
+  `multi_values` entry, → that row; `=` `9223372036854775808` (2^63) → none; `=` with a whole number of 308
+  digits → none, and of 309 digits → error_code `invalid_number`. With `price` an expression without a SQL type,
+  declared a number: `=` `18446744073709551616` → that row. With `price` a string column declared a number that
+  holds the text `18446744073709551616`: `=` `18446744073709551616` → that row (text is compared with the digits).
+- **SPEC-F25.5** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
+  18446744073709551616: `=` `18446744073709551616` → that row; `<` with a whole number of 31 digits → that row (the
+  declared precision bounds nothing). `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite]
+  → that row (PRD section 5). `=` with a whole number of 39 digits, and `=` `1e39`, [SQLite, PostgreSQL, MySQL] →
+  none; [SQL Server] → error_code `invalid_number`. [SQL Server] `multi_values` of 3,000 numbers and
+  `18446744073709551616`, long enough to be sent as JSON, → that row.
+- **SPEC-F25.6** [SQL] With `price` redeclared as MySQL's unsigned `BIGINT`: `=` `-1` → error_code `invalid_number`.
+  [MySQL] Given a row whose `price` is 18446744073709551615: `=` `18446744073709551615` → that row.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
+- **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
+  `TypeDecorator` over a string type, also one over another `TypeDecorator`; `note` declared a date; an expression
+  without a SQL type, declared a string; an `Enum` column that names `''` as a value. It finds the NULL rows only on:
+  the same expression declared a date; an `Enum` column without `''` among its values; a `Uuid` column; a column
+  behind a `TypeDecorator` that stores a UUID as `CHAR(32)` and on PostgreSQL as its `UUID` type (SQLAlchemy's
+  GUID recipe), which holds no `''`.
+- **SPEC-F26.4** [SQL] `multi_values` `[""]` on a `Uuid` column, and on a column behind a `TypeDecorator` that
+  refuses to convert `''`, → the rows holding NULL (and `''` where the stored type is text); the entry is never
+  sent as a value.
 
 ## SearchBuilder
 
@@ -246,6 +281,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F33.2** [OS] Column search on `price`: `7 8`, `!7`, `"7"` and `abc` → error_code `invalid_number`.
 - **SPEC-F33.3** [all] Categorical `^(7|8)$` and `multi_values` `["7", "8"]` on `price` → rows 1, 3.
 - **SPEC-F33.4** [all] `multi_values` `["x"]` on `price` → error_code `invalid_number`; `[""]` → rows 4.
+- **SPEC-F33.5** [all] `multi_values` `[" ", "7"]` on `price` → rows 1, 4 (white space is an empty entry).
 - **SPEC-F34.1** [OS] Column search on `made`: `2024` → rows 1, 2; `2024-03-05` → rows 1; `2024-03-05 10:00:00`, a
   day with a time after it (PRD-F22) → rows 1.
 - **SPEC-F34.2** [OS] Column search on `made`: `2024 2023`, `!2024`, `"2024"` and `2024-13` → error_code
@@ -259,6 +295,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F36.2** [all] `null` on `note` with the values `[]` → rows 1, 2 on SQL, rows 1 on OS; with `[""]` → the
   same; with `abc` and a value holding U+0000 → the same, no refusal (PRD-F15 does not apply).
 - **SPEC-F36.3** [all] `null` with a value that is not text → `MalformedRequest` (PRD-P6).
+- **SPEC-F36.4** [all] `=` on `name` with `Bob` and a second value holding U+0000 → error_code `invalid_filter` (the
+  surplus value is not read, so no `invalid_character`); `=` on `price` with `abc` and `1` → error_code
+  `invalid_number` (the value the condition reads is checked first, PRD-E3).
 - **SPEC-F37.1** [all] On `note`: `!=` `x_y` → rows 1, 2, 4; `!contains` `pipe` → rows 1, 2, 3; `!starts` `5` →
   rows 1, 2, 3; `!ends` `y` → rows 1, 2, 4. Row 1 (NULL or missing) satisfies each.
 - **SPEC-F37.2** [all] On `price`: `!=` `7` → rows 2, 3, 4; `!between` `0` and `100` → rows 4.
@@ -304,3 +343,4 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-F44.3** [all] Categorical `^(true|0)$` on `active` → rows 1, 2, 4; `multi_values` `["", "1"]` → rows 1, 3,
   4.
+- **SPEC-F44.4** [all] `multi_values` `[" ", "1"]` on `active` → rows 1, 3, 4 (white space is an empty entry).

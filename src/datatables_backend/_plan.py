@@ -79,6 +79,7 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_values_refused': ('invalid_filter', 4),  # a list of values where none belongs
     'datatables_condition_refused': ('invalid_filter', 4),
     'datatables_value_missing': ('invalid_filter', 4),
+    'datatables_value_surplus': ('invalid_filter', 4),  # more values than the condition takes
     'datatables_boolean_unreadable': ('invalid_filter', 4),
     'datatables_page_out_of_range': ('page_out_of_range', 5),
 }
@@ -134,6 +135,10 @@ _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
 }
 _BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
+#: The characters a categorical filter's regex may escape: the set of DataTables' ``util.escapeRegex`` (PRD-F19)
+_REGEX_ESCAPED = frozenset('/.*+?|()[]{}\\$^-')
+#: What counts as a space in search text (PRD-F6, PRD-F7): U+0020, LF, CR, U+2028 and U+2029
+_SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
 # How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
@@ -180,7 +185,7 @@ class Equals:
 class OneOf:
     """A multi-select: the column equals one of ``values``, parsed as for ``Equals``; on a date column they are
     days, each matched as ``=`` matches a day. ``empty`` says the list also holds an empty entry, which matches a
-    row without a value (PRD-F21)."""
+    row without a value (PRD-F17, PRD-F20) and is never among ``values``, which may then be none at all."""
 
     column: Column
     type: ColumnType
@@ -283,8 +288,8 @@ def plan(
 ) -> Plan:
     """Check ``params`` against ``columns`` and return what it asks for. ``describe`` says what the backend can do
     with a column, so that a skip or a refusal is decided here, for every backend alike. Two refusals are left to a
-    backend, which alone knows what they need: SQL's of a number outside its column's range, and OpenSearch's of a
-    list of exact values on analysed text.
+    backend, which alone knows what they need: SQL's of a whole number its column cannot hold or be compared with,
+    and OpenSearch's of a list of exact values on analysed text.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -317,7 +322,7 @@ def plan(
             raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
         if params.search.multi_values:  # refused as a form, so its entries are never read
             raise mistake('datatables_values_refused', SEARCH_VALUES)
-        if params.search.value:
+        if params.search.value.strip(_SPACES):  # text of spaces only adds nothing (PRD-F6)
             if params.search.regex:
                 raise mistake('datatables_regex_refused', SEARCH_REGEX)
             found: list[Contains] = []
@@ -337,6 +342,9 @@ def plan(
     for requested in params.columns:
         search = requested.search
         if not (search.value or search.multi_values):
+            continue
+        # Text of spaces only adds nothing, on a column of any type (PRD-F6). As a regex it is a categorical value
+        if not (search.regex or search.multi_values or search.value.strip(_SPACES)):
             continue
         with mistakes.part():
             _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
@@ -426,8 +434,10 @@ def _criterion(
     the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
     column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
     column is no number mistake); a value of the wrong format, or a date out of range, among the values there are;
-    a value that is missing. A whole number outside the range of its SQL column is found only later, when the query
-    is built, so within one criterion a missing value is reported before it."""
+    a value that is missing, or more values than the condition takes (PRD-F36), which are never read: ``null`` and
+    ``!null`` take none and ignore whatever they carry. A whole number outside the range of its SQL column is found
+    only later, when the query is built, so within one criterion a missing or surplus value is reported before
+    it."""
     condition = item.condition
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]
@@ -459,6 +469,13 @@ def _criterion(
         raise mistake(
             'datatables_value_missing',
             f'The filter on "{column.name}" needs {"two values" if needed == 2 else "a value"}.',
+            column,
+        )
+    if needed and len(item.value) > needed:  # the values beyond those the condition takes are never read
+        raise mistake(
+            'datatables_value_surplus',
+            f'The filter on "{column.name}" holds more values than its condition takes. Remove the filter and set '
+            'it again.',
             column,
         )
     positive = _positive(column, kind, condition, values)
@@ -510,26 +527,27 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first."""
     stripped = text.strip()
-
-    def unreadable() -> InvalidFilter:
-        needed = (
-            f'Each value in the filter on "{column.name}" must be a number'
-            if listed
-            else f'The filter on "{column.name}" needs one number'
-        )
-        return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
-
     if not _NUMBER.fullmatch(stripped):
-        raise unreadable()
+        raise number_unreadable(column, listed=listed)
     if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
         try:
             return int(stripped)
         except ValueError:  # more digits than Python converts to an integer
-            raise unreadable() from None
+            raise number_unreadable(column, listed=listed) from None
     number = float(stripped)
     if not math.isfinite(number):
-        raise unreadable()
+        raise number_unreadable(column, listed=listed)
     return number
+
+
+def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of a value in a filter on ``column`` that is no number, or no finite one."""
+    needed = (
+        f'Each value in the filter on "{column.name}" must be a number'
+        if listed
+        else f'The filter on "{column.name}" needs one number'
+    )
+    return mistake('datatables_number_unreadable', f'{needed}, written like 42 or -3.5.', column)
 
 
 def parse_boolean(text: str, column: Column) -> bool:
@@ -554,24 +572,17 @@ def _last_day(column: Column) -> InvalidFilter:
     )
 
 
-def parse_days(
-    texts: Sequence[str], column: Column, *, listed: bool, blank_is_empty: bool = False
-) -> tuple[date | None, ...]:
+def parse_days(texts: Sequence[str], column: Column, *, listed: bool) -> tuple[date, ...]:
     """The days ``texts`` name in a filter on ``column``, each written as ``_written_day`` reads it, white space
     around it ignored. ``listed`` says they are several values (a list, or the two of a ``between``), where the
-    reason must not ask for one date. With ``blank_is_empty`` a text that holds nothing is None, an empty entry of a
-    list; otherwise no day is None.
+    reason must not ask for one date.
 
     Every text's format is checked before any day's range, so the format is the mistake answered wherever it
     stands (PRD-E3). The last day there is, 9999-12-31, is refused in every condition: it has no next day to bound
     it by, and that is the user's filter, not a failed query."""
-    days: list[date | None] = []
+    days: list[date] = []
     for text in texts:
-        value = text.strip()
-        if blank_is_empty and not value:
-            days.append(None)
-            continue
-        day = _written_day(value)
+        day = _written_day(text.strip())
         if day is None:
             needed = (
                 f'Each value in the filter on "{column.name}" must be a date'
@@ -662,7 +673,7 @@ def _column_search(search: Search, column: Column, able: Capabilities, hooked: C
             )
         texts = alternatives
     elif kind == 'boolean':
-        texts = [search.value]
+        return OneOf(column, kind, (parse_boolean(search.value, column),))
     elif able.value_search and kind == 'number':
         return Equals(column, kind, parse_number(str(hooked(column, search.value)), column))
     elif able.value_search and kind == 'date':
@@ -670,25 +681,38 @@ def _column_search(search: Search, column: Column, able: Capabilities, hooked: C
         return Range(column, kind, Bound(start, True), Bound(end, False))
     else:
         return Contains(column, kind, hooked(column, search.value))
+    # An entry that holds nothing is no value: it matches a row without one (PRD-F17, PRD-F20), and no hook is
+    # given it (PRD-D16). A string column takes an entry of white space as that exact value; on any other type
+    # it holds nothing either
+    held = [text for text in texts if (text if kind == 'string' else text.strip())]
+    empty = len(held) < len(texts)
+    values: tuple[Any, ...]
     if kind == 'boolean':
-        return OneOf(column, kind, tuple(parse_boolean(text, column) for text in texts))
-    if kind == 'date':  # an empty entry of the list is no day: it matches a row without a date
-        days = parse_days(texts, column, listed=True, blank_is_empty=True)
-        return OneOf(column, kind, tuple(day for day in days if day is not None), empty=None in days)
-    if kind == 'number':
-        return OneOf(
-            column, kind, tuple(parse_number(str(hooked(column, text)), column, listed=True) for text in texts)
-        )
-    return OneOf(column, kind, tuple(hooked(column, text) for text in texts))
+        values = tuple(parse_boolean(text, column) for text in held)
+    elif kind == 'date':
+        values = parse_days(held, column, listed=True)
+    elif kind == 'number':
+        values = tuple(parse_number(str(hooked(column, text)), column, listed=True) for text in held)
+    else:
+        values = tuple(hooked(column, text) for text in held)
+    return OneOf(column, kind, values, empty)
 
 
 def _alternatives(pattern: str) -> list[str] | None:
-    """The exact values of a multi-select's regex (``a|b``, ``^(a|b)$``, ``^a$``, escaped or not); None for any
-    other regex."""
+    """The exact values of a categorical filter's regex, in one of the four forms of PRD-F16: ``abc``, ``a|b``,
+    ``^a$`` or ``^(a|b)$``; None for any other regex. Alternatives need the group once the anchors are there
+    (``^a|b$`` anchors each value at one end only), and a backslash escapes only a character of PRD-F19's set
+    (``\\d`` is a class, not the letter d). An alternative that holds nothing is the value ``''``, which means
+    empty (PRD-F17): ``^(|a)$``, ``a|``, ``^()$``, ``^$``, a bare ``|``."""
     body = pattern
-    if body.startswith('^') and body.endswith('$') and not body.endswith('\\$'):
+    alone = False  # anchored without a group, which holds one value
+    # A `$` at the end is taken for the anchor also after a backslash: after escaped backslashes it is one (the
+    # value `C:\` is written `^C:\\$`), and were it escaped itself, what is left would end in a lone backslash,
+    # which is refused below as the unanchored `^` would be
+    if body.startswith('^') and body.endswith('$'):
         body = body[1:-1]
-        if body.startswith('(') and body.endswith(')'):
+        alone = not (body.startswith('(') and body.endswith(')'))
+        if not alone:
             body = body[1:-1]
     values: list[str] = []
     current: list[str] = []
@@ -696,10 +720,12 @@ def _alternatives(pattern: str) -> list[str] | None:
     for char in chars:
         if char == '\\':
             escaped = next(chars, None)
-            if escaped is None:
+            if escaped is None or escaped not in _REGEX_ESCAPED:
                 return None
             current.append(escaped)
         elif char == '|':
+            if alone:
+                return None
             values.append(''.join(current))
             current = []
         elif char in _REGEX_SPECIAL:
@@ -707,6 +733,4 @@ def _alternatives(pattern: str) -> list[str] | None:
         else:
             current.append(char)
     values.append(''.join(current))
-    if any(value == '' for value in values):
-        return None
     return values
