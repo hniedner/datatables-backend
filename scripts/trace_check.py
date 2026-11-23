@@ -66,6 +66,7 @@ ENFORCED = (
     'R',
     'O',
     'A',
+    'C',
     # PRD-D12 and PRD-D14 to PRD-D20 are the hooked-column statements, enforced with #64
     'PRD-D1',
     'PRD-D2',
