@@ -121,8 +121,12 @@ the README sends the same request as a form and as JSON and compares them). Data
 `ajax: { url, type: 'POST' }` needs nothing more, as the README shows. To send JSON instead:
 
 ```js
-ajax: { url: '/users/table', type: 'POST', contentType: 'application/json', data: (d) => JSON.stringify(d) },
+ajax: { url: '/users/table', type: 'POST', submitAs: 'json' },
 ```
+
+Use `submitAs` rather than building the JSON yourself in `ajax.data`: hooks such as ColumnControl's `preXhr` run after
+`ajax.data` and add their parts to the request object, which would by then be a string. (READ from DataTables 3.1.5,
+`dataTables.mjs`: `submitAs` at line 641, the order of `ajax.data` and `preXhr` at lines 5531-5572; not run.)
 
 A form of more than 1,000 fields is refused by Starlette with HTTP 400 (`Too many fields`), before the library reads
 it. A table sends six fields for each column, so that is about 165 columns (measured through the FastAPI test client:
@@ -154,3 +158,28 @@ the same way (it is not part of the DataTables protocol, and the global search r
 - A list is bounded: 256 values in one list, 512 in all lists of a request ([rules.md](rules.md#requests)).
 
 Source: PRD-F16, PRD-F17, PRD-F20, PRD-F38, PRD-F39 and the `Search` model in `protocol.py`.
+
+## Coming from sqlalchemy2-datatables
+
+`sqlalchemy2-datatables` (import name `datatables`) is retired; 0.7.0 is its last release, and its notice points here.
+This is the same job in this library. The left column is that package's own README (0.7.0, read on PyPI).
+
+| sqlalchemy2-datatables | datatables-backend |
+| --- | --- |
+| `DataTable(request_params=params, table=table, column_names=[...], engine=engine, callbacks=callbacks)`, built for each request | `SQLTable(table, [Column('id'), ...], rows=RowHooks(...))`, built once (or per request, see above); `params = parse_request(request_json)` |
+| `datatable.output_result()` | `(await table.fetch(params, session)).to_dict()`; `fetch_sync` for a sync `Session` or `Connection` |
+| an `Engine` | a `Session` or `Connection`; `AsyncSession` or `AsyncConnection` for the async `fetch` |
+| `column_names`, the names of the table's columns | `Column(name, field=..., type=...)`: the server declares each column the client may see, search and sort |
+| `callbacks` (a `DTDataCallbacks`, for the `DT_*` attributes) | `RowHooks(row_id=..., row_data=..., shape=...)` |
+
+What differs in behaviour, each stated in [rules.md](rules.md):
+
+- A column the server did not declare cannot be filtered or sorted by; the request is answered with an error.
+- A request needs a `length` of 1 to 1000. "All" (`-1`) is refused (`MalformedRequest`), where the old package's
+  notice says its default `length` of `-1` reads the whole table.
+- `LIKE` wildcards in a search value are escaped, and a client's regular expression is not run (the categorical
+  forms in the section above are the exception: literal alternatives only).
+- A user's mistake comes back in the response, with an `error_code` and a text that says how to fix it. A failure of
+  the database raises in your application; its message is not sent to the client.
+- The response holds `draw`, `recordsTotal`, `recordsFiltered` and `data` (and `error` and `error_code` for a
+  mistake). The old output also held `start` and `length`.
