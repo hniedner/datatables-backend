@@ -812,3 +812,8 @@ def test_a_length_outside_one_to_the_limit_is_refused(length: int, limit: int):
     with pytest.raises(MalformedRequest) as refused:
         parse_request({'length': length}, max_length=limit)
     assert refused.value.parameter == 'length'
+
+
+def test_a_response_holds_exactly_the_fields_datatables_and_the_error_use():
+    """SPEC-R5.1: a field added to the model would reach every client; a field dropped would break one."""
+    assert list(DTResponse.model_fields) == ['draw', 'recordsTotal', 'recordsFiltered', 'data', 'error', 'error_code']

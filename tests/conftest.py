@@ -10,6 +10,7 @@ from typing import Any
 
 from hypothesis import HealthCheck
 from hypothesis import settings
+from pydantic import BaseModel
 import pytest
 from sqlalchemy import Boolean
 from sqlalchemy import Column as SQLColumn
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
 
 from datatables_backend import DTParams
+from datatables_backend import RowHooks
 from datatables_backend import parse_request
 
 # The property tests (tests/test_parse_properties.py). `ci` is the default and runs the same examples on every run, so
@@ -246,6 +248,17 @@ def flat(count: int, column: str) -> dict[str, Any]:
 def exact_values(count: int, first: str) -> list[str]:
     """``count`` values, ``first`` among them and the rest matching nothing."""
     return [first, *(f'v{number}' for number in range(count - 1))]
+
+
+class Labelled(BaseModel, extra='allow'):
+    """A row model that adds one field, `label`, to what the table reads."""
+
+    label: str
+
+
+def labelled(key: str) -> RowHooks:
+    """Hooks that shape each row through `Labelled`, naming it by the row's `key` column (SPEC-R2.1)."""
+    return RowHooks(shape=lambda row: Labelled(label=f'label {row[key]}', **row).model_dump())
 
 
 BRACKETED = [

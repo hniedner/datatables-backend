@@ -25,6 +25,7 @@ from datatables_backend.opensearch import SearchTable
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import labelled
 from .conftest import nested
 from .conftest import request
 
@@ -150,7 +151,8 @@ async def test_the_async_client_answers_like_the_sync_one():
 
 
 def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
-    """Also SPEC-R7.2: a value comes back as `_source` holds it, an HTML text unescaped."""
+    """SPEC-R1.1: `author` reads `meta.author` and the row has no `meta`; also SPEC-R7.2: a value comes back as
+    `_source` holds it, an HTML text unescaped."""
     html = '<b>x</b> & "y"'
     hit = {'_source': {'id': 'a', 'title': html, 'pages': 3, 'meta': {'author': 'Ann'}}, '_score': 1.0}
     hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(row_id=lambda row: row['id']))
@@ -1716,3 +1718,30 @@ def test_a_nameless_first_column_with_the_default_order_and_a_global_search_is_a
         '', *NAMES, flags={'': {'data': None}}, order=[{'column': 0, 'dir': 'asc'}], search={'value': 'red'}
     )
     assert sent(table, nameless) == sent(table, request(*NAMES, search={'value': 'red'}))
+
+
+HITS = [{'_source': {'id': name, 'title': f'title {name}', 'pages': 1}, '_score': 1.0} for name in ('a', 'b')]
+
+
+def test_a_row_shaped_through_a_model_carries_the_field_the_model_adds():
+    """SPEC-R2.1: `shape` maps each row through a Pydantic model that adds `label`; every row carries it."""
+    shaped = SearchTable('docs', COLUMNS, unique_key='id', rows=labelled('id'))
+    rows = shaped.fetch_sync(request(*NAMES), Client(hits=HITS)).data
+    assert [(row['id'], row['label']) for row in rows] == [('a', 'label a'), ('b', 'label b')]
+    assert all(set(row) == {*NAMES, 'label'} for row in rows)
+
+
+def test_the_row_id_hook_adds_dt_rowid_and_without_it_no_row_has_one():
+    """SPEC-R3.1: a hook returning `row_<id>` gives each row its `DT_RowId`; the plain table adds none."""
+    hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(row_id=lambda row: f'row_{row["id"]}'))
+    rows = hooked.fetch_sync(request(*NAMES), Client(hits=HITS)).data
+    assert [row['DT_RowId'] for row in rows] == ['row_a', 'row_b']
+    assert all('DT_RowId' not in row for row in table.fetch_sync(request(*NAMES), Client(hits=HITS)).data)
+
+
+def test_the_row_data_hook_adds_dt_rowdata_and_without_it_no_row_has_any():
+    """SPEC-R4.1: a hook returning `{"pk": id}` gives each row its `DT_RowData`; the plain table adds none."""
+    hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(row_data=lambda row: {'pk': row['id']}))
+    rows = hooked.fetch_sync(request(*NAMES), Client(hits=HITS)).data
+    assert [row['DT_RowData'] for row in rows] == [{'pk': 'a'}, {'pk': 'b'}]
+    assert all('DT_RowData' not in row for row in table.fetch_sync(request(*NAMES), Client(hits=HITS)).data)

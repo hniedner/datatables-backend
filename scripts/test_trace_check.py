@@ -482,11 +482,13 @@ def test_an_xfail_is_strict_names_its_exception_and_an_issue(tmp_path: Path, sou
 
 
 def test_the_enforced_requirements_of_the_script_are_the_default(tmp_path: Path) -> None:
-    """Without `--enforce` an uncited statement of PRD-P fails: an emptied default would pass every other test."""
-    prd = PRD + '\n#### PRD-P1' + VALID
-    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-P1.1** Parse, see PRD-F1.\n'}, prd=prd, enforce=None)
+    """Without `--enforce` an uncited statement of PRD-P or PRD-R fails: an emptied default would pass every other
+    test."""
+    prd = PRD + '\n#### PRD-P1' + VALID + '#### PRD-R1' + VALID
+    specs = COMPLETE + '- **SPEC-P1.1** Parse, see PRD-F1.\n- **SPEC-R1.1** Row, see PRD-F1.\n'
+    result = run(tmp_path, {'F.md': specs}, prd=prd, enforce=None)
     assert result.returncode == 1
-    assert result.stderr == 'SPEC-P1.1 is cited by no test\n'
+    assert result.stderr == 'SPEC-P1.1 is cited by no test\nSPEC-R1.1 is cited by no test\n'
 
 
 def test_an_enforce_entry_that_names_no_requirement_fails(tmp_path: Path) -> None:
