@@ -616,6 +616,20 @@ def test_false_sorts_before_true(client: OpenSearch, direction: str, expected: l
     assert [row for row in ids(flags.fetch_sync(params, client)) if row != 'c3'] == expected
 
 
+@pytest.mark.parametrize(
+    ('direction', 'expected'),
+    [('asc', ['c3', 'a1', 'd4', 'b2', 'e5']), ('desc', ['e5', 'b2', 'd4', 'a1', 'c3'])],
+)
+def test_the_declared_key_breaks_ties_and_the_descending_order_is_the_exact_reverse(
+    client: OpenSearch, direction: str, expected: list[str]
+):
+    """SPEC-O3.4, measured: a1 and d4 tie on `pages` (12), and the key runs in the direction of the order; c3 has no
+    `pages` and is the lowest value. The sort body, with `missing` on the key field too, is one the cluster accepts."""
+    keyed = SearchTable(INDEX, COLUMNS, unique_key='id')  # pyright: ignore[reportCallIssue]
+    response = keyed.fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': direction}]), client)
+    assert ids(response) == expected
+
+
 def test_searchbuilder_groups_nest(client: OpenSearch):
     tree = {'logic': 'OR', 'criteria': [
         {'logic': 'AND', 'criteria': [

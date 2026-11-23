@@ -798,16 +798,96 @@ def test_an_order_on_a_column_declared_unorderable_is_refused():
     assert client.searches == []
 
 
-@pytest.mark.xfail(
-    reason='PRD-O3, PRD-O4, PRD-D11, issue #29: an OpenSearch table declares no unique key yet, so no tie-breaker '
-    'follows the order and a request without an order is sent without a sort',
-    strict=True,
-    raises=AssertionError,
-)
-def test_ties_are_broken_by_a_unique_key():
+# -- the declared unique key, the tie-breaker (PRD-D11, PRD-O3, PRD-O4) ---
+
+
+def keyed(key: str | tuple[str, ...], columns: list[Column] | None = None) -> SearchTable:
+    return SearchTable('docs', columns or COLUMNS, unique_key=key)  # pyright: ignore[reportCallIssue]
+
+
+ID_ASC = {'id': {'order': 'asc', 'missing': '_first'}}
+ID_DESC = {'id': {'order': 'desc', 'missing': '_last'}}
+TITLE_DESC = {'title.keyword': {'order': 'desc', 'missing': '_last'}}
+PAGES_ASC = {'pages': {'order': 'asc', 'missing': '_first'}}
+
+
+def test_a_request_without_an_order_is_sent_in_the_keys_ascending_order():
+    """SPEC-O4.1, SPEC-O3.4: without a sort OpenSearch returns ties in no stable order."""
     client = Client()
-    table.fetch_sync(request(*NAMES), client)
-    assert client.searches[0].get('sort') == [{'id': {'order': 'asc'}}]
+    keyed('id').fetch_sync(request(*NAMES), client)
+    assert client.searches[0]['sort'] == [ID_ASC]
+
+
+@pytest.mark.parametrize(
+    ('order', 'flags', 'expected'),
+    [
+        ([{'column': 1, 'dir': 'desc'}], {}, [TITLE_DESC, ID_DESC]),  # the key follows the first entry
+        ([{'column': 3, 'dir': 'asc'}], {}, [PAGES_ASC, ID_ASC]),
+        ([{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}], {}, [TITLE_DESC, PAGES_ASC, ID_DESC]),
+        # a skipped entry does not decide the direction: `body` is unorderable, so `title` is the first applied one
+        (
+            [{'column': 2, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}],
+            {'body': {'orderable': False}},
+            [TITLE_DESC, ID_DESC],
+        ),
+        ([{'column': 0, 'dir': 'desc'}], {}, [ID_DESC]),  # a key the order already names is not sent twice
+    ],
+)
+def test_the_key_comes_last_in_the_direction_of_the_first_applied_entry(
+    order: list[dict[str, Any]], flags: dict[str, Any], expected: list[dict[str, Any]]
+):
+    """SPEC-O3.4, SPEC-O3.3, SPEC-O8: the exact reverse of the ascending order holds only if the key follows."""
+    client = Client()
+    keyed('id').fetch_sync(request(*NAMES, flags=flags, order=order), client)
+    assert client.searches[0]['sort'] == expected
+
+
+def test_a_key_of_several_columns_follows_the_order_one_after_the_other():
+    """SPEC-D11.4: an index over an association has no single unique field. `title` is the user's own order here,
+    so it is named once."""
+    client = Client()
+    keyed(('title', 'id')).fetch_sync(request(*NAMES, order=[{'column': 1, 'dir': 'desc'}]), client)
+    assert client.searches[0]['sort'] == [TITLE_DESC, ID_DESC]
+    keyed(('author', 'id')).fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': 'desc'}]), client)
+    assert client.searches[1]['sort'][1:] == [
+        {'meta.author.keyword': {'order': 'desc', 'missing': '_last'}},
+        ID_DESC,
+    ]
+
+
+def test_a_key_declared_unorderable_still_breaks_ties_but_cannot_be_ordered_by():
+    """SPEC-D11.1: `orderable=False` keeps the key out of the client's controls, not out of the tie-breaker."""
+    hidden = keyed('id', [IndexColumn('id', text='keyword', orderable=False), Column('pages', type='number')])
+    client = Client()
+    hidden.fetch_sync(request('id', 'pages', order=[{'column': 1, 'dir': 'asc'}]), client)
+    assert client.searches[0]['sort'] == [PAGES_ASC, ID_ASC]
+    refused(hidden.fetch_sync(request('id', 'pages', order=[{'column': 0, 'dir': 'asc'}]), client))
+    assert len(client.searches) == 1
+
+
+def test_an_index_table_without_a_unique_key_is_a_schema_error():
+    """SPEC-D11.1: no index has a primary key, so without one the tie-breaker would be whatever OpenSearch does."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', COLUMNS)  # pyright: ignore[reportCallIssue]
+    assert 'unique_key=' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('key', 'columns', 'text'),
+    [
+        ('nope', COLUMNS, 'nope'),  # not a declared column
+        (('id', 'nope'), COLUMNS, 'nope'),
+        ('body', COLUMNS, 'body'),  # analysed text only: there is no whole string to sort by
+        ((), COLUMNS, 'at least one'),
+    ],
+)
+def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(
+    key: str | tuple[str, ...], columns: list[Column], text: str
+):
+    """SPEC-D11.1: the key must name a declared column the index can sort by."""
+    with pytest.raises(SchemaError, match=text) as raised:
+        keyed(key, columns)
+    assert 'unique_key' in str(raised.value)
 
 
 # -- a boolean column ---

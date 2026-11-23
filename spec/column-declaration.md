@@ -35,9 +35,17 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `enc:Alpha` → rows 1.
 - **SPEC-D10.1** [SQLite] A column declared as the expression `lower(colour)` is ordered by it: order asc → rows 3,
   1, 4, 2, where the plain `colour` gives 4, 3, 1, 2 (PRD-O6); a column search `red` on it → rows 1, 2, 4.
-- **SPEC-D11.1** [OS] Constructing an OpenSearch table without a unique key → `SchemaError`.
-- **SPEC-D11.2** [SQL] Constructing a table over a join or a subquery without a primary key and without a declared
-  key → `SchemaError`; over a table with a primary key, no key need be declared.
+- **SPEC-D11.1** [OS] Constructing an OpenSearch table without a unique key → `SchemaError` naming `unique_key=`; so
+  does a key that is not a declared column, an empty one, or one on analysed text only (no whole string to sort by).
+  A key declared `orderable=False` is accepted: it breaks ties, and the client cannot order by it.
+- **SPEC-D11.2** [SQL] Constructing a table over a table, view, join or subquery that SQLAlchemy reports no primary
+  key for, without a declared key → `SchemaError` naming `unique_key=`; with a key it is accepted; over a source with
+  a primary key, no key need be declared. A declared key that is not a declared column raises too.
+- **SPEC-D11.3** [SQL] A subquery that selects some but not all of a table's primary-key columns reports a part of the
+  key, which is not unique: without a declared key it is a `SchemaError` naming `unique_key=`, and with every key
+  column selected it is accepted. (`GROUP BY`, `DISTINCT` and nested subqueries are not checked.)
+- **SPEC-D11.4** [all] A unique key of several columns breaks ties in the order of its names, each in the direction
+  of the first applied entry (PRD-O3); a column the order already names is not named again.
 - **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none.
 - **SPEC-D12.2** [all] Global search `red Alpha` → none: neither do both words match the other columns, nor does the
   whole text `red Alpha` equal a hooked value.

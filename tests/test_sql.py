@@ -2508,6 +2508,118 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
     assert [row['code'] for row in response.data] == ['a', 'b', 'c']
 
 
+# -- the declared unique key (PRD-D11, PRD-O3) ---
+
+
+def keyed(source: Any, columns: list[Column], key: str | tuple[str, ...]) -> SQLTable:
+    return SQLTable(source, columns, unique_key=key)  # pyright: ignore[reportCallIssue]
+
+
+def tags_without_a_key() -> Table:
+    """The table of SPEC-O3.5: no primary key, as a reflected view has none."""
+    return Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer),
+        SQLColumn('person_id', Integer),
+        SQLColumn('tag', String(5)),
+    )
+
+
+def tagged_people() -> tuple[Table, Any, list[Column]]:
+    tags = tags_without_a_key()
+    joined = people.join(tags, people.c.id == tags.c.person_id)
+    columns = [
+        Column('id', field='dtb_test_people_id'),
+        Column('age', field='dtb_test_people_age'),
+        Column('tag_id', field='dtb_test_tags_id'),
+    ]
+    return tags, joined, columns
+
+
+def test_a_declared_key_breaks_ties_on_a_join_without_a_primary_key(session: Session):
+    """SPEC-O3.5: Ann (1) has two tags and ties with Cy (4) on `age`. The join's SQLAlchemy primary key is
+    `people.id` alone, which repeats, so the tie-breaker must be the declared `tag_id`, whatever the storage order."""
+    tags, joined, columns = tagged_people()
+    tags.create(session.connection())
+    rows = [(4, 5), (3, 4), (2, 1), (1, 1)]  # stored in this order: (tag id, person id)
+    session.execute(tags.insert(), [{'id': t, 'person_id': p, 'tag': 'x'} for t, p in rows])
+    paired = keyed(joined, columns, 'tag_id')
+
+    def tag_ids(direction: str) -> list[Any]:
+        response = paired.fetch_sync(request('id', 'age', 'tag_id', order=[{'column': 1, 'dir': direction}]), session)
+        return [row['tag_id'] for row in response.data]
+
+    assert tag_ids('asc') == [1, 2, 3, 4]
+    assert tag_ids('desc') == [4, 3, 2, 1]
+
+
+def test_a_key_of_several_columns_follows_the_first_entrys_direction(session: Session):
+    """SPEC-D11.4: ties on `age` are broken by `team`, then `id`, in the direction `age` runs. The declared key wins
+    over the primary key (spec/README.md, "Declared key"): Ann (red, 1) and Cy (green, 4) tie on `age`, and `team`
+    puts Cy first ascending, which the primary key `id` would not."""
+    several = keyed(people, [Column('id'), Column('age'), Column('team')], ('team', 'id'))
+    for direction, expected in (('asc', [3, 4, 1, 2, 5]), ('desc', [5, 2, 1, 4, 3])):
+        params = request('id', 'age', 'team', order=[{'column': 1, 'dir': direction}])
+        assert ids(several.fetch_sync(params, session)) == expected
+
+
+def test_a_key_the_order_already_names_is_not_named_twice(session: Session):
+    """SPEC-O3.1: SQL Server refuses a column named twice in an ORDER BY (error 169)."""
+    named = keyed(people, [Column('id'), Column('age')], 'id')
+    response = named.fetch_sync(request('id', 'age', order=[{'column': 0, 'dir': 'desc'}]), session)
+    assert ids(response) == [5, 4, 3, 2, 1]
+
+
+def composite() -> Table:
+    return Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('a', Integer, primary_key=True),
+        SQLColumn('b', Integer, primary_key=True),
+        SQLColumn('c', String(5)),
+    )
+
+
+def part_of_a_composite_key() -> Any:
+    source = composite()
+    return select(source.c.a, source.c.c).subquery()
+
+
+@pytest.mark.parametrize(
+    'make_source',
+    [
+        tags_without_a_key,  # a table, or a reflected view
+        lambda: tagged_people()[1],  # a join of a table without a key
+        lambda: select(tags_without_a_key().c.id).subquery(),
+        part_of_a_composite_key,  # SPEC-D11.3
+    ],
+    ids=['table', 'join', 'subquery', 'part-of-a-composite-key'],
+)
+def test_a_source_that_has_no_unique_key_needs_one_declared(make_source: Callable[[], Any]):
+    """SPEC-D11.2, SPEC-D11.3: SQLAlchemy reports no key, or a part of one, and the tie-breaker would not be unique.
+    The message names the fix."""
+    source = make_source()
+    first = next(iter(source.columns)).name
+    with pytest.raises(SchemaError, match=r'unique_key='):
+        SQLTable(source, [Column(first)])
+    keyed(source, [Column(first)], first)  # declared, it is accepted
+
+
+def test_a_source_with_its_whole_primary_key_needs_no_declared_key():
+    """SPEC-D11.2: the check is not a blanket ban on subqueries."""
+    source = composite()
+    SQLTable(source, [Column('a')])
+    SQLTable(select(source.c.a, source.c.b).subquery(), [Column('a')])
+
+
+@pytest.mark.parametrize('key', ['nope', ('a', 'nope'), ()])
+def test_a_unique_key_the_source_cannot_use_is_a_schema_error(key: str | tuple[str, ...]):
+    """SPEC-D11.1: the key must name a declared column."""
+    with pytest.raises(SchemaError, match='unique_key'):
+        keyed(composite(), [Column('a'), Column('c')], key)
+
+
 def test_a_form_encoded_multi_values_list_is_read(session: Session):
     """The only request that sends ``multi_values`` as a form does (``...[multi_values][]``): were the key dropped or
     read as no list, this global search would be idle and answered."""
