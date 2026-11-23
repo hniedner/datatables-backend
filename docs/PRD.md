@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 43 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 44 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -36,11 +36,13 @@
   deprecates sorting on it; a declared `Column('_id')` shows the document id and is neither searchable nor orderable);
   revision 42 adds clauses to PRD-C10 (the reversed page's `from` and `size`, and each flipped entry naming the `mode`
   of its original direction) and to PRD-O3 (descending is the exact reverse for a field of one value); revision 43 adds
-  the extras `[sqlalchemy-async]` and `[opensearch-async]` to PRD-Q2, as the owner decided on 2026-11-23). It replaces
-  draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a
-  requirement, a goal or non-goal, a public name and an error code change only by the owner. A requirement's further
-  clauses, its reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the
-  owner to read. New facts about a database engine go to `docs/databases.md`, not into this document.
+  the extras `[sqlalchemy-async]` and `[opensearch-async]` to PRD-Q2, as the owner decided on 2026-11-23; revision 44
+  changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
+  a text-only OpenSearch column), and its reason and section 5 row). It replaces draft 1 (R1 to R9); section 10 maps
+  every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or non-goal, a
+  public name and an error code change only by the owner. A requirement's further clauses, its reason and section 5
+  change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts about a
+  database engine go to `docs/databases.md`, not into this document.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
