@@ -4,6 +4,7 @@ A recording client stands in for the cluster. Whether OpenSearch evaluates the b
 container tests of milestone 2; these pin down what is sent.
 """
 
+import asyncio
 from collections.abc import Mapping
 import json
 import logging
@@ -1854,3 +1855,119 @@ def test_a_column_declared_without_the_fold_still_searches_ignoring_case():
     params = request('id', 'secret', **criterion('secret', 'contains', 'RED'))
     assert sent(plain, params) == sent(folding, params)
     assert 'case_insensitive' in json.dumps(sent(plain, params))
+
+
+# -- ordering and the API (PRD-O, PRD-A) ---
+
+
+@pytest.mark.parametrize(
+    'order',
+    [
+        [{'column': 2, 'dir': 'asc'}, {'column': 3, 'dir': 'asc'}],
+        [{'column': 3, 'dir': 'asc'}, {'column': 2, 'dir': 'asc'}],
+    ],
+    ids=['first', 'second'],
+)
+def test_an_order_list_is_refused_whole_wherever_the_refused_entry_stands(order: list[dict[str, Any]]):
+    """SPEC-O1.8: `body` is analysed text, which the server cannot sort by, and the request calls it orderable;
+    `pages` is fine. Nothing is sent."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, order=order), client))
+    assert client.searches == []
+
+
+def test_one_table_sends_the_same_body_for_the_same_request_after_another():
+    """SPEC-A1.1: request X, then Y (a column search and an order), then X again: equal answers, equal bodies."""
+    client = Client(hits=HITS)
+    x = request(*NAMES, search={'value': 'red'})
+    y = request(*NAMES, column_search={'title': {'value': 'pear'}}, order=[{'column': 3, 'dir': 'desc'}])
+    first = table.fetch_sync(x, client)
+    table.fetch_sync(y, client)
+    assert table.fetch_sync(x, client) == first
+    assert client.searches[2] == client.searches[0]
+    assert client.searches[1] != client.searches[0]
+
+
+def _varied_requests(count: int) -> list[DTParams]:
+    words = ['red', 'ann', 'example', 'zzz', '']
+    return [
+        request(
+            *NAMES, search={'value': words[number % 5]}, order=[{'column': 3, 'dir': 'desc' if number % 2 else 'asc'}]
+        )
+        for number in range(count)
+    ]
+
+
+def _fresh() -> SearchTable:
+    return SearchTable('docs', COLUMNS, unique_key='id', base_filter={'term': {'published': True}})
+
+
+def test_one_table_answers_100_requests_as_a_fresh_table_does():
+    """SPEC-A2.1: each answer and each body equals the one of a table built for that request."""
+    for params in _varied_requests(100):
+        used, fresh = Client(hits=HITS), Client(hits=HITS)
+        assert table.fetch_sync(params, used) == _fresh().fetch_sync(params, fresh)
+        assert (used.searches, used.counts) == (fresh.searches, fresh.counts)
+
+
+async def test_one_table_answers_20_concurrent_requests_on_one_async_client_as_a_fresh_table_does():
+    """SPEC-A2.1: the 20 share one async client, whose recorded bodies are those of 20 fresh tables."""
+    concurrent = _varied_requests(20)
+    shared = AsyncClient(hits=HITS)
+    answers = await asyncio.gather(*(table.fetch(params, shared) for params in concurrent))
+    expected_client = Client(hits=HITS)
+    expected = [_fresh().fetch_sync(params, expected_client) for params in concurrent]
+    assert answers == expected
+
+    def canonical(bodies: list[Mapping[str, Any]]) -> list[str]:
+        return sorted(json.dumps(body, sort_keys=True) for body in bodies)
+
+    assert canonical(shared.searches) == canonical(expected_client.searches)
+    assert canonical(shared.counts) == canonical(expected_client.counts)
+
+
+def test_building_a_table_takes_no_client_and_the_first_call_is_made_inside_fetch():
+    """SPEC-A3.1: the constructor takes none, so none is called before `fetch_sync`."""
+    client = Client(hits=HITS)
+    built = _fresh()
+    assert (client.searches, client.counts) == ([], [])
+    built.fetch_sync(request(*NAMES), client)
+    assert len(client.searches) == 1
+
+
+async def test_the_sync_and_the_async_client_answer_the_base_request():
+    """SPEC-A4.1, SPEC-A5.1: the answer is built from the hits, and both clients give the same one."""
+    sync_answer = table.fetch_sync(request(*NAMES), Client(hits=HITS))
+    async_answer = await table.fetch(request(*NAMES), AsyncClient(hits=HITS))
+    assert [row['id'] for row in sync_answer.data] == ['a', 'b']
+    assert async_answer == sync_answer
+
+
+def _plain(value: Any) -> bool:
+    """Whether a body is made of dicts, lists, text, numbers, booleans and None, and of nothing else."""
+    if isinstance(value, dict):
+        return type(value) is dict and all(isinstance(key, str) and _plain(item) for key, item in value.items())  # type: ignore[reportUnknownVariableType]
+    if isinstance(value, list):
+        return type(value) is list and all(_plain(item) for item in value)  # type: ignore[reportUnknownVariableType]
+    return value is None or type(value) in (str, int, float, bool)
+
+
+def test_every_body_the_client_receives_is_a_plain_dict_that_survives_a_json_round_trip():
+    """SPEC-A8.1: a global search, column searches, SearchBuilder, an order and a page, each with its counts."""
+    cases = [
+        request(*NAMES, search={'value': 'red apple -pie'}, start=5, length=5),
+        request(*NAMES, column_search={'title': {'value': 'pear'}, 'pages': {'value': '3'}}),
+        request(*NAMES, **criterion('pages', 'between', '1', '9')),
+        request(*NAMES, **criterion('created', '=', '2026-07-15')),
+        request(*NAMES, order=[{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]),
+        request(*NAMES, search={'value': 'x'}, column_search={'author': {'multi_values': ['Ann', 'Bob']}}),
+    ]
+    bodies: list[Mapping[str, Any]] = []
+    for params in cases:
+        client = Client(hits=HITS)
+        table.fetch_sync(params, client)
+        bodies += [*client.searches, *client.counts]
+    assert len(bodies) > len(cases)  # the filtered requests count too
+    for body in bodies:
+        assert _plain(body)
+        assert json.loads(json.dumps(body)) == body

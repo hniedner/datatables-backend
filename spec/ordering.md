@@ -17,6 +17,8 @@ lists rows in the order they come back.
   its `orderable` (PRD-P21).
 - **SPEC-O1.7** [all] DataTables' first request (`order[0][column]` 0, `dir` asc) on a table whose column 0 is
   undeclared and request-unorderable → rows 1, 2, 3, 4, no error.
+- **SPEC-O1.8** [all] An order with two entries, one on `secret` (server-unorderable, request `orderable: true`) and
+  one on `price`, → error_code `invalid_filter`, whether the `secret` entry comes first or second.
 - **SPEC-O2.1** [all] Order `price` asc → rows 4, 1, 3, 2 (NULL first); desc → rows 2, 3, 1, 4 (NULL last).
 - **SPEC-O2.2** [all] Order `made` asc → rows 3, 4, 1, 2; desc → rows 2, 1, 4, 3.
 - **SPEC-O2.3** [all] Order `active` asc → rows 3, 2, 1, 4 (NULL, false, true; ties by key); desc → rows 4, 1, 2, 3.

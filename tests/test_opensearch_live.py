@@ -798,3 +798,40 @@ def test_a_renamed_column_is_searched_by_its_stored_field_and_reaches_the_client
     assert response.data[0]['author'] == 'Bob'
     assert 'meta' not in response.data[0]
     assert 'meta.author' not in response.data[0]
+
+
+ALL_IDS = ['a1', 'b2', 'c3', 'd4', 'e5']
+
+
+def test_a_sync_client_answers_the_base_request(client: OpenSearch):
+    """SPEC-A5.1: every document, in the key's order."""
+    assert ids(table.fetch_sync(request(*NAMES), client)) == ALL_IDS
+
+
+async def test_an_async_client_answers_the_base_request(async_client: AsyncOpenSearch):
+    """SPEC-A4.1: the same rows through `AsyncOpenSearch`."""
+    assert ids(await table.fetch(request(*NAMES), async_client)) == ALL_IDS
+
+
+@pytest.mark.parametrize('length', range(1, 7))
+def test_the_page_walk_of_an_order_with_ties_holds_every_row_once_and_descending_is_its_reverse(
+    client: OpenSearch, length: int
+):
+    """SPEC-O3.2: a1 and d4 tie on `pages` (12) and c3 has none; the pages joined give each document once, in the order
+    of one big page, and descending is exactly the reverse."""
+
+    def walk(direction: str) -> list[str]:
+        order = [{'column': 3, 'dir': direction}]
+        pages = [
+            ids(table.fetch_sync(request(*NAMES, start=s, length=length, order=order), client))
+            for s in range(0, 5, length)
+        ]
+        return [row for page in pages for row in page]
+
+    whole = {
+        d: ids(table.fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': d}]), client)) for d in ('asc', 'desc')
+    }
+    assert sorted(whole['asc']) == ALL_IDS
+    assert whole['desc'] == whole['asc'][::-1]
+    assert walk('asc') == whole['asc']
+    assert walk('desc') == whole['desc']
