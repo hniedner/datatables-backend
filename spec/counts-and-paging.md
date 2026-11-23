@@ -55,6 +55,8 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
   its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
   answers 4; after the test waits past the TTL, the next request counts again and answers 5.
+- **SPEC-C14.3** [OS] Recording: with a `TotalCache`, an unfiltered request (whose search count is the total, PRD-C8)
+  fills the cache: a global search right after it runs no total count, and answers that `recordsTotal`.
 - **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
   tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
   and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.

@@ -114,6 +114,19 @@ def test_a_filtered_draw_counts_the_total_once_per_ttl():
     assert client.counts == [{'query': {'match_all': {}}}]
 
 
+def test_an_unfiltered_draw_fills_the_total_cache_for_the_filtered_draws_after_it():
+    """SPEC-C14.3, PRD-C14, PRD-C8: an unfiltered search's count is the total, and the cache keeps it. Were it not
+    kept, every filtered draw after it would pay a count of its own, with nothing to show for it."""
+    client, cached = (
+        Client(total=7, count=40),
+        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
+    )
+    cached.fetch_sync(request(*NAMES), client)  # nothing beyond the base filter: the search's own count is the total
+    response = cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert response.recordsTotal == 7
+    assert client.counts == []
+
+
 def test_the_total_count_keeps_the_base_filter():
     client = Client()
     table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
