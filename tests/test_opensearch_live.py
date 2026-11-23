@@ -329,6 +329,19 @@ def test_a_column_search_on_a_hooked_column_matches_the_whole_stored_value(
     assert found(hooked.fetch_sync(params, client)) == expected
 
 
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [('Alpha', ['p1']), (f' {chr(0xA0)}Alpha{chr(0x3000)}', ['p1']), ('Alph', []), ('alpha', ['p4'])],
+)
+def test_the_global_search_on_a_hooked_column_matches_the_whole_stored_value(
+    client: OpenSearch, text: str, expected: list[str]
+):
+    """SPEC-D12.1, SPEC-D12.3: the same `term` as the column search, so the same four documents: not the superset
+    `enc:Alphabet` (p2) nor the padded `enc: Alpha ` (p3), where a wildcard finds them, and `alpha` finds `enc:alpha`
+    (p4) only. The `id` column, searched as text beside it, holds none of these words."""
+    assert found(hooked.fetch_sync(request('id', 'secret', search={'value': text}), client)) == expected
+
+
 def test_a_multi_select_matches_whole_values(client: OpenSearch):
     params = request(*NAMES)
     params.columns[1].search.value = '^(Apple pie|Date loaf)$'

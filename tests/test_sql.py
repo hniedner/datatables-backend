@@ -648,6 +648,23 @@ def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, c
     assert ids(cased.fetch_sync(params, session)) == []
 
 
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('Alpha', [1]),
+        ('  Alpha  ', [1]),  # trimmed before the hook
+        ('alpha', []),  # the collation is case-sensitive here, and a hooked column adds no folding
+        ('Alph', []),  # the whole value, not a part of it
+    ],
+)
+def test_the_global_search_on_a_hooked_column_compares_exactly(
+    session: Session, cased: SQLTable, text: str, expected: list[int]
+):
+    """SPEC-D12.1, SPEC-D12.3, PRD-F9, PRD-D21: the stored `enc:Alpha` is found by the whole text only, on every
+    database; the other searchable columns hold none of these words."""
+    assert ids(cased.fetch_sync(request(*CASED, search={'value': text}), session)) == expected
+
+
 def test_an_exact_match_on_an_enum_column_ignores_case(session: Session, cased: SQLTable):
     """PostgreSQL stores an `Enum` as a type of its own, which has no `lower()`, and MySQL as an `ENUM`; the column
     is cast to text first on every database."""
@@ -2136,6 +2153,28 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_query(
     assert response.error_code == 'request_too_large'
     assert response.data == []
     assert sent == []
+
+
+def hooked_wide_request(plain: int, *, search: str, **body: Any) -> tuple[SQLTable, DTParams]:
+    """A table of ``plain`` columns that all read `email_address` and a hooked `secret`, and a request whose global
+    search of ``search`` covers every one of them."""
+    columns = [Column(f'e{number}', field='email_address') for number in range(plain)]
+    wide = SQLTable(people, [*columns, Column('secret', search_value=lambda text: f's{text}')])
+    return wide, request(*(f'e{number}' for number in range(plain)), 'secret', search={'value': search}, **body)
+
+
+def test_a_hooked_column_in_the_global_search_is_one_condition_however_many_words(session: Session):
+    """SPEC-C17.1, PRD-C17, PRD-D12: two words over 479 columns are 958, a word of a column search is 959, and the
+    hooked column's equality is the 960th, where one condition per word would make it 961 and be refused."""
+    wide, params = hooked_wide_request(479, search='ann bob', column_search={'e0': {'value': 'ann'}})
+    assert wide.fetch_sync(params, session).error is None
+
+
+def test_a_hooked_column_in_the_global_search_is_counted_in_the_budget(session: Session):
+    """SPEC-C17.2, PRD-C17, PRD-D12: two words over 480 columns are exactly BUDGET, and the hooked column's equality
+    is the one condition over it, answered `request_too_large`."""
+    wide, params = hooked_wide_request(480, search='ann bob')
+    assert wide.fetch_sync(params, session).error_code == 'request_too_large'
 
 
 def test_the_budget_message_defines_a_condition_and_says_how_to_fix_it(session: Session):
