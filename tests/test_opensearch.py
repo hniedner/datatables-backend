@@ -5,6 +5,7 @@ container tests of milestone 2; these pin down what is sent.
 """
 
 from collections.abc import Mapping
+import json
 import logging
 from typing import Any
 from typing import cast
@@ -906,6 +907,50 @@ def test_a_column_search_on_a_hooked_column_of_blank_text_sends_no_clause():
     client = Client()
     hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': chr(0xA0)}}), client)
     assert client.searches[-1]['query'] == {'match_all': {}}
+
+
+def recording_hook() -> tuple[list[str], Any]:
+    seen: list[str] = []
+
+    def recorded(text: str) -> str:
+        seen.append(text)
+        return stored(text)
+
+    return seen, recorded
+
+
+GLOBAL_CASES = ['Alpha', f' {chr(0xA0)}Alpha{chr(0x3000)}', '"Alpha"', '!Alpha', 'a\nb', 'red Alpha']
+
+
+def test_the_global_search_on_a_hooked_column_is_one_term_of_the_transformed_trimmed_whole_text():
+    """SPEC-D12.1, SPEC-D12.3, SPEC-D12.4, SPEC-D12.7: the whole text, trimmed, transformed once and matched whole on
+    the keyword field, with no wildcard (a substring) and no phrase. It is the one clause when every searchable column
+    is hooked, and `!Alpha` and `a` + LF + `b` are values like any other."""
+    seen, recorded = recording_hook()
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword', searchable=False), Column('secret', search_value=recorded)]
+    )
+    client = Client()
+    for text in GLOBAL_CASES:
+        hooked.fetch_sync(request('id', 'secret', search={'value': text}), client)
+    assert [search['query']['bool']['must'] for search in client.searches] == [
+        [{'term': {'secret.keyword': stored(text.strip())}}] for text in GLOBAL_CASES
+    ]
+    assert seen == [text.strip() for text in GLOBAL_CASES]
+
+
+def test_the_global_search_adds_the_term_of_a_hooked_column_beside_the_words_of_the_others():
+    """SPEC-D12.1, SPEC-D12.2: the words go to the other columns, each found in some column, and the hooked column
+    adds the one term of the whole text, however many words it holds."""
+    seen, recorded = recording_hook()
+    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    client = Client()
+    hooked.fetch_sync(request('id', 'secret', search={'value': 'red Alpha'}), client)
+    (clause,) = client.searches[-1]['query']['bool']['must']
+    words, term = clause['bool']['should']
+    assert term == {'term': {'secret.keyword': stored('red Alpha')}}
+    assert 'secret' not in json.dumps(words)  # the hooked column is no part of the words
+    assert seen == ['red Alpha']
 
 
 def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value_before_anything_is_sent():

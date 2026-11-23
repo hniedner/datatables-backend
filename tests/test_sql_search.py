@@ -188,23 +188,120 @@ def test_each_of_the_five_space_characters_splits_words(session: Session, space:
     assert found(session, ['aa bb', 'aabb', 'bb'], glob(f'aa{space}bb')) == [1, 2]
 
 
-# -- hooked columns keep today's whole-text match until PRD-D12 (28) ---
+# -- a hooked column in the global search (PRD-D12) ---
+
+TWENTY = ' '.join(
+    'abcdefghijklmnopqrst'
+)  # twenty one-letter words: 39 characters, within `secret`'s 50 with the hook's `s`
+#: Stored as the hook `s{text}` would make them: a superset of `1`, a padded `1`, the bare marks of the grammar, a line
+#: feed beside the same letters with a space, a negated word, and twenty words
+HOOKED_ROWS = {
+    11: 's1x',
+    12: 's 1 ',
+    13: 's"1"',
+    14: 's!x',
+    15: 's"',
+    16: 'sa\nb',
+    17: 'sa b',
+    18: 's!ab',
+    19: f's{TWENTY}',
+}
+PADDED = f'{chr(0xA0)} {chr(0x3000)}'  # White_Space that PRD-F7 does not count as a space
+NAMES = {'mixed': ('id', 'name', 'secret'), 'hooked': ('id', 'secret')}
 
 
-def test_a_hooked_column_is_matched_for_the_whole_text_beside_the_words_of_the_others(session: Session):
-    assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **glob('3')), session)) == [3]
+def recording() -> tuple[list[str], dict[str, SQLTable]]:
+    """The texts a hook is given, and `mixed` and `only_hooked` over a hook that records them."""
+    seen: list[str] = []
+
+    def recorded(text: str) -> str:
+        seen.append(text)
+        return hook(text)
+
+    return seen, {
+        'mixed': SQLTable(
+            people, [Column('id', searchable=False), Column('name'), Column('secret', search_value=recorded)]
+        ),
+        'hooked': SQLTable(people, [Column('id', searchable=False), Column('secret', search_value=recorded)]),
+    }
 
 
-def test_text_with_no_word_adds_nothing_to_a_hooked_column_either(session: Session):
-    """SPEC-F6.2 with PRD-D12: the hook would turn `!x` into `s!x`, which no row holds."""
-    assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **glob('!x')), session)) == [1, 2, 3, 4, 5]
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('1', [1]),  # not row 11, whose `s1x` holds `s1`
+        (f'{PADDED}1{PADDED}', [1]),  # SPEC-D12.3: Unicode White_Space, not only the five of PRD-F7; not row 12
+        (' 1 ', [1]),
+        ('"1"', [13]),  # SPEC-D12.1: no grammar, so the quotes are part of the value
+        ('!ab', [18]),  # a negated word excludes nothing by the hooked column: the whole text is compared
+        ('a\nb', [16]),  # SPEC-D12.7: PRD-F7's rewriting of a line break does not apply
+        (TWENTY, [19]),  # SPEC-D12.5: no word cap where every searchable column is hooked
+    ],
+)
+def test_a_hooked_column_is_equality_on_the_trimmed_whole_text_in_the_global_search(
+    session: Session, text: str, expected: list[int]
+):
+    """SPEC-D12.1, SPEC-D12.3, SPEC-D12.5, SPEC-D12.7, SPEC-D12.9 on a table whose every searchable column is hooked,
+    so the equality alone decides. A match on a part of the value finds more rows (`1` also row 11), and one that did not
+    trim hands the hook the padding."""
+    session.execute(people.insert(), [{'id': row, 'secret': stored} for row, stored in HOOKED_ROWS.items()])
+    assert ids(only_hooked.fetch_sync(request('id', 'secret', **glob(text)), session)) == expected
+
+
+def test_a_hooked_column_beside_other_columns_is_equality_on_the_whole_text(session: Session):
+    """SPEC-D12.1 on a mixed table: `1` finds row 1 by equality and row 3, whose name `anna_100%` holds it, but not
+    row 11 (`s1x`); `1x` finds row 11, which only the hooked column holds whole."""
+    session.execute(people.insert(), [{'id': 11, 'secret': 's1x'}])
+    assert ids(mixed.fetch_sync(request(*NAMES['mixed'], **glob('1')), session)) == [1, 3]
+    assert ids(mixed.fetch_sync(request(*NAMES['mixed'], **glob('1x')), session)) == [11]
+
+
+def test_the_words_of_the_text_are_not_spread_over_a_hooked_column(session: Session):
+    """SPEC-D12.2: `anna` is in the name of row 3 and `3` is the hooked `s3`, but the whole text `anna 3` is neither
+    found in the name nor equal to a hooked value. A hooked column matched word by word finds row 3."""
+    assert ids(mixed.fetch_sync(request(*NAMES['mixed'], **glob('anna 3')), session)) == []
+
+
+def test_a_negated_word_excludes_no_row_by_a_hooked_column(session: Session):
+    """SPEC-D12.4: `!s3` leaves out the rows whose name holds `s3`, and never row 21, whose hooked value is `ss3`,
+    which is what the hook makes of `s3`."""
+    session.execute(people.insert(), [{'id': 21, 'name': 'zed', 'secret': 'ss3'}])
+    assert ids(mixed.fetch_sync(request(*NAMES['mixed'], **glob('!s3')), session)) == [1, 2, 3, 4, 5, 21]
+
+
+@pytest.mark.parametrize('shape', ['mixed', 'hooked'])
+@pytest.mark.parametrize('text', ['  Alpha  ', f'{PADDED}Alpha{PADDED}', 'Alpha beta', '!Alpha'])
+def test_the_hook_is_given_the_trimmed_whole_text_once(session: Session, shape: str, text: str):
+    """SPEC-D12.3, SPEC-D12.4: one call, with the text trimmed and not split into words. `!Alpha` is compared whole,
+    so its hook sees the `!`."""
+    seen, tables = recording()
+    tables[shape].fetch_sync(request(*NAMES[shape], **glob(text)), session)
+    assert seen == [text.strip()]
+
+
+@pytest.mark.parametrize('shape', ['mixed', 'hooked'])
+@pytest.mark.parametrize('text', ['""', '!x', '!"', '"', '!', '   '])
+def test_text_with_no_word_adds_nothing_to_a_hooked_column_in_the_global_search(
+    session: Session, shape: str, text: str
+):
+    """SPEC-F6.2, SPEC-D12.9: text whose every token adds nothing adds nothing here either, on a table of hooked
+    columns only as on a mixed one, and the hook is not called (it would turn `!x` into `s!x`, which no row holds)."""
+    seen, tables = recording()
+    assert ids(tables[shape].fetch_sync(request(*NAMES[shape], **glob(text)), session)) == [1, 2, 3, 4, 5]
+    assert seen == []
+
+
+def test_text_of_white_space_beyond_the_five_adds_nothing_to_the_hooked_side(session: Session):
+    """SPEC-F6.3 with PRD-D12's trimming: trimmed to nothing, the text is blank for the hooked column, so with no
+    other column every row is found and the hook is not called. The other columns read it as PRD-F6 does, where
+    U+00A0 is a word that no name holds."""
+    seen, tables = recording()
+    assert ids(tables['hooked'].fetch_sync(request(*NAMES['hooked'], **glob(chr(0xA0))), session)) == [1, 2, 3, 4, 5]
+    assert ids(tables['mixed'].fetch_sync(request(*NAMES['mixed'], **glob(chr(0xA0))), session)) == []
+    assert seen == []
 
 
 # -- a column search on a hooked column (PRD-D17) ---
-
-#: Stored as the hook `s{text}` would make them: a superset of `1`, a padded `1`, the bare marks of the grammar, and a
-#: line feed beside the same letters with a space
-HOOKED_ROWS = {11: 's1x', 12: 's 1 ', 13: 's"1"', 14: 's!x', 15: 's"', 16: 'sa\nb', 17: 'sa b'}
 
 
 @pytest.mark.parametrize(

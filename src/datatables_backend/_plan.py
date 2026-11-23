@@ -443,8 +443,8 @@ def _global_search(
     describe: Callable[[Column], Capabilities],
     hooked: Callable[[Column, str], Any],
 ) -> Filter | Group | None:
-    """The global search: every word found in some searchable column, none for text with no word. Raises the
-    user's mistakes."""
+    """The global search: every word found in some searchable column, or the whole text equal to the value of a hooked
+    column; none for text with no word. Raises the user's mistakes."""
     text = params.search.value
     if _control_character([text]):
         raise mistake('datatables_control_character', SEARCH_CONTROL_CHARACTER)
@@ -481,9 +481,14 @@ def _global_search(
     alternatives: list[Filter | Group] = []
     if plain:
         alternatives.append(_all('AND', [_word(plain, word, negated) for word, negated in searched_words]))
-    # A hooked column is matched for the whole text until PRD-D12 turns it into an equality (#28)
-    alternatives.extend(Contains(column, kind, hooked(column, text)) for column, kind in found if column.search_value)
-    return _all('OR', alternatives)
+    # A hooked column equals the whole text, trimmed and transformed once (PRD-D12): no words, and no PRD-F7 rewrite
+    # of a line break. Python's strip is Unicode White_Space for admitted text (as for a column search, below)
+    if whole := text.strip():
+        alternatives.extend(
+            Equals(column, kind, hooked(column, whole)) for column, kind in found if column.search_value is not None
+        )
+    # Text of White_Space beyond PRD-F7's five has a word for the other columns and none for the hooked ones
+    return _all('OR', alternatives) if alternatives else None
 
 
 def _words(text: str) -> list[tuple[str, bool]]:

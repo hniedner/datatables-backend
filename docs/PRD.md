@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 36 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 37 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -26,7 +26,9 @@
   rule of 308 digits, which that bound makes unreachable, with lines in section 5; revision 35 gives PRD-C17 its
   budget of 960 conditions, the owner's sentence of 2026-11-22 and the new code `request_too_large`, in PRD-C17,
   PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5; revision 36 adds a clause to PRD-D1
-  (a table declares a column, and no two share a name)). It replaces draft 1 (R1 to
+  (a table declares a column, and no two share a name); revision 37 adds a clause to PRD-D12 (text whose every token
+  adds nothing under PRD-F6 adds nothing there either, and text with a word, a negated one included, is compared
+  whole)). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -391,11 +393,12 @@ key; constructing it without one raises `SchemaError`.
 
 In the global search, a column with a search-value hook (PRD-D9) takes no part in per-word matching: a row matches when
 its other columns satisfy the smart search, or when the hooked column equals the whole search text, trimmed and
-transformed once. `!word` ignores hooked columns, and blank text adds nothing. When every searchable column is hooked,
-the equality alone decides, and PRD-F13 does not apply. Trimmed means leading and trailing Unicode White_Space removed;
-PRD-F7's line-break rewriting does not apply to the whole text, which is an exact value; PRD-F14's 255-code-point bound
-applies to the raw text, before trimming; its 16-word cap is lifted only when every searchable column is hooked, and
-otherwise refuses the whole request.
+transformed once. `!word` ignores hooked columns, in that a negated word never excludes a row by one, and blank text
+adds nothing. Text whose every token adds nothing under PRD-F6 adds nothing here either; text with a word, a negated one
+included, is compared whole. When every searchable column is hooked, the equality alone decides, and PRD-F13 does not
+apply. Trimmed means leading and trailing Unicode White_Space removed; PRD-F7's line-break rewriting does not apply to
+the whole text, which is an exact value; PRD-F14's 255-code-point bound applies to the raw text, before trimming; its
+16-word cap is lifted only when every searchable column is hooked, and otherwise refuses the whole request.
 
 - **Reason:** A transformed (e.g. encrypted) value cannot be matched word by word or as a substring; the whole text is
   what a user types to find one value. Owner's decision of 2026-11-19.
