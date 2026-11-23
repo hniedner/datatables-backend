@@ -575,8 +575,9 @@ def test_a_number_outside_the_range_of_its_field_is_the_users_mistake(client: Op
     assert table.fetch_sync(params, client).error_code == 'invalid_number'
 
 
-# The two tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared
-# boolean (PRD-D8), so PRD-F43 does not change their outcomes. The cases with the column declared boolean follow them.
+# The tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared boolean
+# (PRD-D8), so PRD-F43 does not change their outcomes: the fix is to declare the column boolean, as docs/databases.md
+# says. The cases with the column declared boolean follow them.
 
 
 @pytest.mark.parametrize('value', ['1', 'true', 'abc'])
@@ -588,30 +589,28 @@ def test_searchbuilder_equality_on_a_boolean_field_matches_nothing_today(client:
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == []
 
 
-REFUSED_BY_OPENSEARCH = pytest.mark.xfail(
-    reason='a string column on a boolean mapping: OpenSearch rejects a term other than true/false on a boolean field, '
-    'so the search fails; PRD-D8/PRD-F43 apply once the column is declared boolean',
-    strict=True,
-    raises=RequestError,
-)
-
-
-@pytest.mark.parametrize(
-    ('value', 'expected'),
-    [
-        pytest.param('1', ['a1', 'd4'], marks=REFUSED_BY_OPENSEARCH),
-        ('true', ['a1', 'd4']),
-        pytest.param('abc', [], marks=REFUSED_BY_OPENSEARCH),
-    ],
-)
-def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, value: str, expected: list[str]):
-    """A string column on a boolean mapping: a keyword-kind column terms on `active` itself, and only `true` and
-    `false` reach a boolean field. The expected rows of the strict xfails are never compared, since the search raises.
-    PRD-D8/PRD-F43 apply once the column is declared boolean."""
+def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch):
+    """A keyword-kind string column on a boolean mapping terms on `active` itself, which a boolean field answers for
+    `true`. The adopter's fix for the refusals below is to declare the column boolean."""
     flagged = SearchTable(
         INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')], unique_key='id'
     )
-    assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == expected
+    assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', 'true')), client)) == [
+        'a1',
+        'd4',
+    ]
+
+
+@pytest.mark.parametrize('value', ['1', 'abc'])
+def test_a_keyword_column_on_a_boolean_field_fails_for_a_term_that_is_no_boolean(client: OpenSearch, value: str):
+    """Today's result: OpenSearch rejects a term other than true/false on a boolean field, so the search raises. An
+    adopter who declares a keyword column on a boolean mapping declares it wrong; declared boolean (PRD-D8, PRD-F43)
+    `1` is answered (`test_searchbuilder_on_a_declared_boolean_column`) and `abc` is refused with `invalid_filter`."""
+    flagged = SearchTable(
+        INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')], unique_key='id'
+    )
+    with pytest.raises(RequestError):
+        flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)
 
 
 # The column declared boolean (PRD-D8): `active` is true for a1 and d4, false for b2 and e5, missing in c3. The spec

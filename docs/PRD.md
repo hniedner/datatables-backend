@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 45 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 46 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -39,8 +39,10 @@
   the extras `[sqlalchemy-async]` and `[opensearch-async]` to PRD-Q2, as the owner decided on 2026-11-23; revision 44
   changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
   a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
-  is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed)). It replaces draft 1 (R1 to R9); section
-  10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
+  is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed); revision 46 removes from PRD-P21 the
+  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38, and
+  adds to PRD-D6's exceptions that a criterion with no column adds nothing). It replaces draft 1 (R1 to R9); section 10
+  maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
   non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its reason and
   section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts
   about a database engine go to `docs/databases.md`, not into this document.
@@ -301,8 +303,8 @@ A column's `data` of JSON `null` reads as empty text. A nameless column has an e
 `null`, an object, or the text `function` (how DataTables sends a function `data`) when no declared column has the name
 `function`; if one does, the column is that one, as PRD-P15 and PRD-D6 say. The global search skips a nameless column,
 and an `order` entry on one is skipped (this wins over PRD-O1); a column search on it with a value or a non-empty
-`multi_values` list, or a SearchBuilder criterion with an empty `origData`, is refused with `invalid_filter` (PRD-E1),
-as on an undeclared name (PRD-D6, PRD-F41).
+`multi_values` list is refused with `invalid_filter` (PRD-E1), as on an undeclared name (PRD-D6, PRD-F41); a
+SearchBuilder criterion with no column adds nothing (PRD-F30).
 
 - **Reason:** DataTables sends `data: null` for a column that only renders (JSON `null`; a form request leaves the value
   empty), and sends its default order `[[0, 'asc']]` whatever `orderable` says (READ, DataTables 3.1.5 `dataTables.mjs`:
@@ -358,7 +360,8 @@ Any name the request uses to search, filter or order on (column searches, the gl
 SearchBuilder `origData`) must be a declared name; otherwise the request is refused (PRD-E1). The exceptions: the global
 search leaves out every undeclared column, and a column search on one counts only with a value or a non-empty
 `multi_values` list (PRD-F41); an order entry the request marks unorderable on an undeclared name is skipped (PRD-O1);
-the global search and `order` skip a nameless column (PRD-P21).
+the global search and `order` skip a nameless column (PRD-P21); a SearchBuilder criterion with no column adds nothing
+(PRD-F30).
 
 - **Reason:** A backend field never becomes reachable just because the client names it.
 - **Priority:** must

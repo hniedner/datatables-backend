@@ -97,5 +97,4 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P21.2** [all] A column with `data` `function` and an empty `name` is nameless: an order on it is skipped
   (rows 1, 2, 3, 4); with `Column('function', field='id', type='number')` declared, it is that column: an order
   desc on it → rows 4, 3, 2, 1.
-- **SPEC-P21.3** [all] A column search with value `x` on a nameless column → error_code `invalid_filter`; a
-  SearchBuilder criterion with an empty `origData` → error_code `invalid_filter`.
+- **SPEC-P21.3** [all] A column search with value `x` on a nameless column → error_code `invalid_filter`.

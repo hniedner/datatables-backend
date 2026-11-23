@@ -37,18 +37,11 @@ second paragraph under it is not read.
 - A statement may add rows to the fixture or redeclare a column for itself; it says so ("given a row ...", "with
   the stored field renamed ..."). Otherwise it runs on the fixture as below.
 
-`scripts/trace_check.py` (run in CI's lint job) reports, one line each:
+`scripts/trace_check.py` (run in CI's lint job) reports every finding, one line each; its docstring lists them and
+holds the rule for what a test must cite.
 
-- a PRD heading line that holds `PRD-` but is not a requirement heading of the expected shape, a requirement section
-  of the wrong shape, a requirement in table form (a line that starts with a pipe and whose first cell starts with
-  `PRD-`), a requirement id defined twice, or no requirement at all;
-- no statement at all, the text `SPEC-` outside backticks anywhere but a statement's start, or an unindented line
-  right after a statement;
-- a *must* or *should* requirement with no statement (a *later* one needs none);
-- a statement that states or cites a requirement id the PRD does not hold, or cites a malformed `PRD-` id;
-- a statement id defined more than once.
-
-An unreadable PRD or specs directory is a usage error.
+A test traces to a statement by naming its id. It may run on another fixture than `items` (the tests use a `people`
+table), as long as it asserts the behaviour the statement states.
 
 ## Tags
 
@@ -64,7 +57,8 @@ An unreadable PRD or specs directory is a usage error.
 - `[core]`: backend-independent; checks `parse_request` or a model alone.
 - `[FastAPI]`: through a FastAPI app using the library's dependency, with its `TestClient`, over the SQLite `items`
   fixture unless the statement names another backend.
-- `[CI job]`: checked by that CI job (`install-isolation`, `minimum-versions`, `tests`, `gate`, `opensearch`).
+- `[CI <job>]`: checked by that CI job, written `[CI install-isolation]`, `[CI minimum-versions]`, `[CI tests]`,
+  `[CI gate]` or `[CI opensearch]`.
 - `[review]`: checked by reading the code, the CI configuration, the built wheel or the repository settings; no
   automated check names it yet.
 
