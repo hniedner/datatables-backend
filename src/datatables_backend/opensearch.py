@@ -59,7 +59,8 @@ type TextKind = Literal['keyword', 'text', 'text+keyword']
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
 MAX_RESULT_WINDOW = 10_000
-#: The document's own id: a metadata field, read from the hit (never from ``_source``) and sorted by as it is
+#: The document's own id: a metadata field, read from the hit (never from ``_source``). OpenSearch deprecates sorting
+#: on it (field data), so a column for it is neither orderable nor a key, and it has no text to search
 DOCUMENT_ID = '_id'
 
 
@@ -67,8 +68,9 @@ DOCUMENT_ID = '_id'
 class IndexColumn(Column):
     """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
 
-    A column whose field is the document id, ``_id``, reads the hit's id and is never searchable, whatever its
-    ``searchable`` says: an id has no text to match.
+    A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
+    ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
+    ``orderable=True`` on it raises ``SchemaError``.
     """
 
     text: TextKind = 'text+keyword'
@@ -102,13 +104,13 @@ class SearchTable:
     Args:
         index: The index (or alias, or pattern) to search.
         columns: The columns the client may see, search and sort on; only their fields are fetched. A column whose
-            field is the document id (``_id``) reads the hit's id, sorts by it and is not searchable, whatever its
-            ``searchable`` says.
+            field is the document id (``_id``) reads the hit's id but is neither searchable (whatever its
+            ``searchable`` says) nor orderable (``orderable=True`` raises ``SchemaError``), and cannot be the key:
+            OpenSearch deprecates sorting on ``_id``.
         unique_key: The name of a declared column, or of several, whose values are unique for every document: the
             tie-breaker of every order (an index has no primary key). It must be sortable, so not analysed text only.
-            ``'_id'``, the document's own id, needs no declared column, but it is sorted on field data in memory,
-            where a keyword field is read from disk: it is the key of last resort. Required: a table without one
-            raises ``SchemaError``.
+            An index whose documents hold no unique field copies the id into a ``keyword`` field at ingest. Required:
+            a table without one raises ``SchemaError``.
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
@@ -129,11 +131,7 @@ class SearchTable:
         max_result_window: int = MAX_RESULT_WINDOW,
     ) -> None:
         self.index = index
-        # A column of the document id is never searchable: held so, the plan refuses a filter on it by the rule for any
-        # unsearchable column, and the global search leaves it out
-        self.columns = tuple(
-            replace(column, searchable=False) if column.source == DOCUMENT_ID else column for column in columns
-        )
+        self.columns = tuple(_held(column) for column in columns)
         self.base_filter = dict(base_filter) if base_filter else None
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
@@ -145,7 +143,12 @@ class SearchTable:
                 'An index has no primary key to break ties with. Declare one: SearchTable(..., unique_key="id") with '
                 'the name of a declared column whose values are unique (a tuple of names for a key of several).'
             )
-        self.unique_key = declared_key(self.columns, unique_key, {DOCUMENT_ID: Column(DOCUMENT_ID, searchable=False)})
+        self.unique_key = declared_key(self.columns, unique_key)
+        if any(column.source == DOCUMENT_ID for column in self.unique_key):
+            raise SchemaError(
+                'OpenSearch deprecates sorting on `_id` (field data). Copy the id into a `keyword` field of the '
+                'documents and name that column as the key.'
+            )
         if unkeyable := [column.name for column in self.unique_key if not _sortable(column)]:
             raise SchemaError(
                 f'unique_key {", ".join(unkeyable)}: analysed text has no whole string to sort by. Declare the '
@@ -241,8 +244,8 @@ class SearchTable:
             'from': params.start,
             'size': params.length,
             'track_total_hits': True,
-            # The id is in the hit, not in `_source`; an empty list asks for the whole source, so none is `False`
-            '_source': [column.source for column in self.columns if column.source != DOCUMENT_ID] or False,
+            # The id is in the hit, not in `_source`; the key is a column of another field, so the list is never empty
+            '_source': [column.source for column in self.columns if column.source != DOCUMENT_ID],
         }
         search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
@@ -300,6 +303,20 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
     return isinstance(total, Mapping) and total.get('relation') == 'gte'
 
 
+def _held(column: Column) -> Column:
+    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
+    plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
+    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake."""
+    if column.source != DOCUMENT_ID:
+        return column
+    if column.orderable:
+        raise SchemaError(
+            f'The column "{column.name}" shows the document id and cannot be orderable: OpenSearch deprecates sorting '
+            'on `_id` (field data). Order by a `keyword` field instead.'
+        )
+    return replace(column, searchable=False, orderable=False)
+
+
 # -- query building ---
 
 
@@ -312,10 +329,7 @@ def _kind(column: Column) -> TextKind:
 
 
 def _keyword(column: Column) -> str | None:
-    """The field that holds the whole string (for exact matches, wildcards and sorting); None for analysed text. The
-    document id is its own field: it has no ``.keyword`` subfield."""
-    if column.source == DOCUMENT_ID:
-        return DOCUMENT_ID
+    """The field that holds the whole string (for exact matches, wildcards and sorting); None for analysed text."""
     match _kind(column):
         case 'keyword':
             return column.source
@@ -512,8 +526,6 @@ def _sort(request: Plan, key: tuple[Column, ...]) -> list[dict[str, Any]]:
     for column, kind, reverse in entries:
         field = (_keyword(column) if kind == 'string' else None) or column.source
         placed = {'order': 'desc', 'missing': '_last'} if reverse else {'order': 'asc', 'missing': '_first'}
-        if field == DOCUMENT_ID:  # every document has one
-            del placed['missing']
         sort.append({field: placed})
     return sort
 

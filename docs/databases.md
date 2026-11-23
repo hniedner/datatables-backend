@@ -134,20 +134,20 @@ the count statement with its bound values, and it sees nothing else.
 - **How it is known:** from the OpenSearch documentation of dynamic mapping; not run on a server here.
 - **Requirement:** PRD-D11.
 
-### A unique key on the document `_id` sorts on field data held in memory
+### Sorting on the document `_id` is deprecated
 
-- **What you see:** `unique_key='_id'` works with no declared column, and nothing in the mapping or the ingest
-  changes. A sort on `_id` is accepted on a default cluster, with and without `missing`, `desc` is the exact reverse
-  of `asc`, and it breaks a tie after another field. After a sort on `_id` the nodes report field data held for `_id`
-  (300 bytes on a 5-document index, none before); a keyword field with doc values is read from disk. The key is
-  applied to every search, so the cost is on every request.
-- **What to do:** prefer a `keyword` field as the key where the documents hold one (`IndexColumn(..., text='keyword')`),
-  and use `_id` as the key of last resort. A cluster that sets `indices.id_field_data.enabled` to `false` refuses the
-  sort: the answer is a raised `RequestError`, not the user's mistake. Declare a keyword key there.
-- **How it is known:** measured on OpenSearch 3.10.0 and 2.19.7 (`indices.id_field_data.enabled` is `true` by
-  default, the sort is accepted and reverses exactly, the 300 bytes of field data for `_id` after the sort). Not
-  measured: how the memory grows with the number of documents, which is from the OpenSearch documentation, and a
-  cluster with the setting off.
+- **What you see:** a sort on `_id` is accepted on a default cluster (`indices.id_field_data.enabled` is `true`),
+  `desc` is the exact reverse of `asc`, and after it the nodes report field data held for `_id` (300 bytes on a
+  5-document index, none before). The first such sort logs, on both versions: `[DEPRECATION][o.o.d.i.m.IdFieldMapper]
+  Loading the fielddata on the _id field is deprecated and will be removed in future versions. If you require sorting
+  or aggregating on this field you should also include the id in the body of your documents, and map this field as a
+  keyword field that has [doc_values] enabled`. So the library does not let `_id` be the `unique_key`, nor a column
+  be ordered by it: a public name must not rest on a feature the current release says it will remove.
+- **What to do:** copy the id into a `keyword` field of the documents at ingest (OpenSearch's own advice) and name that
+  column as the key. A declared `Column('_id')` still shows the id (it reads `hit['_id']`, which needs no field data)
+  but is neither searchable nor orderable.
+- **How it is known:** measured on OpenSearch 3.10.0 and 2.19.7 on a CI index of 5 documents: the default setting,
+  the accepted sort and its exact reverse, the 300 bytes of field data, and the deprecation line in the server's log.
 - **Requirement:** PRD-D11.
 
 ### A shared `TotalCache` cannot tell two clusters or two users apart

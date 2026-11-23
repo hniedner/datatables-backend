@@ -393,14 +393,11 @@ key; constructing it without one raises `SchemaError`. The key is `unique_key`, 
 of names for a composite key, and it replaces the primary key as the tie-breaker when declared. An OpenSearch key must
 be sortable (not analysed text only). On SQL, without `unique_key` a source must have a primary key, and a subquery
 must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a scalar subquery);
-otherwise constructing it raises `SchemaError`. A `UNION` is not checked. On OpenSearch `'_id'`, the document's own id,
-is a reserved `unique_key` name that needs no declared column; a column declared for `_id` reads the hit's id, can be
-sorted by, and is not searchable (its `searchable` is ignored).
+otherwise constructing it raises `SchemaError`. A `UNION` is not checked. `_id` cannot be the key: OpenSearch deprecates
+sorting on it; a declared `Column('_id')` shows the document id and is neither searchable nor orderable.
 
 - **Reason:** The tie-breaker of PRD-O3 must be unique; the first column of a join is not. A declared column is read
-  with the type and sort field the table already knows; a bare field name would need the mapping read. `_id` is the
-  one exception: every document has one, so an index with no unique field of its own needs no change to its mapping or
-  its ingest (the design test); its cost is in `docs/databases.md`.
+  with the type and sort field the table already knows; a bare field name would need the mapping read.
 - **Priority:** must
 
 #### PRD-D12

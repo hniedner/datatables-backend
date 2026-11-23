@@ -345,17 +345,13 @@ def check_declaration(columns: Sequence[Column], type_of: Callable[[Column], Col
             )
 
 
-def declared_key(
-    columns: Sequence[Column], key: str | Sequence[str], reserved: Mapping[str, Column] | None = None
-) -> tuple[Column, ...]:
-    """The declared columns a table's ``unique_key`` names (PRD-D11), one name or several. ``reserved`` holds the names
-    a backend accepts with no declared column, which a declared column of the same name replaces. Raises
-    ``SchemaError`` for an empty key or a name that is no declared column. The messages name only what the server
-    declared."""
+def declared_key(columns: Sequence[Column], key: str | Sequence[str]) -> tuple[Column, ...]:
+    """The declared columns a table's ``unique_key`` names (PRD-D11), one name or several. Raises ``SchemaError`` for an
+    empty key or a name that is no declared column. The messages name only what the server declared."""
     names = (key,) if isinstance(key, str) else tuple(key)
     if not names:
         raise SchemaError('unique_key is empty. Name at least one declared column whose values are unique.')
-    by_name = {**(reserved or {}), **{column.name: column for column in columns}}
+    by_name = {column.name: column for column in columns}
     if unknown := [name for name in names if name not in by_name]:
         raise SchemaError(
             f'unique_key names {", ".join(unknown)}, which no declared column has as its name. Name a declared '

@@ -1050,73 +1050,73 @@ def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(key: str | tuple[
     assert 'unique_key' in str(raised.value)
 
 
-# -- the document id as the unique key (PRD-D11, issue #96) ---
+# -- the document id: shown, never searched, sorted or used as the key (PRD-D11, issue #96) ---
 #
-# That a sort on `_id` is accepted, and reverses exactly, is measured on both servers in test_opensearch_live.py.
-
-DOC_ASC = {'_id': {'order': 'asc'}}  # no `.keyword` (it is no mapped text) and no `missing` (every document has one)
-DOC_DESC = {'_id': {'order': 'desc'}}
-
-
-def test_the_document_id_is_a_unique_key_with_no_column_declared():
-    """SPEC-D11.5: `_id` is reserved. Without an order it is the ascending sort; the body is exactly `_id` with
-    neither `.keyword` nor `missing`, and `_source` never holds it."""
-    client = Client()
-    keyed('_id').fetch_sync(request(*NAMES), client)
-    assert client.searches[0]['sort'] == [DOC_ASC]
-    assert client.searches[0]['_source'] == ['id', 'title', 'body', 'pages', 'created', 'meta.author']
-
-
-def test_the_document_id_follows_the_first_applied_entry_alone_or_in_a_tuple():
-    """SPEC-D11.5, SPEC-O3.4: the key runs in the direction of the first entry, last, after the other key columns."""
-    client = Client()
-    keyed('_id').fetch_sync(request(*NAMES, order=[{'column': 1, 'dir': 'desc'}]), client)
-    assert client.searches[0]['sort'] == [TITLE_DESC, DOC_DESC]
-    keyed(('author', '_id')).fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': 'asc'}]), client)
-    assert client.searches[1]['sort'] == [
-        PAGES_ASC,
-        {'meta.author.keyword': {'order': 'asc', 'missing': '_first'}},
-        DOC_ASC,
-    ]
-
-
-def test_a_name_that_is_not_the_reserved_one_is_still_an_unknown_column():
-    """SPEC-D11.5: only `_id`, spelled so, is reserved."""
-    with pytest.raises(SchemaError, match='_ID'):
-        keyed('_ID')
-
+# OpenSearch deprecates sorting on `_id` (field data): its log says so on 3.10.0 and on 2.19.7, so it is no key. A
+# column declared for it reads `hit['_id']`, which needs no field data.
 
 DOC_COLUMNS = [Column('_id'), Column('pages', type='number')]
+ID_ADVICE = 'Copy the id into a `keyword` field of the documents and name that column as the key.'
 
 
 def doc_hit(identifier: str, pages: int) -> dict[str, Any]:
     return {'_id': identifier, '_source': {'pages': pages}}  # a document's `_id` is not in its `_source`
 
 
+def test_the_document_id_alone_is_an_unknown_name_for_the_unique_key():
+    """SPEC-D11.5: `_id` is no reserved key name, and no other name is read as a field."""
+    with pytest.raises(SchemaError, match='_id') as raised:
+        keyed('_id')
+    assert 'unique_key' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    'columns',
+    [
+        [Column('_id'), Column('pages', type='number')],
+        [Column('docid', field='_id'), Column('pages', type='number')],  # a column reads the id by its field
+    ],
+    ids=['by-name', 'by-field'],
+)
+def test_a_column_of_the_document_id_cannot_be_the_unique_key(columns: list[Column]):
+    """SPEC-D11.5: a sort on it is the deprecated one, so the error says what to do instead."""
+    with pytest.raises(SchemaError) as raised:
+        keyed(columns[0].name, columns)
+    assert str(raised.value) == f'OpenSearch deprecates sorting on `_id` (field data). {ID_ADVICE}'
+
+
 def test_a_column_declared_for_the_document_id_reads_the_hits_id():
     """SPEC-D11.6: the value comes from `hit['_id']`, not from `_source`, where it would always be missing; `_source`
     asks for the other columns only."""
     client = Client(hits=[doc_hit('x7', 3)])
-    response = keyed('_id', DOC_COLUMNS).fetch_sync(request('_id', 'pages'), client)
+    response = keyed('pages', DOC_COLUMNS).fetch_sync(request('_id', 'pages'), client)
     assert response.data == [{'_id': 'x7', 'pages': 3}]
     assert client.searches[0]['_source'] == ['pages']
+    assert client.searches[0]['sort'] == [PAGES_ASC]  # the key is the one declared; `_id` is not sorted on
 
 
-def test_a_table_of_the_document_id_alone_asks_for_no_source():
-    """SPEC-D11.6: an empty list of fields is not the way to ask for none, so the body says `False`."""
-    client = Client(hits=[doc_hit('x7', 3)])
-    response = keyed('_id', [Column('_id')]).fetch_sync(request('_id'), client)
-    assert response.data == [{'_id': 'x7'}]
-    assert client.searches[0]['_source'] is False
-
-
-def test_a_client_order_on_the_declared_document_id_is_a_sort_on_it_and_is_not_repeated_by_the_key():
-    """SPEC-D11.6, SPEC-O3.4: `_id` sorts, so an order on its column is one; the key does not name it twice."""
+def test_an_order_on_a_column_of_the_document_id_is_refused_or_skipped_as_the_request_marks_it():
+    """SPEC-D11.6: held unorderable, so the plan refuses it as for any column that cannot be sorted by, and skips it
+    where the request itself marks it unorderable (DataTables' default order on the first column)."""
     client = Client()
-    keyed('_id', DOC_COLUMNS).fetch_sync(request('_id', 'pages', order=[{'column': 0, 'dir': 'desc'}]), client)
-    assert client.searches[0]['sort'] == [DOC_DESC]
-    keyed('_id', DOC_COLUMNS).fetch_sync(request('_id', 'pages', order=[{'column': 1, 'dir': 'desc'}]), client)
-    assert client.searches[1]['sort'] == [{'pages': {'order': 'desc', 'missing': '_last'}}, DOC_DESC]
+    order = [{'column': 0, 'dir': 'asc'}]
+    refused(keyed('pages', DOC_COLUMNS).fetch_sync(request('_id', 'pages', order=order), client))
+    assert client.searches == []
+    keyed('pages', DOC_COLUMNS).fetch_sync(
+        request('_id', 'pages', flags={'_id': {'orderable': False}}, order=order), client
+    )
+    assert client.searches[0]['sort'] == [PAGES_ASC]
+
+
+def test_a_column_of_the_document_id_declared_orderable_is_a_schema_error():
+    """SPEC-D11.6: as for analysed text, an explicit `orderable=True` is refused; `None` and `False` are not."""
+    with pytest.raises(SchemaError) as raised:
+        keyed('pages', [Column('_id', orderable=True), Column('pages', type='number')])
+    assert str(raised.value) == (
+        'The column "_id" shows the document id and cannot be orderable: OpenSearch deprecates sorting on `_id` '
+        '(field data). Order by a `keyword` field instead.'
+    )
+    keyed('pages', [Column('_id', orderable=False), Column('pages', type='number')])
 
 
 def test_the_document_id_is_not_searchable_and_the_global_search_skips_it():
@@ -1125,26 +1125,29 @@ def test_the_document_id_is_not_searchable_and_the_global_search_skips_it():
     columns = [Column('_id'), IndexColumn('title')]
     client = Client()
     text = 'The column "_id" cannot be filtered. Remove the filter on it.'
+    column_search = request('_id', 'title', column_search={'_id': {'value': 'x'}})
+    assert refused(keyed('title', columns).fetch_sync(column_search, client)) == text
     assert (
-        refused(
-            keyed('_id', columns).fetch_sync(request('_id', 'title', column_search={'_id': {'value': 'x'}}), client)
-        )
+        refused(keyed('title', columns).fetch_sync(request('_id', 'title', **criterion('_id', '=', 'x')), client))
         == text
     )
-    assert (
-        refused(keyed('_id', columns).fetch_sync(request('_id', 'title', **criterion('_id', '=', 'x')), client)) == text
-    )
     assert client.searches == []
-    keyed('_id', columns).fetch_sync(request('_id', 'title', search={'value': 'abc'}), client)
+    keyed('title', columns).fetch_sync(request('_id', 'title', search={'value': 'abc'}), client)
     assert '_id' not in json.dumps(client.searches[0]['query'])
 
 
-def test_the_document_id_column_declared_unorderable_is_refused_in_an_order():
-    """SPEC-D11.6: the declaration decides, as for any column."""
-    client = Client()
-    columns = [Column('_id', orderable=False), Column('pages', type='number')]
-    refused(keyed('_id', columns).fetch_sync(request('_id', 'pages', order=[{'column': 0, 'dir': 'asc'}]), client))
-    assert client.searches == []
+def test_a_column_that_reads_the_document_id_by_its_field_is_held_the_same_way():
+    """SPEC-D11.6: it is the field that says the column is the id, not the name; so a column `docid` over `_id`
+    shows the hit's id and is neither searched nor ordered by."""
+    columns = [Column('docid', field='_id'), IndexColumn('title')]
+    client = Client(hits=[{'_id': 'x7', '_source': {'title': 'T'}}])
+    response = keyed('title', columns).fetch_sync(request('docid', 'title'), client)
+    assert response.data == [{'docid': 'x7', 'title': 'T'}]
+    filtered = request('docid', 'title', column_search={'docid': {'value': 'x'}})
+    assert refused(keyed('title', columns).fetch_sync(filtered, client)).startswith('The column "docid" cannot be')
+    ordered = request('docid', 'title', order=[{'column': 0, 'dir': 'asc'}])
+    refused(keyed('title', columns).fetch_sync(ordered, client))
+    assert len(client.searches) == 1
 
 
 # -- a boolean column ---

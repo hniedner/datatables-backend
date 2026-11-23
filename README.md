@@ -70,13 +70,11 @@ an order comes in its ascending order, so pages are stable. Declare it `IndexCol
 number. A key is a declared column, so its value is sent in every row; `searchable=False` and `orderable=False` keep it
 out of the client's controls. A table without a key raises `SchemaError`.
 
-**The document id as the key.** An index whose documents hold no unique field can name the document's own id:
-`unique_key='_id'` (alone or in a tuple) needs no declared column, and nothing in the mapping or the ingest changes. It
-is the key of last resort: a sort on `_id` uses field data held in memory, where a keyword field is read from disk, and
-the key is applied to every search, so prefer a `keyword` field where there is one. A cluster that sets
-`indices.id_field_data.enabled` to `false` refuses the sort; that is raised, not answered as the user's mistake (see
-`docs/databases.md`). To show the id, declare `Column('_id')`: it reads the hit's id and can be sorted by, but the
-document id is not searchable, and `searchable` is ignored on it.
+**The document id.** An index whose documents hold no unique field needs one: copy the id into a `keyword` field at
+ingest, which is OpenSearch's own advice, and name that column as the key. The document's own `_id` cannot be the key,
+because OpenSearch deprecates sorting on it (`docs/databases.md`); naming it raises `SchemaError`. A declared
+`Column('_id')` shows the id (it reads the hit's id, and fills `DT_RowId` through `RowHooks`) but cannot be searched or
+sorted: `searchable` is ignored on it, and `orderable=True` raises `SchemaError`.
 
 SQL takes the same `unique_key`, which replaces the primary key when declared. Without it, a source must have a primary
 key, and a subquery must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a
