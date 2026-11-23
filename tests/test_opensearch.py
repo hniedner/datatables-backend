@@ -94,6 +94,8 @@ def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
 
 
 def test_an_unfiltered_draw_is_one_search_that_answers_both_counts():
+    """SPEC-C7.1: the search asks for `track_total_hits` and no other call is made; SPEC-C8.1: one search answers
+    both counts."""
     client = Client(total=7)
     response = table.fetch_sync(request(*NAMES, start=5, length=5), client)
     assert (response.recordsTotal, response.recordsFiltered) == (7, 7)
@@ -126,6 +128,17 @@ def test_an_unfiltered_draw_fills_the_total_cache_for_the_filtered_draws_after_i
     )
     cached.fetch_sync(request(*NAMES), client)  # nothing beyond the base filter: the search's own count is the total
     response = cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert response.recordsTotal == 7
+    assert client.counts == []
+
+
+async def test_the_async_fetch_fills_the_total_cache_with_an_unfiltered_request_too():
+    """SPEC-C14.3 through `fetch`, which has its own copy of the unfiltered branch: a global search right after an
+    unfiltered request runs no total count and answers that total."""
+    client = AsyncClient(total=7, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60))
+    await cached.fetch(request(*NAMES), client)
+    response = await cached.fetch(request(*NAMES, search={'value': 'x'}), client)
     assert response.recordsTotal == 7
     assert client.counts == []
 
@@ -349,6 +362,22 @@ def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window(
     """SPEC-C3.3: PRD-C3 wins over PRD-C12, and no page is searched for."""
     client = Counting(total=total, filtered=filtered)
     response = bounded(2).fetch_sync(request(*NAMES, start=start, **filtering), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
+    assert response.data == []
+    assert client.searches == []
+
+
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'filtered', 'start'),
+    [({}, 4, 4, 10), ({'search': {'value': 'x'}}, 40, 7, 7)],
+    ids=['past-the-end', 'at-the-end-of-a-filtered-set'],
+)
+async def test_the_async_fetch_answers_a_start_past_the_end_as_an_empty_page_beyond_the_window_too(
+    filtering: dict[str, Any], total: int, filtered: int, start: int
+):
+    """SPEC-C3.3 through `fetch`: PRD-C3 wins over PRD-C12, and no page is searched for."""
+    client = AsyncCounting(total=total, filtered=filtered)
+    response = await bounded(2).fetch(request(*NAMES, start=start, **filtering), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
     assert response.data == []
     assert client.searches == []
@@ -1971,3 +2000,96 @@ def test_every_body_the_client_receives_is_a_plain_dict_that_survives_a_json_rou
     for body in bodies:
         assert _plain(body)
         assert json.loads(json.dumps(body)) == body
+
+
+# -- counts and paging (PRD-C) ---
+
+
+def test_a_filtered_draw_asks_for_the_total_apart_and_answers_it():
+    """SPEC-C8.2: with a global search the total is the answer of a count of the base filter, the filtered count the
+    search's own."""
+    client = Client(total=3, count=40)
+    response = table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (40, 3)
+    assert client.counts == [{'query': {'bool': {'must': [{'term': {'published': True}}]}}}]
+
+
+class Spy(Client):
+    """A client with `search` and `count` whose every other attribute, an index-settings call or any other admin one,
+    is recorded and refused."""
+
+    def __init__(self, **answer: Any):
+        self.admin: list[str] = []
+        super().__init__(**answer)
+
+    def __getattr__(self, name: str) -> Any:
+        self.admin.append(name)
+        raise AttributeError(name)
+
+
+def test_no_call_changes_the_index_settings():
+    """SPEC-C12.2: an ordinary page, a reversed one and a page out of range ask the cluster nothing but searches and
+    counts."""
+    windowed = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3)
+    spy = Spy(hits=HITS, total=10, count=10)
+    for start in (0, 8, 4):
+        windowed.fetch_sync(request(*NAMES, start=start, length=3), spy)
+    assert spy.admin == []
+    assert spy.searches and spy.counts
+
+
+def test_a_cached_total_is_counted_once_between_two_requests_within_the_ttl():
+    """SPEC-C14.1: two filtered requests run one total count between them, and both answer it."""
+    client, cached = (
+        Client(total=3, count=40),
+        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
+    )
+    answers = [cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+
+
+async def test_the_async_fetch_counts_a_cached_total_once_between_two_requests_within_the_ttl():
+    """SPEC-C14.1 through `fetch`: the async path has its own copy of the cache read and fill."""
+    client = AsyncClient(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60))
+    answers = [await cached.fetch(request(*NAMES, search={'value': 'x'}), client) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+
+
+class Indexes:
+    """A recording client over several indexes, each with its own number of documents."""
+
+    def __init__(self, sizes: dict[str, int]):
+        self.sizes = sizes
+        self.counted: list[str] = []
+
+    def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        hits = {'total': {'value': 1, 'relation': 'eq'}, 'max_score': None, 'hits': []}
+        return {'timed_out': False, '_shards': SHARDS, 'hits': hits}
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.counted.append(index)
+        return {'count': self.sizes[index], '_shards': SHARDS}
+
+
+def test_two_tables_over_two_indexes_never_share_a_total():
+    """SPEC-C15.4: `items_a` holds 4 documents and `items_b` 2; one cache and one client serve both."""
+    cache, client = TotalCache(ttl=60), Indexes({'items_a': 4, 'items_b': 2})
+    tables = [SearchTable(index, COLUMNS, unique_key='id', total_cache=cache) for index in ('items_a', 'items_b')]
+    totals = [each.fetch_sync(request(*NAMES, search={'value': 'red'}), client).recordsTotal for each in tables]  # type: ignore[arg-type]
+    assert totals == [4, 2]
+    assert sorted(client.counted) == ['items_a', 'items_b']
+
+
+def test_clear_makes_the_next_request_count_again():
+    """SPEC-C16.1: without `clear()` the cached total stays; after it the next request counts the cluster again."""
+    client, cache = Client(total=3, count=40), TotalCache(ttl=3600)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=cache)
+    params = request(*NAMES, search={'value': 'x'})
+    assert cached.fetch_sync(params, client).recordsTotal == 40
+    client.count_answer['count'] = 41
+    assert cached.fetch_sync(params, client).recordsTotal == 40
+    cache.clear()
+    assert cached.fetch_sync(params, client).recordsTotal == 41
