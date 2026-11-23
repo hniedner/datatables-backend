@@ -196,6 +196,7 @@ def test_the_row_data_hook_adds_dt_rowdata_and_without_it_no_row_has_any(session
 
 
 def test_a_declared_column_the_source_lacks_fails_at_construction():
+    """SPEC-D2.2: a column whose field the source has not is the integrator's mistake, raised when the table is built."""
     with pytest.raises(SchemaError, match='nope'):
         SQLTable(people, [Column('id'), Column('nope')])
 
@@ -445,6 +446,7 @@ def test_a_multi_select_on_a_number_column_compares_numbers(session: Session):
 
 
 def test_an_undeclared_column_cannot_be_searched_or_sorted(session: Session):
+    """SPEC-D6.1 (a value), SPEC-D6.2 (a criterion), SPEC-O1.5 (an order entry): an undeclared name is refused."""
     params = request(*ALL, 'secret')
     params.columns[7].search.value = 's1'
     reason = refused(table.fetch_sync(params, session))
@@ -1491,7 +1493,8 @@ def test_the_extra_values_a_client_sends_beside_value_are_ignored(session: Sessi
 
 
 def test_the_declared_type_decides_not_the_clients(session: Session):
-    """A client that calls a number column a string still gets a numeric comparison, and cannot run 'contains'."""
+    """SPEC-D7.1: a client that calls a number column a string still gets a numeric comparison, and cannot run
+    'contains'."""
     tree = {'criteria': [{'condition': '>', 'origData': 'age', 'type': 'string', 'value': ['9']}]}
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [1, 2, 4, 5]
     tree = {'criteria': [{'condition': 'contains', 'origData': 'age', 'type': 'string', 'value': ['3']}]}
@@ -2870,3 +2873,98 @@ def test_words_are_not_counted_on_a_boolean_column(session: Session):
     flags = SQLTable(people, [Column('id'), Column('active')])
     response = flags.fetch_sync(request('id', 'active', column_search={'active': {'value': SEVENTEEN}}), session)
     assert refused(response) == 'The filter on "active" needs true or false (1 or 0 also work).'
+
+
+# -- column declaration (PRD-D1 to PRD-D11, PRD-D13, PRD-D21) ---
+
+
+@pytest.mark.parametrize('names', [('team', 'id'), ('id',), tuple(reversed(ALL))], ids=['subset', 'one', 'reversed'])
+def test_a_request_naming_some_columns_gets_rows_with_every_declared_column(session: Session, names: tuple[str, ...]):
+    """SPEC-D1.1: the request may name the declared columns in any order or only some; each row holds them all."""
+    rows = table.fetch_sync(request(*names), session).data
+    assert [row['id'] for row in rows] == [1, 2, 3, 4, 5]
+    assert all(set(row) == set(ALL) for row in rows)
+
+
+def test_a_request_with_no_columns_search_or_order_answers_every_row(session: Session):
+    """SPEC-D1.3: nothing is asked of the columns, so every row comes, and filtered equals total."""
+    response = table.fetch_sync(parse_request({'draw': 1, 'start': 0, 'length': 10}), session)
+    assert (response.recordsTotal, response.recordsFiltered) == (5, 5)
+    assert ids(response) == [1, 2, 3, 4, 5]
+    assert all(set(row) == set(ALL) for row in response.data)
+
+
+def test_a_renamed_column_is_searched_by_its_stored_field_and_reaches_the_client_by_its_name(session: Session):
+    """SPEC-D2.1: `email` reads `email_address`: a search on it finds Cy, and the row has `email` and never the field."""
+    response = table.fetch_sync(request(*ALL, column_search={'email': {'value': 'cy@'}}), session)
+    assert ids(response) == [4]
+    assert response.data[0]['email'] == 'cy@example.org'
+    assert 'email_address' not in response.data[0]
+
+
+def test_the_declared_type_decides_the_comparison(session: Session):
+    """SPEC-D3.1: `<` on `age` (a number) compares numbers, and on `name` (a string) is refused."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('age', '<', '40')), session)) == [1, 4]
+    refused(table.fetch_sync(request(*ALL, **criterion('name', '<', 'm')), session))
+
+
+def test_a_column_declared_unsearchable_is_left_out_of_every_search(session: Session):
+    """SPEC-D4.1: with `name` unsearchable, the global search does not find Ann through it and a column search on it is
+    refused."""
+    unsearchable = SQLTable(people, [Column('id'), Column('name', searchable=False), Column('team')])
+    assert ids(unsearchable.fetch_sync(request('id', 'name', 'team', search={'value': 'ann'}), session)) == []
+    refused(unsearchable.fetch_sync(request('id', 'name', column_search={'name': {'value': 'ann'}}), session))
+
+
+def test_a_column_search_on_an_undeclared_name_is_refused_with_a_value_and_answered_without_one(session: Session):
+    """SPEC-D6.1."""
+    assert ids(table.fetch_sync(request(*ALL, 'extra'), session)) == [1, 2, 3, 4, 5]
+    refused(table.fetch_sync(request(*ALL, 'extra', column_search={'extra': {'value': 'x'}}), session))
+
+
+def test_a_criterion_on_an_undeclared_name_is_refused_at_any_depth_beside_a_matching_one(session: Session):
+    """SPEC-D6.2: in a nested group, in an OR group, next to a criterion that matches rows."""
+    tree = {
+        'logic': 'OR',
+        'criteria': [
+            {'condition': '=', 'origData': 'name', 'value': ['Ann']},
+            {'logic': 'AND', 'criteria': [{'condition': '=', 'origData': 'secret', 'value': ['s1']}]},
+        ],
+    }
+    refused(table.fetch_sync(request(*ALL, searchBuilder=tree), session))
+
+
+def test_a_column_search_calls_the_hook_once_with_what_was_typed(session: Session, cased: SQLTable):
+    """SPEC-D9.1: `Alpha` reaches the hook once, and matches the stored `enc:Alpha`."""
+    seen: list[str] = []
+
+    def hook(text: str) -> str:
+        seen.append(text)
+        return f'enc:{text}'
+
+    hooked = SQLTable(cased.source, [Column('id'), Column('secret', search_value=hook)])
+    assert ids(hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': 'Alpha'}}), session)) == [1]
+    assert seen == ['Alpha']
+
+
+def test_a_column_over_an_expression_is_ordered_and_searched_by_it(session: Session, cased: SQLTable):
+    """SPEC-D10.1: a column over `-id` is ordered as the database orders that expression, which is not the order of the
+    key on any database (a collation would decide for `lower(kind)`, and PostgreSQL's and SQL Server's order it as
+    `kind`); a search on one over `lower(kind)` finds `red` in every case."""
+    tags = cased.source
+    over = SQLTable(
+        select(tags.c.id, (-tags.c.id).label('neg'), func.lower(tags.c.kind).label('low')).subquery(),
+        [Column('id'), Column('neg'), Column('low')],
+    )
+    ordered = ids(over.fetch_sync(request('id', 'neg', 'low', order=[{'column': 1, 'dir': 'asc'}]), session))
+    by_database = [row.id for row in session.execute(select(tags.c.id).order_by(-tags.c.id))]
+    assert ordered == by_database
+    assert ordered != sorted(ordered)  # the key's own order, which an order that was ignored would give
+    found = over.fetch_sync(request('id', 'neg', 'low', column_search={'low': {'value': 'red'}}), session)
+    assert ids(found) == [1, 2, 4]
+
+
+def test_a_column_declared_without_the_fold_still_searches_ignoring_case(session: Session, cased: SQLTable):
+    """SPEC-D21.3: `contains` `RED` on `plain` (`fold_case=False`) finds `red`, `reddish` and `RED`, as on `kind`."""
+    for column in ('plain', 'kind'):
+        assert ids(cased.fetch_sync(request(*CASED, **criterion(column, 'contains', 'RED')), session)) == [1, 2, 4]

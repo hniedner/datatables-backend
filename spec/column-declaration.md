@@ -6,9 +6,13 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   each row holds every declared column's client name, whichever the request names (the owner's decision of
   2026-11-20).
 - **SPEC-D1.2** [all] Constructing a table with two columns of one name, or with no column → `SchemaError`.
+- **SPEC-D1.3** [all] A request with no columns, no search and no order is answered with every row, and
+  `recordsFiltered` equals `recordsTotal`; each row holds every declared column.
 - **SPEC-D2.1** [all] With the stored field renamed `colour_code` and the column declared
   `Column('colour', field='colour_code')`: a column search `blue` on `colour` → rows 3, and rows carry the key
   `colour`, never `colour_code`.
+- **SPEC-D2.2** [SQL] `SQLTable(source, [Column('id'), Column('nope')])` over a source without a field `nope` →
+  `SchemaError` naming `nope` when the table is built; it is never an answer to a request.
 - **SPEC-D3.1** [all] The declared type decides: SearchBuilder `<` `8` on `price` (declared number) → rows 1; on
   `colour` (declared string) → `invalid_filter`.
 - **SPEC-D4.1** [all] With `name` declared unsearchable: global search `apple` → none (row 1 is not found through
@@ -17,7 +21,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   (PRD-O1).
 - **SPEC-D6.1** [all] A column search with a value on undeclared `extra` → `invalid_filter`; with an empty value →
   answered (rows 1, 2, 3, 4).
-- **SPEC-D6.2** [all] A SearchBuilder criterion whose `origData` is undeclared → `invalid_filter`.
+- **SPEC-D6.2** [all] A SearchBuilder criterion whose `origData` is undeclared → `invalid_filter`, at any depth of
+  nested groups, even beside a criterion that matches rows.
 - **SPEC-D6.3** [all] A global search with a request-searchable undeclared column → answered (rows 1, 2, 4 for
   `red`); an order on it marked unorderable → skipped; marked orderable → `invalid_filter`.
 - **SPEC-D7.1** [all] SearchBuilder `<` `8` on `price` sent with `type: "string"` → rows 1; `contains` `7` on

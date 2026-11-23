@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 46 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 47 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -40,12 +40,14 @@
   changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
   a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
   is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed); revision 46 removes from PRD-P21 the
-  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38, and
-  adds to PRD-D6's exceptions that a criterion with no column adds nothing). It replaces draft 1 (R1 to R9); section 10
-  maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
-  non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its reason and
-  section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts
-  about a database engine go to `docs/databases.md`, not into this document.
+  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38,
+  and adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a
+  request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
+  lacks raises `SchemaError` at construction)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
+  its place here. The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error
+  code change only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the
+  reviewer, and the PR body lists each such change for the owner to read. New facts about a database engine go to
+  `docs/databases.md`, not into this document.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -321,14 +323,16 @@ SearchBuilder criterion with no column adds nothing (PRD-F30).
 #### PRD-D1
 
 The server declares the table's columns, each with the name the client uses. A table declares at least one column, and
-no two share a name; constructing one otherwise raises `SchemaError`.
+no two share a name; constructing one otherwise raises `SchemaError`. A request may name any subset of the declared
+columns, in any order, or none; each row carries every declared column (PRD-R1).
 
 - **Reason:** The server, not the client, decides what exists; the name keys the request and each response row.
 - **Priority:** must
 
 #### PRD-D2
 
-A column may name the backend field it reads when that differs from the client's name.
+A column may name the backend field it reads when that differs from the client's name. On a SQL source, a column whose
+field the source lacks raises `SchemaError` when the table is built, never an answer to a request.
 
 - **Reason:** Client names need not reveal the schema.
 - **Priority:** must

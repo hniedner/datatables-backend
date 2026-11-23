@@ -1,5 +1,6 @@
 """The trace check passes a complete trace and fails on every kind of break, with one line per finding."""
 
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -482,13 +483,18 @@ def test_an_xfail_is_strict_names_its_exception_and_an_issue(tmp_path: Path, sou
 
 
 def test_the_enforced_requirements_of_the_script_are_the_default(tmp_path: Path) -> None:
-    """Without `--enforce` an uncited statement of PRD-P or PRD-R fails: an emptied default would pass every other
-    test."""
-    prd = PRD + '\n#### PRD-P1' + VALID + '#### PRD-R1' + VALID
-    specs = COMPLETE + '- **SPEC-P1.1** Parse, see PRD-F1.\n- **SPEC-R1.1** Row, see PRD-F1.\n'
+    """Without `--enforce` an uncited statement of every requirement the script enforces fails: an emptied
+    default would pass every other test. The fixture holds one requirement for each entry of `ENFORCED`."""
+    loaded = importlib.util.spec_from_file_location('trace_check_under_test', SCRIPT)
+    assert loaded is not None and loaded.loader is not None
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+    ids = [entry[4:] if entry.startswith('PRD-') else f'{entry}1' for entry in module.ENFORCED]
+    prd = PRD + ''.join(f'\n#### PRD-{rid}' + VALID for rid in ids)
+    specs = COMPLETE + ''.join(f'- **SPEC-{rid}.1** Stated, see PRD-F1.\n' for rid in ids)
     result = run(tmp_path, {'F.md': specs}, prd=prd, enforce=None)
     assert result.returncode == 1
-    assert result.stderr == 'SPEC-P1.1 is cited by no test\nSPEC-R1.1 is cited by no test\n'
+    assert result.stderr == ''.join(f'SPEC-{rid}.1 is cited by no test\n' for rid in ids)
 
 
 def test_an_enforce_entry_that_names_no_requirement_fails(tmp_path: Path) -> None:

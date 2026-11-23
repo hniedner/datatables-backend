@@ -19,6 +19,7 @@ from datatables_backend import PartialResultError
 from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
+from datatables_backend import parse_request
 from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
@@ -883,6 +884,7 @@ def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     ],
 )  # fmt: skip
 def test_searchbuilder_criteria(column: str, condition: str, values: list[str], clause: dict[str, Any]):
+    """SPEC-D13.1: an exact match on a text+keyword column is on `<field>.keyword`, on a keyword column on its field."""
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)
     assert query(client) == [clause]
@@ -901,6 +903,7 @@ def test_searchbuilder_or_groups_need_one_match():
 
 
 def test_an_undeclared_field_is_refused_before_anything_is_sent():
+    """SPEC-D6.2: a criterion on an undeclared name is refused, and nothing reaches the cluster."""
     client = Client()
     refused(table.fetch_sync(request(*NAMES, **criterion('secret', '=', 'x')), client))
     refused(table.fetch_sync(request(*NAMES, **criterion('title.keyword', '=', 'x')), client))
@@ -983,7 +986,8 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
 
 
 def test_sorting_uses_the_whole_string_and_puts_a_missing_value_lowest():
-    """SPEC-O7.1, SPEC-O2.1: left to itself OpenSearch puts a document without the field last in either direction."""
+    """SPEC-O7.1, SPEC-O2.1, SPEC-D13.1: a text+keyword column sorts on `<field>.keyword` and a keyword one on its
+    field; left to itself OpenSearch puts a document without the field last in either direction."""
     client = Client()
     order = [{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]
     table.fetch_sync(request(*NAMES, order=order), client)
@@ -1448,8 +1452,9 @@ def stored(text: str) -> str:
 
 
 def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimmed_text():
-    """SPEC-D17.1, SPEC-D17.3: the keyword field of text+keyword (`.keyword`) is matched whole, with no grammar in
-    the text: `!x` is no negation and the quotes are part of the value. One request gives the hook one text."""
+    """SPEC-D9.1, SPEC-D17.1, SPEC-D17.3: the keyword field of text+keyword (`.keyword`) is matched whole, with no
+    grammar in the text: `!x` is no negation and the quotes are part of the value. One request gives the hook one
+    text."""
     seen: list[str] = []
 
     def recorded(text: str) -> str:
@@ -1745,3 +1750,107 @@ def test_the_row_data_hook_adds_dt_rowdata_and_without_it_no_row_has_any():
     rows = hooked.fetch_sync(request(*NAMES), Client(hits=HITS)).data
     assert [row['DT_RowData'] for row in rows] == [{'pk': 'a'}, {'pk': 'b'}]
     assert all('DT_RowData' not in row for row in table.fetch_sync(request(*NAMES), Client(hits=HITS)).data)
+
+
+# -- column declaration (PRD-D1 to PRD-D11, PRD-D13, PRD-D21) ---
+
+
+@pytest.mark.parametrize(
+    'names', [('author', 'id'), ('id',), tuple(reversed(NAMES))], ids=['subset', 'one', 'reversed']
+)
+def test_a_request_naming_some_columns_gets_rows_with_every_declared_column(names: tuple[str, ...]):
+    """SPEC-D1.1: the answer is built from the hits: each row holds every declared column, whichever the request names."""
+    rows = table.fetch_sync(request(*names), Client(hits=HITS)).data
+    assert [row['id'] for row in rows] == ['a', 'b']
+    assert all(set(row) == set(NAMES) for row in rows)
+
+
+def test_a_request_with_no_columns_search_or_order_asks_for_nothing_and_counts_alike():
+    """SPEC-D1.3: no clause beyond the base filter, every declared field read, and filtered equals total."""
+    client = Client(hits=HITS, total=7)
+    response = table.fetch_sync(parse_request({'draw': 1, 'start': 0, 'length': 10}), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (7, 7)
+    assert query(client) == []
+    assert client.searches[0]['_source'] == ['id', 'title', 'body', 'pages', 'created', 'meta.author']
+    assert [row['id'] for row in response.data] == ['a', 'b']
+
+
+def test_the_declared_type_decides_the_comparison():
+    """SPEC-D3.1: `<` on `pages` (a number) is a range, and on `title` (a string) is refused with nothing sent."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **criterion('pages', '<', '8')), client)
+    assert query(client) == [{'range': {'pages': {'lt': 8}}}]
+    refused_client = Client()
+    refused(table.fetch_sync(request(*NAMES, **criterion('title', '<', 'm')), refused_client))
+    assert refused_client.searches == []
+
+
+def test_a_column_declared_unsearchable_is_left_out_of_every_search():
+    """SPEC-D4.1: it takes no part in the global search, whose query is the one of the table without it, and a column
+    search on it is refused with nothing sent."""
+    columns = [IndexColumn('id', text='keyword'), IndexColumn('title', searchable=False)]
+    unsearchable = SearchTable('docs', columns, unique_key='id')
+    only_id = SearchTable('docs', columns[:1], unique_key='id')
+    params = request('id', 'title', search={'value': 'ann'})
+    assert sent(unsearchable, params)['query'] == sent(only_id, params)['query']
+    assert sent(unsearchable, params)['query'] != sent(table, params)['query']
+    client = Client()
+    refused(unsearchable.fetch_sync(request('id', 'title', column_search={'title': {'value': 'ann'}}), client))
+    assert client.searches == []
+
+
+def test_a_column_search_on_an_undeclared_name_is_refused_with_a_value_and_answered_without_one():
+    """SPEC-D6.1: refused with nothing sent; with an empty value the request is the one without the column."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, 'extra', column_search={'extra': {'value': 'x'}}), client))
+    assert client.searches == []
+    assert sent(table, request(*NAMES, 'extra')) == sent(table, request(*NAMES))
+
+
+def test_a_criterion_on_an_undeclared_name_is_refused_at_any_depth_beside_a_matching_one():
+    """SPEC-D6.2: in a nested group, in an OR group, next to a criterion that would match, with nothing sent."""
+    tree = {
+        'logic': 'OR',
+        'criteria': [
+            {'condition': '=', 'origData': 'id', 'value': ['a']},
+            {'logic': 'AND', 'criteria': [{'condition': '=', 'origData': 'secret', 'value': ['x']}]},
+        ],
+    }
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, searchBuilder=tree), client))
+    assert client.searches == []
+
+
+def test_the_clients_type_is_ignored_both_ways():
+    """SPEC-D7.1: `<` on `pages` sent as a string is still a range; `contains` on it is refused, with nothing sent."""
+    client = Client()
+    typed: dict[str, Any] = {
+        'searchBuilder': {'criteria': [{'condition': '<', 'origData': 'pages', 'type': 'string', 'value': ['8']}]}
+    }
+    table.fetch_sync(request(*NAMES, **typed), client)
+    assert query(client) == [{'range': {'pages': {'lt': 8}}}]
+    contains: dict[str, Any] = {
+        'searchBuilder': {
+            'criteria': [{'condition': 'contains', 'origData': 'pages', 'type': 'string', 'value': ['7']}]
+        }
+    }
+    refused_client = Client()
+    refused(table.fetch_sync(request(*NAMES, **contains), refused_client))
+    assert refused_client.searches == []
+
+
+def test_a_number_field_declared_without_a_type_is_a_string_column():
+    """SPEC-D8.3: the library does not read the mapping, so `pages` without `type='number'` refuses `<`."""
+    untyped = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('pages')], unique_key='id')
+    client = Client()
+    refused(untyped.fetch_sync(request('id', 'pages', **criterion('pages', '<', '8')), client))
+    assert client.searches == []
+
+
+def test_a_column_declared_without_the_fold_still_searches_ignoring_case():
+    """SPEC-D21.3: `contains` `RED` on a `fold_case=False` column sends what the folding column sends."""
+    folding = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret')], unique_key='id')
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', fold_case=False)], unique_key='id')
+    params = request('id', 'secret', **criterion('secret', 'contains', 'RED'))
+    assert sent(plain, params) == sent(folding, params)
+    assert 'case_insensitive' in json.dumps(sent(plain, params))

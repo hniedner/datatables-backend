@@ -61,7 +61,24 @@ import re
 import sys
 
 # PRD ids (`PRD-F25`) or letters (`F`) whose statements a test must cite; each acceptance issue adds its own
-ENFORCED = ('P', 'R')
+ENFORCED = (
+    'P',
+    'R',
+    # PRD-D12 and PRD-D14 to PRD-D20 are the hooked-column statements, enforced with #64
+    'PRD-D1',
+    'PRD-D2',
+    'PRD-D3',
+    'PRD-D4',
+    'PRD-D5',
+    'PRD-D6',
+    'PRD-D7',
+    'PRD-D8',
+    'PRD-D9',
+    'PRD-D10',
+    'PRD-D11',
+    'PRD-D13',
+    'PRD-D21',
+)
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')
 HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
