@@ -145,9 +145,9 @@ class SearchTable:
     async def fetch(self, params: DTParams, client: AsyncClient) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
-        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
-        anything is sent; any other failure raises, a partial answer as ``PartialResultError``. A page beyond the
-        result window sends only the counts, never a page search (PRD-C11).
+        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once; only a
+        page beyond the result window sends anything first, the counts of PRD-C11 and never a page search. Any other
+        failure raises, a partial answer as ``PartialResultError``.
         """
         try:
             request = self._request(params)

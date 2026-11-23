@@ -184,8 +184,8 @@ def test_a_partial_count_raises_too():
 
 
 def test_a_page_beyond_the_result_window_asks_for_the_count_and_never_for_a_page():
-    """SPEC-C11.1, SPEC-C10.4's refusal: the one count of the table's query (the total is its reuse, PRD-C8) runs
-    before the refusal, and no page search."""
+    """SPEC-C12.1, SPEC-C11.1, SPEC-C10.4's refusal: the refusal carries the real counts; the one count of the table's
+    query (the total is its reuse, PRD-C8) runs before it, and no page search."""
     client = Client(count=20000)
     response = table.fetch_sync(request(*NAMES, start=9995, length=10), client)
     refused(response, 'page_out_of_range')
@@ -302,16 +302,6 @@ def bounded(window: int) -> SearchTable:
     return SearchTable('docs', COLUMNS, unique_key='id', max_result_window=window)
 
 
-def test_a_page_out_of_range_carries_the_real_counts():
-    """SPEC-C12.1, SPEC-C11.1: only the count of the query runs (the total is its reuse, PRD-C8), never a page."""
-    client = Counting(total=10, filtered=10)
-    response = bounded(3).fetch_sync(request(*NAMES, start=4, length=3), client)
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
-    assert response.data == []
-    assert client.searches == []
-    assert client.counts == [EVERYTHING]
-
-
 def test_a_refusal_with_counts_logs_one_line_and_an_empty_page_none(caplog: pytest.LogCaptureFixture):
     """SPEC-E4.24 with the counts of C12.1: the refusal is logged once, and the line holds neither a count nor the
     search text; the empty page of PRD-C3 is no refusal and logs nothing."""
@@ -340,11 +330,22 @@ async def test_the_async_fetch_counts_before_the_refusal_too():
     assert EVERYTHING in client.counts
 
 
-def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'filtered', 'start'),
+    [
+        ({}, 4, 4, 10),  # well past the end
+        # A start equal to the filtered count is past the last row, and the total is not what it is compared with
+        ({'search': {'value': 'x'}}, 40, 7, 7),
+    ],
+    ids=['past-the-end', 'at-the-end-of-a-filtered-set'],
+)
+def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window(
+    filtering: dict[str, Any], total: int, filtered: int, start: int
+):
     """SPEC-C3.3: PRD-C3 wins over PRD-C12, and no page is searched for."""
-    client = Counting(total=4, filtered=4)
-    response = bounded(2).fetch_sync(request(*NAMES, start=10), client)
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
+    client = Counting(total=total, filtered=filtered)
+    response = bounded(2).fetch_sync(request(*NAMES, start=start, **filtering), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
     assert response.data == []
     assert client.searches == []
 
@@ -378,6 +379,18 @@ def test_the_total_cache_serves_the_refusal_too():
     params = request(*NAMES, start=4, length=3, search={'value': 'x'})
     cached.fetch_sync(params, client)
     response = cached.fetch_sync(params, client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert len(client.counts) == 3
+    assert client.counts.count(EVERYTHING) == 1
+
+
+async def test_the_total_cache_serves_the_async_refusal_too():
+    """SPEC-C12.4 through `fetch`, which fills and reads the cache by its own lines."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
+    client = AsyncCounting(total=40, filtered=7)
+    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    await cached.fetch(params, client)
+    response = await cached.fetch(params, client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
     assert len(client.counts) == 3
     assert client.counts.count(EVERYTHING) == 1
