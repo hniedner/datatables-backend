@@ -27,9 +27,12 @@ If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 ## Install
 
 ```sh
-pip install "datatables-backend[sqlalchemy]"   # SQL
-pip install "datatables-backend[opensearch]"   # OpenSearch (installs opensearch-py)
-pip install "datatables-backend[fastapi]"      # the FastAPI dependency
+pip install "datatables-backend[sqlalchemy]"        # SQL, sync
+pip install "datatables-backend[sqlalchemy-async]"  # SQL, async (adds greenlet); also your database's async driver,
+                                                    # e.g. aiosqlite or asyncpg
+pip install "datatables-backend[opensearch]"        # OpenSearch, sync (installs opensearch-py)
+pip install "datatables-backend[opensearch-async]"  # OpenSearch, async (adds aiohttp)
+pip install "datatables-backend[fastapi]"           # the FastAPI dependency
 ```
 
 ## SQL
