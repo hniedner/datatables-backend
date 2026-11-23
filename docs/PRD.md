@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 47 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 48 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -43,10 +43,11 @@
   clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38,
   and adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a
   request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
-  lacks raises `SchemaError` at construction)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
-  its place here. The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error
-  code change only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the
-  reviewer, and the PR body lists each such change for the owner to read. New facts about a database engine go to
+  lacks raises `SchemaError` at construction); revision 48 adds a clause to PRD-O1 (an order list is refused whole
+  when any entry is refused)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here.
+  The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
+  only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
+  and the PR body lists each such change for the owner to read. New facts about a database engine go to
   `docs/databases.md`, not into this document.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
@@ -984,7 +985,8 @@ orderable and server unorderable, the order is refused (PRD-E1); request unorder
 answered; both unorderable, the entry is skipped. An entry the request marks unorderable on an undeclared name is
 skipped, not refused, so an undeclared column that only renders cannot fail a first request; an entry the request marks
 orderable on an undeclared name is refused (PRD-D6), which surfaces a misconfigured table. An entry on a nameless column
-is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending).
+is skipped (PRD-P21). When every entry is skipped, PRD-O4 applies (ascending). The order list is refused whole when any
+entry is refused, wherever that entry stands among the others.
 
 - **Reason:** The server decides what can be sorted. DataTables sends its default order `[[0, 'asc']]` even when that
   column is `orderable: false` (READ, DataTables 3.1.5 `dataTables.mjs`: `sortFlatten` ignores `orderable` at
