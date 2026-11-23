@@ -1,8 +1,8 @@
 # 001: Case folding beyond ASCII on OpenSearch
 
 This is the record behind PRD-F9 (for OpenSearch) and PRD-Q14: what was decided, and what was measured for it. The
-requirements are in `docs/PRD.md`, the limits an adopter meets in its section 5 and in the README. Nothing here is a
-requirement.
+requirements are in `docs/PRD.md`, the limits an adopter meets in its section 5 and in `docs/databases.md`. Nothing here is
+a requirement.
 
 Every measurement below was made on 2026-11-21 in CI, on OpenSearch servers with 512 MB of heap and a small index
 on one shard. "Twelve servers" are 2.19.7, 3.0.0, 3.1.0, 3.2.0, 3.3.2 and 3.4.0 to 3.10.0. A run is named by its
