@@ -2455,20 +2455,3 @@ def test_words_are_not_counted_on_a_boolean_column(session: Session):
     flags = SQLTable(people, [Column('id'), Column('active')])
     response = flags.fetch_sync(request('id', 'active', column_search={'active': {'value': SEVENTEEN}}), session)
     assert refused(response) == 'The filter on "active" needs true or false (1 or 0 also work).'
-
-
-def expanded(text: str) -> str:
-    return format(Decimal(text), 'f')
-
-
-def test_a_hook_that_expands_a_number_is_refused_not_failed(session: Session):
-    """PRD-D14, PRD-F25: the 255 bound is measured on the client's text, before the hook, so a hook on a number
-    column can still make `1e5000` 5,000 digits, which Python does not convert to an integer, and `1e400` 401, which
-    a `Float` column does not take. Both are the user's mistake, not a failure; they go when PRD-D14 refuses a hook
-    on a number column."""
-    hooked = SQLTable(people, [Column('id'), Column('age', search_value=expanded)])
-    params = request('id', 'age', column_search={'age': {'multi_values': ['1e5000']}})
-    assert 'must be a number' in refused(hooked.fetch_sync(params, session), 'invalid_number')
-    floats = SQLTable(wide(session).source, [Column('id'), Column('ratio', search_value=expanded)])
-    params = request('id', 'ratio', column_search={'ratio': {'multi_values': ['1e400']}})
-    assert 'at most 308 digits' in refused(floats.fetch_sync(params, session), 'invalid_number')

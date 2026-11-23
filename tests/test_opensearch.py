@@ -628,21 +628,13 @@ def test_a_value_outside_ascii_without_case_keeps_its_query():
             'ends',
             {'regexp': {'secret.keyword': {'value': '.*ä', 'case_insensitive': True}}},
         ),
-        (
-            # Today's result, until issue #28: PRD-D18 asks for this condition to be refused on a hooked column,
-            # which is not met yet. Every search of a hooked column changes with #28, so no other path stands in.
-            Column('secret', search_value=str.upper),
-            'starts',
-            {'wildcard': {'secret.keyword': {'value': 'Ä*', 'case_insensitive': True}}},
-        ),
     ],
 )
 def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     unfolded: Column, condition: str, clause: dict[str, Any]
 ):
     """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
-    as before, and a search on it folds. A hooked column's search is sent as it was before the `regexp` form: the
-    row pins that, not the search itself, which PRD-D18 does away with."""
+    as before, and a search on it folds."""
     plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)

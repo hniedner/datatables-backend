@@ -67,6 +67,7 @@ from ._plan import OneOf
 from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
+from ._plan import check_declaration
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -133,6 +134,7 @@ class SQLTable:
         missing = [column.source for column in self.columns if column.source not in source.columns]
         if missing:
             raise SchemaError(f'{source} has no column {", ".join(missing)}')
+        check_declaration(self.columns, self._type_of)  # after the missing columns: a type is read from the source
 
     async def fetch(self, params: DTParams, source: AsyncSource) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
