@@ -1,0 +1,12 @@
+# Codecov is here for the coverage badge in the README. The one coverage gate is diff-cover in CI (the lines a change
+# touches must be 95 % covered), so Codecov's statuses never fail a pull request and it posts no comment.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment: false

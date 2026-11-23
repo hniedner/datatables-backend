@@ -65,7 +65,9 @@ dev = [
 containers = [
     "aiomysql>=0.2",
     "aioodbc>=0.5",
+    "asyncpg>=0.30",
     "psycopg[binary]>=3.2",
+    "psycopg2-binary>=2.9",
     "pymysql>=1.1",
     "pyodbc>=5.2",
 ]
