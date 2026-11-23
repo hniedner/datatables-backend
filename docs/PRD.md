@@ -40,8 +40,9 @@
   changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
   a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
   is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed); revision 46 removes from PRD-P21 the
-  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38). It
-  replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
+  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38, and
+  adds to PRD-D6's exceptions that a criterion with no column adds nothing). It replaces draft 1 (R1 to R9); section 10
+  maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
   non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its reason and
   section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts
   about a database engine go to `docs/databases.md`, not into this document.
@@ -359,7 +360,8 @@ Any name the request uses to search, filter or order on (column searches, the gl
 SearchBuilder `origData`) must be a declared name; otherwise the request is refused (PRD-E1). The exceptions: the global
 search leaves out every undeclared column, and a column search on one counts only with a value or a non-empty
 `multi_values` list (PRD-F41); an order entry the request marks unorderable on an undeclared name is skipped (PRD-O1);
-the global search and `order` skip a nameless column (PRD-P21).
+the global search and `order` skip a nameless column (PRD-P21); a SearchBuilder criterion with no column adds nothing
+(PRD-F30).
 
 - **Reason:** A backend field never becomes reachable just because the client names it.
 - **Priority:** must
