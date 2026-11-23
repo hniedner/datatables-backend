@@ -431,6 +431,36 @@ def test_text_no_driver_can_encode_is_refused(body: dict[str, Any]):
         parse_request(body)
 
 
+@pytest.mark.parametrize(
+    'value',
+    [[1], [None], [['a']], 1, {'a': 1}],
+    ids=['number-in-list', 'null-in-list', 'list-in-list', 'number', 'object'],
+)
+def test_a_null_criterion_with_a_value_that_is_not_text_is_malformed(value: Any):
+    """SPEC-F36.3: `null` reads no value, but a value that is no text is no SearchBuilder request."""
+    tree = {'logic': 'AND', 'criteria': [{'condition': 'null', 'origData': 'a', 'value': value}]}
+    with pytest.raises(MalformedRequest, match='searchBuilder'):
+        parse_request({'columns': [{'data': 'a'}], 'searchBuilder': tree})
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'columns': [{'data': 'a', 'search': {'value': '\ud800'}}]},
+        {
+            'columns': [{'data': 'a'}],
+            'searchBuilder': {'criteria': [{'condition': '=', 'origData': 'a', 'value': ['\ud800']}]},
+        },
+        {'columns': [{'data': 'a', 'search': {'multi_values': ['x', '\ud800']}}]},
+    ],
+    ids=['column-search', 'searchbuilder-value', 'multi-values-entry'],
+)
+def test_a_lone_surrogate_in_a_filter_value_is_malformed(body: dict[str, Any]):
+    """SPEC-P11.3: every place a client's text reaches a database, not only the global search."""
+    with pytest.raises(MalformedRequest):
+        parse_request(body)
+
+
 def test_a_valid_surrogate_pair_is_the_one_character_it_writes():
     """SPEC-P11.2: JSON writes a character beyond U+FFFF as two escapes. Read as two lone surrogates it would be
     refused (SPEC-P11.1) or break the driver; it is the one character."""

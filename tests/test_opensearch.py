@@ -2427,3 +2427,114 @@ def test_an_answer_with_no_shards_key_at_all_raises_too():
     del client.answer['_shards']
     with pytest.raises(PartialResultError):
         table.fetch_sync(request(*NAMES), client)
+
+
+# -- filters that are not search: categorical values, regex refusals, the tree beside the searches (issue #62) ---
+
+ESCAPE_SET = '/.*+?|()[]{}\\$^-'  # PRD-F19's set, whole
+ESCAPED_SET = ''.join('\\' + character for character in ESCAPE_SET)
+REGEX_FORMS = ['^a|b$', 'a.b', 'a*', '(a)', '[ab]', 'a{2}', r'\d', r'\w', r'\n', 'a+', 'a?', '^(a|b)']  # SPEC-F18.1
+
+
+def clauses_of(**body: Any) -> list[dict[str, Any]]:
+    client = Client()
+    assert table.fetch_sync(request(*NAMES, **body), client).error is None
+    return query(client)
+
+
+@pytest.mark.parametrize(
+    ('value', 'entries'),
+    [
+        ('red', ['red']),  # SPEC-F16.1
+        ('^red$', ['red']),  # SPEC-F16.2
+        ('red|blue', ['red', 'blue']),
+        ('^(red|blue)$', ['red', 'blue']),
+        ('^(a-b/c)$', ['a-b/c']),  # SPEC-F16.3
+        (r'^(a\-b\/c)$', ['a-b/c']),
+        (f'^({ESCAPED_SET})$', [ESCAPE_SET]),  # SPEC-F19.1
+    ],
+)
+def test_a_categorical_filter_sends_what_its_list_of_values_sends(value: str, entries: list[str]):
+    """SPEC-F16.1, SPEC-F16.2, SPEC-F16.3, SPEC-F19.1: a categorical filter is `multi_values` once the request is
+    read, so both ask the cluster the same exact matches."""
+    categorical = clauses_of(column_search={'title': {'value': value, 'regex': True}})
+    assert categorical == clauses_of(column_search={'title': {'multi_values': entries}})
+    assert 'case_insensitive' in json.dumps(categorical)  # PRD-F9: in any case, whole values only
+
+
+@pytest.mark.parametrize(
+    'search',
+    [{'value': '', 'regex': True}, {'value': '', 'multi_values': []}],
+    ids=['categorical', 'empty-list'],
+)
+def test_an_empty_categorical_filter_or_list_adds_no_clause(search: dict[str, Any]):
+    """SPEC-F16.4, SPEC-F20.3: the request without the filter sends the same search."""
+    assert clauses_of(column_search={'title': search}) == clauses_of() == []
+
+
+@pytest.mark.parametrize('pattern', REGEX_FORMS)
+def test_a_regex_that_is_no_categorical_filter_is_refused_and_nothing_is_sent(pattern: str):
+    """SPEC-F18.1: each form the statement names."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, column_search={'title': {'value': pattern, 'regex': True}}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize('value', ['red', '^(red)$'])
+def test_a_regex_global_search_with_a_word_is_refused_and_nothing_is_sent(value: str):
+    """SPEC-F18.2."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, search={'value': value, 'regex': True}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize('value', ['', '   ', '"'])
+def test_a_regex_global_search_with_no_word_adds_no_clause(value: str):
+    """SPEC-F18.3: PRD-F6 reduces these to nothing, so the flag has nothing to refuse."""
+    assert clauses_of(search={'value': value, 'regex': True}) == clauses_of() == []
+
+
+@pytest.mark.parametrize('text', ['nan', 'NaN', 'inf', '-inf', 'Infinity'])
+def test_a_non_finite_number_is_refused_and_nothing_is_sent(text: str):
+    """SPEC-F25.9: Python's `float` reads each as a number, and no field holds one."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, **criterion('pages', '=', text)), client), 'invalid_number')
+    assert (client.searches, client.counts) == ([], [])
+
+
+def test_the_searchbuilder_tree_is_one_more_clause_beside_the_searches():
+    """SPEC-F12.3: the column search and the tree each send their clause alone, and together both, in the one `must`
+    that ANDs them, the OR group included."""
+    column = {'column_search': {'title': {'value': 'apple'}}}
+    group = {
+        'searchBuilder': {
+            'logic': 'OR',
+            'criteria': [
+                {'condition': '=', 'origData': 'pages', 'value': ['12']},
+                {'condition': 'null', 'origData': 'pages', 'value': []},
+            ],
+        }
+    }
+    for tree in (criterion('pages', '=', '12'), group):
+        assert clauses_of(**column, **tree) == [*clauses_of(**column), *clauses_of(**tree)]
+
+
+def test_a_column_the_request_marks_unsearchable_is_left_out_of_the_global_search_only():
+    """SPEC-F41.3: the table declares `title` searchable, so the request's flag keeps it out of the global search
+    and out of nothing else."""
+    flags = {'title': {'searchable': False}}
+    assert 'title' not in json.dumps(clauses_of(search={'value': 'apple'}, flags=flags))
+    assert 'title' in json.dumps(clauses_of(search={'value': 'apple'}))
+    column = {'column_search': {'title': {'value': 'apple'}}}
+    assert clauses_of(**column, flags=flags) == clauses_of(**column) != []
+
+
+@pytest.mark.parametrize('search', [{'value': 'x'}, {'multi_values': ['x']}])
+def test_a_filter_with_a_value_on_an_undeclared_column_is_refused_and_an_empty_one_is_not(search: dict[str, Any]):
+    """SPEC-F41.4: nothing is sent for the refusal, and an empty list is no filter (PRD-D6)."""
+    names = (*NAMES, 'extra')
+    client = Client()
+    refused(table.fetch_sync(request(*names, column_search={'extra': search}), client))
+    assert (client.searches, client.counts) == ([], [])
+    assert table.fetch_sync(request(*names, column_search={'extra': {'multi_values': []}}), client).error is None
+    assert query(client) == []

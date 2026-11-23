@@ -364,7 +364,8 @@ def test_a_column_search_on_a_hooked_column_matches_the_whole_stored_value(
 ):
     """SPEC-D17.1: the `term` on the keyword field finds `enc:Alpha` only: not the superset `enc:Alphabet` (p2), not
     the padded `enc: Alpha ` (p3) and, case-sensitive as a hooked column is (PRD-D21), not `enc:alpha` (p4), which
-    `alpha` finds. A recording client cannot show that the server matches the whole value and not a substring."""
+    `alpha` finds (SPEC-F9.8: the library adds no folding, so `alpha` does not find `enc:Alpha`). A recording client
+    cannot show that the server matches the whole value and not a substring."""
     params = request('id', 'secret', column_search={'secret': {'value': text}})
     assert found(hooked.fetch_sync(params, client)) == expected
 
@@ -382,11 +383,21 @@ def test_the_global_search_on_a_hooked_column_matches_the_whole_stored_value(
     assert found(hooked.fetch_sync(request('id', 'secret', search={'value': text}), client)) == expected
 
 
-def test_a_multi_select_matches_whole_values(client: OpenSearch):
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        ('apple pie', ['a1']),  # SPEC-F16.1: an exact match in any case; not d4, `apple crumble`
+        ('^Apple pie$', ['a1']),  # SPEC-F16.2
+        ('Apple pie|Date loaf', ['a1', 'e5']),
+        ('^(Apple pie|Date loaf)$', ['a1', 'e5']),
+    ],
+)
+def test_a_multi_select_matches_whole_values(client: OpenSearch, value: str, expected: list[str]):
+    """SPEC-F16.1, SPEC-F16.2."""
     params = request(*NAMES)
-    params.columns[1].search.value = '^(Apple pie|Date loaf)$'
+    params.columns[1].search.value = value
     params.columns[1].search.regex = True
-    assert found(table.fetch_sync(params, client)) == ['a1', 'e5']
+    assert found(table.fetch_sync(params, client)) == expected
 
 
 @pytest.mark.parametrize(
@@ -394,6 +405,7 @@ def test_a_multi_select_matches_whole_values(client: OpenSearch):
     [(0, ['a1', 'e5'], ['a1', 'e5']), (3, ['12', '60'], ['a1', 'd4', 'e5']), (4, ['2026-07-16'], ['b2'])],
 )
 def test_multi_values_match_exactly(client: OpenSearch, column: int, values: list[str], expected: list[str]):
+    """SPEC-F20.1: a list of values is an exact match for each."""
     params = request(*NAMES)
     params.columns[column].search.multi_values = values
     assert found(table.fetch_sync(params, client)) == expected
@@ -414,6 +426,8 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('title', 'contains', ['TART'], ['c3']),
         ('title', '!contains', ['apple'], ['b2', 'c3', 'e5']),
         ('title', 'starts', ['apple'], ['a1', 'd4']),
+        ('title', '!starts', ['APPLE'], ['b2', 'c3', 'e5']),
+        ('title', 'ends', ['PIE'], ['a1']),
         ('id', '!ends', ['1'], ['b2', 'c3', 'd4', 'e5']),
         ('pages', '=', ['12'], ['a1', 'd4']),
         ('pages', '>', ['12'], ['b2', 'e5']),
@@ -434,6 +448,7 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
 def test_searchbuilder_conditions(
     client: OpenSearch, column: str, condition: str, values: list[str], expected: list[str]
 ):
+    """SPEC-F9.4 for `ends` and `!starts` too: the value is in another case than stored."""
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
 
 
@@ -862,10 +877,11 @@ def test_a_start_equal_to_the_document_count_is_an_empty_page_with_both_counts(c
 
 
 @contextmanager
-def added_document(client: OpenSearch) -> Iterator[None]:
+def added_document(client: OpenSearch, **fields: Any) -> Iterator[None]:
     """A sixth document, in the index for the length of the block: `client` is shared by every test of the module, so
-    a test that adds one leaves the index as it found it, whatever the test does."""
-    client.index(index=INDEX, id='f6', body={'id': 'f6', 'title': 'Fig tart', 'body': 'figs'})
+    a test that adds one leaves the index as it found it, whatever the test does. It holds a `title` and a `body`,
+    unless `fields` replace them."""
+    client.index(index=INDEX, id='f6', body={'id': 'f6', 'title': 'Fig tart', 'body': 'figs', **fields})
     client.indices.refresh(index=INDEX)
     try:
         yield
@@ -895,3 +911,60 @@ def test_clear_makes_the_next_request_count_the_cluster_again(client: OpenSearch
         assert cached.fetch_sync(params, client).recordsTotal == 5
         cache.clear()
         assert cached.fetch_sync(params, client).recordsTotal == 6
+
+
+@pytest.mark.parametrize(
+    ('column', 'search', 'expected'),
+    [
+        # `meta.author` is missing from c3. A string column, whose missing field is "empty" (PRD-F26)
+        ('author', {'value': '^(|Ann)$', 'regex': True}, ['a1', 'c3']),  # SPEC-F17.1: missing, and a value
+        ('title', {'value': '^(|Apple pie)$', 'regex': True}, ['a1']),  # SPEC-F17.2: no document is empty
+        ('author', {'value': '^()$', 'regex': True}, ['c3']),  # SPEC-F17.3: a group holding only the empty alternative
+        ('author', {'value': '^$', 'regex': True}, ['c3']),  # SPEC-F17.4
+        ('author', {'value': 'Ann||Bob', 'regex': True}, ['a1', 'b2', 'c3']),  # SPEC-F17.4: an empty one between
+        ('author', {'multi_values': ['', 'Bob']}, ['b2', 'c3']),  # SPEC-F20.2
+    ],
+)
+def test_an_empty_alternative_or_entry_matches_the_documents_without_the_field(
+    client: OpenSearch, column: str, search: dict[str, Any], expected: list[str]
+):
+    """SPEC-F17.1, SPEC-F17.2, SPEC-F17.3, SPEC-F17.4, SPEC-F20.2: "empty" on OpenSearch is a field that is missing, so
+    the rows are c3's, which the recording tests' `must_not` `exists` clause only promises."""
+    params = request(*NAMES, column_search={column: search})
+    assert found(table.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize('pattern', ['^(a-b/c)$', r'^(a\-b\/c)$', r'^(\/\.\*\+\?\|\(\)\[\]\{\}\\\$\^\-)$'])
+def test_a_categorical_value_with_every_mark_of_the_escape_set_finds_its_document(client: OpenSearch, pattern: str):
+    """SPEC-F16.3, SPEC-F19.1: the document's title is `a-b/c` or the whole set `/.*+?|()[]{}\\$^-`, which no pattern
+    here may read as an operator (the `-` and `/` either way); f6 is the one document the pattern finds."""
+    title = 'a-b/c' if pattern.startswith('^(a') else '/.*+?|()[]{}\\$^-'
+    with added_document(client, title=title):
+        params = request(*NAMES, column_search={'title': {'value': pattern, 'regex': True}})
+        assert found(table.fetch_sync(params, client)) == ['f6']
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        ({'column_search': {'title': {'value': 'apple'}}, **criterion('author', '=', 'Ann')}, ['a1']),
+        (  # the group is a part of the request: it keeps d4 (Cy) and drops a1, which `apple` finds as well
+            {
+                'column_search': {'title': {'value': 'apple'}},
+                'searchBuilder': {
+                    'logic': 'OR',
+                    'criteria': [
+                        {'condition': '=', 'origData': 'author', 'value': ['Cy']},
+                        {'condition': 'null', 'origData': 'pages', 'value': []},
+                    ],
+                },
+            },
+            ['d4'],
+        ),
+    ],
+)
+def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
+    client: OpenSearch, body: dict[str, Any], expected: list[str]
+):
+    """SPEC-F12.3: `apple` finds a1 and d4, the criterion a1, the group d4 and c3; the answer is the intersection."""
+    assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected

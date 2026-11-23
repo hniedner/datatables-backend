@@ -40,6 +40,7 @@ from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
 from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.dialects import mysql
 from sqlalchemy.dialects import postgresql
@@ -426,6 +427,7 @@ def test_a_start_at_the_bound_is_an_empty_page_with_both_counts(session: Session
 
 
 def test_the_global_search_is_a_case_insensitive_substring_over_searchable_columns(session: Session):
+    """SPEC-F9.1: `ANN` finds `Ann` and `anna_100%`, a substring in another case."""
     assert ids(table.fetch_sync(request(*ALL, search={'value': 'ANN'}), session)) == [1, 3]
 
 
@@ -660,7 +662,7 @@ def cased(session: Session) -> SQLTable:
     [
         (criterion('kind', '=', 'Red'), [1, 4]),  # SPEC-F9.2
         (criterion('kind', '!=', 'Red'), [2, 3, 5]),
-        ({'column_search': {'kind': {'multi_values': ['rEd', 'BLUE']}}}, [1, 3, 4]),  # SPEC-F9.3
+        ({'column_search': {'kind': {'multi_values': ['rEd', 'BLUE']}}}, [1, 3, 4]),  # SPEC-F9.3, SPEC-F20.1
         # The database folds both sides: SQLite's lower() leaves `Ä` alone, where Python's would make it `ä`
         (criterion('kind', '=', 'ÄPFEL'), [5]),
         ({'column_search': {'kind': {'multi_values': ['ÄPFEL']}}}, [5]),
@@ -732,9 +734,14 @@ def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sen
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
-def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, cased: SQLTable):
-    params = request(*CASED, column_search={'secret': {'value': 'alpha'}})
-    assert ids(cased.fetch_sync(params, session)) == []
+@pytest.mark.parametrize(('text', 'expected'), [('alpha', []), ('Alpha', [1])])
+def test_a_column_search_on_a_hooked_column_compares_exactly(
+    session: Session, cased: SQLTable, text: str, expected: list[int]
+):
+    """SPEC-F9.8: the library adds no folding on a hooked column, so the collation, case-sensitive here, compares
+    `enc:alpha` with the stored `enc:Alpha`."""
+    params = request(*CASED, column_search={'secret': {'value': text}})
+    assert ids(cased.fetch_sync(params, session)) == expected
 
 
 @pytest.mark.parametrize(
@@ -1125,6 +1132,9 @@ every_type = SQLTable(
         Column('active'),
     ],
 )
+#: The forms SPEC-F18.1 names: a metacharacter that is no structure of a categorical filter, or an escape PRD-F19's
+#: set does not hold
+REGEXES = ['^a|b$', 'a.b', 'a*', '(a)', '[ab]', 'a{2}', r'\d', r'\w', r'\n', 'a+', 'a?', '^(a|b)']
 #: Every character PRD-F6 counts as a space: U+0020, LF, CR, U+2028 and U+2029
 SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
 
@@ -1141,6 +1151,7 @@ SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
         ('email', {'value': r'ann@example\.org|', 'regex': True}, [1, 2, 3]),  # at the end, unanchored
         ('email', {'value': r'^(ann@example\.org||cy@example\.org)$', 'regex': True}, [1, 2, 3, 4]),
         ('email', {'multi_values': ['', 'ann@example.org']}, [1, 2, 3]),  # SPEC-F20.2
+        ('team', {'value': '^(|red)$', 'regex': True}, [1, 3]),  # SPEC-F17.2: no row holds an empty `team`
         ('age', {'multi_values': [' ', '31']}, [1, 3, 4]),  # white space holds nothing either (PRD-F33)
         ('active', {'multi_values': [' ', '1']}, [1, 3, 4]),  # SPEC-F44.3, SPEC-F44.4
     ],
@@ -1148,7 +1159,8 @@ SPACES = ' \n\r' + chr(0x2028) + chr(0x2029)
 def test_an_empty_alternative_or_entry_matches_the_rows_without_a_value(
     session: Session, column: str, search: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F17.4, SPEC-F20.2, SPEC-F33.5, SPEC-F44.4: on a column of any type. The date column's row is in
+    """SPEC-F17.1 (the first case, a NULL, an empty text and a value), SPEC-F17.2, SPEC-F17.3 (`^()$`), SPEC-F17.4,
+    SPEC-F20.2, SPEC-F33.5, SPEC-F44.4: on a column of any type. The date column's row is in
     test_a_list_on_a_date_column_matches_each_entry_as_a_day."""
     params = request(*EVERY_TYPE, column_search={column: search})
     assert ids(every_type.fetch_sync(params, session)) == expected
@@ -1164,10 +1176,11 @@ def test_white_space_is_a_value_on_a_string_column(session: Session):
     assert ids(every_type.fetch_sync(params, session)) == found
 
 
-@pytest.mark.parametrize('pattern', ['^red|blue$', r'r\ed'])
+@pytest.mark.parametrize('pattern', [*REGEXES, '^red|blue$', r'r\ed'])
 def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, pattern: str):
-    """SPEC-F18.1: anchors without the group anchor each value at one end only, and a backslash escapes only the
-    characters of PRD-F19: `\\e` is no `e`. Read as values, both would find rows."""
+    """SPEC-F18.1: each form the statement names, and two more: anchors without the group anchor each value at one end
+    only, and a backslash escapes only the characters of PRD-F19: `\\e` is no `e`. Read as values, these two would
+    find rows."""
     params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
     refused(every_type.fetch_sync(params, session))
 
@@ -1179,6 +1192,210 @@ def test_a_value_that_ends_in_an_escaped_backslash_is_read_in_every_form(session
     session.execute(people.insert(), [{'id': 6, 'name': 'Eve', 'team': 'C:\\', 'secret': 's6'}])
     params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
     assert ids(every_type.fetch_sync(params, session)) == [6]
+
+
+@pytest.mark.parametrize('value', ['red', '^(red)$'])
+def test_a_regex_global_search_with_a_word_is_refused(session: Session, value: str):
+    """SPEC-F18.2: the categorical forms are column searches only, so any regex in the global search is "any other"."""
+    refused(every_type.fetch_sync(request(*EVERY_TYPE, search={'value': value, 'regex': True}), session))
+
+
+@pytest.mark.parametrize('value', ['', '   ', '"'])
+def test_a_regex_global_search_with_no_word_is_idle(session: Session, value: str):
+    """SPEC-F18.3: PRD-F6 reduces these to nothing, so the flag has nothing to refuse and every row is answered."""
+    params = request(*EVERY_TYPE, search={'value': value, 'regex': True})
+    assert ids(every_type.fetch_sync(params, session)) == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        ('red', [1, 4]),  # SPEC-F16.1: an exact match, in any case (PRD-F9); not row 2, `reddish`
+        ('red|blue', [1, 3, 4]),  # SPEC-F16.2
+        ('^red$', [1, 4]),
+        ('^(red|blue)$', [1, 3, 4]),
+    ],
+)
+def test_a_categorical_filter_matches_whole_values(session: Session, cased: SQLTable, value: str, expected: list[int]):
+    """SPEC-F16.1, SPEC-F16.2: the four forms of PRD-F16 are one IN list, never a substring."""
+    params = request(*CASED, column_search={'kind': {'value': value, 'regex': True}})
+    assert ids(cased.fetch_sync(params, session)) == expected
+
+
+@pytest.mark.parametrize('pattern', [r'^(a-b/c)$', r'^(a\-b\/c)$'])
+def test_a_hyphen_and_a_slash_are_read_escaped_or_not(session: Session, pattern: str):
+    """SPEC-F16.3: PRD-F16 accepts `-` and `/` either way."""
+    session.execute(people.insert(), [{'id': 6, 'name': 'Eve', 'team': 'a-b/c', 'secret': 's6'}])
+    params = request(*EVERY_TYPE, column_search={'team': {'value': pattern, 'regex': True}})
+    assert ids(every_type.fetch_sync(params, session)) == [6]
+
+
+def test_an_empty_categorical_filter_or_list_is_idle(session: Session):
+    """SPEC-F16.4, SPEC-F20.3: no value, so no filter, with or without the flag and the empty list."""
+    for search in ({'value': '', 'regex': True}, {'value': '', 'multi_values': []}):
+        params = request(*EVERY_TYPE, column_search={'team': search})
+        assert ids(every_type.fetch_sync(params, session)) == [1, 2, 3, 4, 5]
+
+
+def test_every_character_of_the_escape_set_matches_itself_escaped(session: Session):
+    """SPEC-F19.1: the whole set of PRD-F19 in one value, which no other row holds."""
+    whole_set = '/.*+?|()[]{}\\$^-'
+    session.execute(people.insert(), [{'id': 6, 'name': 'Eve', 'team': whole_set, 'secret': 's6'}])
+    escaped = ''.join('\\' + character for character in whole_set)
+    params = request(*EVERY_TYPE, column_search={'team': {'value': f'^({escaped})$', 'regex': True}})
+    assert ids(every_type.fetch_sync(params, session)) == [6]
+
+
+@pytest.mark.parametrize(
+    ('condition', 'value', 'expected'),
+    [
+        ('contains', 'NN', [1, 3]),
+        ('!contains', 'NN', [2, 4, 5]),
+        ('starts', 'AN', [1, 3]),
+        ('!starts', 'AN', [2, 4, 5]),
+        ('ends', 'EE', [5]),
+        ('!ends', 'EE', [1, 2, 3, 4]),
+        ('ends', 'NN', [1]),
+    ],
+)
+def test_a_string_condition_ignores_case_and_its_negation_is_the_complement(
+    session: Session, condition: str, value: str, expected: list[int]
+):
+    """SPEC-F9.4: names are `Ann`, `Bob`, `anna_100%`, `Cy` and `Dee`; the value is in another case than stored."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('name', condition, value)), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'value', 'expected'),
+    [
+        ('starts', 'anna_', [3]),
+        ('ends', '00%', [3]),
+        ('!starts', 'anna_', [1, 2, 4, 5, 6, 7, 8]),
+        ('!ends', '00%', [1, 2, 4, 5, 6, 7, 8]),
+        ('starts', 'a[b', [7]),
+    ],
+)
+def test_a_wildcard_in_a_starts_or_ends_value_is_text(
+    session: Session, condition: str, value: str, expected: list[int]
+):
+    """SPEC-F11.8: row 6 matches `anna_` and `00%` only if `_` and `%` are wildcards, rows 7 and 8 `a[b` only if `[`
+    opens a set. (The `[` row is proved on SQL Server by CI.)"""
+    session.execute(
+        people.insert(),
+        [
+            {'id': 6, 'name': 'annaX100Y', 'team': 'x', 'secret': 's6'},
+            {'id': 7, 'name': 'a[bc', 'team': 'x', 'secret': 's7'},
+            {'id': 8, 'name': 'abc', 'team': 'x', 'secret': 's8'},
+        ],
+    )
+    assert ids(table.fetch_sync(request(*ALL, **criterion('name', condition, value)), session)) == expected
+
+
+@pytest.mark.parametrize('text', ['nan', 'NaN', 'inf', '-inf', 'Infinity'])
+def test_a_non_finite_number_is_refused_as_no_number(session: Session, text: str):
+    """SPEC-F25.9: Python's `float` reads each as a number, and no database column holds one; the integer column
+    here and the float column of `wide` both refuse them."""
+    refused(table.fetch_sync(request(*ALL, **criterion('age', '=', text)), session), 'invalid_number')
+    params = request(*WIDE, **criterion('ratio', '=', text))
+    refused(wide(session).fetch_sync(params, session), 'invalid_number')
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        ({'column_search': {'team': {'value': 'red'}}, **criterion('age', '=', '31')}, [1]),
+        (  # the group is a part of the request: row 3 is `red` too, and `anna_100%` has no age
+            {
+                'column_search': {'team': {'value': 'blue'}},
+                'searchBuilder': {
+                    'logic': 'OR',
+                    'criteria': [
+                        {'condition': '=', 'origData': 'age', 'value': ['45']},
+                        {'condition': '=', 'origData': 'name', 'value': ['Cy']},
+                    ],
+                },
+            },
+            [2],
+        ),
+    ],
+)
+def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
+    session: Session, body: dict[str, Any], expected: list[int]
+):
+    """SPEC-F12.3: each half alone answers more rows (the column search 1, 3 and 2, 5; the tree 1, 4 and 2, 4), so
+    the answer is their intersection."""
+    assert ids(table.fetch_sync(request(*ALL, **body), session)) == expected
+
+
+def test_a_column_the_request_marks_unsearchable_is_left_out_of_the_global_search_only(session: Session):
+    """SPEC-F41.3: the library declares `name` searchable, so only the global search listens to the request's flag;
+    row 3 is the only one holding `anna` in any column."""
+    flags = {'name': {'searchable': False}}
+    assert ids(table.fetch_sync(request(*ALL, search={'value': 'anna'}, flags=flags), session)) == []
+    params = request(*ALL, column_search={'name': {'value': 'anna'}}, flags=flags)
+    assert ids(table.fetch_sync(params, session)) == [3]
+
+
+@pytest.mark.parametrize('search', [{'value': 'x'}, {'multi_values': ['x']}])
+def test_a_filter_with_a_value_on_an_undeclared_column_is_refused_and_an_empty_one_is_not(
+    session: Session, search: dict[str, Any]
+):
+    """SPEC-F41.4: a value, or a list that holds one, on `extra`, which the table does not declare; an empty list is
+    no filter (PRD-D6)."""
+    names = (*ALL, 'extra')
+    refused(table.fetch_sync(request(*names, column_search={'extra': search}), session))
+    params = request(*names, column_search={'extra': {'multi_values': []}})
+    assert ids(table.fetch_sync(params, session)) == [1, 2, 3, 4, 5]
+
+
+#: What each database does with accents, for the claims of SPEC-F9.6, SPEC-F9.7, SPEC-F10.1 and SPEC-F10.2. MySQL's and
+#: SQL Server's column is declared with the collation the statement names; SQLite and PostgreSQL keep their default.
+ACCENT_COLLATION = {'mysql': 'utf8mb4_0900_ai_ci', 'mssql': 'Latin1_General_CI_AS'}
+
+
+@pytest.fixture
+def accented(session: Session) -> SQLTable:
+    """Row 1 holds `Apple`, row 4 `Äpfel`."""
+    collation = ACCENT_COLLATION.get(session.get_bind().dialect.name)
+    fruits = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('name', String(20, collation=collation)),
+    )
+    fruits.create(session.connection())
+    session.execute(fruits.insert(), [{'id': 1, 'name': 'Apple'}, {'id': 4, 'name': 'Äpfel'}])
+    return SQLTable(fruits, [Column('id'), Column('name')])
+
+
+def folds_letters_beyond_ascii(session: Session) -> bool:
+    """Whether the database folds `Ä` to `ä` on its own: SQLite folds ASCII only, PostgreSQL does in a UTF-8 locale
+    (the official image's `en_US.utf8`) and not in the `C` locale, MySQL's and SQL Server's collations do."""
+    dialect = session.get_bind().dialect.name
+    if dialect == 'sqlite':
+        return False
+    if dialect == 'postgresql':
+        collate = session.execute(text('SELECT datcollate FROM pg_database WHERE datname = current_database()'))
+        return collate.scalar_one() not in ('C', 'POSIX')
+    return True
+
+
+def test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_small_one_where_the_database_folds(
+    session: Session, accented: SQLTable
+):
+    """SPEC-F9.6, SPEC-F9.7: `ÄPFEL` is the stored `Äpfel` in another case that no database misses; `äpfel` needs the
+    database to fold `Ä` to `ä`, which SQLite does not (it folds ASCII only) and the others do, PostgreSQL in a UTF-8
+    locale (SPEC-F9.7 reads its setting too). SQL Server's and PostgreSQL's cases are proved by CI."""
+    capital = accented.fetch_sync(request('id', 'name', search={'value': 'ÄPFEL'}), session)
+    small = accented.fetch_sync(request('id', 'name', search={'value': 'äpfel'}), session)
+    assert (ids(capital), ids(small)) == ([4], [4] if folds_letters_beyond_ascii(session) else [])
+
+
+def test_the_library_folds_no_accent_the_collation_does_not(session: Session, accented: SQLTable):
+    """SPEC-F10.1, SPEC-F10.2: `apfel` finds `Äpfel` only where the collation ignores accents: MySQL's
+    `utf8mb4_0900_ai_ci` (SQL Server's `Latin1_General_CI_AS` does not, SQLite and PostgreSQL's default do not)."""
+    found = [4] if session.get_bind().dialect.name == 'mysql' else []
+    assert ids(accented.fetch_sync(request('id', 'name', search={'value': 'apfel'}), session)) == found
 
 
 def test_an_empty_entry_is_not_given_to_the_search_value_hook(session: Session):
