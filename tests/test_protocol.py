@@ -1,5 +1,6 @@
 """Reading a DataTables request: both encodings DataTables sends, and every way a request is refused."""
 
+import json
 import logging
 from typing import Any
 
@@ -14,6 +15,7 @@ from datatables_backend import Search
 from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
 from datatables_backend import parse_request
+from datatables_backend.protocol import InvalidFilter
 
 from .conftest import BRACKETED
 from .conftest import reshaped
@@ -119,6 +121,8 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
             ({'searchBuilder': {'criteria': [{'condition': wrong, 'origData': 'a'}]}}, 'searchBuilder')
             for wrong in ('like', 'without', 'regex')
         ],
+        # SPEC-P6.6: a group's logic is AND or OR
+        ({'searchBuilder': {'logic': 'XOR', 'criteria': []}}, 'searchBuilder'),
     ],
 )
 def test_a_malformed_request_names_the_parameter(body: dict[str, Any], message: str):
@@ -425,6 +429,30 @@ def test_text_no_driver_can_encode_is_refused(body: dict[str, Any]):
     """SPEC-P11.1: a lone surrogate, in the global search and in a column's `data`."""
     with pytest.raises(MalformedRequest):
         parse_request(body)
+
+
+def test_a_valid_surrogate_pair_is_the_one_character_it_writes():
+    """SPEC-P11.2: JSON writes a character beyond U+FFFF as two escapes. Read as two lone surrogates it would be
+    refused (SPEC-P11.1) or break the driver; it is the one character."""
+    body = json.loads('{"search": {"value": "\\ud83d\\ude00"}}')
+    assert parse_request(body).search.value == '\U0001f600'
+
+
+def test_the_log_line_of_a_refused_length_holds_none_of_its_digits(caplog: pytest.LogCaptureFixture):
+    """SPEC-E10.2: the number the client sent is the client's text, so the line names the parameter and not the
+    number."""
+    with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest):
+        parse_request({'draw': 2, 'length': 123456})
+    assert warnings(caplog) == ['datatables_length_refused']
+    logged = repr([vars(record) for record in caplog.records])
+    assert '123456' not in logged
+
+
+def test_a_structural_error_and_a_user_error_are_not_one_kind():
+    """SPEC-E6.3: code that catches `MalformedRequest` to answer 422 must not catch the user errors the library
+    answers itself, nor the other way round."""
+    assert not issubclass(MalformedRequest, InvalidFilter)
+    assert not issubclass(InvalidFilter, MalformedRequest)
 
 
 def test_the_page_length_limit_is_the_callers():

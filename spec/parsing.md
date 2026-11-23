@@ -37,6 +37,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P6.4** [core] A SearchBuilder condition `without` or `regex` → `MalformedRequest`.
 - **SPEC-P6.5** [core] `order[0][dir]` other than exactly `asc` or `desc` (`up`, `ASC`, or empty) →
   `MalformedRequest` (the reviewer's decision of 2026-11-20 in `README.md`).
+- **SPEC-P6.6** [core] A SearchBuilder group whose `logic` is neither `AND` nor `OR` (for example `XOR`) →
+  `MalformedRequest`.
 - **SPEC-P7.1** [core] On a request whose only column is `columns[0]`, a flat key at the next free index in a bad
   form, where a lenient parser would read it as column 1, → `MalformedRequest`: `columns[01][data]` and
   `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]` (10 digits),
@@ -56,6 +58,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P10.2** [core] `draw` 2147483647 parses; 2147483648 → `MalformedRequest`.
 - **SPEC-P11.1** [core] A lone surrogate U+D800 in `search[value]` (the JSON escape `\ud800`) or in a column's
   `data` → `MalformedRequest`.
+- **SPEC-P11.2** [core] A valid surrogate pair in `search[value]` (the JSON escape `\ud83d\ude00`) is read as the one
+  character U+1F600; the request parses.
 - **SPEC-P12.1** [core] For `columns[0][searchable]` sent with the value `MARKER_V`, once under the bracket key
   `columns[0][searchable]` and once under the dotted key `columns.0.searchable`, the `MalformedRequest` message names
   the parameter `columns` and contains neither `MARKER_V` nor either form of the key; an `order` index outside the

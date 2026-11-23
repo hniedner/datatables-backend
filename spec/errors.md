@@ -156,14 +156,24 @@ it, as far as that is known when the mistake is found. A text is changed only to
   table declares `Column('ghost')` → `fetch` raises the database error; it is not answered.
 - **SPEC-E8.2** [SQL] A connection whose execute raises `OperationalError` → `fetch` and `fetch_sync` raise it.
 - **SPEC-E8.3** [OS] A client that raises a transport error → `fetch` raises it.
+- **SPEC-E8.4** [all] A `search_value` hook that raises `ValueError`, with a column search on its column → `fetch_sync`
+  raises that `ValueError`, the same object, not answered as a user error; so does a row hook (`shape`, `row_id` or
+  `row_data`) that raises one over a row found.
 - **SPEC-E9.1** [OS] A search answer with `_shards.failed` 1 → `PartialResultError` raised; with `_shards.successful`
   below `_shards.total`, `_shards.failed` 0 and `timed_out` false → `PartialResultError` raised.
 - **SPEC-E9.2** [OS] A search answer with no `_shards`, or with `_shards.total` not an integer → `PartialResultError`
   raised.
 - **SPEC-E9.3** [OS] A count answer that does not cover every shard → `PartialResultError` raised.
+- **SPEC-E9.4** [OS] A search answer with `timed_out` true and every shard successful (`_shards.total` equal to
+  `_shards.successful`, `_shards.failed` 0) → `PartialResultError` raised.
+- **SPEC-E9.5** [OS] With a total cache, a filtered request whose total count answer is partial raises
+  `PartialResultError` and keeps no total: the next request with a complete answer runs the count again and answers
+  its number.
 - **SPEC-E10.1** [all] For every refusal in the specs, no log record of any level holds the search value or an
   undeclared column name the client sent: with a marker string in each value and in an undeclared name, the marker
   appears in no record's message, arguments or extra fields.
+- **SPEC-E10.2** [core] `parse_request` with `length` 123456, over the maximum, raises `MalformedRequest` and logs one
+  record, whose message, arguments and extra fields hold none of the digits of that number.
 - **SPEC-E11.1** [all] A refusal on the undeclared `secret_field` logs a record that does not name it.
 - **SPEC-E12.1** [all] Every record the library emits comes from the logger `datatables_backend` or a child of it,
   through the standard `logging` module.
@@ -177,3 +187,12 @@ it, as far as that is known when the mistake is found. A text is changed only to
   `active`, PRD-F44, and on OS the number and date columns, PRD-F32) logs no record.
 - **SPEC-E13.3** [all] The request of E3.1 (two mistakes) logs exactly one WARNING, for the code answered, and
   answers `data` `[]`.
+- **SPEC-E14.1** [OS] A search answer with `_shards.failed` 1, and one with `timed_out` true, each →
+  `PartialResultError` raised after exactly one record on the logger `datatables_backend`, at ERROR, with the event
+  `opensearch_answer_partial`, the index name and the shard counts (`shards_total`, `shards_successful`,
+  `shards_failed`) as extra fields; with a marker in the search value and in a hit's source, the marker appears in no
+  record's message, arguments or extra fields. A count answer that does not cover every shard logs the same record.
+- **SPEC-E14.2** [OS] A search answer whose `_shards` is missing, or whose `_shards.total` is not an integer, or whose
+  `timed_out` is not a boolean, each → `PartialResultError` raised after exactly one ERROR record with the event
+  `opensearch_answer_unverifiable`, the index name and `unreadable`, the list of the names of the fields it could not
+  read (`_shards`, `_shards.total`, `timed_out`), and no value of them or of the search.
