@@ -190,6 +190,9 @@ def test_each_of_the_five_space_characters_splits_words(session: Session, space:
 
 # -- a hooked column in the global search (PRD-D12) ---
 
+TWENTY = ' '.join(
+    'abcdefghijklmnopqrst'
+)  # twenty one-letter words: 39 characters, within `secret`'s 50 with the hook's `s`
 #: Stored as the hook `s{text}` would make them: a superset of `1`, a padded `1`, the bare marks of the grammar, a line
 #: feed beside the same letters with a space, a negated word, and twenty words
 HOOKED_ROWS = {
@@ -201,7 +204,7 @@ HOOKED_ROWS = {
     16: 'sa\nb',
     17: 'sa b',
     18: 's!ab',
-    19: f's{words(20)}',
+    19: f's{TWENTY}',
 }
 PADDED = f'{chr(0xA0)} {chr(0x3000)}'  # White_Space that PRD-F7 does not count as a space
 NAMES = {'mixed': ('id', 'name', 'secret'), 'hooked': ('id', 'secret')}
@@ -232,7 +235,7 @@ def recording() -> tuple[list[str], dict[str, SQLTable]]:
         ('"1"', [13]),  # SPEC-D12.1: no grammar, so the quotes are part of the value
         ('!ab', [18]),  # a negated word excludes nothing by the hooked column: the whole text is compared
         ('a\nb', [16]),  # SPEC-D12.7: PRD-F7's rewriting of a line break does not apply
-        (words(20), [19]),  # SPEC-D12.5: no word cap where every searchable column is hooked
+        (TWENTY, [19]),  # SPEC-D12.5: no word cap where every searchable column is hooked
     ],
 )
 def test_a_hooked_column_is_equality_on_the_trimmed_whole_text_in_the_global_search(
