@@ -69,6 +69,48 @@ type Condition = Literal[
 ]
 
 
+_DIGITS = re.compile(r'-?[0-9]+')
+
+
+def _whole_number(value: Any) -> Any:
+    """A JSON integer, or the digits of one (ASCII, with an optional minus) as a form carries it: what DataTables
+    writes for a number (``String(n)``, dataTables.mjs:884-890). Pydantic would also read ``true`` as 1, ``1.0`` and
+    ``" 1"`` as 1, which would page or sort as nobody asked (PRD-P8)."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and _DIGITS.fullmatch(value):
+        return int(value)
+    raise ValueError('not a whole number')
+
+
+#: A paging number or an order index: an integer, and never a JSON boolean, a fraction or a loosely written number
+_Integer = Annotated[int, BeforeValidator(_whole_number)]
+
+
+def _true_or_false(value: Any) -> Any:
+    """A JSON boolean, or exactly the text a form carries for one: DataTables writes ``String(bool)``. Pydantic would
+    also read ``yes``, ``on``, ``1`` and the like (PRD-P14)."""
+    if isinstance(value, bool):
+        return value
+    if value in ('true', 'false'):
+        return value == 'true'
+    raise ValueError('not true or false')
+
+
+_Boolean = Annotated[bool, BeforeValidator(_true_or_false)]
+
+
+def _data(value: Any) -> Any:
+    """A column's ``data``: text; an integer, which DataTables sends for a column that sets none, its index, as its
+    decimal text (PRD-P20); an object (orthogonal data) or ``null``, which name no column, as empty text (PRD-P18,
+    PRD-P21). A boolean, a fraction or a list is no ``data``."""
+    if isinstance(value, bool):
+        raise ValueError('not a data source')
+    if isinstance(value, int):
+        return str(value)
+    return '' if value is None or isinstance(value, Mapping) else value
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -77,7 +119,7 @@ class Search(_Model):
     """A search value: the table's global search or one column's."""
 
     value: str = ''
-    regex: bool = False
+    regex: _Boolean = False
     #: Not part of the DataTables protocol: a column's multi-select may send its values as a list here; the global
     #: search refuses one
     multi_values: list[str] | None = None
@@ -121,10 +163,10 @@ class ColumnControl(_Model):
 class DTColumn(_Model):
     """One column as the request describes it. ``name`` is what the server matches on; it falls back to ``data``."""
 
-    data: str | None = ''
+    data: Annotated[str, BeforeValidator(_data)] = ''
     name: str = ''
-    searchable: bool = True
-    orderable: bool = True
+    searchable: _Boolean = True
+    orderable: _Boolean = True
     search: Search = Search()
     columnControl: ColumnControl = ColumnControl()
 
@@ -132,17 +174,6 @@ class DTColumn(_Model):
     def key(self) -> str:
         """The name the server matches against its declared columns."""
         return self.name or self.data or ''
-
-
-def _no_boolean(value: Any) -> Any:
-    """Pydantic reads ``true`` as 1 where an integer belongs, which would page or sort as nobody asked."""
-    if value is True or value is False:
-        raise ValueError('a boolean is not an integer')
-    return value
-
-
-#: A paging number or an order index: an integer, and never a JSON boolean
-_Integer = Annotated[int, BeforeValidator(_no_boolean)]
 
 
 class DTOrder(_Model):
