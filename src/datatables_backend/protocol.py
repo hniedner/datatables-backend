@@ -413,7 +413,9 @@ def _what_to_send(error: Mapping[str, Any]) -> str | None:
 def _parse(data: Mapping[str, Any] | Iterable[tuple[str, Any]], max_length: int) -> DTParams:
     body = _unflatten(data) if _is_flat(data) else dict(cast(Mapping[str, Any], data))
     if not body.keys() & DTParams.model_fields.keys():  # empty, or another protocol (e.g. DataTables 1.9's sEcho)
-        raise MalformedRequest('The table request holds no DataTables parameter.')
+        raise MalformedRequest(
+            'The table request holds no DataTables parameter: send them as a JSON object or as a form.'
+        )
     try:
         json.dumps(body, ensure_ascii=False).encode()
     except (UnicodeEncodeError, TypeError, ValueError):  # a lone surrogate (no driver can encode it), or no JSON
