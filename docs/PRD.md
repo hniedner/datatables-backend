@@ -40,13 +40,14 @@
   changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
   a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
   is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed); revision 46 removes from PRD-P21 the
-  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38, and
-  adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a request
-  may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source lacks
-  raises `SchemaError` at construction)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
-  non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its reason and
-  section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts
-  about a database engine go to `docs/databases.md`, not into this document.
+  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38,
+  and adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a
+  request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
+  lacks raises `SchemaError` at construction)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to
+  its place here. The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error
+  code change only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the
+  reviewer, and the PR body lists each such change for the owner to read. New facts about a database engine go to
+  `docs/databases.md`, not into this document.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED

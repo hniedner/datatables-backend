@@ -1452,8 +1452,9 @@ def stored(text: str) -> str:
 
 
 def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimmed_text():
-    """SPEC-D17.1, SPEC-D17.3: the keyword field of text+keyword (`.keyword`) is matched whole, with no grammar in
-    the text: `!x` is no negation and the quotes are part of the value. One request gives the hook one text."""
+    """SPEC-D9.1, SPEC-D17.1, SPEC-D17.3: the keyword field of text+keyword (`.keyword`) is matched whole, with no
+    grammar in the text: `!x` is no negation and the quotes are part of the value. One request gives the hook one
+    text."""
     seen: list[str] = []
 
     def recorded(text: str) -> str:
