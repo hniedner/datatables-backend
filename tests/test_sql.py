@@ -2948,15 +2948,20 @@ def test_a_column_search_calls_the_hook_once_with_what_was_typed(session: Sessio
 
 
 def test_a_column_over_an_expression_is_ordered_and_searched_by_it(session: Session, cased: SQLTable):
-    """SPEC-D10.1: `lower(kind)` orders as the database orders that expression, which is not the order of `kind`
-    (the case-sensitive collation of this fixture puts `RED` first), and a search on it finds `red` in every case."""
+    """SPEC-D10.1: a column over `-id` is ordered as the database orders that expression, which is not the order of the
+    key on any database (a collation would decide for `lower(kind)`, and PostgreSQL's and SQL Server's order it as
+    `kind`); a search on one over `lower(kind)` finds `red` in every case."""
     tags = cased.source
-    over = SQLTable(select(tags.c.id, func.lower(tags.c.kind).label('low')).subquery(), [Column('id'), Column('low')])
-    ordered = ids(over.fetch_sync(request('id', 'low', order=[{'column': 1, 'dir': 'asc'}]), session))
-    by_database = [row.id for row in session.execute(select(tags.c.id).order_by(func.lower(tags.c.kind), tags.c.id))]
+    over = SQLTable(
+        select(tags.c.id, (-tags.c.id).label('neg'), func.lower(tags.c.kind).label('low')).subquery(),
+        [Column('id'), Column('neg'), Column('low')],
+    )
+    ordered = ids(over.fetch_sync(request('id', 'neg', 'low', order=[{'column': 1, 'dir': 'asc'}]), session))
+    by_database = [row.id for row in session.execute(select(tags.c.id).order_by(-tags.c.id))]
     assert ordered == by_database
-    assert ordered != ids(cased.fetch_sync(request(*CASED, order=[{'column': 1, 'dir': 'asc'}]), session))
-    assert ids(over.fetch_sync(request('id', 'low', column_search={'low': {'value': 'red'}}), session)) == [1, 2, 4]
+    assert ordered != sorted(ordered)  # the key's own order, which an order that was ignored would give
+    found = over.fetch_sync(request('id', 'neg', 'low', column_search={'low': {'value': 'red'}}), session)
+    assert ids(found) == [1, 2, 4]
 
 
 def test_a_column_declared_without_the_fold_still_searches_ignoring_case(session: Session, cased: SQLTable):
