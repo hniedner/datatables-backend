@@ -948,10 +948,9 @@ def test_the_other_conditions_a_boolean_column_takes(
 @pytest.mark.parametrize(
     ('condition', 'values'),
     [
-        ('=', ['yes']),  # each of the four is a value some reading of "boolean" would take
+        ('=', ['yes']),  # each of the three is a value some reading of "boolean" would take
         ('=', ['2']),
         ('=', ['t']),
-        ('=', ['']),
         ('<', ['true']),  # a number's condition
         ('contains', ['true']),  # a string's condition
     ],

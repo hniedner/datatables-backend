@@ -161,7 +161,7 @@ A request whose structure cannot be read (a top-level value that is not an objec
 one, of the wrong type (a `null` `data` excepted, PRD-P21), a flat key that is not text, an object value among flat
 keys, keys that collide or leave a gap in an index, an `order` index outside the request's columns (PRD-O1), a
 SearchBuilder condition outside the 16 the protocol model knows, such as its array condition `without`, a criterion
-with no condition or an empty one excepted, PRD-F30) raises `MalformedRequest`.
+with no condition, an empty one or the text `undefined` excepted, PRD-F30) raises `MalformedRequest`.
 
 - **Reason:** A structural error is an integration bug, not something the user can change.
 - **Priority:** must
@@ -799,12 +799,14 @@ SearchBuilder groups nest and join their criteria with AND or OR; an empty group
 
 #### PRD-F30
 
-An unfinished SearchBuilder criterion adds nothing, as an empty group does (PRD-F28): one with no condition (missing or
-empty text), no column, or without the value or values its condition takes. A criterion with a value it cannot read, or
-with more values than its condition takes (PRD-F36), is still refused.
+An unfinished SearchBuilder criterion adds nothing, as an empty group does (PRD-F28): one with no condition (missing,
+empty text, or the text `undefined`, as a form sends it), no column, or without the value or values its condition
+takes. A value that is empty text counts as missing, as in SearchBuilder's client; white space is a value. A criterion
+with a value it cannot read, or with more values than its condition takes (PRD-F36), is still refused.
 
-- **Reason:** A criterion the user has not finished must neither refuse the request nor match every row; a new
-  SearchBuilder criterion starts without a condition or a column, and the client sends it so.
+- **Reason:** A criterion the user has not finished must neither refuse the request nor match every row. A new
+  SearchBuilder criterion starts without a condition or a column, SearchBuilder's client sends it with every draw and
+  does not apply it, and DataTables 3 writes its `undefined` as that text in a form.
 - **Priority:** must
 
 #### PRD-F31

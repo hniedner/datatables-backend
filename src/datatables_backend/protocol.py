@@ -152,9 +152,10 @@ class DTOrder(_Model):
     dir: Literal['asc', 'desc'] = 'asc'
 
 
-def _no_empty_text(value: Any) -> Any:
-    """A condition an unfinished criterion sends as empty text, which is no condition at all (PRD-F30)."""
-    return None if value == '' else value
+def _no_condition(value: Any) -> Any:
+    """The condition of a criterion the user has not finished, which the client sends as empty text, or as the word
+    ``undefined`` in a form (DataTables 3 writes JavaScript's ``undefined`` so): no condition at all (PRD-F30)."""
+    return None if value in ('', 'undefined') else value
 
 
 class SearchCriterion(_Model):
@@ -162,7 +163,7 @@ class SearchCriterion(_Model):
     A new criterion has no condition and no column yet, and the client sends it so; it is unfinished (PRD-F30), and
     so is one with no value for a condition that takes one."""
 
-    condition: Annotated[Condition | None, BeforeValidator(_no_empty_text)] = None
+    condition: Annotated[Condition | None, BeforeValidator(_no_condition)] = None
     origData: str = ''
     data: str = ''
     type: str = ''

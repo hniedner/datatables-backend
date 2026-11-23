@@ -309,6 +309,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   nothing, with the three results of `SPEC-F30.1`.
 - **SPEC-F30.4** [all] `between` on `price` with the one value `abc` → error_code `invalid_number`: a value that is
   there but unreadable is refused, not left out.
+- **SPEC-F30.5** [all] A value that is the empty text counts as missing, as in SearchBuilder's client: `=` on `name`,
+  `price` or `made` with `[""]`, and `between` on `price` with `["", "7"]` or `["7", ""]`, add nothing, with the
+  three results of `SPEC-F30.1`. A value of one space is a value: `=` on `name` with `[" "]` → no row. A surplus is
+  refused first: `=` on `name` with `["", ""]` → error_code `invalid_filter`.
+- **SPEC-F30.6** [all] As a form sends it, the condition `undefined` is no condition: a new criterion
+  (`condition`, `data` and `origData` the text `undefined`), one with a column and the condition `undefined`, and one
+  with the condition `=` and no `value` key each add nothing, with the three results of `SPEC-F30.1`.
 - **SPEC-F31.1** [all] With the base filter `price` not null: no filter → rows 1, 2, 3, `recordsTotal` 3,
   `recordsFiltered` 3; global search `red` → rows 1, 2, `recordsTotal` 3, `recordsFiltered` 2.
 - **SPEC-F32.1** [OS] Global search `17` → none; `2024` → none (the number and date columns are skipped).
@@ -378,7 +385,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `0` → rows 2.
 - **SPEC-F43.2** [all] `!=` `true` on `active` → rows 2, 3 (NULL passes, PRD-F37); `null` → rows 3; `!null` → rows
   1, 2, 4.
-- **SPEC-F43.3** [all] On `active`: `=` with `yes`, `2`, `t` or `''`, and any of `<`, `between`, `contains`,
+- **SPEC-F43.3** [all] On `active`: `=` with `yes`, `2` or `t`, and any of `<`, `between`, `contains`,
   `starts` → error_code `invalid_filter`, never a database error.
 - **SPEC-F43.4** [all] Whitespace around a boolean value is ignored, as around a number or a date: `=` on `active`
   with ` true ` → rows 1, 4; with ` 0 ` → rows 2; with three spaces → error_code `invalid_filter`.

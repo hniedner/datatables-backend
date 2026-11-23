@@ -711,20 +711,21 @@ def _criterion(
     hooked: Callable[[Column, str], Any],
 ) -> Filter | None:
     """One criterion, the one mistake it reports, or None when it is unfinished and adds nothing (PRD-F30): it has no
-    condition, no column, or fewer values than its condition takes, however it is named and wherever it stands.
+    condition, no column, or fewer values than its condition takes, a blank one counting as missing.
     The checks run in this order: no condition or no column, nothing else is looked at; a control character in the
     values the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
     column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
     column is no number mistake); a value of the wrong format, or a date out of range, among the values there are;
-    then a value that is missing, which leaves the criterion out, or more values than the condition takes
-    (PRD-F36), which are never read: ``null`` and ``!null`` take none and ignore whatever they carry. A whole number
-    outside the range of its SQL column is found only later, when the query is built, so within one criterion a
-    surplus value is reported before it."""
+    more values than the condition takes (PRD-F36), which are never read, also when some are blank; then a value that
+    is missing, which leaves the criterion out. ``null`` and ``!null`` take none and ignore whatever they carry. A
+    whole number outside the range of its SQL column is found only later, when the query is built."""
     condition = item.condition
     if condition is None or not item.origData:
         return None
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
-    texts = item.value[:needed]
+    # A blank value is the empty text, which SearchBuilder's own client does not apply either (PRD-F30); one space is
+    # a value. Kept out here, it counts as missing below
+    texts = [text for text in item.value[:needed] if text]
     column = declared.get(item.origData)
     _no_control_character(texts, column)
     _within_the_length(texts, column, search=False)
@@ -757,8 +758,6 @@ def _criterion(
         values = [_day_span(text, column) for text in texts]
     else:
         values = parse_days(texts, column, listed=needed == 2)
-    if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
-        return None
     if needed and len(item.value) > needed:  # the values beyond those the condition takes are never read
         raise mistake(
             'datatables_value_surplus',
@@ -766,6 +765,8 @@ def _criterion(
             'it again.',
             column,
         )
+    if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
+        return None
     positive = _positive(column, kind, condition, values)
     return Not(positive) if condition.startswith('!') else positive
 
