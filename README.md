@@ -59,9 +59,20 @@ reports = SearchTable(
         Column('created', type='date'),
         Column('published', type='boolean'),  # a column is a string unless declared: the mapping is not read
     ],
+    unique_key='id',  # required: an index has no primary key to break ties with
 )
 response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 ```
+
+**The unique key.** `unique_key` names a declared column (a tuple of names for a key of several) whose values are
+unique for every document. Every order ends with it, in the direction of the first sort entry, and a request without
+an order comes in its ascending order, so pages are stable. Declare it `IndexColumn(..., text='keyword')` or as a
+number. A key is a declared column, so its value is sent in every row; `searchable=False` and `orderable=False` keep it
+out of the client's controls. A table without a key raises `SchemaError`. SQL needs the same key when its source has no
+primary key that is unique for its rows (a view, or a join or subquery without one); it is also checked for a subquery
+that selects only part of a composite key, but not for `GROUP BY`, `DISTINCT` or nested subqueries, which need a key
+declared as well. A table a subquery reads only in a `WHERE` or a scalar subquery counts too: declare `unique_key`
+there, or the subquery is refused though its own key may be whole.
 
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an
@@ -132,9 +143,9 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   string column declared `text='text'` has no whole string to sort by, so it is unorderable, and declaring it
   `orderable=True` raises `SchemaError`. A column named twice in an order is sorted by its first entry.
 - **NULL is the lowest value, and a descending order is the exact reverse of the ascending one.** NULL, or a
-  missing field on OpenSearch, comes first ascending and last descending on every backend. In SQL a tie is broken
-  by the primary key, in the direction of the first sort entry. **Two exceptions:** an OpenSearch table breaks no
-  ties yet, and on PostgreSQL the order of a column that can hold NULL says where NULL goes (`NULLS FIRST`,
+  missing field on OpenSearch, comes first ascending and last descending on every backend. A tie is broken by the
+  unique key (the declared `unique_key`, else a SQL source's primary key), in the direction of the first sort entry.
+  **One exception:** on PostgreSQL the order of a column that can hold NULL says where NULL goes (`NULLS FIRST`,
   `NULLS LAST`), which an index in the default order does not serve: to sort a large table by such a column,
   declare its index `NULLS FIRST`. A column declared `nullable=False` on a table (a primary key's columns are) is
   ordered plainly and keeps its index.

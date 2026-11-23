@@ -2512,7 +2512,7 @@ def test_ties_are_broken_by_the_primary_key_not_by_storage_order(session: Sessio
 
 
 def keyed(source: Any, columns: list[Column], key: str | tuple[str, ...]) -> SQLTable:
-    return SQLTable(source, columns, unique_key=key)  # pyright: ignore[reportCallIssue]
+    return SQLTable(source, columns, unique_key=key)
 
 
 def tags_without_a_key() -> Table:
@@ -2555,12 +2555,13 @@ def test_a_declared_key_breaks_ties_on_a_join_without_a_primary_key(session: Ses
 
 
 def test_a_key_of_several_columns_follows_the_first_entrys_direction(session: Session):
-    """SPEC-D11.4: ties on `age` are broken by `team`, then `id`, in the direction `age` runs. The declared key wins
-    over the primary key (spec/README.md, "Declared key"): Ann (red, 1) and Cy (green, 4) tie on `age`, and `team`
-    puts Cy first ascending, which the primary key `id` would not."""
-    several = keyed(people, [Column('id'), Column('age'), Column('team')], ('team', 'id'))
-    for direction, expected in (('asc', [3, 4, 1, 2, 5]), ('desc', [5, 2, 1, 4, 3])):
-        params = request('id', 'age', 'team', order=[{'column': 1, 'dir': direction}])
+    """SPEC-D11.4: ties on `active` are broken by `team`, then `id`, in the direction `active` runs. The declared key
+    wins over the primary key (spec/README.md, "Declared key"): Ann (red, 1) and Cy (green, 4) tie on `active`, and
+    `team` puts Cy first ascending, which the primary key `id` would not. Bob (2) and Dee (5) tie on `team` as well,
+    so only the second name of the key tells them apart."""
+    several = keyed(people, [Column('id'), Column('active'), Column('team')], ('team', 'id'))
+    for direction, expected in (('asc', [3, 2, 5, 4, 1]), ('desc', [1, 4, 5, 2, 3])):
+        params = request('id', 'active', 'team', order=[{'column': 1, 'dir': direction}])
         assert ids(several.fetch_sync(params, session)) == expected
 
 
@@ -2600,17 +2601,20 @@ def test_a_source_that_has_no_unique_key_needs_one_declared(make_source: Callabl
     """SPEC-D11.2, SPEC-D11.3: SQLAlchemy reports no key, or a part of one, and the tie-breaker would not be unique.
     The message names the fix."""
     source = make_source()
-    first = next(iter(source.columns)).name
+    first = next(iter(source.columns.keys()))  # a join keys its columns `<table>_<column>`
     with pytest.raises(SchemaError, match=r'unique_key='):
         SQLTable(source, [Column(first)])
     keyed(source, [Column(first)], first)  # declared, it is accepted
 
 
 def test_a_source_with_its_whole_primary_key_needs_no_declared_key():
-    """SPEC-D11.2: the check is not a blanket ban on subqueries."""
+    """SPEC-D11.2: the check is not a blanket ban on subqueries or joins. A join on the key of both tables keeps one of
+    the two columns (SQLAlchemy reduces them as equal), and is unique all the same."""
     source = composite()
     SQLTable(source, [Column('a')])
     SQLTable(select(source.c.a, source.c.b).subquery(), [Column('a')])
+    other = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True))
+    SQLTable(people.join(other, people.c.id == other.c.id), [Column('id', field='dtb_test_people_id')])
 
 
 @pytest.mark.parametrize('key', ['nope', ('a', 'nope'), ()])

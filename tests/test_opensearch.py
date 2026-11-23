@@ -38,7 +38,7 @@ COLUMNS = [
     Column('author', field='meta.author'),
 ]
 NAMES = ('id', 'title', 'body', 'pages', 'created', 'author')
-table = SearchTable('docs', COLUMNS, base_filter={'term': {'published': True}})
+table = SearchTable('docs', COLUMNS, unique_key='id', base_filter={'term': {'published': True}})
 
 
 class Client:
@@ -102,7 +102,10 @@ def test_an_unfiltered_draw_is_one_search_that_answers_both_counts():
 
 
 def test_a_filtered_draw_counts_the_total_once_per_ttl():
-    client, cached = Client(total=3, count=40), SearchTable('docs', COLUMNS, total_cache=TotalCache(60))
+    client, cached = (
+        Client(total=3, count=40),
+        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
+    )
     params = request(*NAMES, search={'value': 'x'})
     assert (cached.fetch_sync(params, client).recordsTotal, cached.fetch_sync(params, client).recordsFiltered) == (
         40,
@@ -137,7 +140,7 @@ def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
     """Also SPEC-R7.2: a value comes back as `_source` holds it, an HTML text unescaped."""
     html = '<b>x</b> & "y"'
     hit = {'_source': {'id': 'a', 'title': html, 'pages': 3, 'meta': {'author': 'Ann'}}, '_score': 1.0}
-    hooked = SearchTable('docs', COLUMNS, rows=RowHooks(row_id=lambda row: row['id']))
+    hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(row_id=lambda row: row['id']))
     (row,) = hooked.fetch_sync(request(*NAMES), Client(hits=[hit])).data
     assert row == {
         'id': 'a', 'title': html, 'body': None, 'pages': 3, 'created': None, 'author': 'Ann', 'DT_RowId': 'a',
@@ -201,14 +204,16 @@ def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
             'The filter on "pages" needs one number, written like 42 or -3.5.',
         ),
         (
-            SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')]),
+            SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages'),
             ('pages', 'created'),
             {'search': {'value': 'x'}},
             'invalid_filter',
             'No column of this table can be searched from the search box. Clear it and use a column filter instead.',
         ),
         (
-            SearchTable('docs', COLUMNS, max_result_window=3),  # the number in the text is the table's own
+            SearchTable(
+                'docs', COLUMNS, unique_key='id', max_result_window=3
+            ),  # the number in the text is the table's own
             NAMES,
             {'start': 4, 'length': 3},
             'page_out_of_range',
@@ -241,7 +246,9 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
         params = request(*NAMES, column_search={'pages': {'value': 'abc'}}, **criterion('title', '=', 'a\x00b'))
         expected = 'invalid_character'
     else:  # step 4: only a number and a date column, which take no free text; beside a date of the wrong format
-        searched = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
+        searched = SearchTable(
+            'docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages'
+        )
         params = request('pages', 'created', search={'value': 'x'}, **criterion('created', '=', 'xx'))
         expected = 'invalid_date'
     refused(searched.fetch_sync(params, Client()), expected)
@@ -254,7 +261,7 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     raises=AssertionError,
 )
 def test_a_page_out_of_range_carries_the_real_counts():
-    small = SearchTable('docs', COLUMNS, max_result_window=3)
+    small = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3)
     response = small.fetch_sync(request(*NAMES, start=4, length=3), Client(total=10, count=10))
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
 
@@ -266,7 +273,7 @@ def test_a_page_out_of_range_carries_the_real_counts():
     raises=AssertionError,
 )
 def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
-    small = SearchTable('docs', COLUMNS, max_result_window=2)
+    small = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=2)
     response = small.fetch_sync(request(*NAMES, start=10), Client(total=4, count=4))
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
 
@@ -432,7 +439,7 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
 
 
 def test_a_global_search_over_numbers_and_dates_only_is_refused():
-    numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
+    numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages')
     refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
 
 
@@ -533,7 +540,7 @@ def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[s
 )
 def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfolded: Column):
     """A `term` without `case_insensitive`, and a list as one `terms` query: the field's mapping decides."""
-    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded], unique_key='id')
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', '=', 'A')), client)
     plain.fetch_sync(request('id', 'secret', column_search={'secret': {'multi_values': ['A', 'B']}}), client)
@@ -636,7 +643,7 @@ def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
 ):
     """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
     as before, and a search on it folds."""
-    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded], unique_key='id')
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)
     assert client.searches[-1]['query']['bool']['must'] == [clause]
@@ -770,6 +777,7 @@ def test_sorting_uses_the_whole_string_and_puts_a_missing_value_lowest():
     assert client.searches[0]['sort'] == [
         {'title.keyword': {'order': 'desc', 'missing': '_last'}},
         {'pages': {'order': 'asc', 'missing': '_first'}},
+        {'id': {'order': 'desc', 'missing': '_last'}},  # PRD-O3: the key follows the first entry
     ]
 
 
@@ -780,19 +788,28 @@ def test_an_order_on_analysed_text_is_refused_or_skipped_as_the_request_marks_it
     refused(table.fetch_sync(request(*NAMES, order=order), client))
     assert client.searches == []
     table.fetch_sync(request(*NAMES, flags={'body': {'orderable': False}}, order=order), client)
-    assert client.searches[0]['sort'] == [{'pages': {'order': 'asc', 'missing': '_first'}}]
+    assert client.searches[0]['sort'] == [
+        {'pages': {'order': 'asc', 'missing': '_first'}},
+        {'id': {'order': 'asc', 'missing': '_first'}},
+    ]
 
 
 def test_analysed_text_declared_orderable_is_a_schema_error():
     """SPEC-O5.2. Declared unorderable, which it is anyway, it is no mistake."""
     with pytest.raises(SchemaError, match='body'):
-        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)])
-    SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=False)])
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)],
+            unique_key='id',
+        )
+    SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=False)], unique_key='id'
+    )
 
 
 def test_an_order_on_a_column_declared_unorderable_is_refused():
     """SPEC-O1.2, SPEC-D5.1: the declaration decides on this backend too, for a column the index could sort by."""
-    fixed = SearchTable('docs', [IndexColumn('id', text='keyword', orderable=False)])
+    fixed = SearchTable('docs', [IndexColumn('id', text='keyword', orderable=False)], unique_key='id')
     client = Client()
     refused(fixed.fetch_sync(request('id', order=[{'column': 0, 'dir': 'asc'}]), client))
     assert client.searches == []
@@ -802,7 +819,7 @@ def test_an_order_on_a_column_declared_unorderable_is_refused():
 
 
 def keyed(key: str | tuple[str, ...], columns: list[Column] | None = None) -> SearchTable:
-    return SearchTable('docs', columns or COLUMNS, unique_key=key)  # pyright: ignore[reportCallIssue]
+    return SearchTable('docs', columns or COLUMNS, unique_key=key)
 
 
 ID_ASC = {'id': {'order': 'asc', 'missing': '_first'}}
@@ -861,6 +878,7 @@ def test_a_key_declared_unorderable_still_breaks_ties_but_cannot_be_ordered_by()
     client = Client()
     hidden.fetch_sync(request('id', 'pages', order=[{'column': 1, 'dir': 'asc'}]), client)
     assert client.searches[0]['sort'] == [PAGES_ASC, ID_ASC]
+    assert client.searches[0]['_source'] == ['id', 'pages']  # a declared column, so its value is in every row
     refused(hidden.fetch_sync(request('id', 'pages', order=[{'column': 0, 'dir': 'asc'}]), client))
     assert len(client.searches) == 1
 
@@ -868,7 +886,7 @@ def test_a_key_declared_unorderable_still_breaks_ties_but_cannot_be_ordered_by()
 def test_an_index_table_without_a_unique_key_is_a_schema_error():
     """SPEC-D11.1: no index has a primary key, so without one the tie-breaker would be whatever OpenSearch does."""
     with pytest.raises(SchemaError) as raised:
-        SearchTable('docs', COLUMNS)  # pyright: ignore[reportCallIssue]
+        SearchTable('docs', COLUMNS)
     assert 'unique_key=' in str(raised.value)
 
 
@@ -895,7 +913,11 @@ def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(
 # What OpenSearch makes of these bodies is measured in test_opensearch_live.py.
 
 FLAG_NAMES = ('id', 'title', 'active')
-flags = SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('active', type='boolean')])
+flags = SearchTable(
+    'docs',
+    [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('active', type='boolean')],
+    unique_key='id',
+)
 
 
 def clauses(client: Client) -> list[dict[str, Any]]:
@@ -930,7 +952,9 @@ def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
 def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(kind: Any):
     """SPEC-D14.1: the hook transforms text the user types. The message names the declared column and the fix."""
     with pytest.raises(SchemaError) as raised:
-        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('held', type=kind, search_value=str)])
+        SearchTable(
+            'docs', [IndexColumn('id', text='keyword'), Column('held', type=kind, search_value=str)], unique_key='id'
+        )
     assert str(raised.value) == (
         f'The column "held" has a search_value hook but is a {kind} column. Only a string column takes one: remove '
         'the hook.'
@@ -940,7 +964,11 @@ def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(kin
 def test_two_columns_with_one_name_are_a_schema_error():
     """SPEC-D1.2: the name keys the request and each row, so the second column would silently replace the first."""
     with pytest.raises(SchemaError) as raised:
-        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('title', field='name')])
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('title', field='name')],
+            unique_key='id',
+        )
     assert str(raised.value) == (
         'Two columns are declared with the name "title". Give each its own name: Column(name, field=...) reads one '
         'field under another name.'
@@ -970,7 +998,9 @@ def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimm
         seen.append(text)
         return stored(text)
 
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)], unique_key='id'
+    )
     client = Client()
     cases = ['Alpha', f' {chr(0xA0)}Alpha{chr(0x3000)}', '"Alpha"', '!x', 'a\nb']
     for text in cases:
@@ -983,7 +1013,9 @@ def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimm
 
 def test_a_column_search_on_a_hooked_column_of_blank_text_sends_no_clause():
     """SPEC-F6.3 with PRD-D12's trimming: text of only White_Space beyond PRD-F7's five is blank too."""
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)], unique_key='id'
+    )
     client = Client()
     hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': chr(0xA0)}}), client)
     assert client.searches[-1]['query'] == {'match_all': {}}
@@ -1008,7 +1040,9 @@ def test_the_global_search_on_a_hooked_column_is_one_term_of_the_transformed_tri
     is hooked, and `!Alpha` and `a` + LF + `b` are values like any other."""
     seen, recorded = recording_hook()
     hooked = SearchTable(
-        'docs', [IndexColumn('id', text='keyword', searchable=False), Column('secret', search_value=recorded)]
+        'docs',
+        [IndexColumn('id', text='keyword', searchable=False), Column('secret', search_value=recorded)],
+        unique_key='id',
     )
     client = Client()
     for text in GLOBAL_CASES:
@@ -1023,7 +1057,9 @@ def test_the_global_search_adds_the_term_of_a_hooked_column_beside_the_words_of_
     """SPEC-D12.1, SPEC-D12.2: the words go to the other columns, each found in some column, and the hooked column
     adds the one term of the whole text, however many words it holds."""
     seen, recorded = recording_hook()
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)], unique_key='id'
+    )
     client = Client()
     hooked.fetch_sync(request('id', 'secret', search={'value': 'red Alpha'}), client)
     (clause,) = client.searches[-1]['query']['bool']['must']
@@ -1036,7 +1072,9 @@ def test_the_global_search_adds_the_term_of_a_hooked_column_beside_the_words_of_
 def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value_before_anything_is_sent():
     """SPEC-D18.2: a `wildcard` on a transformed value means nothing. `starts` stands for the six conditions, which
     one rule refuses in the plan (test_sql.py has each)."""
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)], unique_key='id'
+    )
     client = Client()
     response = hooked.fetch_sync(request('id', 'secret', **criterion('secret', 'starts', 'zzz')), client)
     assert refused(response) == (
@@ -1077,7 +1115,9 @@ def test_the_widest_bool_of_a_request_of_the_budget_holds_at_most_the_default_cl
     catches a budget set above the limit, or a change that puts the clauses of a word in one `bool`."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
     client = Client()
-    SearchTable('docs', columns).fetch_sync(request(*(c.name for c in columns), search={'value': 'ann'}), client)
+    SearchTable('docs', columns, unique_key='t0').fetch_sync(
+        request(*(c.name for c in columns), search={'value': 'ann'}), client
+    )
     leaves, _, widest = tally(client.searches[0]['query'])
     assert (leaves, widest) == (2 * BUDGET, BUDGET)
 
@@ -1088,7 +1128,7 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
     or counted after the search has gone out."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET + 1)]
     client = Client()
-    response = SearchTable('docs', columns).fetch_sync(
+    response = SearchTable('docs', columns, unique_key='t0').fetch_sync(
         request(*(c.name for c in columns), search={'value': 'ann'}), client
     )
     assert response.error_code == 'request_too_large'

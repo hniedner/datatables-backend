@@ -27,6 +27,7 @@ from sqlalchemy import DateTime
 from sqlalchemy import Enum
 from sqlalchemy import Float
 from sqlalchemy import Integer
+from sqlalchemy import Join
 from sqlalchemy import Numeric
 from sqlalchemy import SmallInteger
 from sqlalchemy import String
@@ -51,6 +52,7 @@ from sqlalchemy.sql import operators
 from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
+from sqlalchemy.sql.util import find_tables
 from sqlalchemy.types import NullType
 from sqlalchemy.types import TypeDecorator
 
@@ -68,6 +70,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -110,6 +113,10 @@ class SQLTable:
     Args:
         source: The rows: a ``Table``, a mapped class's ``__table__``, a join or a subquery.
         columns: The columns the client may see, search and sort on; nothing else is selected.
+        unique_key: The name of a declared column, or of several, whose values are unique for every row: the
+            tie-breaker of every order, in place of the primary key. Required when the source has no primary key
+            that is unique for its rows (a view, or a join or subquery without one, or with only part of a
+            composite one): the table then raises ``SchemaError``.
         base_filter: The rows the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` (one ``COUNT(*)`` per TTL instead of per draw).
@@ -120,6 +127,7 @@ class SQLTable:
         source: FromClause,
         columns: Sequence[Column],
         *,
+        unique_key: str | Sequence[str] | None = None,
         base_filter: ColumnElement[bool] | None = None,
         rows: RowHooks | None = None,
         total_cache: TotalCache | None = None,
@@ -133,6 +141,17 @@ class SQLTable:
         if missing:
             raise SchemaError(f'{source} has no column {", ".join(missing)}')
         check_declaration(self.columns, self._type_of)  # after the missing columns: a type is read from the source
+        if unique_key is not None:  # a declared key wins over the source's primary key
+            self._tie_breakers = [self._sql(column) for column in declared_key(self.columns, unique_key)]
+        elif _key_is_not_unique(source):
+            raise SchemaError(
+                'The source has no primary key that is unique for every row it shows: it is a view, or a join or '
+                'subquery with no primary key or with only part of a composite one. Declare one: '
+                'SQLTable(..., unique_key="id") with the name of a declared column whose values are unique (a tuple '
+                'of names for a key of several).'
+            )
+        else:
+            self._tie_breakers = list(source.primary_key)
 
     async def fetch(self, params: DTParams, source: AsyncSource) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
@@ -291,14 +310,14 @@ class SQLTable:
                 assert_never(node)
 
     def _ordered(self, stmt: Select[Any], request: Plan, dialect: Dialect) -> Select[Any]:
-        """The user's order with NULL as the lowest value, then the primary key in the direction of the first
-        entry: the same rows come in the same order, a tie never splits across pages, and a descending order is the
-        exact reverse of the ascending one."""
+        """The user's order with NULL as the lowest value, then the unique key (the declared one, else the primary
+        key) in the direction of the first entry: the same rows come in the same order, a tie never splits across
+        pages, and a descending order is the exact reverse of the ascending one."""
         descending = bool(request.order) and request.order[0].descending
         ordered = [self._sql(item.column) for item in request.order]
         for column, item in zip(ordered, request.order, strict=True):
             stmt = stmt.order_by(self._by(column, item.descending, dialect))
-        for key in _primary_key(self.source):
+        for key in self._tie_breakers:
             # A key column the user already orders by is not named again: SQL Server refuses a column named twice.
             # It is told by the column itself, since a join names its columns `<table>_<column>`, not by their keys
             if all(key is not column for column in ordered):
@@ -372,10 +391,20 @@ def _dialect(source: AsyncSource | SyncSource) -> Dialect:
     return _bind(source).dialect
 
 
-def _primary_key(source: FromClause) -> list[ColumnElement[Any]]:
-    """The primary key's columns, or the first column of a source that declares none."""
-    key = list(getattr(source, 'primary_key', None) or [])
-    return key or [next(iter(source.columns))]
+def _key_is_not_unique(source: FromClause) -> bool:
+    """Whether the source's primary key cannot be trusted to tell its rows apart (PRD-D11): SQLAlchemy reports none,
+    or a table under it has none, or (outside a join, which keeps every table's key) a subquery selects only part of
+    a table's. A join keeps the key of each table whole, bar the equivalence of the columns it joins on, so only the
+    keys of its tables are checked. ``GROUP BY`` and ``DISTINCT`` are not looked at. A table a subquery reads only in
+    a ``WHERE`` or a scalar subquery counts too, so such a subquery is refused though its own key may be whole:
+    declare ``unique_key`` there."""
+    primary_key = getattr(source, 'primary_key', None)
+    tables = find_tables(source)
+    if not primary_key or any(not table.primary_key for table in tables):
+        return True
+    return not isinstance(source, Join) and any(
+        not any(column in kept.proxy_set for kept in primary_key) for table in tables for column in table.primary_key
+    )
 
 
 def _sql_type(column: ColumnElement[Any]) -> Any:

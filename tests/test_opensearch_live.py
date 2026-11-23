@@ -118,8 +118,8 @@ COLUMNS = [
     Column('author', field='meta.author'),
 ]
 NAMES = ('id', 'title', 'body', 'pages', 'created', 'author')
-table = SearchTable(INDEX, COLUMNS)
-timed = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('seen', type='date')])
+table = SearchTable(INDEX, COLUMNS, unique_key='id')
+timed = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('seen', type='date')], unique_key='id')
 
 # A second index, so that no count or row of the tests above changes: five documents whose one text is `a`, `b`, `a-b`,
 # `b a` and `a b`, in a field of analysed text and in a field of text+keyword (PRD-F11's phrase of tokens).
@@ -137,10 +137,12 @@ PHRASE_MAPPING = {
     }
 }
 phrases = SearchTable(PHRASE_INDEX, [IndexColumn('id', text='keyword'), IndexColumn('only_text', text='text'),
-                                     IndexColumn('both')])  # fmt: skip
+                                     IndexColumn('both')], unique_key='id')  # fmt: skip
 PHRASE_NAMES = ('id', 'only_text', 'both')
 hooked = SearchTable(
-    PHRASE_INDEX, [IndexColumn('id', text='keyword'), Column('secret', search_value=lambda text: f'enc:{text}')]
+    PHRASE_INDEX,
+    [IndexColumn('id', text='keyword'), Column('secret', search_value=lambda text: f'enc:{text}')],
+    unique_key='id',
 )
 
 
@@ -208,7 +210,7 @@ def test_a_filtered_draw_counts_the_total_apart(client: OpenSearch):
 
 
 def test_the_base_filter_limits_the_total_too(client: OpenSearch):
-    long_reads = SearchTable(INDEX, COLUMNS, base_filter={'range': {'pages': {'gte': 30}}})
+    long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
     response = long_reads.fetch_sync(request(*NAMES, search={'value': 'bread'}), client)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 1)
 
@@ -422,7 +424,9 @@ def test_an_exact_match_on_a_string_column_ignores_case(client: OpenSearch, body
 
 
 LABEL_NAMES = ('id', 'label')
-labelled = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label')])  # e5 holds `ÄPFEL`
+labelled = SearchTable(
+    INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label')], unique_key='id'
+)  # e5 holds `ÄPFEL`
 
 
 @pytest.mark.parametrize(
@@ -449,7 +453,9 @@ def test_a_letter_outside_ascii_is_folded_from_opensearch_3_1_on(
 
 
 whole_label = SearchTable(
-    INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label', field='label.keyword', text='keyword')]
+    INDEX,
+    [IndexColumn('id', text='keyword'), IndexColumn('label', field='label.keyword', text='keyword')],
+    unique_key='id',
 )  # the label as one whole string only, so no analysed word can answer for it: c3 holds LONGEST
 
 
@@ -502,7 +508,7 @@ def test_punctuation_in_a_value_is_matched_as_written(client: OpenSearch):
     assert found(whole_label.fetch_sync(params, client)) == ['a1']
 
 
-folded = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('folded', text='keyword')])
+folded = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('folded', text='keyword')], unique_key='id')
 
 
 @pytest.mark.parametrize(
@@ -547,7 +553,7 @@ def test_searchbuilder_equality_on_a_boolean_field_matches_nothing_today(client:
     """A string column on a boolean mapping: the column is a default (text+keyword) string column, and `=` queries its
     keyword subfield `active.keyword`, which a boolean mapping does not have: no document matches, whatever the value.
     PRD-D8/PRD-F43 apply once the column is declared boolean."""
-    flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active')])
+    flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active')], unique_key='id')
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == []
 
 
@@ -571,7 +577,9 @@ def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, va
     """A string column on a boolean mapping: a keyword-kind column terms on `active` itself, and only `true` and
     `false` reach a boolean field. The expected rows of the strict xfails are never compared, since the search raises.
     PRD-D8/PRD-F43 apply once the column is declared boolean."""
-    flagged = SearchTable(INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')])
+    flagged = SearchTable(
+        INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')], unique_key='id'
+    )
     assert found(flagged.fetch_sync(request('id', 'active', **criterion('active', '=', value)), client)) == expected
 
 
@@ -579,7 +587,7 @@ def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch, va
 # statements cited speak of their own four-row fixture; the rows here are the same cases on this index.
 
 FLAG_NAMES = ('id', 'active')
-flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', type='boolean')])
+flags = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('active', type='boolean')], unique_key='id')
 
 
 @pytest.mark.parametrize(
@@ -625,7 +633,7 @@ def test_the_declared_key_breaks_ties_and_the_descending_order_is_the_exact_reve
 ):
     """SPEC-O3.4, measured: a1 and d4 tie on `pages` (12), and the key runs in the direction of the order; c3 has no
     `pages` and is the lowest value. The sort body, with `missing` on the key field too, is one the cluster accepts."""
-    keyed = SearchTable(INDEX, COLUMNS, unique_key='id')  # pyright: ignore[reportCallIssue]
+    keyed = SearchTable(INDEX, COLUMNS, unique_key='id')
     response = keyed.fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': direction}]), client)
     assert ids(response) == expected
 
@@ -670,5 +678,5 @@ def test_a_request_of_the_budget_is_answered(client: OpenSearch):
     catches a budget set past what the server answers, on 3.10 and on 2.19."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
     names = [column.name for column in columns]
-    response = SearchTable(INDEX, columns).fetch_sync(request(*names, search={'value': 'x'}), client)
+    response = SearchTable(INDEX, columns, unique_key='t0').fetch_sync(request(*names, search={'value': 'x'}), client)
     assert response.error is None

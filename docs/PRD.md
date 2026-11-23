@@ -385,9 +385,13 @@ and ordered like any column.
 #### PRD-D11
 
 A table whose source has no primary key (every OpenSearch index; a SQL join or subquery without one) declares a unique
-key; constructing it without one raises `SchemaError`.
+key; constructing it without one raises `SchemaError`. The key is `unique_key`, the name of a declared column or a tuple
+of names for a composite key, and it replaces the primary key as the tie-breaker when declared. An OpenSearch key must
+be sortable (not analysed text only). On SQL, a source needs one too when its primary key is only part of a table's (a
+subquery) or a table under it has none (a view, or a join to one); `GROUP BY` and `DISTINCT` are not checked.
 
-- **Reason:** The tie-breaker of PRD-O3 must be unique; the first column of a join is not.
+- **Reason:** The tie-breaker of PRD-O3 must be unique; the first column of a join is not. A declared column is read
+  with the type and sort field the table already knows; a bare field name would need the mapping read.
 - **Priority:** must
 
 #### PRD-D12
