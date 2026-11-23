@@ -323,7 +323,7 @@ async def test_the_async_fetch_counts_before_the_refusal_too():
     """SPEC-C12.1, SPEC-C12.3, SPEC-C11.1 through `fetch`, which builds its answer apart from `fetch_sync`: a filtered
     refusal, so that both of its counts are run."""
     client = AsyncCounting(total=40, filtered=7)
-    response = await bounded(3).fetch(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    response = await bounded(3).fetch(request(*NAMES, start=2, length=3, search={'value': 'x'}), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
     assert client.searches == []
     assert len(client.counts) == 2
@@ -364,7 +364,7 @@ def test_a_filtered_refusal_counts_the_filtered_set_and_the_total_each_by_its_ow
     sent = Client()
     bounded(3).fetch_sync(request(*NAMES, length=3, search={'value': 'x'}), sent)  # what the same filter asks for
     client = Counting(total=40, filtered=7)
-    response = bounded(3).fetch_sync(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    response = bounded(3).fetch_sync(request(*NAMES, start=2, length=3, search={'value': 'x'}), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
     assert client.searches == []
     assert len(client.counts) == 2
@@ -376,7 +376,7 @@ def test_the_total_cache_serves_the_refusal_too():
     """SPEC-C12.4: the second refusal within the TTL runs only the count of the filtered set."""
     cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
     client = Counting(total=40, filtered=7)
-    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    params = request(*NAMES, start=2, length=3, search={'value': 'x'})
     cached.fetch_sync(params, client)
     response = cached.fetch_sync(params, client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
@@ -388,7 +388,7 @@ async def test_the_total_cache_serves_the_async_refusal_too():
     """SPEC-C12.4 through `fetch`, which fills and reads the cache by its own lines."""
     cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
     client = AsyncCounting(total=40, filtered=7)
-    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    params = request(*NAMES, start=2, length=3, search={'value': 'x'})
     await cached.fetch(params, client)
     response = await cached.fetch(params, client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
@@ -1048,6 +1048,153 @@ def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(key: str | tuple[
     with pytest.raises(SchemaError, match=text) as raised:
         keyed(key)
     assert 'unique_key' in str(raised.value)
+
+
+# -- the last pages, by a reversed sort (PRD-C10, PRD-C13, issue #74) ---
+
+
+def doc(number: int) -> dict[str, Any]:
+    return {'_id': str(number), '_source': {'id': str(number)}}
+
+
+class Docs(Counting):
+    """An index of `count` documents numbered 1 to `count`, which answers a search by the direction of the `id` key,
+    `from` and `size` as the cluster does: the arithmetic of a page can be tried against what it should show."""
+
+    def __init__(self, count: int):
+        super().__init__(total=count, filtered=count)
+        self.docs = list(range(1, count + 1))
+
+    def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.searches.append(body)
+        key = next(entry['id'] for entry in body['sort'] if 'id' in entry)  # a table of the default order: the key
+        ordered = self.docs if key['order'] == 'asc' else self.docs[::-1]
+        page = ordered[body['from'] : body['from'] + body['size']]
+        hits = {'total': {'value': len(self.docs), 'relation': 'eq'}, 'hits': [doc(number) for number in page]}
+        return {'timed_out': False, '_shards': SHARDS, 'hits': hits}
+
+
+class AsyncDocs(Docs):
+    async def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Docs.search(self, index=index, body=body)
+
+    async def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Counting.count(self, index=index, body=body)
+
+
+def row_ids(response: DTResponse) -> list[str]:
+    return [row['id'] for row in response.data]
+
+
+@pytest.mark.parametrize('rows', [10, 7, 4])
+def test_every_page_the_reversed_sort_reaches_is_the_page_the_ordinary_way_gives(rows: int):
+    """SPEC-C10.3 on the recording client, with a window of 3: for every start and length, a page is served exactly
+    when it is ordinary (start + length <= W) or near the end (rows - start <= W), and then it holds the rows a table
+    of the default window shows; the empty page and the refusal keep their places (PRD-C3, PRD-C12)."""
+    window = 3
+    for start in range(rows + 2):
+        for length in range(1, 5):
+            asked = request(*NAMES, start=start, length=length)
+            small, wide = (
+                bounded(window).fetch_sync(asked, Docs(rows)),
+                SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(asked, Docs(rows)),
+            )
+            where = f'rows {rows}, start {start}, length {length}'
+            served = start + length <= window or rows - start <= window or start >= rows
+            assert (small.error_code is None) == served, where
+            if served:
+                assert row_ids(small) == row_ids(wide), where
+                assert (small.recordsTotal, small.recordsFiltered) == (rows, rows), where
+            else:
+                assert small.error_code == 'page_out_of_range', where
+
+
+@pytest.mark.parametrize(
+    ('start', 'length', 'from_', 'size'),
+    [
+        (7, 3, 0, 3),  # the first reversed page: start = rows - window
+        (7, 2, 1, 2),  # a shorter page: from is not clamped
+        (8, 3, 0, 2),  # a page cut short by the end
+        (9, 3, 0, 1),  # the last row
+        (9, 1, 0, 1),
+    ],
+)
+def test_a_reversed_page_asks_for_the_rows_from_the_end_and_is_shown_in_ascending_order(
+    start: int, length: int, from_: int, size: int
+):
+    """SPEC-C10.5: `from` is `max(0, F - start - length)` and `size` is `min(length, F - start)`, so that from + size
+    is F - start, within the window; the key is the only entry of the default order, flipped, and the counts that
+    decided the page are the answer's."""
+    client = Docs(10)
+    response = bounded(3).fetch_sync(request(*NAMES, start=start, length=length), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 10, 10)
+    assert len(client.searches) == 1
+    assert (client.searches[0]['from'], client.searches[0]['size']) == (from_, size)
+    assert client.searches[0]['sort'] == [{'id': {'order': 'desc', 'missing': '_last', 'mode': 'min'}}]
+    assert row_ids(response) == [str(number) for number in range(start + 1, start + size + 1)]
+    assert client.counts == [EVERYTHING]  # the one count, the total being the filtered count (PRD-C8)
+
+
+def test_the_last_ordinary_page_is_searched_without_a_count():
+    """SPEC-C10.1, SPEC-C11.1: start + length = W is ordinary, and the reverse is used only beyond it."""
+    client = Docs(10)
+    response = bounded(3).fetch_sync(request(*NAMES, start=1, length=2), client)
+    assert row_ids(response) == ['2', '3']
+    assert (client.searches[0]['from'], client.searches[0]['size']) == (1, 2)
+    assert client.counts == []
+
+
+def test_a_reversed_page_flips_every_entry_of_the_order_with_the_mode_each_one_has():
+    """SPEC-C10.6: title desc, pages asc and the key (which follows the first entry, so desc) become title asc, pages
+    desc and the key asc. A missing value stays the lowest, and each entry keeps the `mode` of its original direction
+    (the minimum for `asc`, the maximum for `desc`): a field of several values sorts by another one in each
+    direction, so a flip without it would not reverse the order it flips."""
+    client = Docs(10)
+    order = [{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]
+    bounded(3).fetch_sync(request(*NAMES, start=7, length=3, order=order), client)
+    assert len(client.searches) == 1
+    assert client.searches[0]['sort'] == [
+        {'title.keyword': {'order': 'asc', 'missing': '_first', 'mode': 'max'}},
+        {'pages': {'order': 'desc', 'missing': '_last', 'mode': 'min'}},
+        {'id': {'order': 'asc', 'missing': '_first', 'mode': 'max'}},
+    ]
+
+
+def test_a_reversed_page_answers_the_counts_that_decided_it_though_the_index_has_changed():
+    """SPEC-C13.1: the count says 10, the reversed search finds 11 (an index that grew in between): the rows are what
+    it found, in ascending order, with no error, no point in time (the client has no `create_pit`), and the answer
+    carries the counts that decided the page."""
+    client = Counting(total=10, filtered=10, hits=[doc(11), doc(10)])
+    response = bounded(3).fetch_sync(request(*NAMES, start=8, length=3), client)
+    assert (response.error_code, row_ids(response)) == (None, ['10', '11'])
+    assert (response.recordsTotal, response.recordsFiltered) == (10, 10)
+
+
+async def test_the_async_fetch_serves_a_reversed_page_too():
+    """SPEC-C10.2, SPEC-C13.1 through `fetch`, which builds its page apart from `fetch_sync`: the rows come in
+    ascending order, and the answer carries the counts that decided the page (the search itself says 7)."""
+    client = AsyncCounting(total=10, filtered=10, hits=[doc(10), doc(9)])
+    response = await bounded(3).fetch(request(*NAMES, start=8, length=3), client)
+    assert row_ids(response) == ['9', '10']
+    assert (response.recordsTotal, response.recordsFiltered) == (10, 10)
+    assert (client.searches[0]['from'], client.searches[0]['size']) == (0, 2)
+
+
+PARTIAL = {'total': 2, 'successful': 1, 'failed': 1}
+
+
+def test_a_partial_answer_to_a_reversed_page_raises():
+    """SPEC-E8: a page read from some of the shards only is no answer, the reversed one included."""
+    client = Counting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
+    with pytest.raises(PartialResultError):
+        bounded(3).fetch_sync(request(*NAMES, start=9, length=1), client)
+
+
+async def test_a_partial_answer_to_an_async_reversed_page_raises():
+    """SPEC-E8 through `fetch`."""
+    client = AsyncCounting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
+    with pytest.raises(PartialResultError):
+        await bounded(3).fetch(request(*NAMES, start=9, length=1), client)
 
 
 # -- the document id: shown, never searched, sorted or used as the key (PRD-D11, issue #96) ---

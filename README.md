@@ -81,6 +81,15 @@ key, and a subquery must select every primary-key column of each table it reads 
 scalar subquery); otherwise it raises `SchemaError`. A `UNION` is not checked: declare `unique_key` on a subquery over
 one.
 
+**Paging past the window.** OpenSearch reads at most `max_result_window` rows (10,000 by default; give the table the
+index's own) from the start of a search. The first pages are read as they come, and so are the last: a page that ends
+within that many rows of the last row is read by reversing the sort (every entry, the unique key included) and is shown
+in order, so "last page" works on a result of any size. A page in the middle of a larger result is refused with
+`page_out_of_range` and the real counts, and the library never changes the cluster's setting. A last page is read after
+a count, so it can drift if the index changes in between, as offset paging always can (no point in time is held). A
+field of several values sorts by its least value ascending and its greatest descending (`docs/databases.md`); a reversed
+page keeps the ordinary page's rows all the same.
+
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an
 analysed-only column.
