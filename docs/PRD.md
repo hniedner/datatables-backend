@@ -1115,7 +1115,8 @@ An OpenSearch page is served when `start + length <= max_result_window` (the ord
 #### PRD-C11
 
 To decide PRD-C10, the filtered count, plus the total count when PRD-C8 does not reuse it, may run before the page
-query; these are the only queries that may run before a refusal.
+query; these are the only queries that may run before a refusal. The filtered count is a `_count` of the search's own
+query, so it is exact whatever a search's total says (PRD-C9).
 
 - **Reason:** Telling a near-end page from a middle one needs the total.
 - **Priority:** must

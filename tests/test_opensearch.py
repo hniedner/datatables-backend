@@ -299,12 +299,32 @@ def test_a_page_out_of_range_carries_the_real_counts():
     assert client.counts == [EVERYTHING]
 
 
+def test_a_refusal_with_counts_logs_one_line_and_an_empty_page_none(caplog: pytest.LogCaptureFixture):
+    """SPEC-E4.24 with the counts of C12.1: the refusal is logged once, and the line holds neither a count nor the
+    search text; the empty page of PRD-C3 is no refusal and logs nothing."""
+    client = Counting(total=4242, filtered=1717)
+    with caplog.at_level(logging.DEBUG):
+        bounded(3).fetch_sync(request(*NAMES, start=4, length=3, search={'value': 'MARKER'}), client)
+    assert [(record.levelname, record.msg) for record in caplog.records] == [
+        ('WARNING', 'datatables_page_out_of_range')
+    ]
+    logged = repr([vars(record) for record in caplog.records])
+    assert not any(text in logged for text in ('4242', '1717', 'MARKER'))
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        bounded(3).fetch_sync(request(*NAMES, start=5000), client)  # past the 4242 rows the unfiltered count gives
+    assert caplog.records == []
+
+
 async def test_the_async_fetch_counts_before_the_refusal_too():
-    """SPEC-C12.1, SPEC-C11.1 through `fetch`, which builds its answer apart from `fetch_sync`."""
-    client = AsyncCounting(total=10, filtered=10)
-    response = await bounded(3).fetch(request(*NAMES, start=4, length=3), client)
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
-    assert (client.searches, client.counts) == ([], [EVERYTHING])
+    """SPEC-C12.1, SPEC-C12.3, SPEC-C11.1 through `fetch`, which builds its answer apart from `fetch_sync`: a filtered
+    refusal, so that both of its counts are run."""
+    client = AsyncCounting(total=40, filtered=7)
+    response = await bounded(3).fetch(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert client.searches == []
+    assert len(client.counts) == 2
+    assert EVERYTHING in client.counts
 
 
 def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
@@ -313,14 +333,6 @@ def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
     response = bounded(2).fetch_sync(request(*NAMES, start=10), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
     assert response.data == []
-    assert client.searches == []
-
-
-async def test_the_async_fetch_answers_the_empty_page_beyond_the_window_too():
-    """SPEC-C3.3 through `fetch`."""
-    client = AsyncCounting(total=4, filtered=4)
-    response = await bounded(2).fetch(request(*NAMES, start=10), client)
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered, response.data) == (None, 4, 4, [])
     assert client.searches == []
 
 

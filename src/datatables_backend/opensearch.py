@@ -81,6 +81,12 @@ class AsyncClient(Protocol):
 class _Request:
     search: dict[str, Any]
     count: dict[str, Any] | None  # None: the search's own count is the total
+    beyond: InvalidFilter | None = None  # set: the page is past the result window, so only the counts run (PRD-C11)
+
+    @property
+    def filtered_count(self) -> dict[str, Any]:
+        """The count of the search's own query: the filtered set, exact where a search's total may be a lower bound."""
+        return {'query': self.search['query']}
 
 
 class SearchTable:
@@ -95,7 +101,9 @@ class SearchTable:
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
-        max_result_window: The index's ``max_result_window``; a page beyond it is refused as the user's request.
+        max_result_window: The index's ``max_result_window``; a page beyond it is refused as the user's request, with
+            the real counts (one or two count calls, never a page search), or answered empty when ``start`` is past
+            the last row.
     """
 
     def __init__(
@@ -138,14 +146,24 @@ class SearchTable:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
-        anything is sent; any other failure raises, a partial answer as ``PartialResultError``.
+        anything is sent; any other failure raises, a partial answer as ``PartialResultError``. A page beyond the
+        result window sends only the counts, never a page search (PRD-C11).
         """
         try:
             request = self._request(params)
         except InvalidFilter as found:
             return refused(params, found)
+        if request.beyond is not None:
+            filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
+            total = self._cached_total(request, filtered)
+            if total is None:
+                total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
+                self._remember(total)
+            return self._past_the_window(params, request.beyond, total, filtered)
         answer = await client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
+        if _lower_bound(answer):
+            filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
@@ -158,8 +176,17 @@ class SearchTable:
             request = self._request(params)
         except InvalidFilter as found:
             return refused(params, found)
+        if request.beyond is not None:
+            filtered = self._count(client.count(index=self.index, body=request.filtered_count))
+            total = self._cached_total(request, filtered)
+            if total is None:
+                total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
+                self._remember(total)
+            return self._past_the_window(params, request.beyond, total, filtered)
         answer = client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
+        if _lower_bound(answer):
+            filtered = self._count(client.count(index=self.index, body=request.filtered_count))
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
@@ -173,8 +200,8 @@ class SearchTable:
 
         Raises:
             InvalidFilter: the one of the user's mistakes that decides the answer, from the plan or from the clauses
-                built here; a page beyond the result window only when the request holds no other. It is raised in
-                one place, once every clause is built.
+                built here. It is raised in one place, once every clause is built. A page beyond the result window is
+                no raise: it is the last step of PRD-E3, and the request holds it for the counts to run first.
         """
         mistakes = Mistakes()
         request = plan(params, self.columns, _describe, mistakes)
@@ -186,14 +213,14 @@ class SearchTable:
                 must.append(_compile(column_search))
         if request.search_builder is not None:
             must.append(_compile(request.search_builder))
-        with mistakes.part():
-            if params.start + params.length > self.max_result_window:
-                raise mistake(
-                    'datatables_page_out_of_range',
-                    f'This table can be paged through its first {self.max_result_window:,} rows only. Go back to an '
-                    'earlier page, or narrow the search so fewer rows match.',
-                )
         mistakes.raise_first()
+        beyond = None
+        if params.start + params.length > self.max_result_window:  # the last step of PRD-E3, so any other mistake won
+            beyond = mistake(
+                'datatables_page_out_of_range',
+                f'This table can be paged through its first {self.max_result_window:,} rows only. Go back to an '
+                'earlier page, or narrow the search so fewer rows match.',
+            )
         search = {
             'query': {'bool': {'must': must}} if must else {'match_all': {}},
             'from': params.start,
@@ -203,7 +230,7 @@ class SearchTable:
         }
         search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
-        return _Request(search, count if request.filtered else None)
+        return _Request(search, count if request.filtered else None, beyond)
 
     # -- running ----------------------------------------------------------------------------------------------------
 
@@ -230,6 +257,13 @@ class SearchTable:
             raise PartialResultError(f'The count of {self.index} did not cover every shard.')
         return int(answer['count'])
 
+    def _past_the_window(self, params: DTParams, beyond: InvalidFilter, total: int, filtered: int) -> DTResponse:
+        """The answer for a page beyond the result window, once the counts are in: an empty page when ``start`` is at
+        or past the end (PRD-C3 wins), else the refusal carrying the real counts (PRD-C12)."""
+        if params.start >= filtered:
+            return DTResponse(draw=params.draw, recordsTotal=total, recordsFiltered=filtered, data=[])
+        return refused(params, beyond).model_copy(update={'recordsTotal': total, 'recordsFiltered': filtered})
+
     def _response(self, params: DTParams, answer: Mapping[str, Any], total: int, filtered: int) -> DTResponse:
         hits = cast(list[Mapping[str, Any]], answer['hits']['hits'])
         data = [self.rows.apply(self._row(hit.get('_source') or {})) for hit in hits]
@@ -237,6 +271,13 @@ class SearchTable:
 
     def _row(self, source: Mapping[str, Any]) -> dict[str, Any]:
         return {column.name: _get(source, column.source) for column in self.columns}
+
+
+def _lower_bound(answer: Mapping[str, Any]) -> bool:
+    """Whether the search's total says only "at least this many" (PRD-C9): ``track_total_hits`` is sent, but a server
+    or a proxy in between may not honour it."""
+    total = answer['hits']['total']
+    return isinstance(total, Mapping) and total.get('relation') == 'gte'
 
 
 # -- query building ---
