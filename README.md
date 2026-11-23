@@ -15,7 +15,7 @@ and [SearchBuilder](https://datatables.net/extensions/searchbuilder/) criteria. 
 
 The library is read-only and framework-agnostic.
 
-> Status: pre-alpha. The API may change before 0.1.0. See [docs/PRD.md](https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md) for the scope and design.
+> Status: pre-alpha. The API may change before 0.1.0. See [docs/PRD.md][prd] for the scope and design.
 
 If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 [`datatables_server`](https://datatables.net/manual/python). This library adds:
@@ -74,7 +74,7 @@ response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 **The unique key.** `unique_key` names a declared column (a tuple of names for a key of several) whose values are
 unique for every document; OpenSearch needs it, since an index has no primary key to break ties with, and on SQL it
 replaces the primary key. Its rules, the document `_id` and paging past the window are in [the OpenSearch
-rules](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#opensearch).
+rules][rules-opensearch].
 
 ## FastAPI
 
@@ -90,26 +90,36 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 ## What the server decides
 
 The library does not change how a database compares values. Each rule below is stated in full in
-[docs/rules.md](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md), and what each engine does on its own in [docs/databases.md](https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md).
+[docs/rules.md][rules], and what each engine does on its own in [docs/databases.md][databases].
 
-- [Columns and ordering](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#columns-and-ordering): only declared columns are used, the server decides what
-  sorts, NULL is lowest, and a descending order is the exact reverse.
-- [Types and matching](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#types-and-matching): the declared type builds the filter, a date is matched by day,
-  a day and a number have one spelling, and text matches in any case.
-- [Errors](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#errors): a user's mistake comes back as a response with one of eight stable codes (the list is
+- [Columns and ordering][rules-columns]: only declared columns are used, the server decides what sorts, NULL is
+  lowest, and a descending order is the exact reverse (one exception below).
+- [Types and matching][rules-types]: the declared type builds the filter, a date is matched by day, a day and a number
+  have one spelling, and text matches in any case.
+- [Errors][rules-errors]: a user's mistake comes back as a response with one of eight stable codes (the list is
   closed) and a text that says how to fix it; any other failure raises.
-- [Requests](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#requests): bounded in length, lists, tree depth and conditions; a request the library cannot
-  read raises `MalformedRequest`, answered 422 by the FastAPI dependency.
-- [OpenSearch](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#opensearch) and [SQL](https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#sql): the unique key, the document id, last pages,
-  analysed text.
+- [Requests][rules-requests]: bounded in length, lists, tree depth and conditions; a request the library cannot read
+  raises `MalformedRequest`, answered 422 by the FastAPI dependency.
+- [OpenSearch][rules-opensearch] and [SQL][rules-sql]: the unique key, the document id, last pages, analysed text.
 
 **Exceptions to "no surprise", each with its reason in the rules:**
 
+- On OpenSearch, an order on a field of several values: descending is not the exact reverse of ascending.
 - An OpenSearch column declared `text='text'` has no whole string to sort by, so it is unorderable.
 - On PostgreSQL a column that can hold NULL needs its index declared `NULLS FIRST` to serve a sort.
 - A column that carries a time zone is matched by its UTC day; SQLite and MySQL `DATETIME` store no offset.
 - SQLite, and OpenSearch before 3.1, fold ASCII letters only.
 - A SQL column with a type of its own, or none, is compared as sent, not folded.
+
+[prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
+[rules]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md
+[databases]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md
+[rules-columns]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#columns-and-ordering
+[rules-types]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#types-and-matching
+[rules-errors]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#errors
+[rules-requests]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#requests
+[rules-opensearch]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#opensearch
+[rules-sql]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#sql
 
 ## Development
 
