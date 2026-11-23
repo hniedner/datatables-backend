@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 44 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 45 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -38,11 +38,12 @@
   of its original direction) and to PRD-O3 (descending is the exact reverse for a field of one value); revision 43 adds
   the extras `[sqlalchemy-async]` and `[opensearch-async]` to PRD-Q2, as the owner decided on 2026-11-23; revision 44
   changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
-  a text-only OpenSearch column), and its reason and section 5 row). It replaces draft 1 (R1 to R9); section 10 maps
-  every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or non-goal, a
-  public name and an error code change only by the owner. A requirement's further clauses, its reason and section 5
-  change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts about a
-  database engine go to `docs/databases.md`, not into this document.
+  a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
+  is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed)). It replaces draft 1 (R1 to R9); section
+  10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a goal or
+  non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its reason and
+  section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to read. New facts
+  about a database engine go to `docs/databases.md`, not into this document.
 - **Order of work:** PRD (approved) -> specs with numbered statements -> behavioural tests from the outside in -> code
   by TDD. Every spec statement traces to a requirement here, and every *must* has statements.
 - **Fact labels:** READ (a document or source read on 2026-11-19), MEASURED (a command run on 2026-11-19), INFERRED
@@ -189,9 +190,12 @@ bounded by PRD-P10.
 #### PRD-P8
 
 A paging number or an order index that is not an integer raises `MalformedRequest`; a JSON `true` or `false` is not an
-integer.
+integer. An integer is a JSON integer or ASCII digits with an optional minus; a number with a fraction (even a zero one)
+and text with a space, a plus sign, an exponent or non-ASCII digits are not.
 
-- **Reason:** Paging must be exact; a boolean read as 1 or 0 would page or sort as nobody asked.
+- **Reason:** Paging must be exact; a boolean read as 1 or 0 would page or sort as nobody asked. DataTables writes
+  `String(n)` and `String(bool)` in a form, and JSON numbers and booleans under `submitAs: 'json'` (READ, 3.1.5,
+  dataTables.mjs:884-890, :5618-5681); a lax reader would read a loose spelling as a value nobody sent.
 - **Priority:** must
 
 #### PRD-P9
@@ -237,9 +241,12 @@ the request's columns (PRD-O1) names `order`.
 
 #### PRD-P14
 
-The strings `"true"` and `"false"` read as booleans.
+The strings `"true"` and `"false"` read as booleans. So does a JSON boolean; any other value (other text such as `True`,
+`yes` or `1`, or a JSON number) raises `MalformedRequest`.
 
-- **Reason:** Form and query encodings carry only strings.
+- **Reason:** Form and query encodings carry only strings. DataTables writes exactly `String(bool)` and, under
+  `submitAs: 'json'`, JSON booleans (READ, 3.1.5, dataTables.mjs:884-890); a lax reader would read a loose spelling as
+  a value nobody sent.
 - **Priority:** must
 
 #### PRD-P15
