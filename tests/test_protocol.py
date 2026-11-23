@@ -5,8 +5,12 @@ from typing import Any
 
 import pytest
 
+from datatables_backend import DTColumn
+from datatables_backend import DTOrder
+from datatables_backend import DTParams
 from datatables_backend import DTResponse
 from datatables_backend import MalformedRequest
+from datatables_backend import Search
 from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
 from datatables_backend import parse_request
@@ -29,6 +33,11 @@ def test_a_json_request_is_read():
     assert (params.draw, params.start, params.length, params.search.value) == (3, 20, 10, 'ann')
     assert params.columns[0].key == 'name'  # name falls back to data
     assert params.order[0].dir == 'desc'
+    # SPEC-P17.1: the types a caller reads
+    assert isinstance(params, DTParams)
+    assert isinstance(params.columns[0], DTColumn)
+    assert isinstance(params.order[0], DTOrder)
+    assert isinstance(params.search, Search)
 
 
 def test_the_default_form_encoding_is_read():
@@ -79,7 +88,7 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
     first, second = params.searchBuilder.criteria
     assert isinstance(first, SearchCriterion)
     assert isinstance(second, SearchGroup)
-    assert isinstance(second.criteria[0], SearchCriterion)
+    assert isinstance(second.criteria[0], SearchCriterion)  # SPEC-P17.1: a tree of groups and criteria
 
 
 @pytest.mark.parametrize(
@@ -88,6 +97,7 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
         ({'length': -1}, 'length'),  # DataTables' "All"
         ({'length': 1001}, 'at most 1000'),
         ({'start': -5}, 'start'),
+        ({'start': -1}, 'start'),  # SPEC-P9.1
         ({'start': 2**53}, 'start'),  # SPEC-P10.1: one above the largest start
         ({'start': 'ten'}, 'start'),
         ({'draw': -1}, 'draw'),  # SPEC-P9.2
@@ -98,8 +108,17 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
         ({'length': True}, 'length'),
         ({'columns': [{'data': 'a'}, {'data': 'b'}], 'order': [{'column': True, 'dir': 'asc'}]}, 'order'),
         ({'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'sideways'}]}, 'order'),
+        # SPEC-P6.5: exactly `asc` or `desc`
+        *[
+            ({'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': wrong}]}, 'order')
+            for wrong in ('up', 'ASC', '')
+        ],
         ({'columns': 'name'}, 'columns'),
-        ({'searchBuilder': {'criteria': [{'condition': 'like', 'origData': 'a'}]}}, 'searchBuilder'),
+        # SPEC-P6.4: a condition that is none of SearchBuilder's
+        *[
+            ({'searchBuilder': {'criteria': [{'condition': wrong, 'origData': 'a'}]}}, 'searchBuilder')
+            for wrong in ('like', 'without', 'regex')
+        ],
     ],
 )
 def test_a_malformed_request_names_the_parameter(body: dict[str, Any], message: str):
@@ -345,9 +364,12 @@ def test_a_malformed_request_carries_the_draw_it_could_read(request_data: Any, d
     assert refused.value.draw == draw
 
 
-@pytest.mark.parametrize(('parameter', 'value'), [('draw', 2147483647), ('draw', 0), ('start', 2**53 - 1)])
+@pytest.mark.parametrize(
+    ('parameter', 'value'), [('draw', 2147483647), ('draw', 0), ('start', 0), ('start', 2**53 - 1)]
+)
 def test_a_paging_number_at_its_bound_is_read(parameter: str, value: int):
-    """SPEC-P10.2's and SPEC-P10.1's other half, and SPEC-P9.2's: a bound refuses nothing a client sends."""
+    """SPEC-P10.2's and SPEC-P10.1's other half, and SPEC-P9.1's and SPEC-P9.2's: a bound refuses nothing a client
+    sends."""
     assert getattr(parse_request({parameter: value}), parameter) == value
 
 
@@ -394,21 +416,38 @@ def test_a_refusal_never_quotes_the_value():
     assert 'secret-value' not in str(refused.value)
 
 
-def test_text_no_driver_can_encode_is_refused():
+@pytest.mark.parametrize(
+    'body',
+    [{'search': {'value': '\ud800'}}, {'columns': [{'data': '\ud800'}]}],
+    ids=['search', 'column data'],
+)
+def test_text_no_driver_can_encode_is_refused(body: dict[str, Any]):
+    """SPEC-P11.1: a lone surrogate, in the global search and in a column's `data`."""
     with pytest.raises(MalformedRequest):
-        parse_request({'search': {'value': '\ud800'}})
+        parse_request(body)
 
 
 def test_the_page_length_limit_is_the_callers():
     assert parse_request({'length': 5000}, max_length=5000).length == 5000
 
 
-def test_a_flat_key_given_twice_is_refused():
+@pytest.mark.parametrize(
+    'request_data',
+    [
+        [('draw', '1'), ('draw', '2')],
+        [('columns[0][data]', 'a'), ('columns.0.data', 'b')],
+        {'columns[0][data]': 'a', 'columns.0.data': 'b'},
+    ],
+    ids=['same key', 'bracket and dot, pairs', 'bracket and dot, mapping'],
+)
+def test_a_flat_key_given_twice_is_refused(request_data: Any):
+    """SPEC-P6.2: the dotted and the bracketed spelling are one key, so two values for it are refused."""
     with pytest.raises(MalformedRequest):
-        parse_request([('draw', '1'), ('draw', '2')])
+        parse_request(request_data)
 
 
 def test_flat_indexes_with_a_gap_are_refused():
+    """SPEC-P6.2: `columns[0]` and `columns[2]` with no `columns[1]`."""
     with pytest.raises(MalformedRequest):
         parse_request({'columns[0][data]': 'a', 'columns[2][data]': 'b'})
 
@@ -421,9 +460,15 @@ def test_the_dotted_form_reads_as_the_bracketed_one(form: str):
 
 
 def test_keys_a_real_client_adds_are_ignored():
-    """DataTables' GET cache-buster ``_`` and an app's own ``ajax.data`` keys, in either notation."""
+    """SPEC-P3.1, SPEC-P3.2: DataTables' GET cache-buster ``_``, an app's own ``ajax.data`` keys in either notation,
+    and the keys of an extension, though some have the shape of a request parameter's."""
     extras = [
         ('_', '1763550000000'),
+        ('_[x]', '1'),
+        ('myApp.x', '1'),
+        ('myAppKey', 'x'),
+        ('searchPanes_options', 'x'),
+        ('searchPanesLast', 'x'),
         ('status', 'open'),
         ('filter[owner]', 'me'),
         ('app.key', 'x'),
@@ -434,8 +479,16 @@ def test_keys_a_real_client_adds_are_ignored():
 
 
 def test_an_app_key_beside_a_json_body_is_ignored():
+    """SPEC-P3.1: in a JSON body too."""
     body = {'draw': 1, 'columns': [{'data': 'name'}], 'search': {'value': 'ann'}}
-    assert parse_request({**body, 'filter[owner]': 'me', 'app.key': 'x'}) == parse_request(body)
+    extras = {'filter[owner]': 'me', 'app.key': 'x', '_': '1', 'myAppKey': 'x', 'searchPanesLast': 'x'}
+    assert parse_request({**body, **extras}) == parse_request(body)
+
+
+def test_unknown_fields_of_a_protocol_object_are_ignored():
+    """SPEC-P4.1: `columns[0][foo]` and `search[smart]`, which a newer DataTables or a plug-in may send."""
+    unknown = [('columns[0][foo]', 'x'), ('search[smart]', 'true')]
+    assert parse_request(BRACKETED + unknown) == parse_request(BRACKETED)
 
 
 @pytest.mark.parametrize(
@@ -448,12 +501,14 @@ def test_an_app_key_beside_a_json_body_is_ignored():
     ],
 )
 def test_a_fixed_or_grouped_search_is_refused(extra: tuple[str, str]):
-    """DataTables sends these only when the page sets them; dropping them would answer fewer filters than asked."""
+    """SPEC-P5.1: DataTables sends these only when the page sets them; dropping them would answer fewer filters than
+    asked."""
     with pytest.raises(MalformedRequest, match=r'^Invalid (search|columns) parameter\.$'):
         parse_request([*BRACKETED, extra])
 
 
 def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
+    """SPEC-P5.1: an empty `fixed` (JSON `[]`) parses, a filled one is refused."""
     body: dict[str, Any] = {'columns': [{'data': 'name', 'search': {'value': '', 'fixed': []}}]}
     assert parse_request(body) == parse_request({'columns': [{'data': 'name'}]})
     with pytest.raises(MalformedRequest, match='search'):
@@ -475,10 +530,13 @@ def test_a_fixed_search_in_a_json_body_is_refused_and_an_empty_one_is_not():
         'columns[0][search.value]',
         'search[a.b]',
         'search[value]]',
+        'columns[0.x][data]',  # SPEC-P7.1
+        'columns[0][data][]x',
+        'columns[1234567890][data]',
     ],
 )
 def test_a_protocol_key_of_unknown_shape_is_refused(key: str):
-    """Each key alone over keys it cannot collide with, so only the shape rule can refuse it."""
+    """SPEC-P7.1: each key alone over keys it cannot collide with, so only the shape rule can refuse it."""
     with pytest.raises(MalformedRequest, match=r'^Invalid (columns|search|order) parameter\.$'):
         parse_request([('draw', '1'), (key, 'x')])
 
@@ -493,7 +551,7 @@ def test_a_refused_key_shape_names_the_parameter_and_never_the_key(caplog: pytes
 
 @pytest.mark.parametrize(('key', 'digit'), [('columns[\u00b2][data]', '\u00b2'), ('columns.\u0660.data', '\u0660')])
 def test_a_non_ascii_digit_index_is_refused_without_quoting_it(key: str, digit: str):
-    """Superscript two and ARABIC-INDIC DIGIT ZERO are Unicode digits, not indexes."""
+    """SPEC-P7.1: superscript two and ARABIC-INDIC DIGIT ZERO are Unicode digits, not indexes."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request([(key, 'a')])
     assert digit not in str(refused.value)
@@ -508,6 +566,7 @@ def test_a_non_ascii_digit_index_is_refused_without_quoting_it(key: str, digit: 
     ],
 )
 def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
+    """SPEC-P7.1: `columns[01]` where a lenient parser would read column 1."""
     with pytest.raises(MalformedRequest, match='columns'):
         parse_request(pairs)
 
@@ -524,13 +583,14 @@ def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
     ],
 )
 def test_a_searchpanes_or_columncontrol_filter_is_refused(extra: tuple[str, str]):
-    """SearchPanes and ColumnControl filters are not answered; dropping them would answer fewer filters than asked."""
+    """SPEC-P5.2, SPEC-P5.3: SearchPanes and ColumnControl filters are not answered; dropping them would answer fewer
+    filters than asked."""
     with pytest.raises(MalformedRequest, match=r'^Invalid (searchPanes|searchPanes_null|columns) parameter\.$'):
         parse_request([*BRACKETED, extra])
 
 
 def test_idle_searchpanes_and_columncontrol_parameters_are_accepted():
-    """SearchPanes sends its options, and ColumnControl an empty search, on every request."""
+    """SPEC-P5.3: SearchPanes sends its options, and ColumnControl an empty search, on every request."""
     idle = [
         ('searchPanes_options[cascade]', 'false'),
         ('searchPanes_options[viewTotal]', 'false'),
@@ -549,13 +609,15 @@ def test_idle_searchpanes_and_columncontrol_parameters_are_accepted():
 
 
 def test_an_index_too_long_for_a_number_is_refused():
+    """SPEC-P7.1: a `MalformedRequest`, not a `ValueError` from converting the index."""
     with pytest.raises(MalformedRequest, match='columns'):
         parse_request([(f'columns[{"1" * 5000}][data]', 'a')])
 
 
 def test_an_idle_searchpanes_body_is_accepted_and_a_selection_is_not():
-    """SearchPanes sends an empty object per pane on every request; only a selection is a filter."""
-    idle = {'searchPanes': {'team': {}}, 'searchPanes_null': {'team': {}}}
+    """SPEC-P5.2: SearchPanes sends an empty pane (an object, or JSON `[]`) on every request; only a selection is a
+    filter."""
+    idle = {'searchPanes': {'team': {}, 'colour': []}, 'searchPanes_null': {'team': {}}}
     assert (
         parse_request({'columns': [{'data': 'a'}], **idle}).columns
         == parse_request({'columns': [{'data': 'a'}]}).columns
@@ -613,6 +675,7 @@ def test_a_field_and_a_value_under_one_append_are_refused_in_either_order(key: s
 
 @pytest.mark.parametrize('key', ['columns[2][columnControl][list][0]', 'columns[2][columnControl][list]'])
 def test_a_columncontrol_list_refusal_names_only_the_parameter(key: str):
+    """SPEC-P5.3: a ColumnControl list is a filter, which is refused."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request([*BRACKETED, (key, 'red')])
     assert str(refused.value) == 'Invalid columns parameter.'
@@ -678,12 +741,74 @@ def test_an_empty_list_for_an_append_key_is_accepted():
     [
         {'search': {'value': 'x'}, 'search[regex]': 'true'},  # a nested object among flat keys
         [(b'search[value]', 'x')],  # a key that is not text
+        {1: 'x'},  # an int key in the mapping
         {'sEcho': '1', 'iDisplayStart': '0', 'iDisplayLength': '10', 'sSearch': 'x'},  # the legacy 1.9 form
         {},
         [],
     ],
-    ids=['nested-in-flat', 'bytes-key', 'legacy', 'empty-mapping', 'empty-pairs'],
+    ids=['nested-in-flat', 'bytes-key', 'int-key', 'legacy', 'empty-mapping', 'empty-pairs'],
 )
 def test_a_request_that_is_not_a_datatables_request_is_refused(request_data: Any):
+    """SPEC-P6.3: a flat value that is a dict, or a key that is not text; SPEC-P19.1: an empty request and DataTables
+    1.9's."""
     with pytest.raises(MalformedRequest):
         parse_request(request_data)
+
+
+def test_the_base_request_reads_alike_in_every_form():
+    """SPEC-P1.1: as nested JSON, as a mapping of flat keys, as a multi-dict and as a list of pairs."""
+    from starlette.datastructures import ImmutableMultiDict
+
+    body: dict[str, Any] = {
+        'draw': 1,
+        'start': 0,
+        'length': 10,
+        'columns': [{'data': 'name', 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False}}],
+        'search': {'value': '', 'regex': False},
+    }  # fmt: skip
+    pairs = as_pairs(body)
+    assert parse_request(dict(pairs)) == parse_request(ImmutableMultiDict(pairs)) == parse_request(pairs)
+    assert parse_request(body) == parse_request(pairs)
+
+
+def test_a_repeated_multi_values_key_adds_its_values():
+    """SPEC-P1.2, SPEC-P7.2: a multi-dict and a pair list repeating `columns[0][search][multi_values][]` read both
+    values, in order; `[]` in place of an index is refused."""
+    from starlette.datastructures import ImmutableMultiDict
+
+    pairs = [
+        ('columns[0][data]', 'colour'),
+        ('columns[0][search][multi_values][]', 'red'),
+        ('columns[0][search][multi_values][]', 'blue'),
+    ]
+    assert parse_request(pairs).columns[0].search.multi_values == ['red', 'blue']
+    assert parse_request(ImmutableMultiDict(pairs)).columns[0].search.multi_values == ['red', 'blue']
+    with pytest.raises(MalformedRequest):
+        parse_request([('columns[0][data]', 'a'), ('columns[][data]', 'x')])
+
+
+def test_the_four_spellings_of_a_nested_key_are_one_request():
+    """SPEC-P2.1."""
+    spellings = [
+        'columns[0][search][value]',
+        'columns[0].search.value',
+        'columns.0.search.value',
+        'columns[0].search[value]',
+    ]
+    parsed = [parse_request([('columns[0][data]', 'a'), (key, 'x')]) for key in spellings]
+    assert parsed[0].columns[0].search.value == 'x'
+    assert all(other == parsed[0] for other in parsed)
+
+
+@pytest.mark.parametrize('length', [1, 1000])
+def test_a_length_from_one_to_the_limit_is_read(length: int):
+    """SPEC-P13.1."""
+    assert parse_request({'length': length}).length == length
+
+
+@pytest.mark.parametrize(('length', 'limit'), [(0, 1000), (-1, 1000), (1001, 1000), (51, 50)])
+def test_a_length_outside_one_to_the_limit_is_refused(length: int, limit: int):
+    """SPEC-P13.1: the limit is the caller's `max_length`, 1000 by default."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'length': length}, max_length=limit)
+    assert refused.value.parameter == 'length'

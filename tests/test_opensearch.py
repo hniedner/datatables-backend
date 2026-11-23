@@ -1648,3 +1648,58 @@ def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(bod
 def test_a_value_within_the_bounds_is_answered(body: dict[str, Any]):
     """PRD-F14: the bound is at 255 code points and 16 words, not below."""
     assert table.fetch_sync(request(*NAMES, **body), Client()).error is None
+
+
+def sent(search_table: SearchTable, params: DTParams) -> Mapping[str, Any]:
+    """The one search body the request makes."""
+    client = Client()
+    response = search_table.fetch_sync(params, client)
+    assert response.error is None, response.error
+    return client.searches[-1]
+
+
+def test_a_column_with_data_and_no_name_is_the_declared_column_of_that_name():
+    """SPEC-P15.1: a column search on `title` (data `title`, empty name) adds a clause on that field."""
+    assert sent(table, request(*NAMES, column_search={'title': {'value': 'pear'}})) != sent(table, request(*NAMES))
+
+
+def test_an_order_entry_is_decided_by_its_column_index_not_its_name():
+    """SPEC-P16.1: column 3 is `pages`, and the entry's `name` `id` is not read; ordering by `id` sorts differently."""
+    by_index = sent(table, request(*NAMES, order=[{'column': 3, 'dir': 'asc', 'name': 'id'}]))
+    assert by_index == sent(table, request(*NAMES, order=[{'column': 3, 'dir': 'asc'}]))
+    assert by_index != sent(table, request(*NAMES, order=[{'column': 0, 'dir': 'asc'}]))
+
+
+def test_a_column_whose_data_is_an_object_is_known_by_its_name():
+    """SPEC-P18.1: `data` `{"_": "title", "sort": "title"}` with `name` `title` is the declared column; with no `name`
+    it is nameless (PRD-P21), and a column search on it is refused with nothing sent."""
+    search = {'title': {'value': 'pear'}}
+    plain = sent(table, request(*NAMES, column_search=search))
+    named = request(
+        *NAMES, column_search=search, flags={'title': {'data': {'_': 'title', 'sort': 'title'}, 'name': 'title'}}
+    )
+    assert sent(table, named) == plain
+    nameless = request(*NAMES, column_search=search, flags={'title': {'data': {'_': 'title', 'sort': 'title'}}})
+    client = Client()
+    assert refused(table.fetch_sync(nameless, client))
+    assert client.searches == []
+
+
+def test_a_data_of_the_integer_zero_is_a_column_named_zero():
+    """SPEC-P20.2: the default `data` is the index, which a JSON body carries as the number 0; a column declared `'0'` is
+    that column, so the body is the one the text `'0'` makes."""
+    zero = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('0', field='pages', type='number')], unique_key='id'
+    )
+    as_text = request('id', '0', column_search={'0': {'value': '3'}})
+    as_number = request('id', '0', column_search={'0': {'value': '3'}}, flags={'0': {'data': 0}})
+    assert sent(zero, as_number) == sent(zero, as_text)
+    assert sent(zero, as_number) != sent(zero, request('id', '0'))
+
+
+def test_a_column_search_on_a_nameless_column_is_refused():
+    """SPEC-P21.3: a column that only renders has no field to search; nothing is sent."""
+    client = Client()
+    params = request('', *NAMES, flags={'': {'data': None}}, column_search={'': {'value': 'x'}})
+    assert refused(table.fetch_sync(params, client))
+    assert client.searches == []

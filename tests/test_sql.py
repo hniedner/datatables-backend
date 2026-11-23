@@ -352,7 +352,8 @@ def test_a_column_ordered_twice_is_ordered_by_its_first_entry(session: Session):
 
 
 def test_a_skipped_order_entry_or_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
-    """SPEC-E13.2: a column that only renders and DataTables' default order on it are every request's traffic. Each
+    """SPEC-E13.2, SPEC-P21.1: a column that only renders and DataTables' default order on it are every request's
+    traffic. Each
     skip there is, is in this request: an order on a column that only renders, on an undeclared one and on `team`,
     which both sides mark unorderable, a column ordered twice, and the two columns the global search leaves out."""
     params = request(
@@ -435,6 +436,45 @@ def test_a_columns_name_decides_before_its_data(session: Session):
     by `id`, which the column's `data` names, the rows would come 1 to 5."""
     params = request(*ALL, flags={'id': {'name': 'age'}}, order=[{'column': 0, 'dir': 'asc'}])
     assert ids(table.fetch_sync(params, session)) == [3, 1, 4, 2, 5]
+
+
+def test_a_column_with_data_and_no_name_is_the_declared_column_of_that_name(session: Session):
+    """SPEC-P15.1: `data` `name` with an empty `name` is `name`: a column search on it finds Bob only."""
+    assert ids(table.fetch_sync(request(*ALL, column_search={'name': {'value': 'bob'}}), session)) == [2]
+
+
+def test_an_order_entry_is_decided_by_its_column_index_not_its_name(session: Session):
+    """SPEC-P16.1: column 3 is `age`; the entry's `name` `id` is not read. By `id` the rows would come 1 to 5."""
+    order = [{'column': 3, 'dir': 'asc', 'name': 'id'}]
+    assert ids(table.fetch_sync(request(*ALL, order=order), session)) == [3, 1, 4, 2, 5]
+
+
+@pytest.mark.parametrize(('name', 'found'), [('name', [2]), ('', None)], ids=['named', 'nameless'])
+def test_a_column_whose_data_is_an_object_is_known_by_its_name(session: Session, name: str, found: list[int] | None):
+    """SPEC-P18.1: `data` `{"_": "name", "sort": "name"}` with `name` `name` is the declared column; with no `name` it
+    is nameless, and a column search on it is refused (PRD-P21)."""
+    flags = {'name': {'data': {'_': 'name', 'sort': 'name'}, 'name': name}}
+    response = table.fetch_sync(request(*ALL, flags=flags, column_search={'name': {'value': 'bob'}}), session)
+    if found is None:
+        refused(response)
+    else:
+        assert ids(response) == found
+
+
+def test_a_data_of_the_integer_zero_is_a_column_named_zero(session: Session):
+    """SPEC-P20.2: DataTables' default `data` is the index, which a JSON body carries as the number 0; a column
+    declared `'0'` is that column."""
+    zero = SQLTable(people, [Column('0', field='id', type='number'), Column('name')])
+    params = request('0', 'name', flags={'0': {'data': 0}}, column_search={'0': {'value': '3'}})
+    response = zero.fetch_sync(params, session)
+    assert response.error is None, response.error
+    assert [row['0'] for row in response.data] == [3]
+
+
+def test_a_column_search_on_a_nameless_column_is_refused(session: Session):
+    """SPEC-P21.3: a column that only renders has no field to search."""
+    params = request('', *ALL, flags={'': {'data': None}}, column_search={'': {'value': 'x'}})
+    refused(table.fetch_sync(params, session))
 
 
 def test_the_global_search_leaves_out_a_column_the_server_did_not_declare(session: Session):
