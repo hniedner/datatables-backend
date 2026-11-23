@@ -68,7 +68,7 @@ reports = SearchTable(
     ],
     unique_key='id',  # required: an index has no primary key to break ties with
 )
-response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
+response = await reports.fetch(params, AsyncOpenSearch(hosts=['http://localhost:9200']))
 ```
 
 **The unique key.** `unique_key` names a declared column (a tuple of names for a key of several) whose values are
