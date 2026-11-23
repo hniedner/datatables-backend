@@ -89,6 +89,15 @@ jobs:
             BASE=HEAD~1
           fi
           uv run --frozen diff-cover coverage.xml --compare-branch="$BASE" --fail-under=95
+      # The coverage that leg wrote goes to Codecov for the README's badge. The upload cannot fail the build, and
+      # Codecov's own statuses are informational (codecov.yml): diff-cover above is the one coverage gate.
+      - name: Upload the coverage to Codecov
+        if: matrix.python == '3.14'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
 
   # Every pre-commit hook on every file, except the private-word scans, whose word list never leaves the owner's
   # machine. gitleaks' hook scans staged changes only, which here is nothing; the `secrets` job scans the history.
