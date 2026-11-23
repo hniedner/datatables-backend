@@ -46,6 +46,14 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   column selected it is accepted. The same holds for a subquery inside a join. (A `UNION` is not checked.)
 - **SPEC-D11.4** [all] A unique key of several columns breaks ties in the order of its names, each in the direction
   of the first applied entry (PRD-O3); a column the order already names is not named again.
+- **SPEC-D11.5** [OS] `_id` is a reserved `unique_key` name, accepted with no declared column, alone or in a tuple:
+  the tie-breaker is a sort on `_id` in the direction of the first applied entry (ascending without an order), sent
+  with no `.keyword` and no `missing`, and `_source` never holds it. Any other name must be declared (`_ID` is
+  unknown). On a default cluster of 3.10.0 and 2.19.7 the sort is accepted and `desc` is the exact reverse of `asc`.
+- **SPEC-D11.6** [OS] A column declared for `_id` reads its value from `hit['_id']`, not from `_source`; it is not
+  searchable, whatever its `searchable` says (a column search or a criterion on it is refused as for any
+  unsearchable column, and the global search leaves it out), and an order on it, unless it is declared `orderable=False`, is a sort on `_id`, which the key does
+  not name again.
 - **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none.
 - **SPEC-D12.2** [all] Global search `red Alpha` → none: neither do both words match the other columns, nor does the
   whole text `red Alpha` equal a hooked value.

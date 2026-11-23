@@ -712,6 +712,35 @@ def test_a_request_of_the_budget_is_answered(client: OpenSearch):
     assert response.error is None
 
 
+@pytest.mark.parametrize(
+    ('direction', 'expected'),
+    [('asc', ['c3', 'a1', 'd4', 'b2', 'e5']), ('desc', ['e5', 'b2', 'd4', 'a1', 'c3'])],
+)
+def test_the_document_id_key_breaks_ties_and_the_descending_order_is_the_exact_reverse(
+    client: OpenSearch, direction: str, expected: list[str]
+):
+    """SPEC-D11.5, SPEC-O3.4, measured on both servers (issue #96): a1 and d4 tie on `pages`, and `_id`, a key no
+    column declares, breaks the tie in the direction of the order; c3 has no `pages` and is the lowest."""
+    keyed = SearchTable(INDEX, COLUMNS, unique_key='_id')
+    response = keyed.fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': direction}]), client)
+    assert ids(response) == expected
+
+
+def test_a_column_declared_for_the_document_id_shows_the_real_id_and_sorts_on_it(client: OpenSearch):
+    """SPEC-D11.6, measured (issue #96): the documents were indexed with the ids 1 to 5, which no `_source` holds."""
+    shown = SearchTable(INDEX, [Column('_id'), IndexColumn('id', text='keyword')], unique_key='_id')
+    ascending = shown.fetch_sync(request('_id', 'id'), client)
+    assert [(row['_id'], row['id']) for row in ascending.data] == [
+        ('1', 'a1'),
+        ('2', 'b2'),
+        ('3', 'c3'),
+        ('4', 'd4'),
+        ('5', 'e5'),
+    ]
+    descending = shown.fetch_sync(request('_id', 'id', order=[{'column': 0, 'dir': 'desc'}]), client)
+    assert [row['_id'] for row in descending.data] == ['5', '4', '3', '2', '1']
+
+
 # -- MEASUREMENT (#96): to be removed once the decision on a `_id` unique key is made ---
 
 
@@ -724,6 +753,16 @@ def _measure(client: OpenSearch, sort: list[dict[str, Any]], **extra: Any) -> tu
     except TransportError as error:
         return 'REFUSED', f'{type(error).__name__} {error.status_code}: {str(error.info)[:400]}'
     return 'ACCEPTED', [(hit['_id'], hit['_source'].get('id'), hit.get('sort')) for hit in answer['hits']['hits']]
+
+
+def _fielddata(client: OpenSearch) -> str:
+    """What the nodes report of field data held in memory for `_id` (context for the measurement, not a size at scale)."""
+    try:
+        stats = client.transport.perform_request('GET', '/_nodes/stats/indices/fielddata?fields=_id')
+    except TransportError as error:
+        return f'unreadable: {type(error).__name__} {error.status_code}'
+    held = [node['indices']['fielddata'] for node in stats['nodes'].values()]
+    return str(held)
 
 
 def test_measurement_a_sort_on_the_document_id_on_a_default_cluster(
@@ -740,7 +779,9 @@ def test_measurement_a_sort_on_the_document_id_on_a_default_cluster(
         'pages asc, then _id asc': [{'pages': {'order': 'asc', 'missing': '_first'}}, {'_id': {'order': 'asc'}}],
         'pages desc, then _id desc': [{'pages': {'order': 'desc', 'missing': '_last'}}, {'_id': {'order': 'desc'}}],
     }
+    fielddata_before = _fielddata(client)
     results = {label: _measure(client, sort) for label, sort in cases.items()}
+    fielddata_after = _fielddata(client)
     try:
         settings = client.transport.perform_request(
             'GET', '/_cluster/settings?include_defaults=true&flat_settings=true'
@@ -755,6 +796,8 @@ def test_measurement_a_sort_on_the_document_id_on_a_default_cluster(
     lines = [
         f'MEASURE #96 server {client.info()["version"]["number"]}',
         f'MEASURE #96 settings holding id_field_data: {id_settings}',
+        f'MEASURE #96 fielddata for _id before the sorts: {fielddata_before}',
+        f'MEASURE #96 fielddata for _id after the sorts: {fielddata_after}',
         *(f'MEASURE #96 [{label}] {outcome}: {detail}' for label, (outcome, detail) in results.items()),
         f'MEASURE #96 _id in every hit with _source filtered to [id]: {all("_id" in hit for hit in hits)} ({len(hits)})',
     ]
