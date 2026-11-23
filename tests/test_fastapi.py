@@ -1,5 +1,6 @@
 """The FastAPI dependency: every encoding DataTables can send, and a 422 that never quotes the request."""
 
+import json
 from typing import Any
 
 from fastapi import FastAPI
@@ -57,15 +58,127 @@ def test_a_422_leaves_out_a_draw_that_could_not_be_read():
     )
 
 
-def test_a_body_that_is_not_json_answers_422():
-    response = client.post('/table', content=b'{not json', headers={'content-type': 'application/json'})
-    assert (response.status_code, response.json()) == (422, {'detail': {'message': 'The table request is malformed.'}})
+@app.api_route('/echo', methods=['GET', 'POST', 'PUT'])
+def echo(params: DataTablesParams) -> dict[str, Any]:
+    return {'draw': params.draw, 'search': params.search.value}
 
 
-def test_a_json_body_that_is_not_an_object_answers_422():
-    """Also a list of pairs, which `parse_request` would read: over HTTP, JSON carries the request as an object."""
-    response = client.post('/table', json=[['draw', '1'], ['length', '5']])
-    assert (response.status_code, response.json()) == (422, {'detail': {'message': 'The table request is malformed.'}})
+#: The request with `draw` 2 and the search `body`, and the one the query string must never contribute
+SENT = {'draw': 2, 'search': {'value': 'body', 'regex': False}}
+AS_JSON = json.dumps(SENT)
+AS_FORM = 'draw=2&search%5Bvalue%5D=body&search%5Bregex%5D=false'
+IN_THE_QUERY = 'draw=1&search%5Bvalue%5D=query&search%5Bregex%5D=false'
+#: What `submitAs: 'json'` alone sends: DataTables' default Content-Type is the form's, and it sets JSON only if none is
+#: set (dataTables.mjs:621, :643-645), so the JSON body travels under this one
+FORM_TYPE = 'application/x-www-form-urlencoded; charset=UTF-8'
+BODY_READ = {'draw': 2, 'search': 'body'}
+NO_PARAMETER = 'The table request holds no DataTables parameter: send them as a JSON object or as a form.'
+MALFORMED = 'The table request is malformed: send it as a JSON object or as a form.'
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    ['application/json', 'application/json; charset=utf-8', FORM_TYPE, 'text/plain', ''],
+    ids=['json', 'json-charset', 'form-type', 'plain', 'none'],
+)
+def test_a_json_object_is_read_whatever_its_content_type(content_type: str):
+    """SPEC-A9.2, SPEC-A9.4: DataTables' `submitAs: 'json'` keeps the form Content-Type unless the page sets one."""
+    response = client.post('/echo', content=AS_JSON, headers={'content-type': content_type})
+    assert (response.status_code, response.json()) == (200, BODY_READ)
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    ['application/x-www-form-urlencoded', FORM_TYPE, 'text/plain', ''],
+    ids=['form', 'form-charset', 'plain', 'none'],
+)
+def test_a_form_body_is_read_whatever_its_content_type(content_type: str):
+    """SPEC-A9.5: any body that is no JSON object is read as a form."""
+    response = client.post('/echo', content=AS_FORM, headers={'content-type': content_type})
+    assert (response.status_code, response.json()) == (200, BODY_READ)
+
+
+def test_a_multipart_form_is_read():
+    """SPEC-A9.5: a body under `multipart/form-data` goes through Starlette's parser, a file field beside it ignored."""
+    response = client.post(
+        '/echo', data={'draw': '2', 'search[value]': 'body'}, files={'upload': ('a.txt', b'x', 'text/plain')}
+    )
+    assert (response.status_code, response.json()) == (200, BODY_READ)
+
+
+@pytest.mark.parametrize('body', [AS_JSON, AS_FORM], ids=['json', 'form'])
+def test_the_body_is_read_and_the_query_string_is_never_merged_into_it(body: str):
+    """SPEC-A9.1: DataTables appends its cache-buster `_` to the query of a POST; a merge would also apply the query's
+    search, `query`, and empty the page. The `_` of DataTables' own request is in the query here."""
+    response = client.post(f'/echo?_=1700&{IN_THE_QUERY}', content=body, headers={'content-type': FORM_TYPE})
+    assert (response.status_code, response.json()) == (200, BODY_READ)
+
+
+@pytest.mark.parametrize('method', ['GET', 'POST', 'PUT'])
+@pytest.mark.parametrize('body', [b'', b' \n '], ids=['empty', 'white-space'])
+def test_the_query_string_is_read_when_there_is_no_body(method: str, body: bytes):
+    """SPEC-A9.3: for every method, and a body of white space is none."""
+    response = client.request(method, f'/echo?{IN_THE_QUERY}', content=body)
+    assert (response.status_code, response.json()) == (200, {'draw': 1, 'search': 'query'})
+
+
+@pytest.mark.parametrize(
+    'content_type', ['application/json', FORM_TYPE, 'text/plain', ''], ids=['json', 'form', 'plain', 'none']
+)
+@pytest.mark.parametrize(
+    'body', ['{not json', '[1]', '"x"', 'null', '{"x": 1}', '{"draw":', '[["draw", "1"], ["length", "5"]]'], ids=repr
+)
+def test_a_body_that_is_no_json_object_and_no_form_answers_422_that_says_what_to_send(content_type: str, body: str):
+    """SPEC-A9.6: it falls to the form rule, which finds no DataTables parameter."""
+    response = client.post('/echo', content=body, headers={'content-type': content_type})
+    assert (response.status_code, response.json()) == (422, {'detail': {'message': NO_PARAMETER}})
+
+
+@pytest.mark.parametrize('content_type', ['application/json', FORM_TYPE, 'text/plain'], ids=['json', 'form', 'plain'])
+@pytest.mark.parametrize(
+    ('body', 'message'),
+    [
+        ('[' * 700_000, NO_PARAMETER),
+        ('{"a":' * 150_000, NO_PARAMETER),
+        # This one decodes on some Pythons and not on others, so the message is not compared
+        ('{"draw": 1, "x": ' + '[' * 300_000 + ']' * 300_000 + '}', None),
+    ],
+    ids=['open-list', 'open-object', 'closed'],
+)
+def test_a_body_nested_deeper_than_it_can_be_decoded_answers_422_never_500(
+    content_type: str, body: str, message: str | None
+):
+    """SPEC-A9.7: the decoder's `RecursionError` is a refusal, not a server error a client can cause; a body that does
+    not decode falls to the form rule. Each body is under the 1 MB Starlette allows a form field."""
+    response = TestClient(app, raise_server_exceptions=False).post(
+        '/echo', content=body, headers={'content-type': content_type}
+    )
+    assert response.status_code == 422
+    if message:
+        assert response.json() == {'detail': {'message': message}}
+
+
+def test_a_body_of_several_megabytes_nested_deeper_than_it_can_be_decoded_answers_422_never_500():
+    """SPEC-A9.7 for a body Starlette's form parser would refuse (HTTP 400): under a JSON Content-Type there is none."""
+    response = TestClient(app, raise_server_exceptions=False).post(
+        '/echo', content='{"a":' * 1_000_000, headers={'content-type': 'application/json'}
+    )
+    assert response.status_code == 422
+
+
+def test_a_form_of_more_fields_than_the_limit_is_refused_under_a_plain_content_type():
+    """SPEC-A9.8: the 1,000 fields Starlette allows a form, for the form read without its parser too."""
+    body = 'draw=2&' + '&'.join(f'columns[{i}][data]=c{i}' for i in range(1001))
+    response = client.post('/echo', content=body, headers={'content-type': 'text/plain'})
+    assert (response.status_code, response.json()) == (422, {'detail': {'message': MALFORMED}})
+
+
+def test_a_json_body_over_a_megabyte_is_read_under_a_form_content_type():
+    """SPEC-A9.4: Starlette's form parser refuses a field over 1 MB (HTTP 400); a JSON body never reaches it."""
+    body = json.dumps({'draw': 2, 'columns': [{'data': f'column-{i}'} for i in range(60_000)]})
+    assert len(body) > 1_048_576
+    response = client.post('/echo', content=body, headers={'content-type': FORM_TYPE})
+    assert (response.status_code, response.json()) == (200, {'draw': 2, 'search': ''})
 
 
 docs = SearchTable(

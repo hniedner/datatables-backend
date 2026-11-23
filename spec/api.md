@@ -33,6 +33,20 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   `application/x-www-form-urlencoded`, is read as JSON: the answer's `draw` is 6.
 - **SPEC-A9.3** [FastAPI] With the base request with `draw` 8 as the query string, a GET with no body and a POST
   with an empty body each answer HTTP 200 with `draw` 8 and rows 1, 2, 3, 4.
+- **SPEC-A9.4** [FastAPI] A POST whose body is the JSON object of the base request with `draw` 2 is read as JSON
+  under `application/json` (also with a charset), under `application/x-www-form-urlencoded; charset=UTF-8` (what
+  DataTables' `submitAs: 'json'` sends unless the page sets a Content-Type), under `text/plain` and with none; a JSON
+  body over 1 MB under the form type is read too (Starlette's form parser would refuse a field of that size).
+- **SPEC-A9.5** [FastAPI] A POST whose body is the form of the base request with `draw` 2 is read as a form under
+  `application/x-www-form-urlencoded`, under `multipart/form-data` (a file field beside it is ignored), under
+  `text/plain` and with no Content-Type.
+- **SPEC-A9.6** [FastAPI] A body that is no JSON object and no form (`{not json`, `[1]`, `"x"`, `null`, a JSON object
+  with no DataTables parameter, a JSON list of pairs) → HTTP 422 whose message says to send the parameters as a JSON
+  object or as a form, under each of the four Content-Types.
+- **SPEC-A9.7** [FastAPI] A body nested too deep to decode (`[` or `{"a":` repeated 700,000 and 150,000 times, and a
+  JSON object whose value nests 300,000 lists) → HTTP 422 under `application/json`, the form type and `text/plain`,
+  never a server error; so is one of several megabytes under `application/json`.
+- **SPEC-A9.8** [FastAPI] A form of 1,001 fields under `text/plain` → HTTP 422 (the 1,000 fields Starlette allows).
 - **SPEC-A10.1** [FastAPI] The base request with `draw` 5 and `length` `abc` → HTTP 422 in FastAPI's default shape,
   with `draw` inside `detail`: `{"detail": {"draw": 5, ...}}` (the owner's decision of 2026-11-20); the same request
   with `draw` `x` → HTTP 422 whose `detail` holds no `draw` key.

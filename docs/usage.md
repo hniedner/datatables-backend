@@ -116,23 +116,34 @@ user.id}}, total_cache=cache)`, and the cache key holds it.
 
 ## The page's request: a form or JSON
 
-The FastAPI dependency reads a JSON body, a form, or a query string, and gives the same request for each (a test of
-the README sends the same request as a form and as JSON and compares them). DataTables' default POST is a form, so
-`ajax: { url, type: 'POST' }` needs nothing more, as the README shows. To send JSON instead:
+The FastAPI dependency reads the request from the body when there is one, and from the query string when there is
+none; it never merges the two (DataTables adds a cache-buster `_` to the query of every request, POST included). A
+body that is a JSON object is read as JSON whatever its Content-Type; any other body is read as a form. DataTables'
+default POST is a form, so `ajax: { url, type: 'POST' }` needs nothing more, as the README shows. To send JSON instead:
 
 ```js
 ajax: { url: '/users/table', type: 'POST', submitAs: 'json' },
 ```
 
+DataTables 3.1.5 keeps the form's Content-Type for `submitAs: 'json'` unless the page sets another (READ,
+`dataTables.mjs`: the default `contentType` at line 621, `submitAs` setting JSON only if none is set at lines 641-646;
+not run), so the JSON travels under the form type. **0.1.0rc1 reads a JSON body only under
+`Content-Type: application/json`**, and answers this request with a 422: with rc1, add `contentType: 'application/json'`
+beside `submitAs`. The release after it reads the body whatever its Content-Type, and `submitAs: 'json'` alone is
+enough.
+
 Use `submitAs` rather than building the JSON yourself in `ajax.data`: hooks such as ColumnControl's `preXhr` run after
 `ajax.data` and add their parts to the request object, which would by then be a string. (READ from DataTables 3.1.5,
-`dataTables.mjs`: `submitAs` at line 641, the order of `ajax.data` and `preXhr` at lines 5531-5572; not run.)
+`dataTables.mjs`: the order of `ajax.data` and `preXhr` at lines 5531-5572; not run.)
 
-A form of more than 1,000 fields is refused by Starlette with HTTP 400 (`Too many fields`), before the library reads
-it. A table sends six fields for each column, so that is about 165 columns (measured through the FastAPI test client:
-160 columns passed, 170 were refused; the same request as JSON passed at 500). Send JSON for a table that wide.
+A form under a form Content-Type of more than 1,000 fields is refused by Starlette with HTTP 400 (`Too many fields`),
+before the library reads it; a form under any other Content-Type is read within the same 1,000 fields and answered 422
+beyond them. A table sends six fields for each column, so that is about 165 columns (measured through the FastAPI test
+client: 160 columns passed, 170 were refused; the same request as JSON passed at 500). Send JSON for a table that wide.
+A JSON body has no such limit, and nothing here limits the size of a body: 4.5 MB of JSON (40,000 columns) was read in
+0.35 s through the test client. A limit on the body belongs to the server or the proxy in front of the app.
 
-Source: `parse_datatables_request` in `datatables_backend/fastapi.py`; `tests/test_readme.py`.
+Source: `parse_datatables_request` in `datatables_backend/fastapi.py`; SPEC-A9.1 to A9.8; `tests/test_readme.py`.
 
 ## For client authors: several values in one column
 
