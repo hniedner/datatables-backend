@@ -428,6 +428,10 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('title', 'starts', ['apple'], ['a1', 'd4']),
         ('title', '!starts', ['APPLE'], ['b2', 'c3', 'e5']),
         ('title', 'ends', ['PIE'], ['a1']),
+        ('title', 'starts', ['PIE'], []),  # `Apple pie` ends with it, and does not start with it
+        ('title', '!starts', ['PIE'], ['a1', 'b2', 'c3', 'd4', 'e5']),
+        ('title', 'ends', ['APPLE'], []),  # `Apple pie` holds it, and does not end with it
+        ('title', '!ends', ['APPLE'], ['a1', 'b2', 'c3', 'd4', 'e5']),
         ('id', '!ends', ['1'], ['b2', 'c3', 'd4', 'e5']),
         ('pages', '=', ['12'], ['a1', 'd4']),
         ('pages', '>', ['12'], ['b2', 'e5']),

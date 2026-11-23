@@ -1230,11 +1230,14 @@ def test_a_hyphen_and_a_slash_are_read_escaped_or_not(session: Session, pattern:
     assert ids(every_type.fetch_sync(params, session)) == [6]
 
 
-def test_an_empty_categorical_filter_or_list_is_idle(session: Session):
-    """SPEC-F16.4, SPEC-F20.3: no value, so no filter, with or without the flag and the empty list."""
-    for search in ({'value': '', 'regex': True}, {'value': '', 'multi_values': []}):
-        params = request(*EVERY_TYPE, column_search={'team': search})
-        assert ids(every_type.fetch_sync(params, session)) == [1, 2, 3, 4, 5]
+@pytest.mark.parametrize('search', [{'value': '', 'regex': True}, {'value': '', 'multi_values': []}])
+def test_an_empty_categorical_filter_or_list_is_idle(session: Session, search: dict[str, Any]):
+    """SPEC-F16.4, SPEC-F20.3: no value, so no filter, with or without the flag and the empty list. An idle search is
+    not counted either: 65 columns that hold one are answered (PRD-F38 counts the searches that hold a value)."""
+    params = request(*EVERY_TYPE, column_search={'team': search})
+    assert ids(every_type.fetch_sync(params, session)) == [1, 2, 3, 4, 5]
+    many = request(*(('team',) * 65), column_search={'team': search})
+    assert ids(every_type.fetch_sync(many, session)) == [1, 2, 3, 4, 5]
 
 
 def test_every_character_of_the_escape_set_matches_itself_escaped(session: Session):

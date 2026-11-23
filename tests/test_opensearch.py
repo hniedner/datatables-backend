@@ -2468,8 +2468,11 @@ def test_a_categorical_filter_sends_what_its_list_of_values_sends(value: str, en
     ids=['categorical', 'empty-list'],
 )
 def test_an_empty_categorical_filter_or_list_adds_no_clause(search: dict[str, Any]):
-    """SPEC-F16.4, SPEC-F20.3: the request without the filter sends the same search."""
+    """SPEC-F16.4, SPEC-F20.3: the request without the filter sends the same search, and an idle search is not
+    counted: 65 columns that hold one are answered (PRD-F38 counts the searches that hold a value)."""
     assert clauses_of(column_search={'title': search}) == clauses_of() == []
+    many = table.fetch_sync(request(*(('title',) * 65), column_search={'title': search}), Client())
+    assert many.error is None
 
 
 @pytest.mark.parametrize('pattern', REGEX_FORMS)
