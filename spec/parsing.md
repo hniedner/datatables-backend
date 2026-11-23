@@ -7,6 +7,10 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   (`getlist`), and as a list of key-value pairs parses to equal `DTParams`.
 - **SPEC-P1.2** [core] A multi-dict holding `columns[0][search][multi_values][]` twice, with `red` and `blue`, reads
   both values; so does a pair list repeating the key.
+- **SPEC-P1.3** [core] The request DataTables builds (`ajaxParameters`, dataTables.mjs:5618-5681) for four columns: an
+  integer `data` (the default, the column's index), a name, an object and `null`; booleans; `fixed`, `groups` and
+  `groupsFixed` as empty arrays; an order entry with its `name`: as a JSON object, and as the form DataTables writes
+  from it (`String(n)`, `true`/`false`, `null` as empty), parses to equal `DTParams`, and nothing in it is refused.
 - **SPEC-P2.1** [core] `columns[0][search][value]`, `columns[0].search.value`, `columns.0.search.value` and
   `columns[0].search[value]` parse to the same request.
 - **SPEC-P3.1** [core] The base request plus `_`, `searchPanes_options`, `searchPanesLast` and `myAppKey` (flat and
@@ -14,6 +18,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P3.2** [core] A flat key `_[x]` or `myApp.x` is ignored, though its shape is not a request parameter's.
 - **SPEC-P4.1** [core] Unknown fields `columns[0][foo]` and `search[smart]` are ignored; the request parses as
   without them.
+- **SPEC-P4.2** [core] A SearchBuilder criterion with `value1` and `value2` beside `value` parses to the same
+  request as without them.
 - **SPEC-P5.1** [core] A non-empty `search[fixed]`, `search[groups]`, `search[groupsFixed]` or
   `columns[0][search][fixed]` → `MalformedRequest`; an empty one (JSON `[]`, or the key absent in a form) parses.
 - **SPEC-P5.2** [core] `searchPanes[colour][0]=red` → `MalformedRequest`; `searchPanes` with only empty panes (JSON
@@ -38,8 +44,10 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   `columns[0.x][data]`, `columns[0]x` and `columns[0][data][]x`.
 - **SPEC-P7.2** [core] `columns[0][search][multi_values][]` repeated appends its values; `columns[][data]` (`[]` in
   place of an index) → `MalformedRequest`.
-- **SPEC-P8.1** [core] `start` as the form text `1.5`, `abc` or empty, as the JSON number `1.5`, and `length` as the
-  form text `10.0` or the JSON number `10.5` → `MalformedRequest`.
+- **SPEC-P8.1** [core] `draw`, `start`, `length` and `order[0][column]` as the form text `1.0`, ` 1`, `+1`, `1e0`, `abc`
+  or empty, or as `U+0661` (an Arabic-Indic digit one), as the JSON number `1.0` or `1.5`, → `MalformedRequest` naming
+  that parameter.
+- **SPEC-P8.3** [core] The same four as the JSON integer 1, as the form text `1`, and as the form text `01`, parse.
 - **SPEC-P8.2** [core] The JSON boolean `true` as `draw`, `start`, `length` or `order[0][column]`, and `false` as
   `start`, → `MalformedRequest` naming that parameter (read as integers they would be 1 and 0).
 - **SPEC-P9.1** [core] `start` `-1` → `MalformedRequest`; `start` `0` parses.
@@ -52,10 +60,18 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   `columns[0][searchable]` and once under the dotted key `columns.0.searchable`, the `MalformedRequest` message names
   the parameter `columns` and contains neither `MARKER_V` nor either form of the key; an `order` index outside the
   columns names `order`.
+- **SPEC-P12.2** [core] The `MalformedRequest` message of a refused number, boolean, `dir` or `data` names the
+  parameter and says what to send: `Invalid draw parameter: send a whole number, as DataTables does.`, `Invalid start
+  parameter: send a whole number from 0 to 9007199254740991.`, `Invalid columns parameter: searchable must be true or
+  false.` (`orderable`, `regex`, and for `data` text, a whole number, an object or null), `Invalid order parameter:
+  dir must be asc or desc.`; an order index outside the columns says it must name one of the request's columns. A
+  field is named only from the protocol's own, never a client's key, and the value is never shown.
 - **SPEC-P13.1** [core] `length` 1 and 1000 parse; 0, -1 and 1001 → `MalformedRequest`; with the maximum set to 50,
   51 → `MalformedRequest`.
-- **SPEC-P14.1** [core] `columns[0][searchable]` `"true"` and `"false"` (form and JSON) read as `True` and `False`;
-  `"yes"` → `MalformedRequest`.
+- **SPEC-P14.1** [core] `columns[0][searchable]`, `columns[0][orderable]`, `columns[0][search][regex]` and
+  `search[regex]` as the JSON booleans, and as the text `true` and `false` (form and JSON), read as `True` and
+  `False`; as `"yes"`, `"True"`, `"TRUE"`, `"on"`, `"1"`, the empty text, the JSON integers 0, 1 and 2, or `null`, →
+  `MalformedRequest` (naming `columns`, or `search` for the global `regex`).
 - **SPEC-P15.1** [all] A column with `data` `name` and an empty `name` is the declared column `name`: a column search
   `pear` on it → rows 2.
 - **SPEC-P15.2** [all] A request column is the declared column whose name equals its `name`, or its `data` when
@@ -71,6 +87,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   search `pear` on it → error_code `invalid_filter`.
 - **SPEC-P19.1** [core] An empty request, and a DataTables 1.9 request (`sEcho`, `sSearch`, `iDisplayStart`), →
   `MalformedRequest`.
+- **SPEC-P18.2** [core] A column whose `data` is `{"_": "x", "display": "y"}`, as JSON and as `columns[0][data][_]`,
+  parses; its `data` is empty text, and its key is its `name` (empty when it has none).
 - **SPEC-P20.1** [core] `columns[0][data]` as the JSON integer 0 parses to a column whose `data` is `"0"`.
 - **SPEC-P20.2** [all] With `Column('0', field='id', type='number')` declared and `columns[0][data]` the JSON
   integer 0: a column search `3` on it → rows 3.

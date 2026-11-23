@@ -69,6 +69,48 @@ type Condition = Literal[
 ]
 
 
+_DIGITS = re.compile(r'-?[0-9]+')
+
+
+def _whole_number(value: Any) -> Any:
+    """A JSON integer, or the digits of one (ASCII, with an optional minus) as a form carries it: what DataTables
+    writes for a number (``String(n)``, dataTables.mjs:884-890). Pydantic would also read ``true`` as 1, ``1.0`` and
+    ``" 1"`` as 1, which would page or sort as nobody asked (PRD-P8)."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and _DIGITS.fullmatch(value):
+        return int(value)
+    raise ValueError('not a whole number')
+
+
+#: A paging number or an order index: an integer, and never a JSON boolean, a fraction or a loosely written number
+_Integer = Annotated[int, BeforeValidator(_whole_number)]
+
+
+def _true_or_false(value: Any) -> Any:
+    """A JSON boolean, or exactly the text a form carries for one: DataTables writes ``String(bool)``. Pydantic would
+    also read ``yes``, ``on``, ``1`` and the like (PRD-P14)."""
+    if isinstance(value, bool):
+        return value
+    if value in ('true', 'false'):
+        return value == 'true'
+    raise ValueError('not true or false')
+
+
+_Boolean = Annotated[bool, BeforeValidator(_true_or_false)]
+
+
+def _data(value: Any) -> Any:
+    """A column's ``data``: text; an integer, which DataTables sends for a column that sets none, its index, as its
+    decimal text (PRD-P20); an object (orthogonal data) or ``null``, which name no column, as empty text (PRD-P18,
+    PRD-P21). A boolean, a fraction or a list is no ``data``."""
+    if isinstance(value, bool):
+        raise ValueError('not a data source')
+    if isinstance(value, int):
+        return str(value)
+    return '' if value is None or isinstance(value, Mapping) else value
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -77,7 +119,7 @@ class Search(_Model):
     """A search value: the table's global search or one column's."""
 
     value: str = ''
-    regex: bool = False
+    regex: _Boolean = False
     #: Not part of the DataTables protocol: a column's multi-select may send its values as a list here; the global
     #: search refuses one
     multi_values: list[str] | None = None
@@ -121,10 +163,10 @@ class ColumnControl(_Model):
 class DTColumn(_Model):
     """One column as the request describes it. ``name`` is what the server matches on; it falls back to ``data``."""
 
-    data: str | None = ''
+    data: Annotated[str, BeforeValidator(_data)] = ''
     name: str = ''
-    searchable: bool = True
-    orderable: bool = True
+    searchable: _Boolean = True
+    orderable: _Boolean = True
     search: Search = Search()
     columnControl: ColumnControl = ColumnControl()
 
@@ -132,17 +174,6 @@ class DTColumn(_Model):
     def key(self) -> str:
         """The name the server matches against its declared columns."""
         return self.name or self.data or ''
-
-
-def _no_boolean(value: Any) -> Any:
-    """Pydantic reads ``true`` as 1 where an integer belongs, which would page or sort as nobody asked."""
-    if value is True or value is False:
-        raise ValueError('a boolean is not an integer')
-    return value
-
-
-#: A paging number or an order index: an integer, and never a JSON boolean
-_Integer = Annotated[int, BeforeValidator(_no_boolean)]
 
 
 class DTOrder(_Model):
@@ -342,11 +373,41 @@ def parse_request(
         raise
 
 
-def _malformed(parameter: str | None = None) -> MalformedRequest:
-    """The refusal that names ``parameter``, a request parameter and so never the client's text, or none."""
-    refusal = MalformedRequest(f'Invalid {parameter} parameter.' if parameter else 'The table request is malformed.')
+def _malformed(parameter: str | None = None, fix: str | None = None) -> MalformedRequest:
+    """The refusal that names ``parameter``, a request parameter and so never the client's text, or none, and says
+    what to send (``fix``) where that is known."""
+    if not parameter:
+        text = 'The table request is malformed.'
+    else:
+        text = f'Invalid {parameter} parameter: {fix}' if fix else f'Invalid {parameter} parameter.'
+    refusal = MalformedRequest(text)
     refusal.parameter = parameter
     return refusal
+
+
+#: The number a request parameter may hold, from and to (PRD-P9, PRD-P10, PRD-P13)
+_RANGES = {'draw': (0, MAX_PAGING_NUMBER), 'start': (0, MAX_START), 'length': (1, MAX_PAGING_NUMBER)}
+#: What a field of the protocol must be, named by the protocol's own field names and never by a client's key
+_FIELDS = {
+    'column': 'column must be a whole number.',
+    'dir': 'dir must be asc or desc.',
+    'searchable': 'searchable must be true or false.',
+    'orderable': 'orderable must be true or false.',
+    'regex': 'regex must be true or false.',
+    'data': 'data must be text, a whole number, an object or null.',
+}
+
+
+def _what_to_send(error: Mapping[str, Any]) -> str | None:
+    """What a request parameter or one of its fields must be, for the first error of a validation, or None where
+    nothing is said beyond the parameter. The field is named only if it is one of the protocol's (``_FIELDS``)."""
+    where = tuple(error['loc'])
+    if len(where) == 1 and where[0] in _RANGES:
+        if error['type'] in ('greater_than_equal', 'less_than_equal'):
+            low, high = _RANGES[where[0]]
+            return f'send a whole number from {low} to {high}.'
+        return 'send a whole number, as DataTables does.'
+    return _FIELDS.get(where[-1]) if where and isinstance(where[-1], str) else None
 
 
 def _parse(data: Mapping[str, Any] | Iterable[tuple[str, Any]], max_length: int) -> DTParams:
@@ -360,11 +421,13 @@ def _parse(data: Mapping[str, Any] | Iterable[tuple[str, Any]], max_length: int)
     try:
         params = DTParams.model_validate(body)
     except ValidationError as exc:
-        # Only the request parameter: the path below it is the client's own key when it sends dotted keys
-        where = exc.errors()[0]['loc']
-        raise _malformed(str(where[0]) if where else None) from None
+        # The request parameter, and a field of the protocol's own under it: the path is otherwise the client's key
+        first = exc.errors()[0]
+        where = first['loc']
+        raise _malformed(str(where[0]) if where else None, _what_to_send(first)) from None
     if any(not 0 <= item.column < len(params.columns) for item in params.order):
-        raise _malformed('order')  # only an integration bug orders by a column the request does not hold
+        # only an integration bug orders by a column the request does not hold
+        raise _malformed('order', "column must be the index of one of the request's columns.")
     if params.length > max_length:
         refusal = MalformedRequest(f'Invalid length parameter: at most {max_length} rows per request.')
         refusal.parameter, refusal.event = 'length', 'datatables_length_refused'

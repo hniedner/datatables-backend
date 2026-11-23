@@ -107,13 +107,195 @@ def test_a_malformed_request_names_the_parameter(body: dict[str, Any], message: 
         parse_request(body)
 
 
+ONE_COLUMN = [{'data': 'a'}, {'data': 'b'}]
+#: Where each integer is read: its request body, and the parameter a refusal names
+INTEGER_PLACES = {
+    'draw': (lambda value: {'draw': value}, 'draw'),
+    'start': (lambda value: {'start': value}, 'start'),
+    'length': (lambda value: {'length': value}, 'length'),
+    'order': (lambda value: {'columns': ONE_COLUMN, 'order': [{'column': value, 'dir': 'asc'}]}, 'order'),
+}
+
+
+def as_pairs(body: dict[str, Any]) -> list[tuple[str, str]]:
+    """The same body as the form DataTables posts: bracket keys, every value its text (dataTables.mjs:884-890)."""
+
+    def walk(value: Any, key: str) -> list[tuple[str, str]]:
+        if isinstance(value, dict):
+            return [pair for name, item in value.items() for pair in walk(item, f'{key}[{name}]' if key else name)]
+        if isinstance(value, list):
+            return [pair for index, item in enumerate(value) for pair in walk(item, f'{key}[{index}]')]
+        return [(key, '' if value is None else str(value).lower() if isinstance(value, bool) else str(value))]
+
+    return walk(body, '')
+
+
+@pytest.mark.parametrize('place', INTEGER_PLACES)
+@pytest.mark.parametrize('value', ['1.0', ' 1', '+1', '1e0', '\u0661', 1.0, 1.5], ids=repr)
+def test_an_integer_that_is_not_a_whole_number_in_digits_is_malformed(place: str, value: Any):
+    """SPEC-P8.1: a fraction, even a zero one, a space, a plus sign, an exponent and non-ASCII digits are refused, as
+    JSON and as form text; DataTables writes `String(n)`, so none of them is something it sends."""
+    build, parameter = INTEGER_PLACES[place]
+    body = build(value)
+    for encoded in [body] + ([as_pairs(body)] if isinstance(value, str) else []):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert refused.value.parameter == parameter
+
+
+@pytest.mark.parametrize('place', INTEGER_PLACES)
+@pytest.mark.parametrize('value', [1, '1', '01'], ids=repr)
+def test_an_integer_as_a_number_or_as_digits_is_read(place: str, value: Any):
+    """SPEC-P8.3: what DataTables writes (a JSON integer, or digit text in a form), and leading zeros, which buy nothing
+    to refuse."""
+    build, _ = INTEGER_PLACES[place]
+    body = build(value)
+    assert parse_request(body) == parse_request(as_pairs(body))
+
+
+#: Where each boolean is read, and the parameter a refusal names
+BOOLEAN_PLACES = {
+    'searchable': (lambda value: {'columns': [{'data': 'a', 'searchable': value}]}, 'columns'),
+    'orderable': (lambda value: {'columns': [{'data': 'a', 'orderable': value}]}, 'columns'),
+    'column regex': (lambda value: {'columns': [{'data': 'a', 'search': {'value': '', 'regex': value}}]}, 'columns'),
+    'global regex': (lambda value: {'search': {'value': '', 'regex': value}}, 'search'),
+}
+
+
+@pytest.mark.parametrize('place', BOOLEAN_PLACES)
+@pytest.mark.parametrize(
+    'value', ['True', 'TRUE', 'yes', 'no', 'on', 'off', '1', '0', 't', 'y', '', 1, 0, 2, None], ids=repr
+)
+def test_a_boolean_that_is_not_true_or_false_is_malformed(place: str, value: Any):
+    """SPEC-P14.1: a JSON boolean, or exactly the text `true` or `false` that DataTables writes for one; the other
+    spellings a lax reader takes are not what it sends."""
+    build, parameter = BOOLEAN_PLACES[place]
+    body = build(value)
+    for encoded in [body] + ([as_pairs(body)] if isinstance(value, str) else []):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert refused.value.parameter == parameter
+
+
+@pytest.mark.parametrize('place', BOOLEAN_PLACES)
+@pytest.mark.parametrize('value', [True, False, 'true', 'false'], ids=repr)
+def test_a_boolean_as_json_or_as_its_text_is_read(place: str, value: Any):
+    build, _ = BOOLEAN_PLACES[place]
+    body = build(value)
+    assert parse_request(body) == parse_request(as_pairs(body))
+
+
+def test_an_integer_data_is_the_text_of_the_integer():
+    """SPEC-P20.1: DataTables' default `data` is the column's index (dataTables.mjs:7923), which a JSON body carries as
+    a number."""
+    params = parse_request({'draw': 1, 'columns': [{'data': 0, 'name': ''}, {'data': 1, 'name': 'age'}]})
+    assert [column.data for column in params.columns] == ['0', '1']
+    assert [column.key for column in params.columns] == ['0', 'age']
+
+
+@pytest.mark.parametrize('data', [True, 1.5, ['a']], ids=repr)
+def test_a_data_that_is_no_text_integer_object_or_null_is_malformed(data: Any):
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'draw': 1, 'columns': [{'data': data}]})
+    assert refused.value.parameter == 'columns'
+
+
+@pytest.mark.parametrize('name, key', [('', ''), ('age', 'age')])
+def test_an_object_data_is_read_in_json_and_in_a_form(name: str, key: str):
+    """SPEC-P18.2: a column with orthogonal data sends an object (dataTables.mjs:5628); its identity is its name, and
+    without one it is nameless."""
+    body = {'draw': 1, 'columns': [{'data': {'_': 'x', 'display': 'y'}, 'name': name}]}
+    for encoded in (body, as_pairs(body)):
+        params = parse_request(encoded)
+        assert (params.columns[0].data, params.columns[0].key) == ('', key)
+
+
+def test_the_request_datatables_builds_is_read_as_json_and_as_a_form():
+    """SPEC-P1.3. What `ajaxParameters` (dataTables.mjs:5618-5681) builds for three columns: the default integer `data`, a name, an
+    object and null; booleans; `fixed`, `groups` and `groupsFixed` as empty arrays; an order entry with its `name`. A
+    strict reader must refuse none of it, and the two encodings must read as one request."""
+    sent = {
+        'draw': 4,
+        'columns': [
+            {'data': 0, 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False, 'fixed': []}},
+            {'data': 'age', 'name': 'age', 'searchable': False, 'orderable': True,
+             'search': {'value': 'x', 'regex': False, 'fixed': []}},
+            {'data': {'_': 'a', 'display': 'b'}, 'name': '', 'searchable': True, 'orderable': False,
+             'search': {'value': '', 'regex': True, 'fixed': []}},
+            {'data': None, 'name': 'tag', 'searchable': True, 'orderable': True,
+             'search': {'value': '', 'regex': False, 'fixed': []}},
+        ],
+        'order': [{'column': 1, 'dir': 'desc', 'name': 'age'}],
+        'start': 20,
+        'length': 10,
+        'search': {'value': '', 'regex': False, 'fixed': [], 'groups': [], 'groupsFixed': []},
+    }  # fmt: skip
+    from_json, from_form = parse_request(sent), parse_request(as_pairs(sent))
+    assert from_json == from_form
+    assert [column.key for column in from_json.columns] == ['0', 'age', '', 'tag']
+    assert (from_json.draw, from_json.start, from_json.length, from_json.order[0].column) == (4, 20, 10, 1)
+
+
+def test_a_searchbuilder_criterion_with_value1_and_value2_is_read_as_without_them():
+    """SPEC-P4.2: SearchBuilder sends `value1` and `value2` beside `value`; they are unknown fields (PRD-P4)."""
+    criterion = {'condition': 'between', 'origData': 'age', 'type': 'num', 'value': ['1', '9']}
+    plain = parse_request({'searchBuilder': {'logic': 'AND', 'criteria': [criterion]}})
+    extra = {**criterion, 'value1': '1', 'value2': '9'}
+    assert parse_request({'searchBuilder': {'logic': 'AND', 'criteria': [extra]}}) == plain
+
+
+@pytest.mark.parametrize(
+    ('body', 'message'),
+    [
+        ({'draw': 'x'}, 'Invalid draw parameter: send a whole number, as DataTables does.'),
+        ({'draw': -1}, 'Invalid draw parameter: send a whole number from 0 to 2147483647.'),
+        ({'start': 1.5}, 'Invalid start parameter: send a whole number, as DataTables does.'),
+        ({'start': -5}, 'Invalid start parameter: send a whole number from 0 to 9007199254740991.'),
+        ({'length': '10.0'}, 'Invalid length parameter: send a whole number, as DataTables does.'),
+        ({'length': -1}, 'Invalid length parameter: send a whole number from 1 to 2147483647.'),
+        (
+            {'columns': [{'data': 'a'}, {'data': 'b'}], 'order': [{'column': 'x', 'dir': 'asc'}]},
+            'Invalid order parameter: column must be a whole number.',
+        ),
+        (
+            {'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'up'}]},
+            'Invalid order parameter: dir must be asc or desc.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'searchable': 'yes'}]},
+            'Invalid columns parameter: searchable must be true or false.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'orderable': 1}]},
+            'Invalid columns parameter: orderable must be true or false.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'search': {'regex': 'on'}}]},
+            'Invalid columns parameter: regex must be true or false.',
+        ),
+        ({'search': {'regex': 'on'}}, 'Invalid search parameter: regex must be true or false.'),
+        (
+            {'columns': [{'data': True}]},
+            'Invalid columns parameter: data must be text, a whole number, an object or null.',
+        ),
+        ({'columns': 'name'}, 'Invalid columns parameter.'),
+    ],
+)
+def test_a_malformed_request_says_what_to_send_and_never_shows_the_value(body: dict[str, Any], message: str):
+    """SPEC-P12.2, the rule that an error says how to fix it: the parameter, what it must be, and the field inside
+    it where that is one of the protocol's own (never a key or a value of the client)."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(body)
+    assert str(refused.value) == message
+
+
 @pytest.mark.parametrize('index', [1, -1])
 def test_an_order_on_a_column_the_request_does_not_hold_is_malformed(index: int):
     """SPEC-O1.1, SPEC-P12.1: only an integration bug sends one, so it is not answered as the user's mistake. The
     request holds one column, index 0."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request({'draw': 1, 'columns': [{'data': 'a'}], 'order': [{'column': index, 'dir': 'asc'}]})
-    assert str(refused.value) == 'Invalid order parameter.'
+    assert str(refused.value) == ("Invalid order parameter: column must be the index of one of the request's columns.")
 
 
 @pytest.mark.parametrize('request_data', [[{'draw': 1}], [1], 7])
@@ -198,7 +380,8 @@ def test_a_refused_value_names_the_parameter_and_never_the_key_or_the_value(capl
     """SPEC-P12.1, SPEC-E10.1: the path below the parameter is the client's own key when it sends dotted keys."""
     with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest) as refused:
         parse_request([('draw', '1'), (key, 'MARKER_V')])
-    assert str(refused.value) == 'Invalid columns parameter.'
+    # The message names the protocol's own field, from a table of ours; the log record names none
+    assert str(refused.value) == 'Invalid columns parameter: searchable must be true or false.'
     assert caplog.records
     logged = repr([vars(record) for record in caplog.records])
     assert 'MARKER_V' not in logged
