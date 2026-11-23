@@ -402,10 +402,9 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('id', '=', ['a1'], ['a1']),
         ('title', '=', ['Apple pie'], ['a1']),
         ('title', '!=', ['Apple pie'], ['b2', 'c3', 'd4', 'e5']),
-        ('body', '=', ['green apples'], ['d4']),  # a phrase on analysed text
-        ('body', '!=', ['green apples'], ['a1', 'b2', 'c3', 'e5']),
-        ('body', 'starts', ['smith'], ['a1']),  # analysed text has no whole string: starts reads as contains
-        ('body', 'ends', ['granny'], ['a1']),  # and so does ends
+        # Analysed text: a phrase of the words. `=`, `starts` and `ends` are refused there (PRD-D19)
+        ('body', 'contains', ['green apples'], ['d4']),
+        ('body', '!contains', ['green apples'], ['a1', 'b2', 'c3', 'e5']),
         ('title', 'contains', ['TART'], ['c3']),
         ('title', '!contains', ['apple'], ['b2', 'c3', 'e5']),
         ('title', 'starts', ['apple'], ['a1', 'd4']),

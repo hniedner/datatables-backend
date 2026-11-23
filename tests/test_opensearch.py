@@ -868,7 +868,7 @@ def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     [
         ('id', '=', ['A1'], {'term': {'id': {'value': 'A1', 'case_insensitive': True}}}),  # SPEC-F9.2
         ('title', '!=', ['T'], {'bool': {'must_not': [{'term': {'title.keyword': {'value': 'T', 'case_insensitive': True}}}]}}),
-        ('body', '=', ['x y'], {'match_phrase': {'body': 'x y'}}),
+        ('body', 'contains', ['x y'], {'match_phrase': {'body': 'x y'}}),  # analysed text: the phrase of the words
         ('title', 'starts', ['a?'], {'wildcard': {'title.keyword': {'value': 'a\\?*', 'case_insensitive': True}}}),
         ('id', '!ends', ['z'], {'bool': {'must_not': [{'wildcard': {'id': {'value': '*z', 'case_insensitive': True}}}]}}),
         ('pages', 'between', ['1', '9'], {'range': {'pages': {'gte': 1, 'lte': 9}}}),

@@ -470,13 +470,14 @@ On a hooked column, SearchBuilder answers `=`, `!=`, `null` and `!null`; any oth
 #### PRD-D19
 
 On a text-only OpenSearch string column (PRD-D13), a categorical filter, a `multi_values` list and the SearchBuilder
-conditions `=`, `!=`, `starts`, `!starts`, `ends`, `!ends`, `contains` and `!contains` are refused with
-`invalid_filter`, except a categorical filter or `multi_values` list of only empty entries, which means empty (PRD-F20)
-and is answered; beyond that only the analysed smart search (global and column) and `null`/`!null` are answered. A
-hooked column cannot be text-only (PRD-D20).
+conditions `=`, `!=`, `starts`, `!starts`, `ends` and `!ends` are refused with `invalid_filter`, except a categorical
+filter or `multi_values` list of only empty entries, which means empty (PRD-F20) and is answered; beyond that the
+analysed smart search (global and column), `contains`, `!contains` and `null`/`!null` are answered. A hooked column
+cannot be text-only (PRD-D20).
 
-- **Reason:** Exact, prefix, suffix and substring matches need the unanalysed form, which a text-only column does not
-  have; answering them on analysed tokens would return different rows than asked.
+- **Reason:** Exact, prefix and suffix matches need the unanalysed form, which a text-only column does not have;
+  answering them on analysed tokens would return different rows than asked. `contains` is the phrase of the words, as
+  PRD-F11 says.
 - **Priority:** must
 
 #### PRD-D20
@@ -1632,7 +1633,7 @@ where a database decides. Each difference is stated here; every other answer is 
 | DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between` over a range holding 0; the server lets NULL satisfy every negative condition. | Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=` and `!between`) | PRD-F37 |
 | A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page. | SQL and OpenSearch | PRD-C12 |
 | A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
-| A text-only OpenSearch string column answers only the analysed search, `null`/`!null` and a list of only empty entries; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
+| A text-only OpenSearch string column answers the analysed search, `contains`, `!contains`, `null`/`!null` and a list of only empty entries, and refuses the other conditions and lists; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
 | Search text of more than 16 words is refused with `too_many_words`; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
 | A value over 255 code points is refused with `value_too_long` on every backend. | Every backend | PRD-F14 |
 | A request of more than 960 conditions (a word counts once per column searched, a list value and a range once each) is refused with `request_too_large` on every backend; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-C17 |
