@@ -31,14 +31,25 @@ Findings, one line each on stderr, exit status 1:
   right after a statement;
 - a *must* or *should* requirement with no statement (a *later* one needs none);
 - a statement that states or cites a requirement id the PRD does not hold, or cites a malformed ``PRD-`` id;
-- a statement id defined more than once.
+- a statement id defined more than once;
+- a statement of an enforced requirement that no test names, unless its first tag is ``[review]`` or ``[CI <job>]``
+  (a statement whose first tag is a behaviour tag, ``[all]`` or ``[OS]``, needs a test even if a later tag says
+  ``[review]``). A test names a statement by its id (``SPEC-P1.1``) anywhere in a ``*.py`` file under the tests
+  directory; ``SPEC-F1.01`` is ``SPEC-F1.1``. A test may cite a statement written against another fixture, if it
+  exercises the behaviour the statement states. ``ENFORCED`` holds the enforced PRD ids or letters; ``--enforce``
+  replaces it;
+- a test file naming a statement that no spec holds;
+- an ``xfail`` mark or call in the tests that is not ``strict=True`` or whose ``reason`` names no issue (``#47``). That
+  the issue is still open is not checked: a fixed behaviour makes a strict xfail fail, and the reviewer reads the
+  rest at each issue close.
 
-An unreadable PRD or specs directory is a usage error (exit status 2).
+An unreadable PRD, specs or tests directory is a usage error (exit status 2).
 
-Usage: trace_check.py [--prd docs/PRD.md] [--specs spec]
+Usage: trace_check.py [--prd docs/PRD.md] [--specs spec] [--tests tests] [--enforce ID ...]
 """
 
 import argparse
+import ast
 from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field
@@ -47,6 +58,9 @@ from pathlib import Path
 import re
 import sys
 
+ENFORCED = (
+    'P',
+)  # PRD ids (`PRD-F25`) or letters (`F`) whose statements a test must cite; each acceptance issue adds its own
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')
 HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
@@ -61,6 +75,9 @@ ENDS_STATEMENT = re.compile(r'^(\s*$|#|[-*+] |\d+[.)] )')
 LOOSE_CITATION = re.compile(r'PRD-[\w.-]*[\w-]')
 CITATION = re.compile(r'PRD-[A-Z]+\d+')
 BACKTICKED = re.compile(r'`[^`]*`')
+EXEMPT = re.compile(r'\[(?:review\]|CI [\w-]+\])')
+SPEC_ID = re.compile(r'SPEC-([A-Z]+)(\d+)\.(\d+)')
+ISSUE = re.compile(r'#\d+')
 
 
 @dataclass
@@ -69,6 +86,7 @@ class Statement:
     requirement: str
     cited: set[str] = field(default_factory=set[str])
     malformed: list[str] = field(default_factory=list[str])
+    exempt: bool = False
 
 
 def requirements(name: str, text: str) -> tuple[list[tuple[str, str]], list[str]]:
@@ -104,6 +122,7 @@ def statements(files: list[tuple[str, str]]) -> tuple[list[Statement], list[str]
             if match := STATEMENT.match(line):
                 letters, requirement, index, body = match.groups()
                 current = Statement(f'SPEC-{letters}{requirement}.{int(index)}', f'PRD-{letters}{requirement}')
+                current.exempt = bool(EXEMPT.match(body))
                 found.append(current)
             elif current is None or not CONTINUATION.match(line):
                 if current is not None and not ENDS_STATEMENT.match(line):
@@ -123,7 +142,28 @@ def statements(files: list[tuple[str, str]]) -> tuple[list[Statement], list[str]
     return found, findings
 
 
-def check(prd_name: str, prd_text: str, files: list[tuple[str, str]]) -> tuple[list[str], str]:
+def xfail_findings(name: str, text: str) -> list[str]:
+    """The xfail marks and calls of a test file that are not strict or name no issue."""
+    findings: list[str] = []
+    for node in ast.walk(ast.parse(text)):
+        if not (isinstance(node, ast.Call) and getattr(node.func, 'attr', None) == 'xfail'):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        strict, reason = keywords.get('strict'), keywords.get('reason')
+        if not (isinstance(strict, ast.Constant) and strict.value is True):
+            findings.append(f'{name}:{node.lineno} xfail is not strict')
+        elif not (isinstance(reason, ast.Constant) and ISSUE.search(str(reason.value))):
+            findings.append(f'{name}:{node.lineno} xfail names no issue')
+    return findings
+
+
+def check(
+    prd_name: str,
+    prd_text: str,
+    files: list[tuple[str, str]],
+    tests: list[tuple[str, str]],
+    enforce: list[str],
+) -> tuple[list[str], str]:
     """The findings, and the success line."""
     rows, findings = requirements(prd_name, prd_text)
     stated, stray = statements(files)
@@ -148,6 +188,22 @@ def check(prd_name: str, prd_text: str, files: list[tuple[str, str]]) -> tuple[l
             if missing not in priority
         )
         findings.extend(f'{statement.id} cites the malformed id {bad}' for bad in statement.malformed)
+    cited_by = {
+        f'SPEC-{letters}{number}.{int(index)}': name
+        for name, text in tests
+        for letters, number, index in SPEC_ID.findall(text)
+    }
+    for statement in stated:
+        letters = statement.requirement[4:].rstrip('0123456789')
+        enforced = statement.requirement in enforce or letters in enforce
+        if enforced and not statement.exempt and statement.id not in cited_by:
+            findings.append(f'{statement.id} is cited by no test')
+    known = {statement.id for statement in stated}
+    findings.extend(
+        f'{name} cites {cited}, which does not exist' for cited, name in cited_by.items() if cited not in known
+    )
+    for name, text in tests:
+        findings.extend(xfail_findings(name, text))
     ids = Counter(statement.id for statement in stated)
     findings.extend(f'{statement} is defined {count} times' for statement, count in ids.items() if count > 1)
     levels = Counter(level for _, level in rows)
@@ -162,6 +218,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Check that the specs trace to the PRD.')
     parser.add_argument('--prd', type=Path, default=Path('docs/PRD.md'))
     parser.add_argument('--specs', type=Path, default=Path('spec'))
+    parser.add_argument('--tests', type=Path, default=Path('tests'))
+    parser.add_argument('--enforce', nargs='*', default=list(ENFORCED))
     args = parser.parse_args()
     try:
         prd_text = args.prd.read_text(encoding='utf-8')
@@ -172,9 +230,15 @@ def main() -> int:
             for path in sorted(args.specs.iterdir())
             if path.suffix == '.md' and path.name != 'README.md' and not path.is_dir()
         ]
+        if not args.tests.is_dir():
+            parser.error(f'{args.tests} is not a directory')
+        tests = [
+            (path.relative_to(args.tests).as_posix(), path.read_text(encoding='utf-8'))
+            for path in sorted(args.tests.rglob('*.py'))
+        ]
     except (OSError, UnicodeDecodeError) as error:
         parser.error(f'cannot read the input: {error}')
-    findings, summary = check(args.prd.name, prd_text, files)
+    findings, summary = check(args.prd.name, prd_text, files, tests, args.enforce)
     for finding in findings:
         print(finding, file=sys.stderr)
     if findings:
