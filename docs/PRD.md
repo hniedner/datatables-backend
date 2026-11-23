@@ -642,17 +642,18 @@ column's database collation.
 #### PRD-F11
 
 A word matches as a substring, except on a text-only OpenSearch column, where it is an analysed match (`red` does not
-find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped, and
-in the value of a SearchBuilder `contains`, `starts` or `ends`, and of their negations, too. On analysed text a word,
-and a SearchBuilder `contains` value, matches as a phrase of its tokens, so `foo-bar` finds `foo bar` but not `foo`
-alone.
+find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped. The
+same holds for the value of a SearchBuilder `contains`, `starts` or `ends`, and of their negations. On analysed text a
+word, and a SearchBuilder `contains` value, matches as a phrase of its tokens, so `foo-bar` finds `foo bar` but not
+`foo` alone.
 
 - **Reason:** A user's `%` or `*` is text, never a pattern; wildcard injection is a known failure.
 - **Priority:** must
 
 #### PRD-F12
 
-Column searches combine with AND, with each other, with the global search and with the SearchBuilder tree.
+Column searches combine with AND, with each other and with the global search. The SearchBuilder tree combines with
+them, and with the global search, with AND too.
 
 - **Reason:** DataTables' meaning.
 - **Priority:** must
