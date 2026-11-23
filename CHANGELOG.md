@@ -4,6 +4,31 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
+## [Unreleased]
+
+### Fixed
+
+- A JSON request whose columns set no `data` raised `MalformedRequest`: DataTables sends the column's index, an integer,
+  in that case, and so it does with `ajax.submitAs: 'json'`. It is read now, as the text of the integer.
+- A column whose `data` is an object (DataTables' orthogonal data) raised `MalformedRequest`, in JSON and in a form. It is
+  read now, as a column named by its `name`, or as a nameless one without.
+
+### Changed
+
+A tightening is a breaking change, and each is listed here with what to send.
+
+- A number in the request (`draw`, `start`, `length`, `order[i][column]`) must be a JSON integer, or ASCII digits with an
+  optional minus, as DataTables writes it. `1.0`, `1.5`, ` 1`, `+1` and the JSON number `1.0` now raise
+  `MalformedRequest`; they were read as 1.
+- A boolean (`searchable`, `orderable`, `regex`) must be a JSON boolean or exactly the text `true` or `false`, as
+  DataTables writes it. `True`, `yes`, `on`, `1` and the JSON numbers 0 and 1 now raise `MalformedRequest`; they were
+  read as booleans. A client that writes `True` (Python's `requests` does, for a form) must send `true`.
+- The message of a `MalformedRequest` says what to send, for example `Invalid draw parameter: send a whole number, as
+  DataTables does.` It still names no key or value of the client.
+- On an OpenSearch column of analysed text only (`text='text'`), `=`, `!=`, `starts`, `!starts`, `ends`, `!ends` and a
+  list of values are now refused with `invalid_filter`, where they were answered as a phrase; `contains` and `!contains`
+  are still answered. A `search_value` hook on such a column is now a `SchemaError` at construction ([#75]).
+
 ## [0.1.0rc1] - 2026-11-23
 
 The first release, a release candidate: install it with `pip install --pre datatables-backend`.
@@ -29,3 +54,4 @@ The first release, a release candidate: install it with `pip install --pre datat
   is refused (a malformed request, 422 in the FastAPI dependency) rather than answered with fewer filters.
 
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1
+[#75]: https://github.com/hniedner/datatables-backend/issues/75

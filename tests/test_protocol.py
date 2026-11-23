@@ -146,7 +146,8 @@ def test_an_integer_that_is_not_a_whole_number_in_digits_is_malformed(place: str
 @pytest.mark.parametrize('place', INTEGER_PLACES)
 @pytest.mark.parametrize('value', [1, '1', '01'], ids=repr)
 def test_an_integer_as_a_number_or_as_digits_is_read(place: str, value: Any):
-    """What DataTables writes (a JSON integer, or digit text in a form), and leading zeros, which buy nothing to refuse."""
+    """SPEC-P8.3: what DataTables writes (a JSON integer, or digit text in a form), and leading zeros, which buy nothing
+    to refuse."""
     build, _ = INTEGER_PLACES[place]
     body = build(value)
     assert parse_request(body) == parse_request(as_pairs(body))
@@ -201,7 +202,7 @@ def test_a_data_that_is_no_text_integer_object_or_null_is_malformed(data: Any):
 
 @pytest.mark.parametrize('name, key', [('', ''), ('age', 'age')])
 def test_an_object_data_is_read_in_json_and_in_a_form(name: str, key: str):
-    """SPEC-P18.1: a column with orthogonal data sends an object (dataTables.mjs:5628); its identity is its name, and
+    """SPEC-P18.2: a column with orthogonal data sends an object (dataTables.mjs:5628); its identity is its name, and
     without one it is nameless."""
     body = {'draw': 1, 'columns': [{'data': {'_': 'x', 'display': 'y'}, 'name': name}]}
     for encoded in (body, as_pairs(body)):
@@ -210,7 +211,7 @@ def test_an_object_data_is_read_in_json_and_in_a_form(name: str, key: str):
 
 
 def test_the_request_datatables_builds_is_read_as_json_and_as_a_form():
-    """What `ajaxParameters` (dataTables.mjs:5618-5681) builds for three columns: the default integer `data`, a name, an
+    """SPEC-P1.3. What `ajaxParameters` (dataTables.mjs:5618-5681) builds for three columns: the default integer `data`, a name, an
     object and null; booleans; `fixed`, `groups` and `groupsFixed` as empty arrays; an order entry with its `name`. A
     strict reader must refuse none of it, and the two encodings must read as one request."""
     sent = {
@@ -281,7 +282,7 @@ def test_a_searchbuilder_criterion_with_value1_and_value2_is_read_as_without_the
     ],
 )
 def test_a_malformed_request_says_what_to_send_and_never_shows_the_value(body: dict[str, Any], message: str):
-    """SPEC-P12.1 and the rule that an error says how to fix it: the parameter, what it must be, and the field inside
+    """SPEC-P12.2, the rule that an error says how to fix it: the parameter, what it must be, and the field inside
     it where that is one of the protocol's own (never a key or a value of the client)."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request(body)
