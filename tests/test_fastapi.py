@@ -64,7 +64,10 @@ def test_a_json_body_that_is_not_an_object_answers_422():
 
 
 docs = SearchTable(
-    'docs', [Column('name'), Column('made', type='date'), Column('price', type='number')], max_result_window=3
+    'docs',
+    [Column('name'), Column('made', type='date'), Column('price', type='number')],
+    unique_key='name',
+    max_result_window=3,
 )
 no_server: Any = object()  # every case below is refused before a server would be asked
 
@@ -94,7 +97,7 @@ def test_a_user_error_of_each_code_answers_http_200_with_its_code(extra: dict[st
     assert (response.json()['draw'], response.json()['error_code']) == (3, code)
 
 
-wide = SearchTable('docs', [Column(f't{number}', field='title') for number in range(61)])
+wide = SearchTable('docs', [Column(f't{number}', field='title') for number in range(61)], unique_key='t0')
 
 
 @app.post('/wide')

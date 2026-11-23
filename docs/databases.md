@@ -124,6 +124,16 @@ the count statement with its bound values, and it sees nothing else.
 
 ## OpenSearch
 
+### A `text+keyword` unique key skips long values
+
+- **What you see:** the `.keyword` subfield that dynamic mapping adds to a string has `ignore_above: 256`, so a
+  document whose value is longer than 256 characters has no value in it. As a `unique_key` that document sorts as if
+  it had none, with every other document that lacks one, and the tie-breaker no longer tells them apart.
+- **What to do:** declare the key `IndexColumn(..., text='keyword')` (a `keyword` field has no such limit by default),
+  or use a number.
+- **How it is known:** from the OpenSearch documentation of dynamic mapping; not run on a server here.
+- **Requirement:** PRD-D11.
+
 ### A shared `TotalCache` cannot tell two clusters or two users apart
 
 This is a limit of the library, not of OpenSearch: the cache keeps a total under the index's name and the base

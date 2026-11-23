@@ -1,7 +1,7 @@
 """DataTables from an OpenSearch index, with the sync or the async client.
 
     reports = SearchTable('reports', [IndexColumn('title', text='text'), IndexColumn('id', text='keyword'),
-                                      Column('created', type='date')])
+                                      Column('created', type='date')], unique_key='id')
     response = await reports.fetch(params, AsyncOpenSearch(...))
 
 Requests are plain bodies (``client.search(index=..., body=...)``): no DSL library is needed, and any client with
@@ -35,6 +35,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -88,6 +89,9 @@ class SearchTable:
     Args:
         index: The index (or alias, or pattern) to search.
         columns: The columns the client may see, search and sort on; only their fields are fetched.
+        unique_key: The name of a declared column, or of several, whose values are unique for every document: the
+            tie-breaker of every order (an index has no primary key). It must be sortable, so not analysed text only.
+            Required: a table without one raises ``SchemaError``.
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
@@ -99,6 +103,7 @@ class SearchTable:
         index: str,
         columns: Sequence[Column],
         *,
+        unique_key: str | Sequence[str] | None = None,
         base_filter: Mapping[str, Any] | None = None,
         rows: RowHooks | None = None,
         total_cache: TotalCache | None = None,
@@ -112,6 +117,17 @@ class SearchTable:
         self.max_result_window = max_result_window
         self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
         check_declaration(self.columns, _type_of)
+        if unique_key is None:
+            raise SchemaError(
+                'An index has no primary key to break ties with. Declare one: SearchTable(..., unique_key="id") with '
+                'the name of a declared column whose values are unique (a tuple of names for a key of several).'
+            )
+        self.unique_key = declared_key(self.columns, unique_key)
+        if unkeyable := [column.name for column in self.unique_key if not _sortable(column)]:
+            raise SchemaError(
+                f'unique_key {", ".join(unkeyable)}: analysed text has no whole string to sort by. Declare the '
+                'column IndexColumn(..., text="keyword") (or "text+keyword"), or name a number or a date.'
+            )
         unsortable = [column.name for column in self.columns if column.orderable and not _sortable(column)]
         if unsortable:
             raise SchemaError(
@@ -185,8 +201,7 @@ class SearchTable:
             'track_total_hits': True,
             '_source': [column.source for column in self.columns],
         }
-        if sort := _sort(request):
-            search['sort'] = sort
+        search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
         return _Request(search, count if request.filtered else None)
 
@@ -417,13 +432,22 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 
-def _sort(request: Plan) -> list[dict[str, Any]]:
-    """The user's order, a document without the field as the lowest value: left to itself OpenSearch puts it last
-    in either direction. A string is sorted by its keyword field; the plan lets no analysed-only text through."""
+def _sort(request: Plan, key: tuple[Column, ...]) -> list[dict[str, Any]]:
+    """The user's order, then the unique key (PRD-O3) in the direction of the first applied entry, ascending when
+    there is none (PRD-O4); a key column the order names is not named again. A document without the field is the
+    lowest value: left to itself OpenSearch puts it last in either direction. A string is sorted by its keyword
+    field; the plan lets no analysed-only text through, and the key is checked at construction."""
+    descending = bool(request.order) and request.order[0].descending
+    entries = [(item.column, item.type, item.descending) for item in request.order]
+    entries += [
+        (column, _type_of(column), descending)
+        for column in key
+        if all(column is not item.column for item in request.order)
+    ]
     sort: list[dict[str, Any]] = []
-    for item in request.order:
-        field = (_keyword(item.column) if item.type == 'string' else None) or item.column.source
-        placed = {'order': 'desc', 'missing': '_last'} if item.descending else {'order': 'asc', 'missing': '_first'}
+    for column, kind, reverse in entries:
+        field = (_keyword(column) if kind == 'string' else None) or column.source
+        placed = {'order': 'desc', 'missing': '_last'} if reverse else {'order': 'asc', 'missing': '_first'}
         sort.append({field: placed})
     return sort
 
