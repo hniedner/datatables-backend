@@ -60,6 +60,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   `data` → `MalformedRequest`.
 - **SPEC-P11.2** [core] A valid surrogate pair in `search[value]` (the JSON escape `\ud83d\ude00`) is read as the one
   character U+1F600; the request parses.
+- **SPEC-P11.3** [core] A lone surrogate U+D800 in a column search value, in a SearchBuilder criterion's value and in a
+  `multi_values` entry → `MalformedRequest`.
 - **SPEC-P12.1** [core] For `columns[0][searchable]` sent with the value `MARKER_V`, once under the bracket key
   `columns[0][searchable]` and once under the dotted key `columns.0.searchable`, the `MalformedRequest` message names
   the parameter `columns` and contains neither `MARKER_V` nor either form of the key; an `order` index outside the

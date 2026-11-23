@@ -127,11 +127,18 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F11.7** [OS] Given rows whose text is `a`, `b`, `a-b`, `b a` and `a b`, on a text column and on a
   text+keyword column: column search `a-b`, and SearchBuilder `contains` `a-b`, → the `a-b` and `a b` rows (a phrase of
   the word's tokens, not `a` alone); `!a-b` → the other three.
+- **SPEC-F11.8** [SQL] Given a row whose `name` is `anna_100%` and one whose `name` is `annaX100Y`: SearchBuilder
+  `starts` `anna_` → the first row only, and `ends` `00%` → the first row only; `!starts` `anna_` and `!ends` `00%` →
+  every row but the first. A `_` and a `%` in the value are text, not wildcards. Given rows whose `name` is `a[bc` and
+  `abc`: `starts` `a[b` → the first row only.
 
 ## Combining and refusing
 
 - **SPEC-F12.1** [all] Column search `red` on `colour` and `apple` on `name` → rows 1.
 - **SPEC-F12.2** [all] Column search `red` on `colour` and global search `pear` → rows 2; with global `plum` → none.
+- **SPEC-F12.3** [all] Column search `red` on `colour` and SearchBuilder `=` `7` on `price` → rows 1 (the rows of the
+  column search that the criterion keeps); the same column search beside a group OR of `price = 17` and `price` null
+  → rows 4. The tree is a part of the request like the searches: it narrows them, it never widens them.
 - **SPEC-F13.1** [all] On a table whose every column is declared unsearchable, a global search `red` → error_code
   `invalid_filter`.
 - **SPEC-F13.2** [OS] On a table with only number, date and boolean columns, a global search `red` → error_code
@@ -267,6 +274,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   sends the nearest float).
 - **SPEC-F25.8** [SQLite] With `active`, a Boolean column, and with `born`, a Date column, each declared a number: a
   `multi_values` list of `2` → answered, no row. (PostgreSQL and SQL Server refuse such a comparison themselves.)
+- **SPEC-F25.9** [all] SearchBuilder `=` on `price` with `nan`, `NaN`, `inf`, `-inf` or `Infinity` → error_code
+  `invalid_number`: Python's own number reader takes these texts, and no column holds such a number (PRD-F25).
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a

@@ -82,6 +82,26 @@ ENFORCED = (
     'PRD-D13',
     'PRD-D21',
     'E',
+    # The filters that are not search, by id: the F letter is shared with the smart search and the hooked columns
+    'PRD-F9',
+    'PRD-F10',
+    'PRD-F16',
+    'PRD-F17',
+    'PRD-F18',
+    'PRD-F19',
+    'PRD-F20',
+    'PRD-F24',
+    'PRD-F25',
+    'PRD-F34',
+    'PRD-F36',
+    'PRD-F37',
+    'PRD-F38',
+    'PRD-F39',
+    'PRD-F40',
+    'PRD-F41',
+    'PRD-F42',
+    'PRD-F43',
+    'PRD-F44',
 )
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')

@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 49 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 50 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -45,8 +45,10 @@
   request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
   lacks raises `SchemaError` at construction); revision 48 adds a clause to PRD-O1 (an order list is refused whole
   when any entry is refused); revision 49 adds PRD-E14, as the owner decided on 2026-11-23, and clauses to PRD-E8 (a
-  hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached)). It
-  replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here.
+  hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached); revision
+  50 adds a clause to PRD-F11 (a typed wildcard in a SearchBuilder `contains`, `starts` or `ends` value is text) and
+  one to PRD-F12 (the SearchBuilder tree combines with AND too)). It replaces draft 1 (R1 to R9); section 10 maps
+  every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -640,16 +642,18 @@ column's database collation.
 #### PRD-F11
 
 A word matches as a substring, except on a text-only OpenSearch column, where it is an analysed match (`red` does not
-find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped. On
-analysed text a word, and a SearchBuilder `contains` value, matches as a phrase of its tokens, so `foo-bar` finds
-`foo bar` but not `foo` alone.
+find `reddish`; PRD-D19); LIKE wildcards (`%`, `_`, `[`, `\`) and OpenSearch wildcard characters in it are escaped. The
+same holds for the value of a SearchBuilder `contains`, `starts` or `ends`, and of their negations. On analysed text a
+word, and a SearchBuilder `contains` value, matches as a phrase of its tokens, so `foo-bar` finds `foo bar` but not
+`foo` alone.
 
 - **Reason:** A user's `%` or `*` is text, never a pattern; wildcard injection is a known failure.
 - **Priority:** must
 
 #### PRD-F12
 
-Column searches combine with AND, with each other and with the global search.
+Column searches combine with AND, with each other and with the global search. The SearchBuilder tree combines with
+them, and with the global search, with AND too.
 
 - **Reason:** DataTables' meaning.
 - **Priority:** must
