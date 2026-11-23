@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
 from datetime import UTC
@@ -49,6 +50,17 @@ for _url in filter(None, SQL_URLS):
     checked_database(_url)
 
 
+async def async_time_zone() -> str:
+    """The session time zone of a connection of the async driver: libpq reads PGTZ, but a driver that does not use
+    libpq may not, so the async tests could run in UTC while the sync ones do not."""
+    engine = create_async_engine(SQL_URLS[1])
+    try:
+        async with engine.connect() as connection:
+            return str((await connection.exec_driver_sql('SHOW TimeZone')).scalar())
+    finally:
+        await engine.dispose()
+
+
 def pytest_report_header() -> list[str]:
     """The real servers the tests run on, with their versions, so a run cannot pass on SQLite unnoticed."""
     lines: list[str] = []
@@ -57,7 +69,8 @@ def pytest_report_header() -> list[str]:
         with engine.connect() as connection:
             version = '.'.join(map(str, connection.dialect.server_version_info or ()))
             if engine.dialect.name == 'postgresql':  # a non-UTC session is what makes the timezone test bite
-                version += f', session TimeZone {connection.exec_driver_sql("SHOW TimeZone").scalar()}'
+                zone = connection.exec_driver_sql('SHOW TimeZone').scalar()
+                version += f', session TimeZone {zone} (sync), {asyncio.run(async_time_zone())} (async)'
         engine.dispose()
         lines.append(f'SQL tests on {engine.dialect.name} {version}')
     if url := os.environ.get('DTB_OPENSEARCH_URL'):
