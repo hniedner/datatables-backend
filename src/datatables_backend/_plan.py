@@ -33,6 +33,7 @@ from .protocol import DTParams
 from .protocol import DTResponse
 from .protocol import ErrorCode
 from .protocol import InvalidFilter
+from .protocol import SchemaError
 from .protocol import Search
 from .protocol import SearchCriterion
 from .protocol import SearchGroup
@@ -162,11 +163,14 @@ _STRING_CONDITIONS = frozenset(
 )
 _NUMBER_CONDITIONS = frozenset({'=', '!=', '<', '<=', '>', '>=', 'between', '!between', 'null', '!null'})
 _DATE_CONDITIONS = _NUMBER_CONDITIONS | {'contains', '!contains'}
+#: What a boolean takes (it holds no part to match) and what a hooked column takes (PRD-D18: a part of a transformed
+#: value means nothing)
+_EQUALITY_AND_EMPTY = frozenset({'=', '!=', 'null', '!null'})
 _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
     'string': _STRING_CONDITIONS,
     'number': _NUMBER_CONDITIONS,
     'date': _DATE_CONDITIONS,
-    'boolean': frozenset({'=', '!=', 'null', '!null'}),
+    'boolean': _EQUALITY_AND_EMPTY,
 }
 _BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
@@ -317,6 +321,29 @@ class Plan:
     def filtered(self) -> bool:
         """Whether the request narrows the rows beyond the table's base filter."""
         return bool(self.global_search or self.column_searches or self.search_builder)
+
+
+def check_declaration(columns: Sequence[Column], type_of: Callable[[Column], ColumnType]) -> None:
+    """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
+    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14).
+    The messages name only declared columns. ``type_of`` is the backend's: SQL reads the type of a column it did not
+    declare one for from the source."""
+    if not columns:
+        raise SchemaError('No column is declared. Declare at least one Column.')
+    names: set[str] = set()
+    for column in columns:
+        if column.name in names:
+            raise SchemaError(
+                f'Two columns are declared with the name "{column.name}". Give each its own name: '
+                'Column(name, field=...) reads one field under another name.'
+            )
+        names.add(column.name)
+    for column in columns:
+        if column.search_value is not None and (kind := type_of(column)) != 'string':
+            raise SchemaError(
+                f'The column "{column.name}" has a search_value hook but is a {kind} column. Only a string column '
+                'takes one: remove the hook.'
+            )
 
 
 def plan(
@@ -704,6 +731,13 @@ def _criterion(
             'Choose another condition.',
             column,
         )
+    if column.search_value is not None and condition not in _EQUALITY_AND_EMPTY:  # PRD-D18, a protocol literal again
+        raise mistake(
+            'datatables_condition_refused',
+            f'The condition "{condition}" cannot be used on "{column.name}", whose search value is transformed '
+            'before it is compared. Choose =, !=, null or !null.',
+            column,
+        )
     values: Sequence[Any]
     if kind == 'string':
         values = [hooked(column, text) for text in texts]
@@ -779,13 +813,8 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | fl
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
-    if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent
-        try:
-            return int(stripped)
-        except ValueError:  # more digits than Python converts to an integer
-            # Reachable only through a search-value hook that expands the client's text (`1e5000` to 5,000 digits),
-            # which PRD-D14 will refuse on a number column; the client's own text is at most 255 characters
-            raise number_unreadable(column, listed=listed) from None
+    if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent; at most 255 characters, so `int` converts it
+        return int(stripped)
     number = float(stripped)
     if not math.isfinite(number):
         raise number_unreadable(column, listed=listed)
@@ -904,8 +933,8 @@ def _column_search(
     that the column must hold, which is nothing when the text has none.
     On a boolean column a plain value is an exact value too, and so is one on a number or date column where the
     backend has no text of it to search in: one number, or the span a year, a month or a day names. On a date
-    column each entry of a list is a day, and the column's ``search_value`` hook is not applied to it, as it is not
-    applied to a criterion's date."""
+    column each entry of a list is a day. A hooked column (a string, PRD-D14) is searched for its whole text, trimmed,
+    by equality, and for its list entries by equality (PRD-D15, PRD-D17)."""
     kind = able.type
     if search.multi_values and search.value:
         # Only a client that builds its own request sends both, so this one tells the integrator what to send
@@ -916,6 +945,11 @@ def _column_search(
         )
     searched_words: list[tuple[str, bool]] = []
     if not (search.multi_values or search.regex):
+        if column.search_value is not None:  # before the words: its text has no grammar, only a whole value (PRD-D17)
+            # Python's strip is Unicode White_Space for admitted text: the characters it adds (U+001C to U+001F) are
+            # control characters, which `_control_character` refuses
+            whole = search.value.strip()
+            return Equals(column, kind, hooked(column, whole)) if whole else None
         searched_words = _words(search.value)
         if not searched_words:  # no word is no search, on a column of any type (PRD-F6)
             return None
@@ -935,13 +969,11 @@ def _column_search(
     elif kind == 'boolean':
         return OneOf(column, kind, (parse_boolean(search.value, column),))
     elif able.value_search and kind == 'number':
-        return Equals(column, kind, parse_number(str(hooked(column, search.value)), column))
+        return Equals(column, kind, parse_number(search.value, column))
     elif able.value_search and kind == 'date':
-        start, end = _day_span(str(hooked(column, search.value)), column)
+        start, end = _day_span(search.value, column)
         return Range(column, kind, Bound(start, True), Bound(end, False))
     else:
-        if column.search_value:  # matched for the whole text, with no word cap, until PRD-D17 (#28)
-            return Contains(column, kind, hooked(column, search.value))
         return _all('AND', [_word([(column, kind)], word, negated) for word, negated in searched_words])
     # An entry that holds nothing is no value: it matches a row without one (PRD-F17, PRD-F20), and no hook is
     # given it (PRD-D16). A string column takes an entry of white space as that exact value; on any other type
@@ -954,7 +986,7 @@ def _column_search(
     elif kind == 'date':
         values = parse_days(held, column, listed=True)
     elif kind == 'number':
-        values = tuple(parse_number(str(hooked(column, text)), column, listed=True) for text in held)
+        values = tuple(parse_number(text, column, listed=True) for text in held)
     else:
         values = tuple(hooked(column, text) for text in held)
     return OneOf(column, kind, values, empty)

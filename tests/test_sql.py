@@ -643,12 +643,6 @@ def test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sen
     assert ids(cased.fetch_sync(request(*CASED, **body), session)) == expected
 
 
-@pytest.mark.xfail(
-    reason='PRD-D17 (SPEC-F9.8), issue #28: a column search on a hooked column is still a substring search in any '
-    'case over the transformed text, not an equality',
-    strict=True,
-    raises=AssertionError,
-)
 def test_a_column_search_on_a_hooked_column_compares_exactly(session: Session, cased: SQLTable):
     params = request(*CASED, column_search={'secret': {'value': 'alpha'}})
     assert ids(cased.fetch_sync(params, session)) == []
@@ -1136,15 +1130,74 @@ def test_false_sorts_before_true(session: Session, direction: str, expected: lis
     assert [row for row in ids(flagged.fetch_sync(params, session)) if row != 3] == expected
 
 
-@pytest.mark.xfail(
-    reason='PRD-D14: a search-value hook on a column that is not a string is not refused yet, for any type '
-    '(SPEC-D14.1)',
-    strict=True,
-    raises=pytest.fail.Exception,
+@pytest.mark.parametrize(
+    ('declared', 'kind'),
+    [
+        (Column('age', search_value=str.upper), 'number'),
+        (Column('born', search_value=str.upper), 'date'),
+        (Column('seen', search_value=str.upper), 'date'),
+        (Column('active', search_value=str.upper), 'boolean'),
+        (Column('team', type='number', search_value=str.upper), 'number'),  # the declared type decides
+    ],
 )
-def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
-    with pytest.raises(SchemaError):
-        SQLTable(people, [Column('id'), Column('active', search_value=str.upper)])
+def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(declared: Column, kind: str):
+    """SPEC-D14.1: the hook transforms text the user types. The message names the declared column and the fix."""
+    with pytest.raises(SchemaError) as raised:
+        SQLTable(people, [Column('id'), declared])
+    assert str(raised.value) == (
+        f'The column "{declared.name}" has a search_value hook but is a {kind} column. Only a string column takes '
+        'one: remove the hook.'
+    )
+
+
+def test_two_columns_with_one_name_are_a_schema_error():
+    """SPEC-D1.2: the name keys the request and each row, so the second column would silently replace the first."""
+    with pytest.raises(SchemaError) as raised:
+        SQLTable(people, [Column('id'), Column('team'), Column('team', field='name')])
+    assert str(raised.value) == (
+        'Two columns are declared with the name "team". Give each its own name: Column(name, field=...) reads one '
+        'field under another name.'
+    )
+
+
+def test_a_table_without_columns_is_a_schema_error():
+    """SPEC-D1.2: a table that has none answers every request with empty rows."""
+    with pytest.raises(SchemaError) as raised:
+        SQLTable(people, [])
+    assert str(raised.value) == 'No column is declared. Declare at least one Column.'
+
+
+HOOKED = SQLTable(people, [Column('id'), Column('secret', search_value=lambda text: f's{text}')])
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('=', ['4'], [4]),  # the hook turns `4` into the stored `s4`
+        ('!=', ['4'], [1, 2, 3, 5, 6]),  # PRD-F37: row 6, with no value, is not equal to `s4`
+        ('null', [], [6]),  # row 6 holds no secret; the rows that hold one are not empty
+        ('!null', [], [1, 2, 3, 4, 5]),
+    ],
+)
+def test_searchbuilder_on_a_hooked_column_answers_equality_and_empty(
+    session: Session, condition: str, values: list[str], expected: list[int]
+):
+    """SPEC-D18.1 (PRD-D18): `=` and `!=` give the value to the hook; `null` and `!null` take none."""
+    session.execute(people.insert(), [{'id': 6, 'secret': None}])
+    assert (
+        ids(HOOKED.fetch_sync(request('id', 'secret', **criterion('secret', condition, *values)), session)) == expected
+    )
+
+
+@pytest.mark.parametrize('condition', ['contains', '!contains', 'starts', '!starts', 'ends', '!ends'])
+def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value(session: Session, condition: str):
+    """SPEC-D18.2: a part of a transformed value means nothing. The message names the condition (a protocol literal)
+    and the declared column, never the value."""
+    response = HOOKED.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'zzz')), session)
+    assert refused(response) == (
+        f'The condition "{condition}" cannot be used on "secret", whose search value is transformed before it is '
+        'compared. Choose =, !=, null or !null.'
+    )
 
 
 @pytest.mark.parametrize(
@@ -2410,20 +2463,3 @@ def test_words_are_not_counted_on_a_boolean_column(session: Session):
     flags = SQLTable(people, [Column('id'), Column('active')])
     response = flags.fetch_sync(request('id', 'active', column_search={'active': {'value': SEVENTEEN}}), session)
     assert refused(response) == 'The filter on "active" needs true or false (1 or 0 also work).'
-
-
-def expanded(text: str) -> str:
-    return format(Decimal(text), 'f')
-
-
-def test_a_hook_that_expands_a_number_is_refused_not_failed(session: Session):
-    """PRD-D14, PRD-F25: the 255 bound is measured on the client's text, before the hook, so a hook on a number
-    column can still make `1e5000` 5,000 digits, which Python does not convert to an integer, and `1e400` 401, which
-    a `Float` column does not take. Both are the user's mistake, not a failure; they go when PRD-D14 refuses a hook
-    on a number column."""
-    hooked = SQLTable(people, [Column('id'), Column('age', search_value=expanded)])
-    params = request('id', 'age', column_search={'age': {'multi_values': ['1e5000']}})
-    assert 'must be a number' in refused(hooked.fetch_sync(params, session), 'invalid_number')
-    floats = SQLTable(wide(session).source, [Column('id'), Column('ratio', search_value=expanded)])
-    params = request('id', 'ratio', column_search={'ratio': {'multi_values': ['1e400']}})
-    assert 'at most 308 digits' in refused(floats.fetch_sync(params, session), 'invalid_number')

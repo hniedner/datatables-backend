@@ -125,10 +125,23 @@ timed = SearchTable(INDEX, [IndexColumn('id', text='keyword'), Column('seen', ty
 # `b a` and `a b`, in a field of analysed text and in a field of text+keyword (PRD-F11's phrase of tokens).
 PHRASE_INDEX = 'dtb-test-docs-phrases'  # owned by this module too: deleted and recreated on every run
 PHRASE_TEXTS = {'p1': 'a', 'p2': 'b', 'p3': 'a-b', 'p4': 'b a', 'p5': 'a b'}
-PHRASE_MAPPING = {'properties': {'id': {'type': 'keyword'}, 'only_text': {'type': 'text'}, 'both': KEYWORD_TEXT}}
+# A field stored as a hook would store it (`enc:` and the text), for the table `hooked` below: the whole value, a
+# superset of it, a padded one, one in other letters, and p5 without it
+SECRETS = {'p1': 'enc:Alpha', 'p2': 'enc:Alphabet', 'p3': 'enc: Alpha ', 'p4': 'enc:alpha'}
+PHRASE_MAPPING = {
+    'properties': {
+        'id': {'type': 'keyword'},
+        'only_text': {'type': 'text'},
+        'both': KEYWORD_TEXT,
+        'secret': KEYWORD_TEXT,
+    }
+}
 phrases = SearchTable(PHRASE_INDEX, [IndexColumn('id', text='keyword'), IndexColumn('only_text', text='text'),
                                      IndexColumn('both')])  # fmt: skip
 PHRASE_NAMES = ('id', 'only_text', 'both')
+hooked = SearchTable(
+    PHRASE_INDEX, [IndexColumn('id', text='keyword'), Column('secret', search_value=lambda text: f'enc:{text}')]
+)
 
 
 @pytest.fixture(scope='module')
@@ -142,7 +155,11 @@ def client() -> Iterator[OpenSearch]:
         client.index(index=INDEX, id=str(number), body=document)
     client.indices.create(index=PHRASE_INDEX, body={'mappings': PHRASE_MAPPING, 'settings': SETTINGS})
     for key, text in PHRASE_TEXTS.items():
-        client.index(index=PHRASE_INDEX, id=key, body={'id': key, 'only_text': text, 'both': text})
+        client.index(
+            index=PHRASE_INDEX,
+            id=key,
+            body={'id': key, 'only_text': text, 'both': text, **({'secret': SECRETS[key]} if key in SECRETS else {})},
+        )
     client.indices.refresh(index=[INDEX, PHRASE_INDEX])
     yield client
     client.indices.delete(index=[INDEX, PHRASE_INDEX])
@@ -296,6 +313,20 @@ def test_searchbuilder_contains_of_one_space(client: OpenSearch, column: str, ex
     """SPEC-F11.7 on a blank value sent as typed (#68): the phrase has no token, the wildcard `* *` is a space."""
     response = phrases.fetch_sync(request(*PHRASE_NAMES, **criterion(column, 'contains', ' ')), client)
     assert found(response) == expected
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [('Alpha', ['p1']), (f' {chr(0xA0)}Alpha{chr(0x3000)}', ['p1']), ('Alph', []), ('alpha', ['p4'])],
+)
+def test_a_column_search_on_a_hooked_column_matches_the_whole_stored_value(
+    client: OpenSearch, text: str, expected: list[str]
+):
+    """SPEC-D17.1: the `term` on the keyword field finds `enc:Alpha` only: not the superset `enc:Alphabet` (p2), not
+    the padded `enc: Alpha ` (p3) and, case-sensitive as a hooked column is (PRD-D21), not `enc:alpha` (p4), which
+    `alpha` finds. A recording client cannot show that the server matches the whole value and not a substring."""
+    params = request('id', 'secret', column_search={'secret': {'value': text}})
+    assert found(hooked.fetch_sync(params, client)) == expected
 
 
 def test_a_multi_select_matches_whole_values(client: OpenSearch):

@@ -34,6 +34,7 @@ from ._plan import OneOf
 from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
+from ._plan import check_declaration
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -110,6 +111,7 @@ class SearchTable:
         self.total_cache = total_cache
         self.max_result_window = max_result_window
         self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
+        check_declaration(self.columns, _type_of)
         unsortable = [column.name for column in self.columns if column.orderable and not _sortable(column)]
         if unsortable:
             raise SchemaError(

@@ -628,21 +628,13 @@ def test_a_value_outside_ascii_without_case_keeps_its_query():
             'ends',
             {'regexp': {'secret.keyword': {'value': '.*ä', 'case_insensitive': True}}},
         ),
-        (
-            # Today's result, until issue #28: PRD-D18 asks for this condition to be refused on a hooked column,
-            # which is not met yet. Every search of a hooked column changes with #28, so no other path stands in.
-            Column('secret', search_value=str.upper),
-            'starts',
-            {'wildcard': {'secret.keyword': {'value': 'Ä*', 'case_insensitive': True}}},
-        ),
     ],
 )
 def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     unfolded: Column, condition: str, clause: dict[str, Any]
 ):
     """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
-    as before, and a search on it folds. A hooked column's search is sent as it was before the `regexp` form: the
-    row pins that, not the search itself, which PRD-D18 does away with."""
+    as before, and a search on it folds."""
     plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)
@@ -853,15 +845,80 @@ def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
     assert clauses(client) == [{'terms': {'active': [True, False]}}]
 
 
-@pytest.mark.xfail(
-    reason='PRD-D14: a search-value hook on a column that is not a string is not refused yet, for any type '
-    '(SPEC-D14.1)',
-    strict=True,
-    raises=pytest.fail.Exception,
-)
-def test_a_search_value_hook_on_a_boolean_column_is_a_schema_error():
-    with pytest.raises(SchemaError):
-        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('active', type='boolean', search_value=str)])
+@pytest.mark.parametrize('kind', ['number', 'date', 'boolean'])
+def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(kind: Any):
+    """SPEC-D14.1: the hook transforms text the user types. The message names the declared column and the fix."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('held', type=kind, search_value=str)])
+    assert str(raised.value) == (
+        f'The column "held" has a search_value hook but is a {kind} column. Only a string column takes one: remove '
+        'the hook.'
+    )
+
+
+def test_two_columns_with_one_name_are_a_schema_error():
+    """SPEC-D1.2: the name keys the request and each row, so the second column would silently replace the first."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('title', field='name')])
+    assert str(raised.value) == (
+        'Two columns are declared with the name "title". Give each its own name: Column(name, field=...) reads one '
+        'field under another name.'
+    )
+
+
+def test_a_table_without_columns_is_a_schema_error():
+    """SPEC-D1.2: a table that has none answers every request with empty rows."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [])
+    assert str(raised.value) == 'No column is declared. Declare at least one Column.'
+
+
+# -- a hooked column (PRD-D17, PRD-D18) ---
+
+
+def stored(text: str) -> str:
+    return f'enc:{text}'
+
+
+def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimmed_text():
+    """SPEC-D17.1, SPEC-D17.3: the keyword field of text+keyword (`.keyword`) is matched whole, with no grammar in
+    the text: `!x` is no negation and the quotes are part of the value. One request gives the hook one text."""
+    seen: list[str] = []
+
+    def recorded(text: str) -> str:
+        seen.append(text)
+        return stored(text)
+
+    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    client = Client()
+    cases = ['Alpha', f' {chr(0xA0)}Alpha{chr(0x3000)}', '"Alpha"', '!x', 'a\nb']
+    for text in cases:
+        hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': text}}), client)
+    assert [search['query']['bool']['must'] for search in client.searches] == [
+        [{'term': {'secret.keyword': stored(text.strip())}}] for text in cases
+    ]
+    assert seen == [text.strip() for text in cases]
+
+
+def test_a_column_search_on_a_hooked_column_of_blank_text_sends_no_clause():
+    """SPEC-F6.3 with PRD-D12's trimming: text of only White_Space beyond PRD-F7's five is blank too."""
+    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    client = Client()
+    hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': chr(0xA0)}}), client)
+    assert client.searches[-1]['query'] == {'match_all': {}}
+
+
+def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value_before_anything_is_sent():
+    """SPEC-D18.2: a `wildcard` on a transformed value means nothing. `starts` stands for the six conditions, which
+    one rule refuses in the plan (test_sql.py has each)."""
+    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    client = Client()
+    response = hooked.fetch_sync(request('id', 'secret', **criterion('secret', 'starts', 'zzz')), client)
+    assert refused(response) == (
+        'The condition "starts" cannot be used on "secret", whose search value is transformed before it is '
+        'compared. Choose =, !=, null or !null.'
+    )
+    assert client.searches == []
 
 
 def tally(query: Mapping[str, Any]) -> tuple[int, int, int]:

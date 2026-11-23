@@ -67,6 +67,7 @@ from ._plan import OneOf
 from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
+from ._plan import check_declaration
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -91,8 +92,6 @@ type SyncSource = Session | Connection
 
 #: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
 MSSQL_DECIMAL_DIGITS = 38
-#: Every whole number of this many digits is below the largest float (about 1.8e308), so it has a nearest one
-FLOAT_DIGITS = 308
 #: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
 #: LAST; every other database is told where NULL goes
 _NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
@@ -133,6 +132,7 @@ class SQLTable:
         missing = [column.source for column in self.columns if column.source not in source.columns]
         if missing:
             raise SchemaError(f'{source} has no column {", ".join(missing)}')
+        check_declaration(self.columns, self._type_of)  # after the missing columns: a type is read from the source
 
     async def fetch(self, params: DTParams, source: AsyncSource) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
@@ -404,7 +404,7 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
     A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
     compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to a column that stores text as
     its digits, since text is compared with text; to any other column (a ``Float``, an expression without a type)
-    as the nearest float, which holds a whole number of up to 308 digits.
+    as the nearest float, which holds every whole number a request may carry (at most 255 digits, below 1.8e308).
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
@@ -439,8 +439,6 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
         return Decimal(value)
     if isinstance(sql_type, String):
         return str(value)
-    if len(str(abs(value))) > FLOAT_DIGITS:
-        raise mistake('datatables_number_out_of_range', f'{needed} of at most {FLOAT_DIGITS} digits.', declared)
     return float(value)
 
 

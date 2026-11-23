@@ -200,6 +200,50 @@ def test_text_with_no_word_adds_nothing_to_a_hooked_column_either(session: Sessi
     assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **glob('!x')), session)) == [1, 2, 3, 4, 5]
 
 
+# -- a column search on a hooked column (PRD-D17) ---
+
+#: Stored as the hook `s{text}` would make them: a superset of `1`, a padded `1`, the bare marks of the grammar, and a
+#: line feed beside the same letters with a space
+HOOKED_ROWS = {11: 's1x', 12: 's 1 ', 13: 's"1"', 14: 's!x', 15: 's"', 16: 'sa\nb', 17: 'sa b'}
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('1', [1]),  # not row 11, whose `s1x` holds `s1`
+        (' 1 ', [1]),  # not row 12: the hook is given `1`, not ` 1 `
+        (f'{chr(0xA0)}1{chr(0x3000)}', [1]),  # SPEC-D17.1: Unicode White_Space, not only the five of PRD-F7
+        (f'{chr(0x2003)}1{chr(0x2003)}', [1]),
+        ('1x', [11]),
+        ('"1"', [13]),  # SPEC-D17.1: no grammar, so the quotes are part of the value
+        ('!x', [14]),  # ... and `!` too: it is no negation, and the text is no "no word"
+        ('"', [15]),
+        ('a\nb', [16]),  # SPEC-D17.3: PRD-F7's rewriting of a line break does not apply
+        ('a b', [17]),
+    ],
+)
+def test_a_column_search_on_a_hooked_column_is_equality_on_the_trimmed_whole_text(
+    session: Session, text: str, expected: list[int]
+):
+    """SPEC-D17.1, SPEC-D17.3. A search that took the text apart into words or matched a part of it finds more rows
+    here (`1` also row 11, `!x` every row), and one that did not trim hands the hook the padding."""
+    session.execute(people.insert(), [{'id': row, 'secret': stored} for row, stored in HOOKED_ROWS.items()])
+    assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **column(text, 'secret')), session)) == expected
+
+
+@pytest.mark.parametrize('blank', [chr(0xA0), chr(0x3000), chr(0x2003)])
+def test_a_column_search_on_a_hooked_column_of_blank_text_adds_nothing(session: Session, blank: str):
+    """SPEC-F6.3 with PRD-D12's trimming: text of only White_Space beyond PRD-F7's five is blank too, so every row
+    is found; handed to the hook it would be the value `s` plus the space, which no row holds."""
+    assert ids(mixed.fetch_sync(request('id', 'name', 'secret', **column(blank, 'secret')), session)) == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+
+
 # -- the bounds of search text (PRD-F14), each with its own code (PRD-E2) ---
 
 EMOJI = chr(0x1F600)
