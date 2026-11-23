@@ -722,3 +722,48 @@ def test_a_column_declared_for_the_document_id_shows_the_real_id(client: OpenSea
         ('4', 'd4'),
         ('5', 'e5'),
     ]
+
+
+LABELS = [IndexColumn('id', text='keyword'), IndexColumn('label')]  # `label` holds several values in a1 and d4
+
+
+@pytest.mark.parametrize(
+    ('names', 'columns', 'column', 'direction'),
+    [
+        (NAMES, COLUMNS, 3, 'asc'),  # a1 and d4 tie on `pages`, and c3 has none
+        (NAMES, COLUMNS, 3, 'desc'),
+        (NAMES, COLUMNS, 1, 'asc'),
+        (NAMES, COLUMNS, 1, 'desc'),
+        (
+            ('id', 'label'),
+            LABELS,
+            1,
+            'asc',
+        ),  # several values in a field: `asc` sorts by the least, `desc` by the greatest
+        (('id', 'label'), LABELS, 1, 'desc'),
+    ],
+    ids=['pages-asc', 'pages-desc', 'title-asc', 'title-desc', 'label-asc', 'label-desc'],
+)
+def test_a_page_read_by_the_reversed_sort_is_the_page_the_ordinary_way_gives(
+    client: OpenSearch, names: tuple[str, ...], columns: list[Column], column: int, direction: str
+):
+    """SPEC-C10.3, measured: with a table window of 3 over the 5 documents (the cluster's setting is untouched), every
+    page the reversed sort serves equals the same request on a table of the default window, and every other page
+    beyond the window is refused. A field of several values is the case a flip without its `mode` gets wrong, and
+    `label` (several values in a1 and d4) is that case. Compared by their UTF-8 terms, `asc` sorts by the least value
+    of each document: c3, d4 (`bär`), a1, e5, b2. `desc` sorts by the greatest: d4, a1, b2, e5, c3. That is not the
+    reverse of the first (b2, e5, a1, d4, c3), so a reversed page that flips `asc` to a `desc` of the default `mode`
+    shows other rows than the ordinary way does, and this test fails; with the `mode` of the original direction the
+    reverse is exact."""
+    small = SearchTable(INDEX, columns, unique_key='id', max_result_window=3)
+    wide = SearchTable(INDEX, columns, unique_key='id')
+    for start in range(6):
+        for length in range(1, 4):
+            asked = request(*names, start=start, length=length, order=[{'column': column, 'dir': direction}])
+            got, expected = small.fetch_sync(asked, client), wide.fetch_sync(asked, client)
+            where = f'start {start}, length {length}'
+            if start + length <= 3 or 5 - start <= 3:
+                assert got.error_code is None, where
+                assert ids(got) == ids(expected), where
+            else:
+                assert got.error_code == 'page_out_of_range', where

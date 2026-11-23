@@ -37,12 +37,22 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C10.4** [OS] `max_result_window` defaults to 10,000: with no setting and a recording client whose counts
   answer 20,000, `start` 9990, `length` 10 is sent as an ordinary page (`from` 9990); `start` 9995, `length` 10 (past
   the window both ways: 10,005 > 10,000 and 20,000 - 9995 > 10,000) → `page_out_of_range`.
+- **SPEC-C10.5** [OS] Recording, with `max_result_window` W 3 and F 10 rows: a reversed page asks for `from`
+  `max(0, F - start - length)` and `size` `min(length, F - start)`, so that from + size = F - start <= W: `start` 7,
+  `length` 3 (the first reversed page, start = F - W) → `from` 0, `size` 3; `start` 7, `length` 2 → `from` 1, `size`
+  2; `start` 8, `length` 3 → `from` 0, `size` 2; `start` 9 (the last row) → `from` 0, `size` 1; the rows come in
+  ascending order. `start` 6 is refused, `start` 10 is the empty page, and `start` 1 with `length` 2 (start + length =
+  W) is an ordinary page with no count.
+- **SPEC-C10.6** [OS] Recording: a reversed page flips every entry of the order, the unique key included, and keeps a
+  missing value the lowest (`asc` with `missing` `_first`, `desc` with `_last`); each flipped entry carries the
+  `mode` of its original direction (`min` for `asc`, `max` for `desc`), which OpenSearch sorts a field of several
+  values by, so that the flip reverses exactly the order it flips. An ordinary body carries no `mode`.
 - **SPEC-C11.1** [OS] Recording: a `page_out_of_range` answer runs only the count calls, before any page search.
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
 - **SPEC-C12.3** [OS] Recording: with `max_result_window` 3, a global search, a filtered count of 7 and a total of 40,
-  `start` 4 and `length` 3 → `page_out_of_range`, `recordsFiltered` 7, `recordsTotal` 40: two count calls, told apart
+  `start` 2 and `length` 3 → `page_out_of_range`, `recordsFiltered` 7, `recordsTotal` 40: two count calls, told apart
   by their query (the order is no part of the contract), and no page search.
 - **SPEC-C12.4** [OS] Recording: C12.3 with a `TotalCache`: the second request within the TTL runs one count call, the
   filtered set's.
