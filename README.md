@@ -140,8 +140,8 @@ The library does not change how a database compares values. Each rule below is s
 - A SQL column with a type of its own, or none, is compared as sent, not folded.
 - On OpenSearch a page in the middle of more than `max_result_window` rows is refused (`page_out_of_range`), where the
   first and last pages work and SQL serves every page ([paging past the window][rules-opensearch]).
-- An OpenSearch column of analysed text only answers the word search, `null`, `!null` and empty lists, where SQL
-  answers every condition ([the rule][rules-opensearch]).
+- An OpenSearch column of analysed text only answers the word search, `contains`, `null`, `!null` and empty lists,
+  where SQL answers every condition ([the rule][rules-opensearch]).
 - OpenSearch's global search skips number and date columns, and every backend's skips boolean columns
   ([the rule][rules-types]).
 - On OpenSearch a stored `""` is not empty, where on SQL it is ([the rule][rules-opensearch]).

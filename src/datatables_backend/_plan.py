@@ -165,6 +165,8 @@ _DATE_CONDITIONS = _NUMBER_CONDITIONS | {'contains', '!contains'}
 #: What a boolean takes (it holds no part to match) and what a hooked column takes (PRD-D18: a part of a transformed
 #: value means nothing)
 _EQUALITY_AND_EMPTY = frozenset({'=', '!=', 'null', '!null'})
+#: What a string column that is analysed text only takes (PRD-D19): no whole string to equal or to anchor on
+_CONTAINS_AND_EMPTY = frozenset({'contains', '!contains', 'null', '!null'})
 _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
     'string': _STRING_CONDITIONS,
     'number': _NUMBER_CONDITIONS,
@@ -196,12 +198,15 @@ class Capabilities:
 
     ``type`` is how its filters are built. ``orderable`` says whether it can be sorted by, ``searched`` whether it
     takes part in the global search, and ``value_search`` whether a column search on a number or date column is one
-    value to match (OpenSearch, which has no text of a number to search in) rather than text (SQL)."""
+    value to match (OpenSearch, which has no text of a number to search in) rather than text (SQL). ``whole_string``
+    says whether the column holds a whole string to match exactly, to anchor on and to compare a hook's value with: not
+    a string that is analysed text only (PRD-D19, PRD-D20)."""
 
     type: ColumnType
     orderable: bool
     searched: bool
     value_search: bool
+    whole_string: bool
 
 
 @dataclass(frozen=True)
@@ -322,11 +327,11 @@ class Plan:
         return bool(self.global_search or self.column_searches or self.search_builder)
 
 
-def check_declaration(columns: Sequence[Column], type_of: Callable[[Column], ColumnType]) -> None:
+def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
-    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14).
-    The messages name only declared columns. ``type_of`` is the backend's: SQL reads the type of a column it did not
-    declare one for from the source."""
+    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14) or
+    holds no whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the
+    backend's: SQL reads the type of a column it did not declare one for from the source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()
@@ -338,10 +343,18 @@ def check_declaration(columns: Sequence[Column], type_of: Callable[[Column], Col
             )
         names.add(column.name)
     for column in columns:
-        if column.search_value is not None and (kind := type_of(column)) != 'string':
+        if column.search_value is None:
+            continue
+        able = describe(column)
+        if able.type != 'string':
             raise SchemaError(
-                f'The column "{column.name}" has a search_value hook but is a {kind} column. Only a string column '
+                f'The column "{column.name}" has a search_value hook but is a {able.type} column. Only a string column '
                 'takes one: remove the hook.'
+            )
+        if not able.whole_string:
+            raise SchemaError(
+                f'The column "{column.name}" has a search_value hook but holds analysed text only, which a hook '
+                'compares by equality. Declare it text="keyword" or "text+keyword", or remove the hook.'
             )
 
 
@@ -367,9 +380,8 @@ def plan(
     mistakes: Mistakes,
 ) -> Plan:
     """Check ``params`` against ``columns`` and return what it asks for. ``describe`` says what the backend can do
-    with a column, so that a skip or a refusal is decided here, for every backend alike. Two refusals are left to a
-    backend, which alone knows what they need: SQL's of a whole number its column cannot hold or be compared with,
-    and OpenSearch's of a list of exact values on analysed text.
+    with a column, so that a skip or a refusal is decided here, for every backend alike. One refusal is left to a
+    backend, which alone knows what it needs: SQL's of a whole number its column cannot hold or be compared with.
 
     It raises nothing for the user's mistakes: a name that is not declared, a sort or search the declaration does not
     allow, a regex, a control character, a SearchBuilder condition the column's type does not take or a value it
@@ -746,7 +758,8 @@ def _criterion(
     _within_the_length(texts, column, search=False)
     if column is None:  # never logged or answered by its name: that is the client's text
         raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
-    kind = describe(_filterable(column)).type
+    able = describe(_filterable(column))
+    kind = able.type
     if condition not in _CONDITIONS[kind]:
         # The condition is one of the protocol's literals, never free text
         raise mistake(
@@ -760,6 +773,13 @@ def _criterion(
             'datatables_condition_refused',
             f'The condition "{condition}" cannot be used on "{column.name}", whose search value is transformed '
             'before it is compared. Choose =, !=, null or !null.',
+            column,
+        )
+    if not able.whole_string and condition not in _CONTAINS_AND_EMPTY:  # PRD-D19
+        raise mistake(
+            'datatables_condition_refused',
+            f'The condition "{condition}" cannot be used on "{column.name}", which holds analysed text only. Search '
+            'the column for words, or choose contains, !contains, null or !null.',
             column,
         )
     values: Sequence[Any]
@@ -1000,6 +1020,13 @@ def _column_search(
     # it holds nothing either
     held = [text for text in texts if (text if kind == 'string' else text.strip())]
     empty = len(held) < len(texts)
+    if held and not able.whole_string:  # analysed text holds no whole string to match exactly (PRD-D19)
+        raise mistake(
+            'datatables_search_refused',
+            f'The column "{column.name}" can be searched only for text it contains, not for a list of exact values. '
+            'Type the text to search for instead.',
+            column,
+        )
     values: tuple[Any, ...]
     if kind == 'boolean':
         values = tuple(parse_boolean(text, column) for text in held)

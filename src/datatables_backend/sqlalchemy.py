@@ -140,7 +140,7 @@ class SQLTable:
         missing = [column.source for column in self.columns if column.source not in source.columns]
         if missing:
             raise SchemaError(f'{source} has no column {", ".join(missing)}')
-        check_declaration(self.columns, self._type_of)  # after the missing columns: a type is read from the source
+        check_declaration(self.columns, self._describe)  # after the missing columns: a type is read from the source
         if unique_key is not None:  # a declared key wins over the source's primary key
             self._tie_breakers = [self._sql(column) for column in declared_key(self.columns, unique_key)]
         elif _key_is_not_unique(source):
@@ -211,9 +211,11 @@ class SQLTable:
 
     def _describe(self, column: Column) -> Capabilities:
         """Every SQL column can be sorted by unless it is declared not to, and searched as text (PRD-F23) unless it
-        is a boolean, whose text is nothing a user reads in the cell."""
+        is a boolean, whose text is nothing a user reads in the cell. Every SQL column holds a whole value to match."""
         kind = self._type_of(column)
-        return Capabilities(kind, column.orderable is not False, searched=kind != 'boolean', value_search=False)
+        return Capabilities(
+            kind, column.orderable is not False, searched=kind != 'boolean', value_search=False, whole_string=True
+        )
 
     def _type_of(self, column: Column) -> ColumnType:
         if column.type is not None:

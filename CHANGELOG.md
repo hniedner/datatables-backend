@@ -28,10 +28,4 @@ The first release, a release candidate: install it with `pip install --pre datat
 - Not answered: DataTables' fixed and grouped searches, SearchPanes and ColumnControl filters. A request that carries one
   is refused (a malformed request, 422 in the FastAPI dependency) rather than answered with fewer filters.
 
-### Known differences from the documentation
-
-- On an OpenSearch column of analysed text only (`text='text'`), `=`, `starts` and `ends` are still answered (as a phrase
-  or a substring), although the README and `docs/rules.md` say they are refused. Fixed by
-  [#75](https://github.com/hniedner/datatables-backend/issues/75); this entry goes when it lands.
-
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1

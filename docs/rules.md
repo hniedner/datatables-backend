@@ -149,9 +149,12 @@ finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search 
 analysed-only column.
 
 **A column of analysed text only.** An OpenSearch column declared `text='text'` answers the word search (a word is an
-analysed match: `red` does not find `reddish`), `null` and `!null`, and a categorical filter or `multi_values` list of
-only empty entries, which means empty. A categorical filter, a `multi_values` list and the conditions `=`, `!=`,
-`starts`, `ends`, `contains` and their negations are refused with `invalid_filter`; SQL answers every condition.
+analysed match: `red` does not find `reddish`), `contains` and `!contains` (the phrase of the words), `null` and
+`!null`, and a categorical filter or `multi_values` list of only empty entries, which means empty. A categorical
+filter, a `multi_values` list and the conditions `=`, `!=`, `starts`, `ends` and their negations are refused with
+`invalid_filter`; SQL answers every condition. A column with an exact match to make needs a keyword field: declare it
+`text='text+keyword'` (or `'keyword'`). A `search_value` hook on a column of analysed text only raises `SchemaError`,
+since a hook compares by equality.
 
 **A stored empty string.** "Empty" is a missing field on OpenSearch, so a stored `""` is not empty there; on SQL a
 column that stores text is empty when it holds NULL or `''`.

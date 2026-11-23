@@ -139,7 +139,7 @@ class SearchTable:
         self.total_cache = total_cache
         self.max_result_window = max_result_window
         self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
-        check_declaration(self.columns, _type_of)
+        check_declaration(self.columns, _describe)
         if unique_key is None:
             raise SchemaError(
                 'An index has no primary key to break ties with. Declare one: SearchTable(..., unique_key="id") with '
@@ -374,10 +374,12 @@ def _sortable(column: Column) -> bool:
 def _describe(column: Column) -> Capabilities:
     """A column can be sorted by unless it is declared not to, or left undeclared and not sortable. Only a string
     takes part in the global search, and a column search on a number or a date is one value: OpenSearch cannot match
-    a number or a date as text without a script (PRD-F32, PRD-F33, PRD-F34)."""
+    a number or a date as text without a script (PRD-F32, PRD-F33, PRD-F34). What can be sorted by is also what holds
+    a whole string, to equal, to anchor on and to hook; a string that is analysed text only holds none (PRD-D19,
+    PRD-D20)."""
     kind = _type_of(column)
     orderable = _sortable(column) if column.orderable is None else column.orderable
-    return Capabilities(kind, orderable, searched=kind == 'string', value_search=True)
+    return Capabilities(kind, orderable, searched=kind == 'string', value_search=True, whole_string=_sortable(column))
 
 
 def _any(clauses: list[dict[str, Any]]) -> dict[str, Any]:
@@ -500,15 +502,18 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             return {'range': {field: bounds}}
         case Equals() if node.type != 'string':
             return {'term': {field: node.value}}
-        case Equals():
-            keyword = _keyword(column)
-            return _term(column, keyword, str(node.value)) if keyword else {'match_phrase': {field: str(node.value)}}
+        case Equals():  # the plan lets no analysed-only text through to a match that needs the whole string (PRD-D19)
+            return _term(column, cast(str, _keyword(column)), str(node.value))
+        case Part() if node.where == 'any':
+            return _string_contains(column, str(node.value))
         case Part():
-            keyword = _keyword(column)
-            if node.where == 'any' or keyword is None:
-                # Analysed text has no whole string to anchor on, so starts and ends read as contains there
-                return _string_contains(column, str(node.value))
-            return _part(column, keyword, str(node.value), start=node.where == 'start', end=node.where == 'end')
+            return _part(
+                column,
+                cast(str, _keyword(column)),
+                str(node.value),
+                start=node.where == 'start',
+                end=node.where == 'end',
+            )
         case OneOf():
             return _one_of(node)
 
@@ -521,14 +526,8 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     if node.type == 'date':  # each day as the range `=` gives it
         days = [_compile(Range(column, 'date', Bound(day, True), Bound(next_day(day), False))) for day in node.values]
         return _any([*days, *missing])
+    # The plan lets no list of values through on analysed text (PRD-D19), only an all-empty one, which names no field
     field = _keyword(column) if node.type == 'string' else column.source
-    if field is None and node.values:  # analysed text holds no whole string to match exactly
-        raise mistake(
-            'datatables_search_refused',
-            f'The column "{column.name}" can be searched only for text it contains, not for a list of exact '
-            'values. Type the text to search for instead.',
-            column,
-        )
     if field is not None and node.type == 'string' and _folds(column):
         # A terms query takes no case_insensitive, so a list of strings is one term query for each value
         return _any([*(_term(column, field, str(value)) for value in node.values), *missing])
