@@ -50,7 +50,7 @@ def run(
     specs: dict[str, str] | None,
     prd: str | bytes | None = PRD,
     tests: dict[str, str] | None = None,
-    enforce: tuple[str, ...] = (),
+    enforce: tuple[str, ...] | None = (),
 ) -> subprocess.CompletedProcess[str]:
     tests_path = tmp_path / 'tests'
     tests_path.mkdir()
@@ -79,8 +79,7 @@ def run(
             str(specs_path),
             '--tests',
             str(tests_path),
-            '--enforce',
-            *enforce,
+            *([] if enforce is None else ['--enforce', *enforce]),
         ],
         capture_output=True,
         text=True,
@@ -441,25 +440,65 @@ def test_only_a_statement_whose_first_tag_is_review_or_ci_needs_no_test(
     assert (result.returncode == 0) == exempt, result.stderr
 
 
+GOOD = 'reason="PRD-F1, issue #47", strict=True, raises=ValueError'
+
+
 @pytest.mark.parametrize(
     ('source', 'finding'),
     [
-        ('@pytest.mark.xfail(reason="#7")\ndef f(): ...\n', 'is not strict'),
-        ('@pytest.mark.xfail(reason="PRD-F1", strict=True)\ndef f(): ...\n', 'names no issue'),
-        ('X = pytest.mark.xfail(strict=True)\n', 'names no issue'),
-        ('pytest.xfail("#7")\n', 'is not strict'),
-        ('@pytest.mark.xfail(reason="PRD-F1, issue #47", strict=True)\ndef f(): ...\n', None),
-        ('X = pytest.mark.xfail(reason="#47 and " "more", strict=True)\n', None),
+        ('@pytest.mark.xfail(reason="#7", raises=ValueError)\ndef f(): ...\n', 'xfail is not strict'),
+        ('@pytest.mark.xfail(reason="#7", strict=False, raises=ValueError)\ndef f(): ...\n', 'xfail is not strict'),
+        ('@pytest.mark.xfail(reason="#7", strict=True)\ndef f(): ...\n', 'xfail names no expected exception (raises=)'),
+        (
+            '@pytest.mark.xfail(reason="PRD-F1", strict=True, raises=ValueError)\ndef f(): ...\n',
+            'xfail names no issue',
+        ),
+        ('X = pytest.mark.xfail(strict=True, raises=ValueError)\n', 'xfail names no issue'),
+        ('@pytest.mark.xfail\ndef f(): ...\n', 'xfail is not called; write xfail(reason=..., strict=True, raises=...)'),
+        (
+            'P = pytest.param(1, marks=pytest.mark.xfail)\n',
+            'xfail is not called; write xfail(reason=..., strict=True, raises=...)',
+        ),
+        ('pytest.xfail("#7")\n', 'xfail() cannot be strict; use a strict mark'),
+        ('from pytest import xfail\nxfail("#7")\n', 'xfail() cannot be strict; use a strict mark'),
+        (
+            'from pytest import mark\n@mark.xfail(reason="#7", strict=True)\ndef f(): ...\n',
+            'xfail names no expected exception (raises=)',
+        ),
+        (f'@pytest.mark.xfail({GOOD})\ndef f(): ...\n', None),
+        (f'X = pytest.mark.xfail({GOOD})\n', None),
+        ('X = pytest.mark.xfail(reason="#47 and " "more", strict=True, raises=ValueError)\n', None),
     ],
 )
-def test_an_xfail_is_strict_and_names_an_issue(tmp_path: Path, source: str, finding: str | None) -> None:
-    """An xfail with no issue or no strictness hides a failure for good."""
+def test_an_xfail_is_strict_names_its_exception_and_an_issue(tmp_path: Path, source: str, finding: str | None) -> None:
+    """An xfail that is not strict, passes on any error, names no issue or is not a call hides a failure for good."""
     result = run(tmp_path, {'F.md': COMPLETE}, tests={'test_a.py': source})
     if finding is None:
         assert result.returncode == 0, result.stderr
     else:
         assert result.returncode == 1
-        assert result.stderr == f'test_a.py:1 xfail {finding}\n'
+        line = 2 if source.startswith('from pytest import') else 1
+        assert result.stderr == f'test_a.py:{line} {finding}\n'
+
+
+def test_the_enforced_requirements_of_the_script_are_the_default(tmp_path: Path) -> None:
+    """Without `--enforce` an uncited statement of PRD-P fails: an emptied default would pass every other test."""
+    prd = PRD + '\n#### PRD-P1' + VALID
+    result = run(tmp_path, {'F.md': COMPLETE + '- **SPEC-P1.1** Parse, see PRD-F1.\n'}, prd=prd, enforce=None)
+    assert result.returncode == 1
+    assert result.stderr == 'SPEC-P1.1 is cited by no test\n'
+
+
+def test_an_enforce_entry_that_names_no_requirement_fails(tmp_path: Path) -> None:
+    """A mistyped entry ('p', 'PRD-P99') would enforce nothing and look like a pass."""
+    result = run(tmp_path, {'F.md': COMPLETE}, enforce=('p', 'PRD-P99', 'F'))
+    assert result.returncode == 1
+    assert result.stderr == (
+        'enforce entry p names no PRD id or letter\n'
+        'enforce entry PRD-P99 names no PRD id or letter\n'
+        'SPEC-F1.1 is cited by no test\n'
+        'SPEC-F2.1 is cited by no test\n'
+    )
 
 
 def test_missing_tests_directory_is_a_usage_error(tmp_path: Path) -> None:

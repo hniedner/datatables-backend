@@ -39,9 +39,11 @@ Findings, one line each on stderr, exit status 1:
   exercises the behaviour the statement states. ``ENFORCED`` holds the enforced PRD ids or letters; ``--enforce``
   replaces it;
 - a test file naming a statement that no spec holds;
-- an ``xfail`` mark or call in the tests that is not ``strict=True`` or whose ``reason`` names no issue (``#47``). That
-  the issue is still open is not checked: a fixed behaviour makes a strict xfail fail, and the reviewer reads the
-  rest at each issue close.
+- an ``xfail`` in the tests that is not a call of a mark with ``strict=True``, ``raises=`` and a ``reason`` that names
+  an issue (``#47``): a bare mark, ``pytest.xfail()`` (it cannot be strict) and ``xfail`` imported by name are
+  findings too. That the issue is still open is not checked: a fixed behaviour makes a strict xfail fail, and the
+  reviewer reads the rest at each issue close;
+- an ``--enforce`` entry (or ``ENFORCED`` one) that is neither a PRD id nor the letter of one.
 
 An unreadable PRD, specs or tests directory is a usage error (exit status 2).
 
@@ -143,17 +145,29 @@ def statements(files: list[tuple[str, str]]) -> tuple[list[Statement], list[str]
 
 
 def xfail_findings(name: str, text: str) -> list[str]:
-    """The xfail marks and calls of a test file that are not strict or name no issue."""
+    """The xfail uses of a test file that are not a strict mark naming its exception and an issue."""
+    tree = ast.parse(text)
+    calls = {id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)}
     findings: list[str] = []
-    for node in ast.walk(ast.parse(text)):
-        if not (isinstance(node, ast.Call) and getattr(node.func, 'attr', None) == 'xfail'):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute | ast.Name) or getattr(node, 'attr', getattr(node, 'id', '')) != 'xfail':
             continue
-        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-        strict, reason = keywords.get('strict'), keywords.get('reason')
-        if not (isinstance(strict, ast.Constant) and strict.value is True):
-            findings.append(f'{name}:{node.lineno} xfail is not strict')
-        elif not (isinstance(reason, ast.Constant) and ISSUE.search(str(reason.value))):
-            findings.append(f'{name}:{node.lineno} xfail names no issue')
+        where = f'{name}:{node.lineno} xfail'
+        owner = node.value if isinstance(node, ast.Attribute) else None
+        owner_name = getattr(owner, 'attr', getattr(owner, 'id', None))
+        if (call := calls.get(id(node))) is None:
+            findings.append(f'{where} is not called; write xfail(reason=..., strict=True, raises=...)')
+        elif owner_name != 'mark':
+            findings.append(f'{where}() cannot be strict; use a strict mark')
+        else:
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            strict, reason = keywords.get('strict'), keywords.get('reason')
+            if not (isinstance(strict, ast.Constant) and strict.value is True):
+                findings.append(f'{where} is not strict')
+            elif 'raises' not in keywords:
+                findings.append(f'{where} names no expected exception (raises=)')
+            elif not (isinstance(reason, ast.Constant) and ISSUE.search(str(reason.value))):
+                findings.append(f'{where} names no issue')
     return findings
 
 
@@ -188,6 +202,13 @@ def check(
             if missing not in priority
         )
         findings.extend(f'{statement.id} cites the malformed id {bad}' for bad in statement.malformed)
+    known_ids = {rid for rid, _ in rows}
+    known_letters = {rid[4:].rstrip('0123456789') for rid in known_ids}
+    findings.extend(
+        f'enforce entry {entry} names no PRD id or letter'
+        for entry in enforce
+        if entry not in known_ids | known_letters
+    )
     cited_by = {
         f'SPEC-{letters}{number}.{int(index)}': name
         for name, text in tests
