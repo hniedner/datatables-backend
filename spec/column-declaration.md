@@ -47,14 +47,17 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   ignores the hooked column); `!apple` → rows 2, 3, 4.
 - **SPEC-D12.5** [all] On a table whose only searchable column is `secret`, given a row 5 whose `secret` is stored as
   `enc:` + 20 one-letter words (`a b c ... t`): a global search of those 20 words → rows 5 (no word cap; matched by
-  equality); a global search of 256 code points → `invalid_filter`.
+  equality); a global search of 256 code points → `value_too_long`.
 - **SPEC-D12.6** [all] On a table with one hooked and one other searchable column: a global search of 17 words →
-  `invalid_filter`.
+  `too_many_words`.
 - **SPEC-D12.7** [all] Given a row 5 whose `secret` is stored as `enc:a` + LF + `b` and whose every other column but
   `id` is NULL or missing: global search `a` + LF + `b` → rows 5 (the hooked equality, since
   the LF is not rewritten for it; no fixture row holds both `a` and `b` in its other columns).
 - **SPEC-D12.8** [all] A global search of `Alpha` with spaces around it to 256 code points in all (5 after
-  trimming) → `invalid_filter`: the 255-code-point bound applies to the raw text.
+  trimming) → `value_too_long`: the 255-code-point bound applies to the raw text.
+- **SPEC-D12.9** [all] On a table whose only searchable column is `secret`, given a row 5 whose `secret` is stored as
+  `enc:!Alpha`: global search `!Alpha` → rows 5 (a word, even a negated one, is compared whole by the hooked
+  equality); global search `""` or `!x` → every row, and the hook is not called (text with no word adds nothing).
 - **SPEC-D13.1** [OS] A `text+keyword` column (the default) sorts and matches exactly on `<field>.keyword`; a
   `keyword` column on `<field>`; recording shows the field names.
 - **SPEC-D14.1** [all] Declaring a hook on a number, date or boolean column → `SchemaError` at construction.

@@ -241,8 +241,8 @@ def recording() -> tuple[list[str], dict[str, SQLTable]]:
 def test_a_hooked_column_is_equality_on_the_trimmed_whole_text_in_the_global_search(
     session: Session, text: str, expected: list[int]
 ):
-    """SPEC-D12.1, SPEC-D12.3, SPEC-D12.5, SPEC-D12.7 on a table whose every searchable column is hooked, so the
-    equality alone decides. A match on a part of the value finds more rows (`1` also row 11), and one that did not
+    """SPEC-D12.1, SPEC-D12.3, SPEC-D12.5, SPEC-D12.7, SPEC-D12.9 on a table whose every searchable column is hooked,
+    so the equality alone decides. A match on a part of the value finds more rows (`1` also row 11), and one that did not
     trim hands the hook the padding."""
     session.execute(people.insert(), [{'id': row, 'secret': stored} for row, stored in HOOKED_ROWS.items()])
     assert ids(only_hooked.fetch_sync(request('id', 'secret', **glob(text)), session)) == expected
@@ -284,7 +284,7 @@ def test_the_hook_is_given_the_trimmed_whole_text_once(session: Session, shape: 
 def test_text_with_no_word_adds_nothing_to_a_hooked_column_in_the_global_search(
     session: Session, shape: str, text: str
 ):
-    """SPEC-F6.2 with PRD-D12: text whose every token adds nothing adds nothing here either, on a table of hooked
+    """SPEC-F6.2, SPEC-D12.9: text whose every token adds nothing adds nothing here either, on a table of hooked
     columns only as on a mixed one, and the hook is not called (it would turn `!x` into `s!x`, which no row holds)."""
     seen, tables = recording()
     assert ids(tables[shape].fetch_sync(request(*NAMES[shape], **glob(text)), session)) == [1, 2, 3, 4, 5]
