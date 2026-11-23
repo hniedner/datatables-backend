@@ -27,7 +27,8 @@ class Column:
             string column that is analysed text only, which has no whole string to sort by (declaring that one
             orderable raises ``SchemaError``).
         search_value: Transforms a string the user searches this column for before it reaches the query, for example
-            to encrypt or encode it the way the source stores it.
+            to encrypt or encode it the way the source stores it. The column must be a string (PRD-D14, else
+            ``SchemaError``), and its searches compare the whole transformed value by equality (PRD-D15 to PRD-D18).
         fold_case: Whether an exact match on a string column (SearchBuilder's ``=`` and ``!=``, a multi-select, a
             ``multi_values`` list) ignores case. ``False`` sends a plain comparison, which a plain index on the
             column can serve and which matches case as the column's collation or the field's mapping decides.

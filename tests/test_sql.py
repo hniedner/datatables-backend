@@ -1171,14 +1171,22 @@ HOOKED = SQLTable(people, [Column('id'), Column('secret', search_value=lambda te
 
 
 @pytest.mark.parametrize(
-    ('condition', 'expected'),
-    [('=', [4]), ('!=', [1, 2, 3, 5])],  # the hook turns `4` into the stored `s4`
+    ('condition', 'values', 'expected'),
+    [
+        ('=', ['4'], [4]),  # the hook turns `4` into the stored `s4`
+        ('!=', ['4'], [1, 2, 3, 5, 6]),  # PRD-F37: row 6, with no value, is not equal to `s4`
+        ('null', [], [6]),  # row 6 holds no secret; the rows that hold one are not empty
+        ('!null', [], [1, 2, 3, 4, 5]),
+    ],
 )
-def test_searchbuilder_equality_on_a_hooked_column_compares_the_transformed_value(
-    session: Session, condition: str, expected: list[int]
+def test_searchbuilder_on_a_hooked_column_answers_equality_and_empty(
+    session: Session, condition: str, values: list[str], expected: list[int]
 ):
-    """SPEC-D18.1 (PRD-D18): the one condition besides `null` that gives the value to the hook."""
-    assert ids(HOOKED.fetch_sync(request('id', 'secret', **criterion('secret', condition, '4')), session)) == expected
+    """SPEC-D18.1 (PRD-D18): `=` and `!=` give the value to the hook; `null` and `!null` take none."""
+    session.execute(people.insert(), [{'id': 6, 'secret': None}])
+    assert (
+        ids(HOOKED.fetch_sync(request('id', 'secret', **criterion('secret', condition, *values)), session)) == expected
+    )
 
 
 @pytest.mark.parametrize('condition', ['contains', '!contains', 'starts', '!starts', 'ends', '!ends'])

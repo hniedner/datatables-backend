@@ -65,7 +65,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D17.1** [all] Column search on `secret` with `Alpha`, ` Alpha `, and `"Alpha"`: `Alpha` and ` Alpha ` → rows
   1; `"Alpha"` → none (no smart-search grammar: the quotes are part of the value).
 - **SPEC-D17.2** [all] Column search on `secret` with 20 words is answered (no word cap); with 256 code points →
-  `invalid_filter`.
+  `value_too_long`.
 - **SPEC-D17.3** [all] Given a row whose `secret` is stored as `enc:a` + LF + `b`: a column search on `secret` with
   `a` + LF + `b` → that row; with `a b` → none (LF is not rewritten for the equality).
 - **SPEC-D18.1** [all] Given rows 5 (`secret` NULL or missing) and 6 (`secret` `''`), SearchBuilder on `secret`:

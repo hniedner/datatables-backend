@@ -176,8 +176,8 @@ of the library.
   - A character the normalizer turns into several, as `⁇` (U+2047) into `??`, matches too much in a substring
     search. No form of query measured is right for it.
   - Another character that a normalizer folds to `*`, `?` or `\` is not covered: only the three above are.
-  - A search text of more than 255 code points, and a search on a column with a search-value hook, are sent as
-    before, so the three marks match too much or miss their own row there.
+  - A search text of more than 255 code points, and the global search on a column with a search-value hook, are sent
+    as before, so the three marks match too much or miss their own row there.
   - A search with one of the three marks folds letters as a regular expression does, which from OpenSearch 3.1 on
     is a little more than other searches fold: `k` beside such a mark also finds the Kelvin sign. Not measured for
     these values; `docs/decisions/001-opensearch-case-folding-beyond-ascii.md` holds the measurement for others.
