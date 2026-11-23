@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 48 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 49 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -44,7 +44,9 @@
   and adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a
   request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
   lacks raises `SchemaError` at construction); revision 48 adds a clause to PRD-O1 (an order list is refused whole
-  when any entry is refused)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here.
+  when any entry is refused); revision 49 adds PRD-E14, as the owner decided on 2026-11-23, and clauses to PRD-E8 (a
+  hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached)). It
+  replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -1285,7 +1287,9 @@ PRD-C11 may run first).
 
 #### PRD-E8
 
-Everything else raises: a database error, a schema the table lacks, a partial OpenSearch answer.
+Everything else raises: a database error, a schema the table lacks, a partial OpenSearch answer. An exception raised by
+a hook the caller supplies (a search-value transform or a row hook) propagates unchanged; it is never answered as a
+user error.
 
 - **Reason:** A server failure is not the user's to fix and must not look like an empty result.
 - **Priority:** must
@@ -1293,7 +1297,8 @@ Everything else raises: a database error, a schema the table lacks, a partial Op
 #### PRD-E9
 
 An OpenSearch answer that does not cover every shard, or whose shard information cannot be read, raises
-`PartialResultError`.
+`PartialResultError`. An answer whose shards are all present but that timed out is partial too. A total taken from a
+partial answer is never kept in the total cache.
 
 - **Reason:** A partial answer is never shown as complete.
 - **Priority:** must
@@ -1329,6 +1334,18 @@ or refused.
 
 - **Reason:** An operator sees every refusal once and can count them by event; an allowed skip is normal traffic
   (DataTables sends its default order and idle searches on every request), and logging it would bury the refusals.
+- **Priority:** must
+
+#### PRD-E14
+
+An OpenSearch answer that is partial or unreadable (PRD-E9) is logged once at ERROR, naming the index and the shard
+counts, never a value. A partial answer (a shard failed or missing, or a timeout) is logged as
+`opensearch_answer_partial` with the index, whether it timed out and the counts of shards total, successful and failed;
+one that cannot be read is logged as `opensearch_answer_unverifiable` with the index and the names of the fields it
+could not read (`_shards`, `_shards.total`, `_shards.successful`, `_shards.failed`, `timed_out`, or `answer` when it is
+no mapping), never their values.
+
+- **Reason:** An operator must see a partial answer without the data it holds (PRD-E10).
 - **Priority:** must
 
 ### 4.7 Rows and the response (R)
