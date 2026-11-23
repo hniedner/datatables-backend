@@ -991,7 +991,8 @@ true, so ascending is NULL, false, true.
 
 After the user's order, last, a tie-breaker on a unique key (the primary key, or the key PRD-D11 declares) follows the
 direction of the first applied order entry (PRD-O8; a skipped entry does not decide), so descending is the exact reverse
-of ascending.
+of ascending. This holds for fields of one value: OpenSearch sorts a field of several values by its least value
+ascending and its greatest descending, so there the two are not reverses (`docs/databases.md`).
 
 - **Reason:** Pages are deterministic, a tie never splits across a page boundary, and reversing the order reverses the
   rows.
@@ -1110,7 +1111,10 @@ On OpenSearch, a count that is only a lower bound is replaced by an exact count.
 
 An OpenSearch page is served when `start + length <= max_result_window` (the ordinary way) or
 `recordsFiltered - start <= max_result_window` (by reversing the sort and the page). `max_result_window` defaults to
-10,000 and can be set per table.
+10,000 and can be set per table. A reversed page flips every sort entry, the unique key included, a missing value
+staying the lowest, and asks for `from = max(0, F - start - length)` and `size = min(length, F - start)`, F being
+`recordsFiltered`, so that `from + size = F - start`; each flipped entry names the sort `mode` of its original
+direction, and the hits are shown in the reverse of the order they come in.
 
 - **Reason:** "Last page" on a large index is an ordinary press in SvelteDT's pager; the reverse sort reaches it within
   the window.

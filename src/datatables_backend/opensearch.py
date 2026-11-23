@@ -14,6 +14,7 @@ from collections.abc import Awaitable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field
 from dataclasses import replace
 import json
 import logging
@@ -91,6 +92,7 @@ class _Request:
     search: dict[str, Any]
     count: dict[str, Any] | None  # None: the search's own count is the total
     beyond: InvalidFilter | None = None  # set: the page is past the result window, so only the counts run (PRD-C11)
+    flipped: list[dict[str, Any]] = field(default_factory=list)  # the sort of a reversed page (PRD-C10), if beyond
 
     @property
     def filtered_count(self) -> dict[str, Any]:
@@ -177,7 +179,11 @@ class SearchTable:
             if total is None:
                 total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
                 self._remember(total)
-            return self._past_the_window(params, request.beyond, total, filtered)
+            if (page := self._reversed_page(params, request, filtered)) is None:
+                return self._past_the_window(params, request.beyond, total, filtered)
+            answer = await client.search(index=self.index, body=page)
+            self._filtered(answer)  # raises on a partial answer; the counts that decided the page are the answer's
+            return self._response(params, answer, total, filtered, reverse=True)
         answer = await client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
         if _lower_bound(answer):
@@ -200,7 +206,11 @@ class SearchTable:
             if total is None:
                 total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
                 self._remember(total)
-            return self._past_the_window(params, request.beyond, total, filtered)
+            if (page := self._reversed_page(params, request, filtered)) is None:
+                return self._past_the_window(params, request.beyond, total, filtered)
+            answer = client.search(index=self.index, body=page)
+            self._filtered(answer)  # raises on a partial answer; the counts that decided the page are the answer's
+            return self._response(params, answer, total, filtered, reverse=True)
         answer = client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
         if _lower_bound(answer):
@@ -249,7 +259,8 @@ class SearchTable:
         }
         search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
-        return _Request(search, count if request.filtered else None, beyond)
+        flipped = _sort(request, self.unique_key, flip=True) if beyond else []
+        return _Request(search, count if request.filtered else None, beyond, flipped)
 
     # -- running ----------------------------------------------------------------------------------------------------
 
@@ -276,6 +287,16 @@ class SearchTable:
             raise PartialResultError(f'The count of {self.index} did not cover every shard.')
         return int(answer['count'])
 
+    def _reversed_page(self, params: DTParams, request: _Request, filtered: int) -> dict[str, Any] | None:
+        """The search of a page beyond the result window that the reverse sort reaches (PRD-C10): the rows
+        ``start`` to ``end - 1``, ``end`` being ``min(start + length, filtered)``, are the first ones of the flipped
+        sort from position ``filtered - end``, and ``from`` plus ``size`` is ``filtered - start``, within the window.
+        None when ``start`` is at or past the end (an empty page, PRD-C3) or the page is in the middle (PRD-C12)."""
+        if params.start >= filtered or filtered - params.start > self.max_result_window:
+            return None
+        end = min(params.start + params.length, filtered)
+        return {**request.search, 'from': filtered - end, 'size': end - params.start, 'sort': request.flipped}
+
     def _past_the_window(self, params: DTParams, beyond: InvalidFilter, total: int, filtered: int) -> DTResponse:
         """The answer for a page beyond the result window, once the counts are in: an empty page when ``start`` is at
         or past the end (PRD-C3 wins), else the refusal carrying the real counts (PRD-C12)."""
@@ -283,8 +304,12 @@ class SearchTable:
             return DTResponse(draw=params.draw, recordsTotal=total, recordsFiltered=filtered, data=[])
         return refused(params, beyond).model_copy(update={'recordsTotal': total, 'recordsFiltered': filtered})
 
-    def _response(self, params: DTParams, answer: Mapping[str, Any], total: int, filtered: int) -> DTResponse:
+    def _response(
+        self, params: DTParams, answer: Mapping[str, Any], total: int, filtered: int, *, reverse: bool = False
+    ) -> DTResponse:
         hits = cast(list[Mapping[str, Any]], answer['hits']['hits'])
+        if reverse:  # a reversed page comes back from the end: the rows are shown in the order asked
+            hits = hits[::-1]
         data = [self.rows.apply(self._row(hit)) for hit in hits]
         return DTResponse(draw=params.draw, recordsTotal=total, recordsFiltered=filtered, data=data)
 
@@ -510,11 +535,16 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 
-def _sort(request: Plan, key: tuple[Column, ...]) -> list[dict[str, Any]]:
+def _sort(request: Plan, key: tuple[Column, ...], *, flip: bool = False) -> list[dict[str, Any]]:
     """The user's order, then the unique key (PRD-O3) in the direction of the first applied entry, ascending when
     there is none (PRD-O4); a key column the order names is not named again. A document without the field is the
     lowest value: left to itself OpenSearch puts it last in either direction. A string is sorted by its keyword
-    field; the plan lets no analysed-only text through, and the key is checked at construction."""
+    field; the plan lets no analysed-only text through, and the key is checked at construction.
+
+    ``flip`` gives the sort of a reversed page (PRD-C10): every entry, the key too, runs the other way, a missing value
+    staying the lowest, so that the rows come back in exactly the reverse order. A field of several values is sorted by
+    its least value ascending and its greatest descending, so a flipped entry names the ``mode`` of the direction it
+    flips, or it would not reverse the order it flips."""
     descending = bool(request.order) and request.order[0].descending
     entries = [(item.column, item.type, item.descending) for item in request.order]
     entries += [
@@ -523,10 +553,13 @@ def _sort(request: Plan, key: tuple[Column, ...]) -> list[dict[str, Any]]:
         if all(column is not item.column for item in request.order)
     ]
     sort: list[dict[str, Any]] = []
-    for column, kind, reverse in entries:
-        field = (_keyword(column) if kind == 'string' else None) or column.source
+    for column, kind, original in entries:
+        name = (_keyword(column) if kind == 'string' else None) or column.source
+        reverse = original != flip
         placed = {'order': 'desc', 'missing': '_last'} if reverse else {'order': 'asc', 'missing': '_first'}
-        sort.append({field: placed})
+        if flip:
+            placed['mode'] = 'max' if original else 'min'
+        sort.append({name: placed})
     return sort
 
 

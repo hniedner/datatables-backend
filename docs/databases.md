@@ -150,6 +150,20 @@ the count statement with its bound values, and it sees nothing else.
   the accepted sort and its exact reverse, the 300 bytes of field data, and the deprecation line in the server's log.
 - **Requirement:** PRD-D11.
 
+### A field of several values sorts by another value in each direction
+
+- **What you see:** OpenSearch sorts a document whose sort field holds several values by its least value when the sort
+  is ascending and by its greatest when it is descending (the default sort `mode`). So for such a field a descending
+  order is not the exact reverse of the ascending one (PRD-O3 holds for fields of one value). A reversed last page
+  (PRD-C10) names the `mode` of the direction it flips, so it shows the rows the ordinary page shows at that position.
+- **Example:** in the live index of the tests, `label` holds several values in two documents. By their least values the
+  ascending order is c3, d4, a1, e5, b2; by their greatest values the descending order is d4, a1, b2, e5, c3, not
+  b2, e5, a1, d4, c3.
+- **How it is known:** the default `mode` is from the OpenSearch documentation of sorting; the order of the example is
+  worked out from the test data, and the live test of SPEC-C10.3 depends on it (it is red on `label` without the
+  `mode`, as the recording test of the body shows).
+- **Requirement:** PRD-C10, PRD-O3.
+
 ### A shared `TotalCache` cannot tell two clusters or two users apart
 
 This is a limit of the library, not of OpenSearch: the cache keeps a total under the index's name and the base

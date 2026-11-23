@@ -1171,11 +1171,30 @@ def test_a_reversed_page_answers_the_counts_that_decided_it_though_the_index_has
 
 
 async def test_the_async_fetch_serves_a_reversed_page_too():
-    """SPEC-C10.2 through `fetch`, which builds its page apart from `fetch_sync`."""
-    client = AsyncDocs(10)
+    """SPEC-C10.2, SPEC-C13.1 through `fetch`, which builds its page apart from `fetch_sync`: the rows come in
+    ascending order, and the answer carries the counts that decided the page (the search itself says 7)."""
+    client = AsyncCounting(total=10, filtered=10, hits=[doc(10), doc(9)])
     response = await bounded(3).fetch(request(*NAMES, start=8, length=3), client)
     assert row_ids(response) == ['9', '10']
+    assert (response.recordsTotal, response.recordsFiltered) == (10, 10)
     assert (client.searches[0]['from'], client.searches[0]['size']) == (0, 2)
+
+
+PARTIAL = {'total': 2, 'successful': 1, 'failed': 1}
+
+
+def test_a_partial_answer_to_a_reversed_page_raises():
+    """SPEC-E8: a page read from some of the shards only is no answer, the reversed one included."""
+    client = Counting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
+    with pytest.raises(PartialResultError):
+        bounded(3).fetch_sync(request(*NAMES, start=9, length=1), client)
+
+
+async def test_a_partial_answer_to_an_async_reversed_page_raises():
+    """SPEC-E8 through `fetch`."""
+    client = AsyncCounting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
+    with pytest.raises(PartialResultError):
+        await bounded(3).fetch(request(*NAMES, start=9, length=1), client)
 
 
 def test_the_total_cache_serves_a_reversed_page_too():
