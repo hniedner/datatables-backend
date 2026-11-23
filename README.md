@@ -70,6 +70,12 @@ an order comes in its ascending order, so pages are stable. Declare it `IndexCol
 number. A key is a declared column, so its value is sent in every row; `searchable=False` and `orderable=False` keep it
 out of the client's controls. A table without a key raises `SchemaError`.
 
+**The document id.** An index whose documents hold no unique field needs one: copy the id into a `keyword` field at
+ingest, which is OpenSearch's own advice, and name that column as the key. The document's own `_id` cannot be the key,
+because OpenSearch deprecates sorting on it (`docs/databases.md`); naming it raises `SchemaError`. A declared
+`Column('_id')` shows the id (it reads the hit's id, and fills `DT_RowId` through `RowHooks`) but cannot be searched or
+sorted: `searchable` is ignored on it, and `orderable=True` raises `SchemaError`.
+
 SQL takes the same `unique_key`, which replaces the primary key when declared. Without it, a source must have a primary
 key, and a subquery must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a
 scalar subquery); otherwise it raises `SchemaError`. A `UNION` is not checked: declare `unique_key` on a subquery over

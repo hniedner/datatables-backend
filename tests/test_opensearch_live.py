@@ -708,3 +708,17 @@ def test_a_request_of_the_budget_is_answered(client: OpenSearch):
     names = [column.name for column in columns]
     response = SearchTable(INDEX, columns, unique_key='t0').fetch_sync(request(*names, search={'value': 'x'}), client)
     assert response.error is None
+
+
+def test_a_column_declared_for_the_document_id_shows_the_real_id(client: OpenSearch):
+    """SPEC-D11.6, measured (issue #96): the documents were indexed with the ids 1 to 5, which no `_source` holds.
+    The table is ordered by its keyword key, never by the id."""
+    shown = SearchTable(INDEX, [Column('_id'), IndexColumn('id', text='keyword')], unique_key='id')
+    response = shown.fetch_sync(request('_id', 'id'), client)
+    assert [(row['_id'], row['id']) for row in response.data] == [
+        ('1', 'a1'),
+        ('2', 'b2'),
+        ('3', 'c3'),
+        ('4', 'd4'),
+        ('5', 'e5'),
+    ]

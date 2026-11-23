@@ -134,6 +134,22 @@ the count statement with its bound values, and it sees nothing else.
 - **How it is known:** from the OpenSearch documentation of dynamic mapping; not run on a server here.
 - **Requirement:** PRD-D11.
 
+### Sorting on the document `_id` is deprecated
+
+- **What you see:** a sort on `_id` is accepted on a default cluster (`indices.id_field_data.enabled` is `true`),
+  `desc` is the exact reverse of `asc`, and after it the nodes report field data held for `_id` (300 bytes on a
+  5-document index, none before). The first such sort logs, on both versions: `[DEPRECATION][o.o.d.i.m.IdFieldMapper]
+  Loading the fielddata on the _id field is deprecated and will be removed in future versions. If you require sorting
+  or aggregating on this field you should also include the id in the body of your documents, and map this field as a
+  keyword field that has [doc_values] enabled`. So the library does not let `_id` be the `unique_key`, nor a column
+  be ordered by it: a public name must not rest on a feature the current release says it will remove.
+- **What to do:** copy the id into a `keyword` field of the documents at ingest (OpenSearch's own advice) and name that
+  column as the key. A declared `Column('_id')` still shows the id (it reads `hit['_id']`, which needs no field data)
+  but is neither searchable nor orderable.
+- **How it is known:** measured on OpenSearch 3.10.0 and 2.19.7 on a CI index of 5 documents: the default setting,
+  the accepted sort and its exact reverse, the 300 bytes of field data, and the deprecation line in the server's log.
+- **Requirement:** PRD-D11.
+
 ### A shared `TotalCache` cannot tell two clusters or two users apart
 
 This is a limit of the library, not of OpenSearch: the cache keeps a total under the index's name and the base

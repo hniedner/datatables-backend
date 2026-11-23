@@ -46,6 +46,13 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   column selected it is accepted. The same holds for a subquery inside a join. (A `UNION` is not checked.)
 - **SPEC-D11.4** [all] A unique key of several columns breaks ties in the order of its names, each in the direction
   of the first applied entry (PRD-O3); a column the order already names is not named again.
+- **SPEC-D11.5** [OS] `_id` cannot be the unique key: `unique_key='_id'` with no declared column is an unknown name
+  (`SchemaError`), and a key column whose field is `_id` raises `SchemaError` that says OpenSearch deprecates
+  sorting on `_id` (field data) and to copy the id into a `keyword` field of the documents and name that column.
+- **SPEC-D11.6** [OS] A column declared for `_id` reads its value from `hit['_id']`, which `_source` does not
+  hold, and `_source` is never asked for it. It is neither searchable nor orderable: a column search or a criterion
+  on it is refused as for any unsearchable column, the global search leaves it out, an order on it is refused (or
+  skipped where the request marks it unorderable), and `orderable=True` on it is a `SchemaError`.
 - **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none.
 - **SPEC-D12.2** [all] Global search `red Alpha` → none: neither do both words match the other columns, nor does the
   whole text `red Alpha` equal a hooked value.
