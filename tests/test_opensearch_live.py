@@ -11,6 +11,7 @@ column, which PRD v2 settles (PRD-F37). A boolean column follows PRD v2 already,
 
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
+from contextlib import contextmanager
 import os
 import time
 from typing import Any
@@ -860,9 +861,17 @@ def test_a_start_equal_to_the_document_count_is_an_empty_page_with_both_counts(c
     assert (response.recordsTotal, response.recordsFiltered, response.data, response.error) == (5, 5, [], None)
 
 
-def add_document(client: OpenSearch) -> None:
+@contextmanager
+def added_document(client: OpenSearch) -> Iterator[None]:
+    """A sixth document, in the index for the length of the block: `client` is shared by every test of the module, so
+    a test that adds one leaves the index as it found it, whatever the test does."""
     client.index(index=INDEX, id='f6', body={'id': 'f6', 'title': 'Fig tart', 'body': 'figs'})
     client.indices.refresh(index=INDEX)
+    try:
+        yield
+    finally:
+        client.delete(index=INDEX, id='f6')
+        client.indices.refresh(index=INDEX)
 
 
 def test_the_cached_total_is_counted_again_after_the_ttl(client: OpenSearch):
@@ -870,10 +879,10 @@ def test_the_cached_total_is_counted_again_after_the_ttl(client: OpenSearch):
     cached = SearchTable(INDEX, COLUMNS, unique_key='id', total_cache=TotalCache(ttl=0.3))
     params = request(*NAMES, search={'value': 'apple'})
     assert cached.fetch_sync(params, client).recordsTotal == 5
-    add_document(client)
-    assert cached.fetch_sync(params, client).recordsTotal == 5
-    time.sleep(0.35)
-    assert cached.fetch_sync(params, client).recordsTotal == 6
+    with added_document(client):
+        assert cached.fetch_sync(params, client).recordsTotal == 5
+        time.sleep(0.35)
+        assert cached.fetch_sync(params, client).recordsTotal == 6
 
 
 def test_clear_makes_the_next_request_count_the_cluster_again(client: OpenSearch):
@@ -882,7 +891,7 @@ def test_clear_makes_the_next_request_count_the_cluster_again(client: OpenSearch
     cached = SearchTable(INDEX, COLUMNS, unique_key='id', total_cache=cache)
     params = request(*NAMES, search={'value': 'apple'})
     assert cached.fetch_sync(params, client).recordsTotal == 5
-    add_document(client)
-    assert cached.fetch_sync(params, client).recordsTotal == 5
-    cache.clear()
-    assert cached.fetch_sync(params, client).recordsTotal == 6
+    with added_document(client):
+        assert cached.fetch_sync(params, client).recordsTotal == 5
+        cache.clear()
+        assert cached.fetch_sync(params, client).recordsTotal == 6
