@@ -15,7 +15,9 @@ and [SearchBuilder](https://datatables.net/extensions/searchbuilder/) criteria. 
 
 The library is read-only and framework-agnostic.
 
-> Status: pre-alpha. The API may change before 0.1.0. See [docs/PRD.md][prd] for the scope and design.
+> Status: release candidate (0.1.0rc1). Until 1.0, a minor release (0.x) may break the Python API; each such change is
+> listed in [CHANGELOG.md][changelog]. The wire format and the error codes change only in a release whose notes say so.
+> See [docs/PRD.md][prd] for the scope and design.
 
 If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 [`datatables_server`](https://datatables.net/manual/python). This library adds:
@@ -24,7 +26,11 @@ If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 - a search-engine backend;
 - the same server-declared columns and safety rules on every source.
 
+datatables-backend is not affiliated with or endorsed by DataTables or SpryMedia.
+
 ## Install
+
+pip installs no pre-release unless asked, so while 0.1.0 is a release candidate add `--pre` to each command.
 
 ```sh
 pip install "datatables-backend[sqlalchemy]"        # SQL, sync
@@ -143,6 +149,7 @@ The library does not change how a database compares values. Each rule below is s
   ([the entry][db-number-range], [issue #47][issue-47]).
 
 [prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
+[changelog]: https://github.com/hniedner/datatables-backend/blob/main/CHANGELOG.md
 [db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
 [issue-47]: https://github.com/hniedner/datatables-backend/issues/47
 [usage]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md

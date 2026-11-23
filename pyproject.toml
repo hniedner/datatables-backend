@@ -42,6 +42,9 @@ fastapi = ["fastapi>=0.133", "python-multipart>=0.0.9"]
 
 [project.urls]
 Homepage = "https://github.com/hniedner/datatables-backend"
+Documentation = "https://github.com/hniedner/datatables-backend#readme"
+Issues = "https://github.com/hniedner/datatables-backend/issues"
+Changelog = "https://github.com/hniedner/datatables-backend/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

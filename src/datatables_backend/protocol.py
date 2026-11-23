@@ -303,7 +303,7 @@ def parse_request(
 ) -> DTParams:
     """Read a DataTables request.
 
-    ``data`` is either the decoded JSON object a table posts (``ajax.data`` returning ``JSON.stringify(d)``), or flat
+    ``data`` is either the decoded JSON object a table posts (``ajax.submitAs: 'json'``), or flat
     parameters, as a mapping, a multi-dict (anything with ``getlist``, whose every value is read) or key-value pairs
     (a query string or form with repeated ``key[]`` entries). Flat keys
     may be bracketed, as DataTables' default encoding sends them (``columns[0][search][value]``), dotted

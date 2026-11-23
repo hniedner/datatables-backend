@@ -119,7 +119,7 @@ def test_the_fastapi_example_reads_a_form_post_and_a_json_post_alike():
     app = FastAPI()
     asyncio.run(run('DataTablesParams', app=app, users=Users(), Any=Any, SessionDep=Annotated[int, Depends(lambda: 1)]))
     client = TestClient(app)
-    assert client.post('/users/table', json=sent).json()['draw'] == 3  # `data: d => JSON.stringify(d)`
+    assert client.post('/users/table', json=sent).json()['draw'] == 3  # `ajax.submitAs: 'json'`
     assert client.post('/users/table', data=bracketed(sent)).json()['draw'] == 3  # DataTables' default POST
     assert seen[0] == seen[1]
     assert (seen[0].search.value, seen[0].order[0].column, seen[0].columns[1].data) == ('ann', 1, 'email')
