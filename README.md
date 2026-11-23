@@ -110,8 +110,20 @@ The library does not change how a database compares values. Each rule below is s
 - A column that carries a time zone is matched by its UTC day; SQLite and MySQL `DATETIME` store no offset.
 - SQLite, and OpenSearch before 3.1, fold ASCII letters only.
 - A SQL column with a type of its own, or none, is compared as sent, not folded.
+- On OpenSearch a page in the middle of more than `max_result_window` rows is refused (`page_out_of_range`), where the
+  first and last pages work and SQL serves every page ([paging past the window][rules-opensearch]).
+- An OpenSearch column of analysed text only answers the word search, `null`, `!null` and empty lists, where SQL
+  answers every condition ([stated differences][prd-differences]).
+- OpenSearch's global search skips number and date columns, and every backend's skips boolean columns ([stated
+  differences][prd-differences]).
+- On OpenSearch a stored `""` is not empty, where on SQL it is ([stated differences][prd-differences]).
+- On OpenSearch a number outside its field's mapped range fails the request, a stated limit of this library
+  ([the entry][db-number-range], [issue #47][issue-47]).
 
 [prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
+[prd-differences]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md#5-stated-differences
+[db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
+[issue-47]: https://github.com/hniedner/datatables-backend/issues/47
 [rules]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md
 [databases]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md
 [rules-columns]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#columns-and-ordering
