@@ -91,7 +91,7 @@ class AsyncClient(Protocol):
 class _Request:
     search: dict[str, Any]
     count: dict[str, Any] | None  # None: the search's own count is the total
-    beyond: InvalidFilter | None = None  # set: the page is past the result window, so only the counts run (PRD-C11)
+    beyond: InvalidFilter | None = None  # set: the page is past the result window, so the counts run first (PRD-C11)
     flipped: list[dict[str, Any]] = field(default_factory=list)  # the sort of a reversed page (PRD-C10), if beyond
 
     @property
@@ -116,9 +116,9 @@ class SearchTable:
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
-        max_result_window: The index's ``max_result_window``; a page beyond it is refused as the user's request, with
-            the real counts (one or two count calls, never a page search), or answered empty when ``start`` is past
-            the last row.
+        max_result_window: The index's ``max_result_window``. A page beyond it that ends within that many rows of
+            the last row is read by a reversed sort after the counts (PRD-C10); any other is refused with the real
+            counts, or answered empty when ``start`` is past the last row.
     """
 
     def __init__(
@@ -166,8 +166,9 @@ class SearchTable:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once; only a
-        page beyond the result window sends anything first, the counts of PRD-C11 and never a page search. Any other
-        failure raises, a partial answer as ``PartialResultError``.
+        page beyond the result window sends anything first, the counts of PRD-C11, and then a reversed search for a
+        page near the end, none for the refusal or the empty page. Any other failure raises, a partial answer as
+        ``PartialResultError``.
         """
         try:
             request = self._request(params)

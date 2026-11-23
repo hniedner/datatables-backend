@@ -159,9 +159,9 @@ the count statement with its bound values, and it sees nothing else.
 - **Example:** in the live index of the tests, `label` holds several values in two documents. By their least values the
   ascending order is c3, d4, a1, e5, b2; by their greatest values the descending order is d4, a1, b2, e5, c3, not
   b2, e5, a1, d4, c3.
-- **How it is known:** the default `mode` is from the OpenSearch documentation of sorting; the order of the example is
-  worked out from the test data, and the live test of SPEC-C10.3 depends on it (it is red on `label` without the
-  `mode`, as the recording test of the body shows).
+- **How it is known:** derived from the test data and the documented default `mode`, not observed: without the `mode`,
+  `label` ascending at `start` 2, `length` 2 would show b2, a1 instead of a1, e5. The live test of SPEC-C10.3 compares
+  reversed pages with ordinary ones for keyword, `text+keyword`, integer, date and boolean sort fields on both servers.
 - **Requirement:** PRD-C10, PRD-O3.
 
 ### A shared `TotalCache` cannot tell two clusters or two users apart

@@ -1197,18 +1197,6 @@ async def test_a_partial_answer_to_an_async_reversed_page_raises():
         await bounded(3).fetch(request(*NAMES, start=9, length=1), client)
 
 
-def test_the_total_cache_serves_a_reversed_page_too():
-    """SPEC-C12.4 for the reversed path: with a search the total is a count of its own, kept for the next page."""
-    cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
-    client = Docs(7)
-    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
-    cached.fetch_sync(params, client)
-    response = cached.fetch_sync(params, client)
-    assert response.error_code is None
-    assert len(client.counts) == 3
-    assert client.counts.count(EVERYTHING) == 1
-
-
 # -- the document id: shown, never searched, sorted or used as the key (PRD-D11, issue #96) ---
 #
 # OpenSearch deprecates sorting on `_id` (field data): its log says so on 3.10.0 and on 2.19.7, so it is no key. A

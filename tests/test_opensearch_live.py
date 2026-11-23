@@ -210,11 +210,14 @@ def test_a_filtered_draw_counts_the_total_apart(client: OpenSearch):
 
 
 @pytest.mark.parametrize(
-    ('search', 'base_filter', 'start', 'length', 'code', 'counts'),
+    ('search', 'base_filter', 'window', 'start', 'length', 'code', 'counts'),
     [
-        ('', None, 3, 2, 'page_out_of_range', (5, 5)),
-        ('apple', None, 1, 2, 'page_out_of_range', (5, 2)),  # the filtered set and the total are counts of their own
-        ('bread', {'range': {'pages': {'gte': 30}}}, 5, 1, None, (2, 1)),  # the empty page, past the end of 1 row
+        # 5 rows, window 2: start 2 asks for rows 3 to 3, and 5 - 2 = 3 rows from the end is beyond the window
+        ('', None, 2, 2, 1, 'page_out_of_range', (5, 5)),
+        # 2 rows match, window 1: start 0 asks for 2 rows and 2 - 0 > 1; the filtered set and the total are counts of
+        # their own
+        ('apple', None, 1, 0, 2, 'page_out_of_range', (5, 2)),
+        ('bread', {'range': {'pages': {'gte': 30}}}, 2, 5, 1, None, (2, 1)),  # the empty page, past the end of 1 row
     ],
     ids=['unfiltered', 'filtered', 'empty-page-with-a-base-filter'],
 )
@@ -223,6 +226,7 @@ def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
     *,
     search: str,
     base_filter: dict[str, Any] | None,
+    window: int,
     start: int,
     length: int,
     code: str | None,
@@ -231,7 +235,7 @@ def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
     """SPEC-C12.1, SPEC-C12.3, SPEC-C3.3, measured: the count API takes the very query body the library builds for a
     search (the base filter, the clauses) and counts what the search reports. The recording client cannot show that
     the cluster accepts the body, or that its count equals the search's own total."""
-    narrow = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter=base_filter, max_result_window=2)
+    narrow = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter=base_filter, max_result_window=window)
     response = narrow.fetch_sync(request(*NAMES, start=start, length=length, search={'value': search}), client)
     assert (response.error_code, response.data) == (code, [])
     assert (response.recordsTotal, response.recordsFiltered) == counts
@@ -725,6 +729,10 @@ def test_a_column_declared_for_the_document_id_shows_the_real_id(client: OpenSea
 
 
 LABELS = [IndexColumn('id', text='keyword'), IndexColumn('label')]  # `label` holds several values in a1 and d4
+FLAGGED = [
+    IndexColumn('id', text='keyword'),
+    Column('active', type='boolean'),
+]  # ties: a1 and d4, b2 and e5; c3 has none
 
 
 @pytest.mark.parametrize(
@@ -741,8 +749,23 @@ LABELS = [IndexColumn('id', text='keyword'), IndexColumn('label')]  # `label` ho
             'asc',
         ),  # several values in a field: `asc` sorts by the least, `desc` by the greatest
         (('id', 'label'), LABELS, 1, 'desc'),
+        (NAMES, COLUMNS, 4, 'asc'),  # a date (c3 has none): the server must accept `mode` on a date field too
+        (NAMES, COLUMNS, 4, 'desc'),
+        (('id', 'active'), FLAGGED, 1, 'asc'),  # a boolean, with ties broken by the key
+        (('id', 'active'), FLAGGED, 1, 'desc'),
     ],
-    ids=['pages-asc', 'pages-desc', 'title-asc', 'title-desc', 'label-asc', 'label-desc'],
+    ids=[
+        'pages-asc',
+        'pages-desc',
+        'title-asc',
+        'title-desc',
+        'label-asc',
+        'label-desc',
+        'created-asc',
+        'created-desc',
+        'active-asc',
+        'active-desc',
+    ],
 )
 def test_a_page_read_by_the_reversed_sort_is_the_page_the_ordinary_way_gives(
     client: OpenSearch, names: tuple[str, ...], columns: list[Column], column: int, direction: str
