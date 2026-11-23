@@ -788,3 +788,13 @@ def test_a_page_read_by_the_reversed_sort_is_the_page_the_ordinary_way_gives(
                 assert ids(got) == ids(expected), where
             else:
                 assert got.error_code == 'page_out_of_range', where
+
+
+def test_a_renamed_column_is_searched_by_its_stored_field_and_reaches_the_client_by_its_name(client: OpenSearch):
+    """SPEC-D2.1: `author` reads `meta.author`: a column search on it finds Bob's document, and the row has `author`,
+    never `meta` nor the dotted field."""
+    response = table.fetch_sync(request(*NAMES, column_search={'author': {'value': 'bob'}}), client)
+    assert found(response) == ['b2']
+    assert response.data[0]['author'] == 'Bob'
+    assert 'meta' not in response.data[0]
+    assert 'meta.author' not in response.data[0]
