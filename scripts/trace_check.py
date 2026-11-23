@@ -60,9 +60,8 @@ from pathlib import Path
 import re
 import sys
 
-ENFORCED = (
-    'P',
-)  # PRD ids (`PRD-F25`) or letters (`F`) whose statements a test must cite; each acceptance issue adds its own
+# PRD ids (`PRD-F25`) or letters (`F`) whose statements a test must cite; each acceptance issue adds its own
+ENFORCED = ('P', 'R')
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')
 HEADING = re.compile(r'^#### (PRD-[A-Z]+\d+)$')
