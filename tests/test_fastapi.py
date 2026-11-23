@@ -98,6 +98,14 @@ def test_a_form_body_is_read_whatever_its_content_type(content_type: str):
     assert (response.status_code, response.json()) == (200, BODY_READ)
 
 
+def test_a_multipart_form_is_read():
+    """SPEC-A9.5: a body under `multipart/form-data` goes through Starlette's parser, a file field beside it ignored."""
+    response = client.post(
+        '/echo', data={'draw': '2', 'search[value]': 'body'}, files={'upload': ('a.txt', b'x', 'text/plain')}
+    )
+    assert (response.status_code, response.json()) == (200, BODY_READ)
+
+
 @pytest.mark.parametrize('body', [AS_JSON, AS_FORM], ids=['json', 'form'])
 def test_the_body_is_read_and_the_query_string_is_never_merged_into_it(body: str):
     """SPEC-A9.1: DataTables appends its cache-buster `_` to the query of a POST; a merge would also apply the query's
@@ -128,17 +136,26 @@ def test_a_body_that_is_no_json_object_and_no_form_answers_422_that_says_what_to
 
 @pytest.mark.parametrize('content_type', ['application/json', FORM_TYPE, 'text/plain'], ids=['json', 'form', 'plain'])
 @pytest.mark.parametrize(
-    'body',
-    ['[' * 700_000, '{"a":' * 150_000, '{"draw": 1, "x": ' + '[' * 300_000 + ']' * 300_000 + '}'],
+    ('body', 'message'),
+    [
+        ('[' * 700_000, NO_PARAMETER),
+        ('{"a":' * 150_000, NO_PARAMETER),
+        # This one decodes on some Pythons and not on others, so the message is not compared
+        ('{"draw": 1, "x": ' + '[' * 300_000 + ']' * 300_000 + '}', None),
+    ],
     ids=['open-list', 'open-object', 'closed'],
 )
-def test_a_body_nested_deeper_than_it_can_be_decoded_answers_422_never_500(content_type: str, body: str):
-    """SPEC-A9.7: the decoder's `RecursionError` is a refusal, not a server error a client can cause. Each body is
-    under the 1 MB Starlette allows a form field."""
+def test_a_body_nested_deeper_than_it_can_be_decoded_answers_422_never_500(
+    content_type: str, body: str, message: str | None
+):
+    """SPEC-A9.7: the decoder's `RecursionError` is a refusal, not a server error a client can cause; a body that does
+    not decode falls to the form rule. Each body is under the 1 MB Starlette allows a form field."""
     response = TestClient(app, raise_server_exceptions=False).post(
         '/echo', content=body, headers={'content-type': content_type}
     )
     assert response.status_code == 422
+    if message:
+        assert response.json() == {'detail': {'message': message}}
 
 
 def test_a_body_of_several_megabytes_nested_deeper_than_it_can_be_decoded_answers_422_never_500():

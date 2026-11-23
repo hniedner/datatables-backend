@@ -8,6 +8,9 @@ change here; the wire format and the error codes change only in a release whose 
 
 ### Fixed
 
+- The FastAPI dependency read a JSON body only under `Content-Type: application/json`. DataTables' `ajax.submitAs: 'json'`
+  alone keeps the form's Content-Type, so such a table was answered 422. The body is read whatever its Content-Type now:
+  a JSON object as JSON, any other body as a form.
 - A JSON request whose columns set no `data` raised `MalformedRequest`: DataTables sends the column's index, an integer,
   in that case, and so it does with `ajax.submitAs: 'json'`. It is read now, as the text of the integer.
 - A column whose `data` is an object (DataTables' orthogonal data) raised `MalformedRequest`, in JSON and in a form. It is
@@ -16,6 +19,10 @@ change here; the wire format and the error codes change only in a release whose 
 ### Changed
 
 A tightening is a breaking change, and each is listed here with what to send.
+
+- A request with no body is read from its query string whatever its method; a POST with an empty body was answered
+  422. (Nothing that was answered before is answered differently: a body still wins over the query string, and the two
+  are never merged.)
 
 - A number in the request (`draw`, `start`, `length`, `order[i][column]`) must be a JSON integer, or ASCII digits with an
   optional minus, as DataTables writes it. `1.0`, `1.5`, ` 1`, `+1` and the JSON number `1.0` now raise
