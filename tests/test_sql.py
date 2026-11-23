@@ -1260,6 +1260,44 @@ def test_searchbuilder_groups_nest_and_empty_groups_add_nothing(session: Session
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [1, 5]
 
 
+BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}  # rows 2 and 5
+
+
+@pytest.mark.parametrize(
+    'unfinished',
+    [
+        pytest.param({'origData': 'name', 'value': ['Ann']}, id='no condition'),
+        pytest.param({'condition': '', 'origData': 'name', 'value': ['Ann']}, id='empty condition'),
+        pytest.param({'condition': '=', 'value': ['Ann']}, id='no column'),
+        pytest.param({'condition': '=', 'origData': '', 'data': '', 'value': ['Ann']}, id='empty column'),
+        pytest.param({'condition': '=', 'origData': 'name'}, id='equals without a value key'),
+        pytest.param({'condition': '=', 'origData': 'name', 'value': []}, id='equals with no value'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5']}, id='between with one value'),
+        pytest.param({'condition': 'between', 'origData': 'age'}, id='between without a value key'),
+    ],
+)
+def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict[str, Any]):
+    """SPEC-F30.1 to SPEC-F30.3 (PRD-F30), as an empty group does (SPEC-F28.3). Alone it leaves every row; beside
+    `team = blue` it leaves that criterion's rows in an AND group and in an OR group: read as true it would give every
+    row in the OR group, and read as false none in the AND group."""
+    alone = {'logic': 'AND', 'criteria': [unfinished]}
+    assert ids(table.fetch_sync(request(*ALL, searchBuilder=alone), session)) == [1, 2, 3, 4, 5]
+    for logic in ('AND', 'OR'):
+        tree = {'logic': logic, 'criteria': [BLUE, unfinished]}
+        assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [2, 5], logic
+
+
+def test_a_value_that_is_there_but_unreadable_is_refused_not_left_out(session: Session):
+    """SPEC-F30.4: only a missing value is unfinished; an unreadable one is the user's mistake."""
+    refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', 'abc')), session), 'invalid_number')
+
+
+def test_the_extra_values_a_client_sends_beside_value_are_ignored(session: Session):
+    """SPEC-F27.7: SearchBuilder sends value1 and value2 beside value; a criterion that carries them is still answered."""
+    tree = {'criteria': [{'condition': '=', 'origData': 'name', 'value': ['Bob'], 'value1': 'x', 'value2': 'y'}]}
+    assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [2]
+
+
 def test_the_declared_type_decides_not_the_clients(session: Session):
     """A client that calls a number column a string still gets a numeric comparison, and cannot run 'contains'."""
     tree = {'criteria': [{'condition': '>', 'origData': 'age', 'type': 'string', 'value': ['9']}]}
