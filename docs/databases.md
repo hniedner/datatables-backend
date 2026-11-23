@@ -200,7 +200,8 @@ A column is a string column unless it is declared, because the library does not 
 - **What you see:** a column over a `boolean` field, declared as a string or as `IndexColumn(..., text='keyword')`,
   matches nothing on `=` (a string column queries a `.keyword` subfield the field lacks) or, for a keyword column,
   fails the request with the client's `RequestError` for a term other than `true` or `false`.
-- **What to do:** declare the column `Column('active', type='boolean')`.
+- **What to do:** declare the column `Column('active', type='boolean')`. `1` and `0` are then read as `true` and `false`,
+  and any other word is refused with `invalid_filter` (PRD-F43).
 - **How it is known:** pinned by `tests/test_opensearch_live.py`, which CI's `opensearch` job runs on a live cluster.
 - **Requirement:** PRD-D8, PRD-F43.
 

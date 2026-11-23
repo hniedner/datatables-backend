@@ -604,8 +604,8 @@ def test_searchbuilder_equality_on_a_boolean_field_itself(client: OpenSearch):
 @pytest.mark.parametrize('value', ['1', 'abc'])
 def test_a_keyword_column_on_a_boolean_field_fails_for_a_term_that_is_no_boolean(client: OpenSearch, value: str):
     """Today's result: OpenSearch rejects a term other than true/false on a boolean field, so the search raises. An
-    adopter who declares a keyword column on a boolean mapping declares it wrong; declared boolean (PRD-D8, PRD-F43) it
-    answers `invalid_filter`."""
+    adopter who declares a keyword column on a boolean mapping declares it wrong; declared boolean (PRD-D8, PRD-F43)
+    `1` is answered (`test_searchbuilder_on_a_declared_boolean_column`) and `abc` is refused with `invalid_filter`."""
     flagged = SearchTable(
         INDEX, [IndexColumn('id', text='keyword'), IndexColumn('active', text='keyword')], unique_key='id'
     )

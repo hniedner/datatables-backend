@@ -353,9 +353,9 @@ def test_a_column_ordered_twice_is_ordered_by_its_first_entry(session: Session):
 
 def test_a_skipped_order_entry_or_column_logs_nothing(session: Session, caplog: pytest.LogCaptureFixture):
     """SPEC-E13.2, SPEC-P21.1: a column that only renders and DataTables' default order on it are every request's
-    traffic. Each
-    skip there is, is in this request: an order on a column that only renders, on an undeclared one and on `team`,
-    which both sides mark unorderable, a column ordered twice, and the two columns the global search leaves out."""
+    traffic. Each skip there is, is in this request: an order on a column that only renders, on an undeclared one
+    and on `team`, which both sides mark unorderable, a column ordered twice, and the two columns the global search
+    leaves out."""
     params = request(
         '',
         'extra',

@@ -1659,8 +1659,12 @@ def sent(search_table: SearchTable, params: DTParams) -> Mapping[str, Any]:
 
 
 def test_a_column_with_data_and_no_name_is_the_declared_column_of_that_name():
-    """SPEC-P15.1: a column search on `title` (data `title`, empty name) adds a clause on that field."""
-    assert sent(table, request(*NAMES, column_search={'title': {'value': 'pear'}})) != sent(table, request(*NAMES))
+    """SPEC-P15.1: a column search on `title` (data `title`, empty name) sends what the same column with `name` `title`
+    sends, and that is a search, not the plain request."""
+    search = {'title': {'value': 'pear'}}
+    by_data = sent(table, request(*NAMES, column_search=search))
+    assert by_data == sent(table, request(*NAMES, column_search=search, flags={'title': {'name': 'title'}}))
+    assert by_data != sent(table, request(*NAMES))
 
 
 def test_an_order_entry_is_decided_by_its_column_index_not_its_name():
@@ -1703,3 +1707,12 @@ def test_a_column_search_on_a_nameless_column_is_refused():
     params = request('', *NAMES, flags={'': {'data': None}}, column_search={'': {'value': 'x'}})
     assert refused(table.fetch_sync(params, client))
     assert client.searches == []
+
+
+def test_a_nameless_first_column_with_the_default_order_and_a_global_search_is_answered():
+    """SPEC-P21.1: DataTables' default order on a column that only renders is skipped and the global search leaves it
+    out, so the body is the one the request without that column sends, and there is no error."""
+    nameless = request(
+        '', *NAMES, flags={'': {'data': None}}, order=[{'column': 0, 'dir': 'asc'}], search={'value': 'red'}
+    )
+    assert sent(table, nameless) == sent(table, request(*NAMES, search={'value': 'red'}))
