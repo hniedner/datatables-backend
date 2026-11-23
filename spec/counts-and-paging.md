@@ -62,16 +62,17 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.1** [all] With a `TotalCache` and a global search `red` (so the total is a count of its own, PRD-C8):
   two requests within the TTL run one total count between them; recording shows the second ran only the page search
   (SQL: the filtered count and the page), and both answer `recordsTotal` 4.
-- **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
+- **SPEC-C14.2** [all] With a `TotalCache` of TTL 0.3 seconds and a global search `red` (so the total is a count of
   its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
-  answers 4; after the test waits past the TTL, the next request counts again and answers 5.
+  answers 4; after the test waits 0.35 seconds, past the TTL, the next request counts again and answers 5.
 - **SPEC-C14.3** [OS] Recording: with a `TotalCache`, an unfiltered request (whose search count is the total, PRD-C8)
   fills the cache: a global search right after it runs no total count, and answers that `recordsTotal`.
 - **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
   tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
   and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.
-- **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two databases of the backend under test
-  holding 4 and 2 rows, with a global search `red` → `recordsTotal` 4 and 2.
+- **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
+  with a global search `red` → `recordsTotal` 4 and 2; the key holds the database URL on every dialect, so SQLite
+  proves it for all (PRD-C15).
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.5** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
