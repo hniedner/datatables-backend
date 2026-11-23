@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 37 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 38 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -28,7 +28,8 @@
   PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5; revision 36 adds a clause to PRD-D1
   (a table declares a column, and no two share a name); revision 37 adds a clause to PRD-D12 (text whose every token
   adds nothing under PRD-F6 adds nothing there either, and text with a word, a negated one included, is compared
-  whole)). It replaces draft 1 (R1 to
+  whole); revision 38 changes PRD-F30 (an unfinished SearchBuilder criterion adds nothing instead of being refused) and
+  a clause of PRD-P6, with a line in section 5; PRD-F36's reason follows). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -159,8 +160,8 @@ logic.
 A request whose structure cannot be read (a top-level value that is not an object, a request parameter, or a field under
 one, of the wrong type (a `null` `data` excepted, PRD-P21), a flat key that is not text, an object value among flat
 keys, keys that collide or leave a gap in an index, an `order` index outside the request's columns (PRD-O1), a
-SearchBuilder condition outside the 16 the protocol model knows, such as its array condition `without`) raises
-`MalformedRequest`.
+SearchBuilder condition outside the 16 the protocol model knows, such as its array condition `without`, a criterion
+with no condition or an empty one excepted, PRD-F30) raises `MalformedRequest`.
 
 - **Reason:** A structural error is an integration bug, not something the user can change.
 - **Priority:** must
@@ -798,9 +799,12 @@ SearchBuilder groups nest and join their criteria with AND or OR; an empty group
 
 #### PRD-F30
 
-A SearchBuilder criterion missing its values is refused.
+An unfinished SearchBuilder criterion adds nothing, as an empty group does (PRD-F28): one with no condition (missing or
+empty text), no column, or without the value or values its condition takes. A criterion with a value it cannot read, or
+with more values than its condition takes (PRD-F36), is still refused.
 
-- **Reason:** A half-built criterion must not match everything.
+- **Reason:** A criterion the user has not finished must neither refuse the request nor match every row; a new
+  SearchBuilder criterion starts without a condition or a column, and the client sends it so.
 - **Priority:** must
 
 #### PRD-F31
@@ -853,8 +857,7 @@ A SearchBuilder criterion carrying more values than its condition takes is refus
 `!null` take no value and ignore every value entry they carry (`[]`, `['']` or leftovers): no entry is checked or
 transformed, PRD-F15 included, so they are never refused for one; a structural error (PRD-P6, PRD-P11) still raises.
 
-- **Reason:** Silently using the first value answers a different question than asked, as a missing value would
-  (PRD-F30); `null` and `!null` read no value, so an entry cannot change their answer.
+- **Reason:** Silently using the first value answers a different question than asked; `null` and `!null` read no value, so an entry cannot change their answer.
 - **Priority:** must
 
 #### PRD-F37
@@ -1647,7 +1650,8 @@ first release is published as version 0.1.0.
 - Exact matches: draft 1's exact matches compared as the column's collation does (case-sensitive on PostgreSQL, SQLite
   and OpenSearch keyword fields); now case-insensitive on string columns on every backend, except on a hooked column
   (PRD-F9).
-- SearchBuilder: a criterion with too many values is refused (PRD-F36), and NULL satisfies every negative condition
+- SearchBuilder: an unfinished criterion adds nothing instead of being refused (PRD-F30), as SearchBuilder's own
+  client sends one and an empty group adds nothing (PRD-F28); a criterion with too many values is refused (PRD-F36), and NULL satisfies every negative condition
   (PRD-F37); the conditions each declared type takes are listed (PRD-F27), and a condition outside the 16 the protocol
   model knows, such as SearchBuilder's array `without`, is a structural error (PRD-P6); a criterion on a column the
   server declares unsearchable is refused, which draft 1's code did not check (PRD-F41).

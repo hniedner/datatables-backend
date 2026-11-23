@@ -292,14 +292,23 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F27.5** [all] SearchBuilder condition `without` → `MalformedRequest` (PRD-P6).
 - **SPEC-F27.6** [all] On `price`: `<` `8` → rows 1; `between` `7` and `8` → rows 1, 3; `!between` `7` and `8` →
   rows 2, 4 (PRD-F37).
+- **SPEC-F27.7** [all] SearchBuilder sends `value1` and `value2` beside `value`; they are ignored: `=` on `name` with
+  `Red Apple` and them → rows 1.
 - **SPEC-F28.1** [all] Group OR of `colour = blue` and `price = 7` → rows 1, 3.
 - **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 17` and `price null` → rows 4
   (dropping the nested group would give rows 1, 4; OR throughout would give rows 1, 2, 4).
 - **SPEC-F28.3** [all] An empty group adds nothing: alone → rows 1, 2, 3, 4; nested in an AND group with
   `colour = blue` → rows 3; nested in an OR group with `colour = blue` → rows 3 (an empty group read as true would
   give every row).
-- **SPEC-F30.1** [all] `=` on `name` with no value, and `between` on `price` with one value → error_code
-  `invalid_filter`.
+- **SPEC-F30.1** [all] A criterion with no condition (the key missing, or `""`) adds nothing: alone → rows 1, 2, 3,
+  4; in an AND group with `colour = blue` → rows 3; in an OR group with `colour = blue` → rows 3 (read as true it
+  would give every row in the OR group, read as false none in the AND group).
+- **SPEC-F30.2** [all] A criterion with no column (`origData` missing, or `""`) adds nothing, with the three results
+  of `SPEC-F30.1`.
+- **SPEC-F30.3** [all] `=` on `name` with no `value` key or with `[]`, and `between` on `price` with one value, add
+  nothing, with the three results of `SPEC-F30.1`.
+- **SPEC-F30.4** [all] `between` on `price` with the one value `abc` → error_code `invalid_number`: a value that is
+  there but unreadable is refused, not left out.
 - **SPEC-F31.1** [all] With the base filter `price` not null: no filter → rows 1, 2, 3, `recordsTotal` 3,
   `recordsFiltered` 3; global search `red` → rows 1, 2, `recordsTotal` 3, `recordsFiltered` 2.
 - **SPEC-F32.1** [OS] Global search `17` → none; `2024` → none (the number and date columns are skipped).

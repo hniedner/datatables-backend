@@ -1612,9 +1612,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             f'The condition "<" cannot be used on "active", which holds true or false. {CONDITION}',
         ),
-        # SPEC-E4.21, E4.22
-        (WORDED, criterion('name', '='), 'invalid_filter', 'The filter on "name" needs a value.'),
-        (WORDED, criterion('age', 'between', '1'), 'invalid_filter', 'The filter on "age" needs two values.'),
+        # SPEC-E4.22
         (
             WORDED,
             criterion('active', '=', 'yes'),
@@ -1677,7 +1675,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
+    """SPEC-E4.3 to SPEC-E4.20, SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
     condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
     else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""

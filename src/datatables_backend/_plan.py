@@ -114,7 +114,6 @@ MISTAKES: Mapping[str, tuple[ErrorCode, int]] = {
     'datatables_regex_refused': ('invalid_filter', 4),
     'datatables_values_refused': ('invalid_filter', 4),  # a list of values where none belongs
     'datatables_condition_refused': ('invalid_filter', 4),
-    'datatables_value_missing': ('invalid_filter', 4),
     'datatables_value_surplus': ('invalid_filter', 4),  # more values than the condition takes
     'datatables_boolean_unreadable': ('invalid_filter', 4),
     'datatables_page_out_of_range': ('page_out_of_range', 5),
@@ -710,16 +709,20 @@ def _criterion(
     declared: Mapping[str, Column],
     describe: Callable[[Column], Capabilities],
     hooked: Callable[[Column, str], Any],
-) -> Filter:
-    """One criterion, or the one mistake it reports. The checks run in this order: a control character in the values
-    the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
+) -> Filter | None:
+    """One criterion, the one mistake it reports, or None when it is unfinished and adds nothing (PRD-F30): it has no
+    condition, no column, or fewer values than its condition takes, however it is named and wherever it stands.
+    The checks run in this order: no condition or no column, nothing else is looked at; a control character in the
+    values the condition reads; a name that is not declared, or one the server declares unsearchable; a condition the
     column's type does not take, reported without the value being read (so ``contains`` with ``abc`` on a number
     column is no number mistake); a value of the wrong format, or a date out of range, among the values there are;
-    a value that is missing, or more values than the condition takes (PRD-F36), which are never read: ``null`` and
-    ``!null`` take none and ignore whatever they carry. A whole number outside the range of its SQL column is found
-    only later, when the query is built, so within one criterion a missing or surplus value is reported before
-    it."""
+    then a value that is missing, which leaves the criterion out, or more values than the condition takes
+    (PRD-F36), which are never read: ``null`` and ``!null`` take none and ignore whatever they carry. A whole number
+    outside the range of its SQL column is found only later, when the query is built, so within one criterion a
+    surplus value is reported before it."""
     condition = item.condition
+    if condition is None or not item.origData:
+        return None
     needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
     texts = item.value[:needed]
     column = declared.get(item.origData)
@@ -755,11 +758,7 @@ def _criterion(
     else:
         values = parse_days(texts, column, listed=needed == 2)
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
-        raise mistake(
-            'datatables_value_missing',
-            f'The filter on "{column.name}" needs {"two values" if needed == 2 else "a value"}.',
-            column,
-        )
+        return None
     if needed and len(item.value) > needed:  # the values beyond those the condition takes are never read
         raise mistake(
             'datatables_value_surplus',

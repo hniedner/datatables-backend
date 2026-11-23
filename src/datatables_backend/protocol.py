@@ -152,11 +152,18 @@ class DTOrder(_Model):
     dir: Literal['asc', 'desc'] = 'asc'
 
 
-class SearchCriterion(_Model):
-    """A SearchBuilder condition. ``origData`` names the column; ``type`` is the client's guess and is not trusted."""
+def _no_empty_text(value: Any) -> Any:
+    """A condition an unfinished criterion sends as empty text, which is no condition at all (PRD-F30)."""
+    return None if value == '' else value
 
-    condition: Condition
-    origData: str
+
+class SearchCriterion(_Model):
+    """A SearchBuilder condition. ``origData`` names the column; ``type`` is the client's guess and is not trusted.
+    A new criterion has no condition and no column yet, and the client sends it so; it is unfinished (PRD-F30), and
+    so is one with no value for a condition that takes one."""
+
+    condition: Annotated[Condition | None, BeforeValidator(_no_empty_text)] = None
+    origData: str = ''
     data: str = ''
     type: str = ''
     value: list[str] = []
