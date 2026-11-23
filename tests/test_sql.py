@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+from typing import get_args
 import uuid
 import warnings
 
@@ -46,6 +47,7 @@ from sqlalchemy.dialects import sqlite
 from sqlalchemy.engine import Dialect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -63,8 +65,10 @@ from datatables_backend import SchemaError
 from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.opensearch import IndexColumn
+from datatables_backend.protocol import ErrorCode
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import ERROR_CODES
 from .conftest import LARGEST_WORDS
 from .conftest import ROWS
 from .conftest import async_engine
@@ -96,6 +100,9 @@ def ids(response: DTResponse) -> list[Any]:
 
 
 def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
+    """The text of an answered user error. SPEC-E2.1: every refusal of these tests is checked against the eight codes,
+    so a case that expects another code, `query_failed` among them, fails here."""
+    assert code in ERROR_CODES
     assert response.error_code == code
     assert response.data == []
     assert response.error is not None
@@ -1569,6 +1576,12 @@ def test_the_last_month_before_the_last_day_is_answered(session: Session):
     assert ids(table.fetch_sync(request(*ALL, **criterion('born', 'contains', '9999-11')), session)) == []
 
 
+def test_the_user_error_codes_are_the_eight_of_the_prd_and_no_other():
+    """SPEC-E2.2: the codes a frontend maps are stable; a ninth, or one renamed or dropped, is a change that is made
+    on purpose, together with the PRD and its documentation."""
+    assert set(get_args(ErrorCode.__value__)) == ERROR_CODES
+
+
 def test_a_user_error_is_an_answer_with_the_draw_and_nothing_else(session: Session):
     """SPEC-E1.1, SPEC-R5.2, SPEC-R6.1: what a caller sends on for a mistake the user can fix."""
     response = table.fetch_sync(request(*ALL, draw=7, **criterion('age', '=', 'abc')), session)
@@ -1619,7 +1632,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 @pytest.mark.parametrize(
     ('names', 'body', 'code', 'text'),
     [
-        # SPEC-E4.3 to E4.5: the owner's case, a tab nobody sees, and where it is
+        # SPEC-E4.3, SPEC-E4.4, SPEC-E4.5: the owner's case, a tab nobody sees, and where it is
         (
             WORDED,
             {'search': {'value': 'a\tb'}},
@@ -1650,7 +1663,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_character',
             f'A column filter {CONTROL} value and type it again.',
         ),
-        # SPEC-E4.6 to E4.8, and SPEC-E4.25 for a list of values, which must not be told to hold one number
+        # SPEC-E4.6, SPEC-E4.7, SPEC-E4.8, and SPEC-E4.25 for a list of values, which must not be told to hold one number
         (
             WORDED,
             criterion('age', '=', 'abc'),
@@ -1727,7 +1740,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
         # SPEC-E4.10, SPEC-F24.1: the last day itself, and a year that holds it
         (WORDED, criterion('born', '<', '9999-12-31'), 'invalid_date', LAST_DAY),
         (WORDED, criterion('born', 'contains', '9999'), 'invalid_date', LAST_DAY),
-        # SPEC-E4.11, E4.12: a name the server did not declare is never given
+        # SPEC-E4.11, SPEC-E4.12, SPEC-E4.2: a name the server did not declare is never given
         (
             UNDECLARED,
             {'order': [{'column': 8, 'dir': 'asc'}]},
@@ -1740,7 +1753,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'A filter is on a column the server does not offer. Remove that filter.',
         ),
-        # SPEC-E4.13 to E4.15
+        # SPEC-E4.13, SPEC-E4.14, SPEC-E4.15
         (
             WORDED,
             {'order': [{'column': 7, 'dir': 'asc'}]},
@@ -1765,7 +1778,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'No column of this table can be searched from the search box. Clear it and use a column filter instead.',
         ),
-        # SPEC-E4.16, E4.17
+        # SPEC-E4.16, SPEC-E4.17
         (
             WORDED,
             {'search': {'value': 'a.*', 'regex': True}},
@@ -1779,7 +1792,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'The filter on "name" does not take regular expressions. Remove these characters and search for plain '
             'text: . * + ? [ ] { } ( ) ^ $ | \\',
         ),
-        # SPEC-E4.18, E4.19, SPEC-F40.1, SPEC-F39.1: only a client that builds its own request makes these. The
+        # SPEC-E4.18, SPEC-E4.19, SPEC-F40.1, SPEC-F39.1: only a client that builds its own request makes these. The
         # second is SPEC-E3.8 on a number column too: the form is refused, and `abc`, which is no number, never read
         (
             WORDED,
@@ -1832,7 +1845,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             'The filter on "name" holds more values than its condition takes. Remove the filter and set it again.',
         ),
-        # PRD-F38 (SPEC-E4.31 to E4.35): each bound names itself, and a list on a name that is not declared is not
+        # PRD-F38 (SPEC-E4.31, SPEC-E4.32, SPEC-E4.33, SPEC-E4.34, SPEC-E4.35): each bound names itself, and a list on a name that is not declared is not
         # named
         (
             WORDED,
@@ -1881,10 +1894,13 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.20, SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a
-    text of its own, which names the condition and the fix, and a column only by the name the server declared. A text
-    is asserted here and nowhere else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
-    SPEC-F39.1, SPEC-F40.1."""
+    """SPEC-E4.3, SPEC-E4.4, SPEC-E4.5, SPEC-E4.6, SPEC-E4.7, SPEC-E4.8, SPEC-E4.9, SPEC-E4.10, SPEC-E4.11,
+    SPEC-E4.12, SPEC-E4.13, SPEC-E4.14, SPEC-E4.15, SPEC-E4.16, SPEC-E4.17, SPEC-E4.18, SPEC-E4.19, SPEC-E4.20,
+    SPEC-E4.22, SPEC-E4.25, SPEC-E4.26, SPEC-E4.27, SPEC-E4.28, SPEC-E4.31, SPEC-E4.32, SPEC-E4.33, SPEC-E4.34 and
+    SPEC-E4.35: each mistake has a text of its own, which names the condition and the fix, and a column only by the
+    name the server declared (SPEC-E4.2: a text on the undeclared `extra` is equal to the fixed one, so it does not
+    hold the name). A text is asserted here and nowhere else. The rows are also the proof of their codes: SPEC-E1.2,
+    SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2, SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
@@ -2300,6 +2316,52 @@ def test_a_failure_that_is_not_the_users_raises(session: Session):
     missing = Table('dtb_test_tags', MetaData(), SQLColumn('code', String(5), primary_key=True))
     with pytest.raises(DBAPIError):
         SQLTable(missing, [Column('code')]).fetch_sync(request('code'), session)
+
+
+def refuse_every_statement(*_: Any) -> None:
+    raise OperationalError('SELECT 1', {}, Exception('connection lost'))
+
+
+def test_a_connection_that_fails_raises_through_the_sync_fetch(session: Session):
+    """SPEC-E8.2: the database's own error reaches the caller; it is not answered as a user error or an empty page."""
+    event.listen(session.get_bind(), 'before_cursor_execute', refuse_every_statement)
+    with pytest.raises(OperationalError):
+        table.fetch_sync(request(*ALL), session)
+
+
+async def test_a_connection_that_fails_raises_through_the_async_fetch(async_session: AsyncSession):
+    """SPEC-E8.2 through `fetch`, which has its own place where the statements run."""
+    event.listen(async_session.sync_session.get_bind(), 'before_cursor_execute', refuse_every_statement)
+    with pytest.raises(OperationalError):
+        await table.fetch(request(*ALL), async_session)
+
+
+def test_an_exception_of_a_search_value_hook_propagates_unchanged(session: Session):
+    """SPEC-E8.4: a hook is the caller's code, so its failure is the caller's to see; answered as `invalid_filter`
+    it would send the user to fix a filter that was right."""
+    failure = ValueError('the hook failed')
+
+    def fail(_: str) -> str:
+        raise failure
+
+    hooked = SQLTable(people, [Column('id'), Column('name', search_value=fail)])
+    with pytest.raises(ValueError, match='the hook failed') as raised:
+        hooked.fetch_sync(request('id', 'name', column_search={'name': {'value': 'Ann'}}), session)
+    assert raised.value is failure
+
+
+@pytest.mark.parametrize('hook', ['shape', 'row_id', 'row_data'])
+def test_an_exception_of_a_row_hook_propagates_unchanged(session: Session, hook: str):
+    """SPEC-E8.4: each of the three row hooks, over a row that was found."""
+    failure = ValueError('the hook failed')
+
+    def fail(_: Any) -> Any:
+        raise failure
+
+    hooked = SQLTable(people, [Column('id'), Column('name')], rows=RowHooks(**{hook: fail}))
+    with pytest.raises(ValueError, match='the hook failed') as raised:
+        hooked.fetch_sync(request('id', 'name'), session)
+    assert raised.value is failure
 
 
 def test_row_values_come_back_as_the_database_gives_them(session: Session):

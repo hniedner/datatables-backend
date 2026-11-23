@@ -5,12 +5,14 @@ container tests of milestone 2; these pin down what is sent.
 """
 
 import asyncio
+from collections.abc import Callable
 from collections.abc import Mapping
 import json
 import logging
 from typing import Any
 from typing import cast
 
+from opensearchpy.exceptions import ConnectionError as NoConnection
 import pytest
 
 from datatables_backend import Column
@@ -24,6 +26,7 @@ from datatables_backend import parse_request
 from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
+from .conftest import ERROR_CODES
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
@@ -85,6 +88,8 @@ def query(client: Client) -> list[dict[str, Any]]:
 
 
 def refused(response: DTResponse, code: str = 'invalid_filter') -> str:
+    """The text of an answered user error; SPEC-E2.1: a case that expects a code outside the eight fails here."""
+    assert code in ERROR_CODES
     assert response.error_code == code
     assert response.error is not None
     return response.error
@@ -177,27 +182,46 @@ def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
     }  # fmt: skip
 
 
-@pytest.mark.parametrize(
-    'answer',
-    [
-        {'_shards': {'total': 2, 'successful': 1, 'failed': 1}},
-        {'_shards': {'total': 2, 'successful': 1, 'failed': 0}},  # SPEC-E9.1: a shard missing, none counted as failed
-        {'timed_out': True},
-        {'_shards': {'total': 2, 'successful': 2}},  # no failed count: cannot be checked
-        {'_shards': {'total': 2, 'failed': 0}},  # nor without the count of those that answered
-        {'_shards': None},
-    ],
-)
+#: Answers that are not known to cover every shard (PRD-E9), as the keys they replace in a complete one
+NOT_COVERED = [
+    {'_shards': {'total': 2, 'successful': 1, 'failed': 1}},
+    {'_shards': {'total': 2, 'successful': 1, 'failed': 0}},  # SPEC-E9.1: a shard missing, none counted as failed
+    {'timed_out': True},  # SPEC-E9.4: every shard answered, and the search timed out
+    {'_shards': {'total': 2, 'successful': 2}},  # no failed count: cannot be checked
+    {'_shards': {'total': 2, 'failed': 0}},  # nor without the count of those that answered
+    {'_shards': None},
+]
+
+
+@pytest.mark.parametrize('answer', NOT_COVERED)
 def test_an_answer_not_known_to_cover_every_shard_raises(answer: dict[str, Any]):
+    """SPEC-E9.1, SPEC-E9.4."""
     with pytest.raises(PartialResultError):
         table.fetch_sync(request(*NAMES), Client(**answer))
 
 
+@pytest.mark.parametrize('answer', NOT_COVERED)
+async def test_the_async_fetch_raises_on_an_answer_not_known_to_cover_every_shard(answer: dict[str, Any]):
+    """SPEC-E9.1, SPEC-E9.4 through `fetch`, whose normal page search reads its answer apart from `fetch_sync`'s: the
+    request filters nothing, so the search's own count is the total, and a partial one must not become the answer."""
+    with pytest.raises(PartialResultError):
+        await table.fetch(request(*NAMES), AsyncClient(**answer))
+
+
 def test_a_partial_count_raises_too():
+    """SPEC-E9.3."""
     client = Client()
     client.count_answer = {'count': 1, '_shards': {'total': 2, 'failed': 1}}
     with pytest.raises(PartialResultError):
         table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+
+
+async def test_the_async_fetch_raises_on_a_partial_count_too():
+    """SPEC-E9.3 through `fetch`: the total is counted where the filtered search is answered, in its own copy."""
+    client = AsyncClient()
+    client.count_answer = {'count': 1, '_shards': {'total': 2, 'successful': 1, 'failed': 1}}
+    with pytest.raises(PartialResultError):
+        await table.fetch(request(*NAMES, search={'value': 'x'}), client)
 
 
 def test_a_page_beyond_the_result_window_asks_for_the_count_and_never_for_a_page():
@@ -2093,3 +2117,313 @@ def test_clear_makes_the_next_request_count_again():
     assert cached.fetch_sync(params, client).recordsTotal == 40
     cache.clear()
     assert cached.fetch_sync(params, client).recordsTotal == 41
+
+
+# -- errors (PRD-E, issue #122) ---
+
+ERROR_NAMES = ('id', 'name', 'age', 'born', 'active', 'secret', 'team')
+UNDECLARED = (*ERROR_NAMES, 'extra')
+errors = SearchTable(
+    'docs',
+    [
+        IndexColumn('id', text='keyword'),
+        IndexColumn('name'),
+        Column('age', type='number'),
+        Column('born', type='date'),
+        Column('active', type='boolean'),
+        Column('secret', searchable=False),
+        Column('team', orderable=False),
+    ],
+    unique_key='id',
+)
+
+#: The statements of PRD-E3 and PRD-E4 that hold on every backend, each with the request it states and its code. The
+#: texts are asserted once, in tests/test_sql.py (the convention of SPEC-E4).
+USER_ERRORS = [
+    ('SPEC-E4.3', ERROR_NAMES, {'search': {'value': 'a\tb'}}, 'invalid_character'),
+    ('SPEC-E4.4', ERROR_NAMES, {'column_search': {'name': {'value': 'a\tb'}}}, 'invalid_character'),
+    ('SPEC-E4.4', ERROR_NAMES, criterion('name', '=', 'a\tb'), 'invalid_character'),
+    ('SPEC-E4.5', UNDECLARED, {'column_search': {'extra': {'value': 'a\tb'}}}, 'invalid_character'),
+    ('SPEC-E4.5', UNDECLARED, criterion('extra', '=', 'a\tb'), 'invalid_character'),
+    ('SPEC-E4.6', ERROR_NAMES, criterion('age', '=', 'abc'), 'invalid_number'),
+    ('SPEC-E4.7', ERROR_NAMES, criterion('born', '=', '15/07/1980'), 'invalid_date'),
+    ('SPEC-E4.8', ERROR_NAMES, criterion('born', 'contains', '1980-13'), 'invalid_date'),
+    ('SPEC-E4.8', ERROR_NAMES, criterion('born', 'contains', '1980-02-30'), 'invalid_date'),
+    ('SPEC-E4.10', ERROR_NAMES, criterion('born', '<', '9999-12-31'), 'invalid_date'),
+    ('SPEC-E4.10', ERROR_NAMES, criterion('born', 'contains', '9999'), 'invalid_date'),
+    ('SPEC-E4.11', UNDECLARED, {'order': [{'column': 7, 'dir': 'asc'}]}, 'invalid_filter'),
+    ('SPEC-E4.12', UNDECLARED, {'column_search': {'extra': {'value': 'x'}}}, 'invalid_filter'),
+    ('SPEC-E4.13', ERROR_NAMES, {'order': [{'column': 6, 'dir': 'asc'}]}, 'invalid_filter'),
+    ('SPEC-E4.14', ERROR_NAMES, {'column_search': {'secret': {'value': 'x'}}}, 'invalid_filter'),
+    ('SPEC-E4.15', ('active',), {'search': {'value': 'x'}}, 'invalid_filter'),
+    ('SPEC-E4.16', ERROR_NAMES, {'search': {'value': 'a.*', 'regex': True}}, 'invalid_filter'),
+    ('SPEC-E4.17', ERROR_NAMES, {'column_search': {'name': {'value': 'A.+', 'regex': True}}}, 'invalid_filter'),
+    ('SPEC-E4.18', ERROR_NAMES, {'search': {'value': '', 'multi_values': ['Bob']}}, 'invalid_filter'),
+    (
+        'SPEC-E4.19',
+        ERROR_NAMES,
+        {'column_search': {'age': {'value': 'abc', 'multi_values': ['x']}}},
+        'invalid_filter',
+    ),
+    ('SPEC-E4.20', ERROR_NAMES, criterion('name', '<', 'm'), 'invalid_filter'),
+    ('SPEC-E4.20', ERROR_NAMES, criterion('age', 'contains', '3'), 'invalid_filter'),
+    ('SPEC-E4.20', ERROR_NAMES, criterion('born', 'starts', '19'), 'invalid_filter'),
+    ('SPEC-E4.20', ERROR_NAMES, criterion('active', '<', '1'), 'invalid_filter'),
+    ('SPEC-E4.22', ERROR_NAMES, criterion('active', '=', 'yes'), 'invalid_filter'),
+    ('SPEC-E4.25', ERROR_NAMES, {'column_search': {'age': {'multi_values': ['31', 'abc']}}}, 'invalid_number'),
+    ('SPEC-E4.25', ERROR_NAMES, criterion('age', 'between', '1', 'abc'), 'invalid_number'),
+    (
+        'SPEC-E4.27',
+        ERROR_NAMES,
+        {'column_search': {'born': {'multi_values': ['1980-07-15', '2024-13-01']}}},
+        'invalid_date',
+    ),
+    ('SPEC-E4.27', ERROR_NAMES, criterion('born', 'between', '2024-01-01', 'abc'), 'invalid_date'),
+    ('SPEC-E4.28', ERROR_NAMES, criterion('name', '=', 'Bob', 'Ann'), 'invalid_filter'),
+    ('SPEC-E4.30', ERROR_NAMES, {'search': {'value': 'x' * 256}}, 'value_too_long'),
+    ('SPEC-E4.30', ERROR_NAMES, {'column_search': {'name': {'value': 'x' * 256}}}, 'value_too_long'),
+    ('SPEC-E4.30', ERROR_NAMES, criterion('name', '=', 'x' * 256), 'value_too_long'),
+    ('SPEC-E4.30', ERROR_NAMES, {'search': {'value': ' '.join('w' * 17)}}, 'too_many_words'),
+    ('SPEC-E4.31', ERROR_NAMES, {'searchBuilder': nested(9, 'name')}, 'invalid_filter'),
+    ('SPEC-E4.32', ERROR_NAMES, {'searchBuilder': flat(65, 'name')}, 'invalid_filter'),
+    (
+        'SPEC-E4.33',
+        ERROR_NAMES,
+        {'column_search': {'name': {'multi_values': exact_values(257, 'Ann')}}},
+        'invalid_filter',
+    ),
+    (
+        'SPEC-E4.34',
+        ERROR_NAMES,
+        {
+            'column_search': {
+                'name': {'multi_values': exact_values(256, 'Ann')},
+                'team': {'multi_values': exact_values(256, 'red')},
+                'age': {'multi_values': ['31']},
+            }
+        },
+        'invalid_filter',
+    ),
+    ('SPEC-E4.35', ('name',) * 65, {'column_search': {'name': {'value': 'Ann'}}}, 'invalid_filter'),
+]
+
+
+@pytest.mark.parametrize(
+    ('spec', 'names', 'body', 'code'), USER_ERRORS, ids=[f'{case[0]}-{index}' for index, case in enumerate(USER_ERRORS)]
+)
+def test_every_user_error_of_the_specs_has_its_code_on_opensearch_and_sends_nothing(
+    spec: str, names: tuple[str, ...], body: dict[str, Any], code: str
+):
+    """SPEC-E4.3, SPEC-E4.4, SPEC-E4.5, SPEC-E4.6, SPEC-E4.7, SPEC-E4.8, SPEC-E4.10, SPEC-E4.11, SPEC-E4.12, SPEC-E4.13,
+    SPEC-E4.14, SPEC-E4.15, SPEC-E4.16, SPEC-E4.17, SPEC-E4.18, SPEC-E4.19, SPEC-E4.20, SPEC-E4.22, SPEC-E4.25,
+    SPEC-E4.27, SPEC-E4.28, SPEC-E4.30, SPEC-E4.31, SPEC-E4.32, SPEC-E4.33, SPEC-E4.34 and SPEC-E4.35 (the `spec` of
+    each case), SPEC-E2.1: the statements tagged [all] answer on OpenSearch the code they answer on SQL, and no
+    mistake reaches the cluster, as a search or as a count (SPEC-E7.2). The text of each is asserted in
+    tests/test_sql.py, once."""
+    client = Client()
+    assert refused(errors.fetch_sync(request(*names, **body), client), code)
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ('searched', 'body', 'code'),
+    [
+        (errors, criterion('age', '=', 'abc'), 'invalid_number'),  # found by the plan
+        (errors, {'column_search': {'age': {'multi_values': ['7', 'x']}}}, 'invalid_number'),  # found by the build
+        (bounded(3), {'start': 4, 'length': 3}, 'page_out_of_range'),
+    ],
+    ids=['plan', 'build', 'page'],
+)
+def test_a_user_error_never_sends_a_page_search_and_only_a_refused_page_sends_counts(
+    searched: SearchTable, body: dict[str, Any], code: str
+):
+    """SPEC-E7.2: the mistake is found before the page is searched; the one that needs a valid count sends the counts of
+    PRD-C11 and nothing else."""
+    names = ERROR_NAMES if searched is errors else NAMES
+    client = Counting(total=40, filtered=7)
+    refused(searched.fetch_sync(request(*names, **body), client), code)
+    assert client.searches == []
+    assert bool(client.counts) == (code == 'page_out_of_range')
+
+
+class Unreachable(Client):
+    """A cluster the transport cannot reach, for the one call it is asked to fail."""
+
+    def __init__(self, fails: str):
+        super().__init__()
+        self.fails = fails
+
+    def check(self, call: str) -> None:
+        if call == self.fails:
+            raise NoConnection('N/A', 'Connection refused', OSError('refused'))
+
+    def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.check('search')
+        return super().search(index=index, body=body)
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.check('count')
+        return super().count(index=index, body=body)
+
+
+class AsyncUnreachable(Unreachable):
+    async def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Unreachable.search(self, index=index, body=body)
+
+    async def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Unreachable.count(self, index=index, body=body)
+
+
+@pytest.mark.parametrize('fails', ['search', 'count'])
+def test_a_transport_error_raises_through_the_sync_fetch(fails: str):
+    """SPEC-E8.3: the request filters, so both calls run; whichever fails reaches the caller, never an empty page."""
+    with pytest.raises(NoConnection):
+        table.fetch_sync(request(*NAMES, search={'value': 'x'}), Unreachable(fails))
+
+
+@pytest.mark.parametrize('fails', ['search', 'count'])
+async def test_a_transport_error_raises_through_the_async_fetch(fails: str):
+    """SPEC-E8.3 through `fetch`."""
+    with pytest.raises(NoConnection):
+        await table.fetch(request(*NAMES, search={'value': 'x'}), AsyncUnreachable(fails))
+
+
+def test_an_exception_of_a_search_value_hook_propagates_unchanged():
+    """SPEC-E8.4: a hook is the caller's code, so its failure is the caller's to see; answered as `invalid_filter`
+    it would send the user to fix a filter that was right."""
+    failure = ValueError('the hook failed')
+
+    def fail(_: str) -> str:
+        raise failure
+
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=fail)], unique_key='id'
+    )
+    client = Client()
+    with pytest.raises(ValueError, match='the hook failed') as raised:
+        hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': 'x'}}), client)
+    assert raised.value is failure
+    assert client.searches == []
+
+
+@pytest.mark.parametrize('hook', ['shape', 'row_id', 'row_data'])
+def test_an_exception_of_a_row_hook_propagates_unchanged(hook: str):
+    """SPEC-E8.4: each of the three row hooks, over a row that was found."""
+    failure = ValueError('the hook failed')
+
+    def fail(_: Any) -> Any:
+        raise failure
+
+    hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(**{hook: fail}))
+    with pytest.raises(ValueError, match='the hook failed') as raised:
+        hooked.fetch_sync(request(*NAMES), Client(hits=[{'_source': {'id': 'a'}}]))
+    assert raised.value is failure
+
+
+def logged(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """What the library logged, after checking that it is all of the logger `datatables_backend` (SPEC-E12.1)."""
+    assert all(record.name == 'datatables_backend' for record in caplog.records)
+    return caplog.records
+
+
+def test_a_total_taken_from_a_partial_count_is_never_kept():
+    """SPEC-E9.5: the count answered by some of the shards raises; the next complete one counts again, so the cache
+    held nothing of the partial one."""
+    client = Client(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(3600))
+    params = request(*NAMES, search={'value': 'x'})
+    client.count_answer = {'count': 12, '_shards': PARTIAL}
+    with pytest.raises(PartialResultError):
+        cached.fetch_sync(params, client)
+    client.count_answer = {'count': 40, '_shards': SHARDS}
+    assert cached.fetch_sync(params, client).recordsTotal == 40
+    assert len(client.counts) == 2
+
+
+def test_a_total_taken_from_a_partial_search_is_never_kept():
+    """SPEC-E9.5: an unfiltered search's own count is the total, which the cache would keep; from a partial answer it
+    must not, so the filtered request after it counts."""
+    client = Client(total=3, count=40, _shards=PARTIAL)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(3600))
+    with pytest.raises(PartialResultError):
+        cached.fetch_sync(request(*NAMES), client)
+    client.answer['_shards'] = SHARDS
+    assert cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client).recordsTotal == 40
+    assert len(client.counts) == 1
+
+
+@pytest.mark.parametrize(
+    ('answer', 'timed_out', 'shards'),
+    [({'_shards': PARTIAL}, False, (2, 1, 1)), ({'timed_out': True}, True, (2, 2, 0))],
+    ids=['a-shard-failed', 'timed-out'],
+)
+@pytest.mark.parametrize('through', ['search', 'count', 'async-search'])
+async def test_a_partial_answer_is_logged_once_at_error_naming_the_index_and_the_shard_counts(
+    caplog: pytest.LogCaptureFixture,
+    answer: dict[str, Any],
+    timed_out: bool,
+    shards: tuple[int, int, int],
+    through: str,
+):
+    """SPEC-E14.1: one record, with the counts and no value: the search text and the document's text are marked, and
+    neither is anywhere in a record. The count answer is checked as the search answer is."""
+    hit = {'_id': 'a', '_source': {'id': 'a', 'title': 'MARKER_HIT'}}
+    client = AsyncClient(hits=[hit]) if through == 'async-search' else Client(hits=[hit])
+    if through == 'count':
+        client.count_answer = (
+            {'count': 1, **answer} if '_shards' in answer else {'count': 1, '_shards': SHARDS, **answer}
+        )
+    else:
+        client.answer.update(answer)
+    params = request(*NAMES, search={'value': 'MARKER_SEARCH'})
+    with caplog.at_level(logging.DEBUG), pytest.raises(PartialResultError):
+        if through == 'async-search':
+            await table.fetch(params, cast(AsyncClient, client))
+        else:
+            table.fetch_sync(params, client)
+    (record,) = logged(caplog)
+    assert (record.levelname, record.msg) == ('ERROR', 'opensearch_answer_partial')
+    assert (record.__dict__['index'], record.__dict__['timed_out']) == ('docs', timed_out)
+    assert (
+        record.__dict__['shards_total'],
+        record.__dict__['shards_successful'],
+        record.__dict__['shards_failed'],
+    ) == shards
+    assert 'MARKER' not in repr(vars(record))
+    assert 'MARKER' not in record.getMessage()
+
+
+def broken(**answer: Any) -> Client:
+    client = Client()
+    client.answer.update(answer)
+    return client
+
+
+@pytest.mark.parametrize(
+    ('client', 'unreadable'),
+    [
+        (lambda: broken(_shards=None), ['_shards']),
+        (lambda: broken(_shards={'total': 'MARKER_TOTAL', 'successful': 2, 'failed': 0}), ['_shards.total']),
+        (lambda: broken(timed_out='MARKER_TIMED'), ['timed_out']),
+    ],
+    ids=['no-shards', 'total-not-an-integer', 'timed-out-not-a-boolean'],
+)
+def test_an_unreadable_answer_raises_and_is_logged_once_naming_the_fields_never_their_values(
+    caplog: pytest.LogCaptureFixture, client: Callable[[], Client], unreadable: list[str]
+):
+    """SPEC-E9.2 (the first two cases), SPEC-E14.2: the record names the fields it could not read and holds neither
+    their values nor the search text."""
+    with caplog.at_level(logging.DEBUG), pytest.raises(PartialResultError):
+        table.fetch_sync(request(*NAMES, search={'value': 'MARKER_SEARCH'}), client())
+    (record,) = logged(caplog)
+    assert (record.levelname, record.msg) == ('ERROR', 'opensearch_answer_unverifiable')
+    assert (record.__dict__['index'], record.__dict__['unreadable']) == ('docs', unreadable)
+    assert 'MARKER' not in repr(vars(record))
+
+
+def test_an_answer_with_no_shards_key_at_all_raises_too():
+    """SPEC-E9.2: the key absent, not only null."""
+    client = Client()
+    del client.answer['_shards']
+    with pytest.raises(PartialResultError):
+        table.fetch_sync(request(*NAMES), client)

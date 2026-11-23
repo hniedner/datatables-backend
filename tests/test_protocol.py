@@ -15,6 +15,7 @@ from datatables_backend import Search
 from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
 from datatables_backend import parse_request
+from datatables_backend.protocol import InvalidFilter
 
 from .conftest import BRACKETED
 from .conftest import reshaped
@@ -445,6 +446,13 @@ def test_the_log_line_of_a_refused_length_holds_none_of_its_digits(caplog: pytes
     assert warnings(caplog) == ['datatables_length_refused']
     logged = repr([vars(record) for record in caplog.records])
     assert '123456' not in logged
+
+
+def test_a_structural_error_and_a_user_error_are_not_one_kind():
+    """SPEC-E6.3: code that catches `MalformedRequest` to answer 422 must not catch the user errors the library
+    answers itself, nor the other way round."""
+    assert not issubclass(MalformedRequest, InvalidFilter)
+    assert not issubclass(InvalidFilter, MalformedRequest)
 
 
 def test_the_page_length_limit_is_the_callers():

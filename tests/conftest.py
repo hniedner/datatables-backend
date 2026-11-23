@@ -213,6 +213,21 @@ def request(
     return parse_request({'draw': 1, 'start': 0, 'length': 10, 'columns': columns, **body})
 
 
+#: PRD-E2's list, closed: the only codes a user error is answered with
+ERROR_CODES = frozenset(
+    {
+        'invalid_filter',
+        'invalid_character',
+        'value_too_long',
+        'too_many_words',
+        'request_too_large',
+        'invalid_date',
+        'invalid_number',
+        'page_out_of_range',
+    }
+)
+
+
 #: Sixteen words (PRD-F14's cap), all substrings of `ann@example.org`
 LARGEST_WORDS = 'ann an nn a n ex xa am mp pl le or rg org ple example'
 

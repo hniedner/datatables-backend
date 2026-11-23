@@ -81,6 +81,7 @@ ENFORCED = (
     'PRD-D11',
     'PRD-D13',
     'PRD-D21',
+    'E',
 )
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')
