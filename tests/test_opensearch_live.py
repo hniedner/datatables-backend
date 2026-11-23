@@ -12,14 +12,12 @@ column, which PRD v2 settles (PRD-F37). A boolean column follows PRD v2 already,
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
 import os
-import sys
 from typing import Any
 
 from opensearchpy import AsyncOpenSearch
 from opensearchpy import OpenSearch
 from opensearchpy.exceptions import ConnectionError as NoConnection
 from opensearchpy.exceptions import RequestError
-from opensearchpy.exceptions import TransportError
 import pytest
 
 from datatables_backend import Column
@@ -739,73 +737,3 @@ def test_a_column_declared_for_the_document_id_shows_the_real_id_and_sorts_on_it
     ]
     descending = shown.fetch_sync(request('_id', 'id', order=[{'column': 0, 'dir': 'desc'}]), client)
     assert [row['_id'] for row in descending.data] == ['5', '4', '3', '2', '1']
-
-
-# -- MEASUREMENT (#96): to be removed once the decision on a `_id` unique key is made ---
-
-
-def _measure(client: OpenSearch, sort: list[dict[str, Any]], **extra: Any) -> tuple[str, Any]:
-    """One search of every document sorted by ``sort``: ACCEPTED with each hit's `_id`, `_source.id` and sort values,
-    or REFUSED with the error the cluster gives."""
-    body = {'query': {'match_all': {}}, 'size': 10, 'sort': sort, '_source': ['id'], **extra}
-    try:
-        answer = client.search(index=INDEX, body=body)
-    except TransportError as error:
-        return 'REFUSED', f'{type(error).__name__} {error.status_code}: {str(error.info)[:400]}'
-    return 'ACCEPTED', [(hit['_id'], hit['_source'].get('id'), hit.get('sort')) for hit in answer['hits']['hits']]
-
-
-def _fielddata(client: OpenSearch) -> str:
-    """What the nodes report of field data held in memory for `_id` (context for the measurement, not a size at scale)."""
-    try:
-        stats = client.transport.perform_request('GET', '/_nodes/stats/indices/fielddata?fields=_id')
-    except TransportError as error:
-        return f'unreadable: {type(error).__name__} {error.status_code}'
-    held = [node['indices']['fielddata'] for node in stats['nodes'].values()]
-    return str(held)
-
-
-def test_measurement_a_sort_on_the_document_id_on_a_default_cluster(
-    client: OpenSearch, capsys: pytest.CaptureFixture[str]
-):
-    """MEASUREMENT (#96): is a sort on `_id` accepted, with and without `missing`, are `asc` and `desc` exact
-    reverses, and is `_id` in each hit when `_source` is filtered? It asserts nothing: the results are printed to the
-    log for a person to read."""
-    cases = {
-        'asc': [{'_id': {'order': 'asc'}}],
-        'desc': [{'_id': {'order': 'desc'}}],
-        'asc missing _first': [{'_id': {'order': 'asc', 'missing': '_first'}}],
-        'desc missing _last': [{'_id': {'order': 'desc', 'missing': '_last'}}],
-        'pages asc, then _id asc': [{'pages': {'order': 'asc', 'missing': '_first'}}, {'_id': {'order': 'asc'}}],
-        'pages desc, then _id desc': [{'pages': {'order': 'desc', 'missing': '_last'}}, {'_id': {'order': 'desc'}}],
-    }
-    fielddata_before = _fielddata(client)
-    results = {label: _measure(client, sort) for label, sort in cases.items()}
-    fielddata_after = _fielddata(client)
-    try:
-        settings = client.transport.perform_request(
-            'GET', '/_cluster/settings?include_defaults=true&flat_settings=true'
-        )
-        id_settings = {
-            key: value for scope in settings.values() for key, value in scope.items() if 'id_field_data' in key
-        }
-    except TransportError as error:  # the setting is context, not the measurement
-        id_settings = {'unreadable': f'{type(error).__name__} {error.status_code}'}
-    plain = client.search(index=INDEX, body={'query': {'match_all': {}}, 'size': 10, '_source': ['id']})
-    hits = plain['hits']['hits']
-    lines = [
-        f'MEASURE #96 server {client.info()["version"]["number"]}',
-        f'MEASURE #96 settings holding id_field_data: {id_settings}',
-        f'MEASURE #96 fielddata for _id before the sorts: {fielddata_before}',
-        f'MEASURE #96 fielddata for _id after the sorts: {fielddata_after}',
-        *(f'MEASURE #96 [{label}] {outcome}: {detail}' for label, (outcome, detail) in results.items()),
-        f'MEASURE #96 _id in every hit with _source filtered to [id]: {all("_id" in hit for hit in hits)} ({len(hits)})',
-    ]
-    if results['asc'][0] == results['desc'][0] == 'ACCEPTED':
-        asc_ids = [hit[0] for hit in results['asc'][1]]
-        desc_ids = [hit[0] for hit in results['desc'][1]]
-        lines.append(
-            f'MEASURE #96 desc is the exact reverse of asc: {asc_ids == desc_ids[::-1]} ({asc_ids} / {desc_ids})'
-        )
-    with capsys.disabled():
-        sys.stdout.write('\n' + '\n'.join(lines) + '\n')
