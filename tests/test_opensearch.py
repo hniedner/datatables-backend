@@ -170,12 +170,15 @@ def test_a_partial_count_raises_too():
         table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
 
 
-def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
-    """The code of PRD-C12. Its counts and the pages PRD-C10 still serves are pinned below."""
-    client = Client()
+def test_a_page_beyond_the_result_window_asks_for_the_count_and_never_for_a_page():
+    """SPEC-C11.1, SPEC-C10.4's refusal: the one count of the table's query (the total is its reuse, PRD-C8) runs
+    before the refusal, and no page search."""
+    client = Client(count=20000)
     response = table.fetch_sync(request(*NAMES, start=9995, length=10), client)
     refused(response, 'page_out_of_range')
-    assert (client.searches, client.counts) == ([], [])
+    assert (response.recordsTotal, response.recordsFiltered) == (20000, 20000)
+    assert client.searches == []
+    assert client.counts == [{'query': {'bool': {'must': [{'term': {'published': True}}]}}}]
 
 
 @pytest.mark.parametrize(
@@ -234,7 +237,9 @@ def test_a_user_error_found_while_the_body_is_built_says_what_is_wrong_and_what_
 def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():
     """SPEC-E3.5: step 4 before step 5, so the user first hears of the filter they can change."""
     params = request(*FLAG_NAMES, start=9995, length=10, **criterion('active', '=', 'yes'))
-    assert 'true or false' in refused(flags.fetch_sync(params, Client()))
+    client = Client()
+    assert 'true or false' in refused(flags.fetch_sync(params, client))
+    assert (client.searches, client.counts) == ([], [])  # the mistake of a lower step runs no count either
 
 
 @pytest.mark.parametrize('found_in_the_build', ['a column search that is no number', 'no column to search'])
@@ -254,28 +259,129 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     refused(searched.fetch_sync(params, Client()), expected)
 
 
-@pytest.mark.xfail(
-    reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1, issue '
-    '#73)',
-    strict=True,
-    raises=AssertionError,
-)
+# -- the counts before a refusal, and the empty page past the end (PRD-C3, PRD-C9, PRD-C11, PRD-C12) ---
+
+EVERYTHING = {'query': {'match_all': {}}}
+
+
+class Counting(Client):
+    """Answers a count by what it is asked: the query that matches everything (the total of a table without a base
+    filter) is `total`, any other `filtered`. The order of the calls is not part of the contract."""
+
+    def __init__(self, *, total: int, filtered: int, **answer: Any):
+        super().__init__(**answer)
+        self.numbers = {'total': total, 'filtered': filtered}
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.counts.append(body)
+        return {'count': self.numbers['total' if body == EVERYTHING else 'filtered'], '_shards': SHARDS}
+
+
+class AsyncCounting(Counting):
+    async def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Client.search(self, index=index, body=body)
+
+    async def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Counting.count(self, index=index, body=body)
+
+
+def bounded(window: int) -> SearchTable:
+    return SearchTable('docs', COLUMNS, unique_key='id', max_result_window=window)
+
+
 def test_a_page_out_of_range_carries_the_real_counts():
-    small = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3)
-    response = small.fetch_sync(request(*NAMES, start=4, length=3), Client(total=10, count=10))
+    """SPEC-C12.1, SPEC-C11.1: only the count of the query runs (the total is its reuse, PRD-C8), never a page."""
+    client = Counting(total=10, filtered=10)
+    response = bounded(3).fetch_sync(request(*NAMES, start=4, length=3), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
+    assert response.data == []
+    assert client.searches == []
+    assert client.counts == [EVERYTHING]
 
 
-@pytest.mark.xfail(
-    reason='PRD-C3: a start past the end beyond the result window is refused, not answered with an empty page and '
-    'both counts (SPEC-C3.3, issue #73)',
-    strict=True,
-    raises=AssertionError,
-)
+async def test_the_async_fetch_counts_before_the_refusal_too():
+    """SPEC-C12.1, SPEC-C11.1 through `fetch`, which builds its answer apart from `fetch_sync`."""
+    client = AsyncCounting(total=10, filtered=10)
+    response = await bounded(3).fetch(request(*NAMES, start=4, length=3), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
+    assert (client.searches, client.counts) == ([], [EVERYTHING])
+
+
 def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
-    small = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=2)
-    response = small.fetch_sync(request(*NAMES, start=10), Client(total=4, count=4))
+    """SPEC-C3.3: PRD-C3 wins over PRD-C12, and no page is searched for."""
+    client = Counting(total=4, filtered=4)
+    response = bounded(2).fetch_sync(request(*NAMES, start=10), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
+    assert response.data == []
+    assert client.searches == []
+
+
+async def test_the_async_fetch_answers_the_empty_page_beyond_the_window_too():
+    """SPEC-C3.3 through `fetch`."""
+    client = AsyncCounting(total=4, filtered=4)
+    response = await bounded(2).fetch(request(*NAMES, start=10), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered, response.data) == (None, 4, 4, [])
+    assert client.searches == []
+
+
+def test_the_largest_start_is_an_empty_page_and_no_search_carries_it():
+    """SPEC-C3.2 on this backend: a `from` of 2^53-1 is one a cluster refuses, so none is sent."""
+    client = Counting(total=4, filtered=4)
+    response = SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(request(*NAMES, start=2**53 - 1), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered, response.data) == (None, 4, 4, [])
+    assert client.searches == []
+
+
+def test_a_filtered_refusal_counts_the_filtered_set_and_the_total_each_by_its_own_query():
+    """SPEC-C12.3: with a search the total is a count of its own (PRD-C8). Which answer is which is told by the call's
+    body: the order of the two calls is not part of the contract."""
+    sent = Client()
+    bounded(3).fetch_sync(request(*NAMES, length=3, search={'value': 'x'}), sent)  # what the same filter asks for
+    client = Counting(total=40, filtered=7)
+    response = bounded(3).fetch_sync(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert client.searches == []
+    assert len(client.counts) == 2
+    assert EVERYTHING in client.counts
+    assert {'query': sent.searches[0]['query']} in client.counts
+
+
+def test_the_total_cache_serves_the_refusal_too():
+    """SPEC-C12.4: the second refusal within the TTL runs only the count of the filtered set."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
+    client = Counting(total=40, filtered=7)
+    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    cached.fetch_sync(params, client)
+    response = cached.fetch_sync(params, client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert len(client.counts) == 3
+    assert client.counts.count(EVERYTHING) == 1
+
+
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'counts'),
+    [
+        ({}, 23456, 1),  # the filtered set is the whole table: its count is the total (PRD-C8)
+        ({'search': {'value': 'x'}}, 40000, 2),  # the total stays a count of its own
+    ],
+    ids=['unfiltered', 'filtered'],
+)
+def test_a_lower_bound_is_replaced_by_an_exact_count(filtering: dict[str, Any], total: int, counts: int):
+    """SPEC-C9.1, SPEC-C9.2: a search that answers `gte` 10,000 says only that there are at least that many."""
+    client = Counting(total=total, filtered=23456)
+    client.answer['hits']['total'] = {'value': 10000, 'relation': 'gte'}
+    response = SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(request(*NAMES, **filtering), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (total, 23456)
+    assert len(client.counts) == counts
+
+
+async def test_the_async_fetch_replaces_a_lower_bound_too():
+    """SPEC-C9.2 through `fetch`."""
+    client = AsyncCounting(total=40000, filtered=23456)
+    client.answer['hits']['total'] = {'value': 10000, 'relation': 'gte'}
+    plain = SearchTable('docs', COLUMNS, unique_key='id')
+    response = await plain.fetch(request(*NAMES, search={'value': 'x'}), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (40000, 23456)
 
 
 @pytest.mark.parametrize(

@@ -209,6 +209,34 @@ def test_a_filtered_draw_counts_the_total_apart(client: OpenSearch):
     assert (response.recordsTotal, response.recordsFiltered) == (5, 2)
 
 
+@pytest.mark.parametrize(
+    ('search', 'base_filter', 'start', 'length', 'code', 'counts'),
+    [
+        ('', None, 3, 2, 'page_out_of_range', (5, 5)),
+        ('apple', None, 1, 2, 'page_out_of_range', (5, 2)),  # the filtered set and the total are counts of their own
+        ('bread', {'range': {'pages': {'gte': 30}}}, 5, 1, None, (2, 1)),  # the empty page, past the end of 1 row
+    ],
+    ids=['unfiltered', 'filtered', 'empty-page-with-a-base-filter'],
+)
+def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
+    client: OpenSearch,
+    *,
+    search: str,
+    base_filter: dict[str, Any] | None,
+    start: int,
+    length: int,
+    code: str | None,
+    counts: tuple[int, int],
+):
+    """SPEC-C12.1, SPEC-C12.3, SPEC-C3.3, measured: the count API takes the very query body the library builds for a
+    search (the base filter, the clauses) and counts what the search reports. The recording client cannot show that
+    the cluster accepts the body, or that its count equals the search's own total."""
+    narrow = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter=base_filter, max_result_window=2)
+    response = narrow.fetch_sync(request(*NAMES, start=start, length=length, search={'value': search}), client)
+    assert (response.error_code, response.data) == (code, [])
+    assert (response.recordsTotal, response.recordsFiltered) == counts
+
+
 def test_the_base_filter_limits_the_total_too(client: OpenSearch):
     long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
     response = long_reads.fetch_sync(request(*NAMES, search={'value': 'bread'}), client)
