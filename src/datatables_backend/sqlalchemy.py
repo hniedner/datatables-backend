@@ -78,6 +78,7 @@ from ._plan import refused
 from .cache import TotalCache
 from .columns import Column
 from .columns import ColumnType
+from .opensearch import IndexColumn  # loads no OpenSearch client library
 from .protocol import DTParams
 from .protocol import DTResponse
 from .protocol import InvalidFilter
@@ -88,13 +89,15 @@ if TYPE_CHECKING:  # importing them needs greenlet, which a sync-only install ma
     from sqlalchemy.ext.asyncio import AsyncConnection
     from sqlalchemy.ext.asyncio import AsyncSession
 
+__all__ = ['SQLTable']
+
 log = logging.getLogger('datatables_backend')
 
-type AsyncSource = AsyncSession | AsyncConnection
-type SyncSource = Session | Connection
+type _AsyncSource = AsyncSession | AsyncConnection
+type _SyncSource = Session | Connection
 
 #: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
-MSSQL_DECIMAL_DIGITS = 38
+_MSSQL_DECIMAL_DIGITS = 38
 #: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
 #: LAST; every other database is told where NULL goes
 _NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
@@ -134,6 +137,12 @@ class SQLTable:
     ) -> None:
         self.source = source
         self.columns = tuple(columns)
+        for column in self.columns:
+            if isinstance(column, IndexColumn):
+                raise SchemaError(
+                    f'The column "{column.name}" is an IndexColumn, which declares an OpenSearch field, and a SQL '
+                    f'table ignores what it adds. Declare it as Column("{column.name}", ...) instead.'
+                )
         self.base_filter = base_filter
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
@@ -154,7 +163,7 @@ class SQLTable:
         else:
             self._tie_breakers = list(source.primary_key)
 
-    async def fetch(self, params: DTParams, source: AsyncSource) -> DTResponse:
+    async def fetch(self, params: DTParams, source: _AsyncSource) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
@@ -169,7 +178,7 @@ class SQLTable:
         result = await source.execute(statements.page)
         return self._response(params, total, filtered, result.mappings().all())
 
-    def fetch_sync(self, params: DTParams, source: SyncSource) -> DTResponse:
+    def fetch_sync(self, params: DTParams, source: _SyncSource) -> DTResponse:
         """``fetch`` for a ``Session`` or ``Connection``."""
         try:
             statements = self._statements(params, _dialect(source))
@@ -245,7 +254,7 @@ class SQLTable:
 
     def _contains(self, search: Contains) -> ColumnElement[bool]:
         column = self._sql(search.column)
-        pattern = f'%{escape_like(str(search.value))}%'
+        pattern = f'%{_escape_like(str(search.value))}%'
         sql_type = _sql_type(column)
         if isinstance(sql_type, Date | DateTime):
             return _day_text(_utc(column) if _aware(sql_type) else column).ilike(pattern, escape='\\')
@@ -294,7 +303,7 @@ class SQLTable:
                 fold = _folds(node.column, column)
                 return _lower(column) == func.lower(node.value) if fold else column == node.value
             case Part():
-                escaped = escape_like(str(node.value))
+                escaped = _escape_like(str(node.value))
                 pattern = {'any': f'%{escaped}%', 'start': f'{escaped}%', 'end': f'%{escaped}'}[node.where]
                 return _text(column).ilike(pattern, escape='\\')
             case Range() if node.type == 'number':
@@ -341,7 +350,7 @@ class SQLTable:
 
     # -- running ----------------------------------------------------------------------------------------------------
 
-    def _total_key(self, source: AsyncSource | SyncSource, total: Select[Any]) -> str:
+    def _total_key(self, source: _AsyncSource | _SyncSource, total: Select[Any]) -> str:
         """The database (its URL without the password) and the count as this database runs it, with every bound
         value of the source and the base filter: two scopes that differ only in a value never share a total."""
         bind = _bind(source)
@@ -349,7 +358,7 @@ class SQLTable:
         values = sorted(compiled.params.items(), key=lambda item: item[0])
         return f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values!r}'
 
-    async def _total(self, source: AsyncSource, statements: _Statements) -> int:
+    async def _total(self, source: _AsyncSource, statements: _Statements) -> int:
         key = self._total_key(source, statements.total) if self.total_cache else ''
         if self.total_cache and (cached := self.total_cache.get(key)) is not None:
             return cached
@@ -358,7 +367,7 @@ class SQLTable:
             self.total_cache.put(key, count)
         return count
 
-    def _total_sync(self, source: SyncSource, statements: _Statements) -> int:
+    def _total_sync(self, source: _SyncSource, statements: _Statements) -> int:
         key = self._total_key(source, statements.total) if self.total_cache else ''
         if self.total_cache and (cached := self.total_cache.get(key)) is not None:
             return cached
@@ -379,18 +388,18 @@ class SQLTable:
 # -- SQL helpers ---
 
 
-def escape_like(value: str) -> str:
+def _escape_like(value: str) -> str:
     """``value`` with LIKE's wildcards escaped by ``\\``: ``%``, ``_``, and ``[`` (a character class on SQL Server)."""
     return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_').replace('[', '\\[')
 
 
-def _bind(source: AsyncSource | SyncSource) -> Any:
+def _bind(source: _AsyncSource | _SyncSource) -> Any:
     """The engine or connection behind a session, or the connection itself."""
     get_bind = getattr(source, 'get_bind', None)  # a Session or an AsyncSession
     return get_bind() if get_bind else source
 
 
-def _dialect(source: AsyncSource | SyncSource) -> Dialect:
+def _dialect(source: _AsyncSource | _SyncSource) -> Dialect:
     return _bind(source).dialect
 
 
@@ -460,10 +469,10 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
             raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
         return value
     exact = isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)  # a Float is a Numeric to SQLAlchemy
-    if exact and dialect.name == 'mssql' and abs(value) >= 10**MSSQL_DECIMAL_DIGITS:
+    if exact and dialect.name == 'mssql' and abs(value) >= 10**_MSSQL_DECIMAL_DIGITS:
         raise mistake(
             'datatables_number_out_of_range',
-            f'{needed} with at most {MSSQL_DECIMAL_DIGITS} digits before the decimal point.',
+            f'{needed} with at most {_MSSQL_DECIMAL_DIGITS} digits before the decimal point.',
             declared,
         )
     if isinstance(value, float) or -(2**63) <= value < 2**63:

@@ -14,7 +14,6 @@ from .protocol import DTColumn
 from .protocol import DTOrder
 from .protocol import DTParams
 from .protocol import DTResponse
-from .protocol import InvalidFilter
 from .protocol import MalformedRequest
 from .protocol import PartialResultError
 from .protocol import SchemaError
@@ -31,7 +30,6 @@ __all__ = [
     'DTOrder',
     'DTParams',
     'DTResponse',
-    'InvalidFilter',
     'MalformedRequest',
     'PartialResultError',
     'RowHooks',

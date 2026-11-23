@@ -40,6 +40,9 @@ pip install "datatables-backend[opensearch-async]"  # OpenSearch, async (adds ai
 pip install "datatables-backend[fastapi]"           # the FastAPI dependency
 ```
 
+Import from `datatables_backend` and from its `sqlalchemy`, `opensearch` and `fastapi` modules; any other module is
+internal.
+
 ## SQL
 
 ```python

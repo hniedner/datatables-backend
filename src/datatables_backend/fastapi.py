@@ -20,11 +20,13 @@ from .protocol import DTParams
 from .protocol import MalformedRequest
 from .protocol import parse_request
 
-MALFORMED = 'The table request is malformed: send it as a JSON object or as a form.'
+__all__ = ['DataTablesParams', 'parse_datatables_request']
+
+_MALFORMED = 'The table request is malformed: send it as a JSON object or as a form.'
 #: The most fields Starlette reads from a form, which a form read here without its parser is held to as well
-FORM_FIELD_LIMIT = 1000
+_FORM_FIELD_LIMIT = 1000
 #: The media types whose body Starlette's own form parser reads
-FORM_TYPES = ('application/x-www-form-urlencoded', 'multipart/form-data')
+_FORM_TYPES = ('application/x-www-form-urlencoded', 'multipart/form-data')
 
 
 async def parse_datatables_request(request: Request) -> DTParams:
@@ -50,7 +52,7 @@ async def parse_datatables_request(request: Request) -> DTParams:
             detail['draw'] = exc.draw
         raise HTTPException(status_code=422, detail=detail) from None
     except (ValueError, RecursionError):  # not UTF-8, or too many fields; the parser's message would quote the body
-        raise HTTPException(status_code=422, detail={'message': MALFORMED}) from None
+        raise HTTPException(status_code=422, detail={'message': _MALFORMED}) from None
 
 
 def _json_object(body: bytes) -> dict[str, Any] | None:
@@ -68,9 +70,9 @@ async def _form(request: Request, body: bytes) -> list[tuple[str, Any]]:
     """``body`` as the form it is: through Starlette's parser under a form media type, as urlencoded text under any
     other."""
     media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
-    if media_type in FORM_TYPES:
+    if media_type in _FORM_TYPES:
         return list((await request.form()).multi_items())
-    return parse_qsl(body.decode(), keep_blank_values=True, max_num_fields=FORM_FIELD_LIMIT)
+    return parse_qsl(body.decode(), keep_blank_values=True, max_num_fields=_FORM_FIELD_LIMIT)
 
 
 #: The parsed DataTables request as a handler parameter (``params: DataTablesParams``)
