@@ -3150,8 +3150,8 @@ def test_a_negated_column_search_counts_with_count_statements_and_keeps_the_null
     response = table.fetch_sync(request(*ALL, column_search={'email': {'value': '!ann'}}), session)
     assert ids(response) == [2, 3, 4, 5]
     assert (response.recordsTotal, response.recordsFiltered) == (5, 4)
-    counts = [statement for statement in statements if 'count(' in statement.lower()]
-    assert len(counts) == 2
+    counts = [s for s in statements if 'dtb_test_people' in s and 'count(' in s.lower()]
+    assert len(counts) == 2  # not the statements a first connection runs to learn the dialect
 
 
 def test_the_page_statement_limits_the_rows_in_the_database(session: Session):
@@ -3160,7 +3160,7 @@ def test_the_page_statement_limits_the_rows_in_the_database(session: Session):
     statements: list[str] = []
     event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
     assert ids(table.fetch_sync(request(*ALL, start=1, length=2), session)) == [2, 3]
-    page = [statement for statement in statements if 'count(' not in statement.lower()]
+    page = [s for s in statements if 'dtb_test_people' in s and 'count(' not in s.lower()]
     assert page
     assert re.search(r'\b(LIMIT|FETCH|TOP)\b', page[-1].upper())
 
@@ -3170,7 +3170,7 @@ def test_the_page_statement_selects_no_undeclared_column(session: Session):
     statements: list[str] = []
     event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
     response = table.fetch_sync(request(*ALL), session)
-    page = [statement for statement in statements if 'count(' not in statement.lower()][-1].lower()
+    page = [s for s in statements if 'dtb_test_people' in s and 'count(' not in s.lower()][-1].lower()
     assert not any(name in page for name in ('secret', 'active', 'seen_tz'))
     assert all(not {'secret', 'active', 'seen_tz'} & set(row) for row in response.data)
 
@@ -3182,10 +3182,11 @@ def test_a_cached_total_is_counted_once_between_two_requests_within_the_ttl(sess
     event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
     cached = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=60))
     first = cached.fetch_sync(request(*ALL, search={'value': 'red'}), session)
-    ran_first = len(statements)
+    ran_first = len([s for s in statements if 'dtb_test_people' in s])
     second = cached.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+    ran_second = len([s for s in statements if 'dtb_test_people' in s]) - ran_first
     assert (first.recordsTotal, second.recordsTotal) == (5, 5)
-    assert (ran_first, len(statements) - ran_first) == (3, 2)  # total, filtered count, page; then the last two
+    assert (ran_first, ran_second) == (3, 2)  # total, filtered count, page; then the last two
 
 
 def test_the_cached_total_is_counted_again_after_the_ttl(session: Session):
