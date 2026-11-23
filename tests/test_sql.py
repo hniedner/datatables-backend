@@ -2589,6 +2589,17 @@ def join_of_part_of_a_composite_key() -> Any:
     return part.join(other, part.c.a == other.c.id)
 
 
+def subquery_over_a_join_with_a_table_without_a_key() -> Any:
+    """Only the keyed table's column is selected, so SQLAlchemy reports its key: but each person repeats once for
+    every tag the other table holds for them."""
+    _, joined, _ = tagged_people()
+    return select(people.c.id).select_from(joined).subquery()
+
+
+def subquery_of_no_table() -> Any:
+    return select(literal_column('1').label('one')).subquery()
+
+
 @pytest.mark.parametrize(
     'make_source',
     [
@@ -2597,8 +2608,18 @@ def join_of_part_of_a_composite_key() -> Any:
         lambda: select(tags_without_a_key().c.id).subquery(),
         part_of_a_composite_key,  # SPEC-D11.3
         join_of_part_of_a_composite_key,  # SPEC-D11.3, under a join too
+        subquery_over_a_join_with_a_table_without_a_key,  # SPEC-D11.2: a key is reported, and repeats
+        subquery_of_no_table,  # SPEC-D11.2: no table, so no key at all
     ],
-    ids=['table', 'join', 'subquery', 'part-of-a-composite-key', 'join-of-part-of-a-composite-key'],
+    ids=[
+        'table',
+        'join',
+        'subquery',
+        'part-of-a-composite-key',
+        'join-of-part-of-a-composite-key',
+        'subquery-over-a-join-with-a-table-without-a-key',
+        'subquery-of-no-table',
+    ],
 )
 def test_a_source_that_has_no_unique_key_needs_one_declared(make_source: Callable[[], Any]):
     """SPEC-D11.2, SPEC-D11.3: SQLAlchemy reports no key, or a part of one, and the tie-breaker would not be unique.
