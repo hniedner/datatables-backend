@@ -132,6 +132,17 @@ def test_an_unfiltered_draw_fills_the_total_cache_for_the_filtered_draws_after_i
     assert client.counts == []
 
 
+async def test_the_async_fetch_fills_the_total_cache_with_an_unfiltered_request_too():
+    """SPEC-C14.3 through `fetch`, which has its own copy of the unfiltered branch: a global search right after an
+    unfiltered request runs no total count and answers that total."""
+    client = AsyncClient(total=7, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60))
+    await cached.fetch(request(*NAMES), client)
+    response = await cached.fetch(request(*NAMES, search={'value': 'x'}), client)
+    assert response.recordsTotal == 7
+    assert client.counts == []
+
+
 def test_the_total_count_keeps_the_base_filter():
     client = Client()
     table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
@@ -351,6 +362,22 @@ def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window(
     """SPEC-C3.3: PRD-C3 wins over PRD-C12, and no page is searched for."""
     client = Counting(total=total, filtered=filtered)
     response = bounded(2).fetch_sync(request(*NAMES, start=start, **filtering), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
+    assert response.data == []
+    assert client.searches == []
+
+
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'filtered', 'start'),
+    [({}, 4, 4, 10), ({'search': {'value': 'x'}}, 40, 7, 7)],
+    ids=['past-the-end', 'at-the-end-of-a-filtered-set'],
+)
+async def test_the_async_fetch_answers_a_start_past_the_end_as_an_empty_page_beyond_the_window_too(
+    filtering: dict[str, Any], total: int, filtered: int, start: int
+):
+    """SPEC-C3.3 through `fetch`: PRD-C3 wins over PRD-C12, and no page is searched for."""
+    client = AsyncCounting(total=total, filtered=filtered)
+    response = await bounded(2).fetch(request(*NAMES, start=start, **filtering), client)
     assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
     assert response.data == []
     assert client.searches == []
