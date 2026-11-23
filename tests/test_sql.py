@@ -834,6 +834,24 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     )
 
 
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [('=', ['2026-07-15'], [1]), ('>', ['2026-07-15'], [2]), ('<', ['2026-07-15'], [4, 5])],
+)
+async def test_a_timezone_aware_column_compares_by_utc_day_through_the_async_fetch(
+    async_session: AsyncSession, condition: str, values: list[str], expected: list[int]
+):
+    """The test above through the async driver. asyncpg ignores PGTZ, so its session was UTC beside the sync one in
+    UTC+14, and the one case that tells a naive bound from a UTC one went unchecked on that leg: the zone is asserted
+    here as it is there, and the conftest asks asyncpg for it."""
+    if async_session.get_bind().dialect.name == 'postgresql':
+        zone = (await async_session.execute(select(func.current_setting('TimeZone')))).scalar()
+        assert zone not in ('UTC', 'Etc/UTC'), 'The async session is in UTC, so this test checks nothing.'
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    response = await aware.fetch(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), async_session)
+    assert ids(response) == expected
+
+
 def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
     """SPEC-F42.1, PostgreSQL's proof: in the job's session zone (UTC+14) the day text of row 1, 23:59 UTC on the
     15th, is the 16th, and row 5's is the 15th. A column search runs the same expression; the test below goes

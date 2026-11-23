@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
 from datetime import UTC
@@ -19,6 +20,7 @@ from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
@@ -49,6 +51,27 @@ for _url in filter(None, SQL_URLS):
     checked_database(_url)
 
 
+def async_engine(url: str) -> AsyncEngine:
+    """The async engine of the tests. asyncpg does not read ``PGTZ`` (libpq's variable, which psycopg and psycopg2 read):
+    the first run on CI showed its session in UTC beside the sync one in the zone ``PGTZ`` names. So where ``PGTZ`` is
+    set, it is asked for that zone as asyncpg takes a setting, and the async leg runs in the same far-from-UTC zone."""
+    connect_args: dict[str, Any] = {}
+    if make_url(url).get_driver_name() == 'asyncpg' and (zone := os.environ.get('PGTZ')):
+        connect_args['server_settings'] = {'timezone': zone}
+    return create_async_engine(url, connect_args=connect_args)
+
+
+async def async_time_zone() -> str:
+    """The session time zone of a connection of the async driver: libpq reads PGTZ, but a driver that does not use
+    libpq may not, so the async tests could run in UTC while the sync ones do not."""
+    engine = async_engine(SQL_URLS[1])
+    try:
+        async with engine.connect() as connection:
+            return str((await connection.exec_driver_sql('SHOW TimeZone')).scalar())
+    finally:
+        await engine.dispose()
+
+
 def pytest_report_header() -> list[str]:
     """The real servers the tests run on, with their versions, so a run cannot pass on SQLite unnoticed."""
     lines: list[str] = []
@@ -57,7 +80,8 @@ def pytest_report_header() -> list[str]:
         with engine.connect() as connection:
             version = '.'.join(map(str, connection.dialect.server_version_info or ()))
             if engine.dialect.name == 'postgresql':  # a non-UTC session is what makes the timezone test bite
-                version += f', session TimeZone {connection.exec_driver_sql("SHOW TimeZone").scalar()}'
+                zone = connection.exec_driver_sql('SHOW TimeZone').scalar()
+                version += f', session TimeZone {zone} (sync), {asyncio.run(async_time_zone())} (async)'
         engine.dispose()
         lines.append(f'SQL tests on {engine.dialect.name} {version}')
     if url := os.environ.get('DTB_OPENSEARCH_URL'):
@@ -144,7 +168,7 @@ def session(database: tuple[str, str]) -> Iterator[Session]:
 
 @pytest.fixture
 async def async_session(database: tuple[str, str]) -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine(database[1])
+    engine = async_engine(database[1])
     async with AsyncSession(engine) as session:
         yield session
     await engine.dispose()

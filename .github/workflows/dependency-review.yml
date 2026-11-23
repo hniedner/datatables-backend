@@ -35,11 +35,13 @@ jobs:
           # BSD-3-Clause with a scancode reference. The action matches these by name only, so the exemption covers
           # every version; scripts/test_dependency_review_exemptions.py fails when the locked version changes, forcing
           # a licence re-check of the new one.
-          # psycopg and psycopg-binary are LGPL-3.0-only and test-only: the PostgreSQL driver of the `containers`
-          # dependency group, never a requirement of the wheel. The same test fails if anything the wheel requires
-          # (its dependencies and extras) comes to depend on either.
+          # psycopg and psycopg-binary (LGPL-3.0-only) and psycopg2-binary (LGPL-2.0-or-later AND LGPL-3.0-or-later)
+          # are test-only: the PostgreSQL drivers of the `containers` dependency group, never a requirement of the
+          # wheel. The same test fails if anything the wheel requires (its dependencies and extras) comes to depend on
+          # any of them.
           allow-dependencies-licenses: >-
-            pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf, pkg:pypi/psycopg, pkg:pypi/psycopg-binary
+            pkg:pypi/aiohappyeyeballs, pkg:pypi/protobuf, pkg:pypi/psycopg, pkg:pypi/psycopg-binary,
+            pkg:pypi/psycopg2-binary
       # The action only lists a dependency whose licence it cannot detect; it fails on forbidden and unresolved
       # licences alone. Its invalid-license-changes output (empty when no dependency changed) holds them under
       # `unlicensed`, without the exempted packages above.
