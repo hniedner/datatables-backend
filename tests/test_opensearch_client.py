@@ -36,7 +36,7 @@ ANSWERS: dict[str, dict[str, Any]] = {
     '/docs/_count': {'count': 5, '_shards': SHARDS},
 }
 SENT: list[tuple[str, str, Any]] = []
-table = SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title')])
+table = SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title')], unique_key='id')
 
 
 def answer(method: str, url: str, body: bytes | str | None) -> tuple[int, dict[str, str], str]:

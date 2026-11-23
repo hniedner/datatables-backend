@@ -59,9 +59,27 @@ reports = SearchTable(
         Column('created', type='date'),
         Column('published', type='boolean'),  # a column is a string unless declared: the mapping is not read
     ],
+    unique_key='id',  # required: an index has no primary key to break ties with
 )
 response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 ```
+
+**The unique key.** `unique_key` names a declared column (a tuple of names for a key of several) whose values are
+unique for every document. Every order ends with it, in the direction of the first sort entry, and a request without
+an order comes in its ascending order, so pages are stable. Declare it `IndexColumn(..., text='keyword')` or as a
+number. A key is a declared column, so its value is sent in every row; `searchable=False` and `orderable=False` keep it
+out of the client's controls. A table without a key raises `SchemaError`.
+
+**The document id.** An index whose documents hold no unique field needs one: copy the id into a `keyword` field at
+ingest, which is OpenSearch's own advice, and name that column as the key. The document's own `_id` cannot be the key,
+because OpenSearch deprecates sorting on it (`docs/databases.md`); naming it raises `SchemaError`. A declared
+`Column('_id')` shows the id (it reads the hit's id, and fills `DT_RowId` through `RowHooks`) but cannot be searched or
+sorted: `searchable` is ignored on it, and `orderable=True` raises `SchemaError`.
+
+SQL takes the same `unique_key`, which replaces the primary key when declared. Without it, a source must have a primary
+key, and a subquery must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a
+scalar subquery); otherwise it raises `SchemaError`. A `UNION` is not checked: declare `unique_key` on a subquery over
+one.
 
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an
@@ -132,9 +150,9 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   string column declared `text='text'` has no whole string to sort by, so it is unorderable, and declaring it
   `orderable=True` raises `SchemaError`. A column named twice in an order is sorted by its first entry.
 - **NULL is the lowest value, and a descending order is the exact reverse of the ascending one.** NULL, or a
-  missing field on OpenSearch, comes first ascending and last descending on every backend. In SQL a tie is broken
-  by the primary key, in the direction of the first sort entry. **Two exceptions:** an OpenSearch table breaks no
-  ties yet, and on PostgreSQL the order of a column that can hold NULL says where NULL goes (`NULLS FIRST`,
+  missing field on OpenSearch, comes first ascending and last descending on every backend. A tie is broken by the
+  unique key (the declared `unique_key`, else a SQL source's primary key), in the direction of the first sort entry.
+  **One exception:** on PostgreSQL the order of a column that can hold NULL says where NULL goes (`NULLS FIRST`,
   `NULLS LAST`), which an index in the default order does not serve: to sort a large table by such a column,
   declare its index `NULLS FIRST`. A column declared `nullable=False` on a table (a primary key's columns are) is
   ordered plainly and keeps its index.
@@ -185,13 +203,15 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   column searched, a selected value and a range once each; 16 words over 60 columns reach it), `invalid_number` or
   `invalid_date` for a value the column cannot read or hold, `page_out_of_range` for an OpenSearch page beyond the
   result window, and `invalid_filter` for any other (an unknown column, a value that is not a boolean, a condition the
-  column's type does not take, a regex search). When a request holds several, a control character, a value that is too
-  long, text of too many words and a structure over the bounds are answered first (the first the request holds in
-  reading order: the global search, then the column searches, then the SearchBuilder tree), and a request of too many
-  conditions after them, then a number or date mistake, then any other, and the page last. The list of codes is closed:
-  a code is added only in a release that says so, and a client that reads a code it does not know treats it as a refusal
-  of the request and shows `error`. Every other failure raises, so the app decides how to report it;
-  `DTResponse.query_failed(draw)` gives the usual shape.
+  column's type does not take, a regex search). A `page_out_of_range` answer carries the real `recordsTotal` and
+  `recordsFiltered`: the library runs the counts first (one or two count calls, never a page search), and a start at or
+  past the last row answers an empty page with both counts instead. When a request holds several, a control character, a
+  value that is too long, text of too many words and a structure over the bounds are answered first (the first the
+  request holds in reading order: the global search, then the column searches, then the SearchBuilder tree), and a
+  request of too many conditions after them, then a number or date mistake, then any other, and the page last. The list
+  of codes is closed: a code is added only in a release that says so, and a client that reads a code it does not know
+  treats it as a refusal of the request and shows `error`. Every other failure raises, so the app decides how to report
+  it; `DTResponse.query_failed(draw)` gives the usual shape.
 - **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
   request's own when that could be read. The FastAPI dependency answers it with 422 and

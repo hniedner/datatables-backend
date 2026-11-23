@@ -64,14 +64,25 @@ def test_a_json_body_that_is_not_an_object_answers_422():
 
 
 docs = SearchTable(
-    'docs', [Column('name'), Column('made', type='date'), Column('price', type='number')], max_result_window=3
+    'docs',
+    [Column('name'), Column('made', type='date'), Column('price', type='number')],
+    unique_key='name',
+    max_result_window=3,
 )
-no_server: Any = object()  # every case below is refused before a server would be asked
+no_server: Any = object()  # the cases of `wide` below are refused before a server would be asked
+
+
+class CountsOnly:
+    """A server that answers a count and nothing else: a page search on this path fails loudly (no `search`)."""
+
+    def count(self, *, index: str, body: Any) -> dict[str, Any]:
+        return {'count': 10, '_shards': {'total': 1, 'successful': 1, 'failed': 0}}
 
 
 @app.post('/docs')
 def answer(params: DataTablesParams) -> DTResponse:
-    return docs.fetch_sync(params, no_server)
+    # Every case below is a mistake found before a server is asked, but a page out of range, which asks for counts
+    return docs.fetch_sync(params, CountsOnly())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -94,7 +105,7 @@ def test_a_user_error_of_each_code_answers_http_200_with_its_code(extra: dict[st
     assert (response.json()['draw'], response.json()['error_code']) == (3, code)
 
 
-wide = SearchTable('docs', [Column(f't{number}', field='title') for number in range(61)])
+wide = SearchTable('docs', [Column(f't{number}', field='title') for number in range(61)], unique_key='t0')
 
 
 @app.post('/wide')

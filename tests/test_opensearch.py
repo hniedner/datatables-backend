@@ -38,7 +38,7 @@ COLUMNS = [
     Column('author', field='meta.author'),
 ]
 NAMES = ('id', 'title', 'body', 'pages', 'created', 'author')
-table = SearchTable('docs', COLUMNS, base_filter={'term': {'published': True}})
+table = SearchTable('docs', COLUMNS, unique_key='id', base_filter={'term': {'published': True}})
 
 
 class Client:
@@ -102,13 +102,29 @@ def test_an_unfiltered_draw_is_one_search_that_answers_both_counts():
 
 
 def test_a_filtered_draw_counts_the_total_once_per_ttl():
-    client, cached = Client(total=3, count=40), SearchTable('docs', COLUMNS, total_cache=TotalCache(60))
+    client, cached = (
+        Client(total=3, count=40),
+        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
+    )
     params = request(*NAMES, search={'value': 'x'})
     assert (cached.fetch_sync(params, client).recordsTotal, cached.fetch_sync(params, client).recordsFiltered) == (
         40,
         3,
     )
     assert client.counts == [{'query': {'match_all': {}}}]
+
+
+def test_an_unfiltered_draw_fills_the_total_cache_for_the_filtered_draws_after_it():
+    """SPEC-C14.3, PRD-C14, PRD-C8: an unfiltered search's count is the total, and the cache keeps it. Were it not
+    kept, every filtered draw after it would pay a count of its own, with nothing to show for it."""
+    client, cached = (
+        Client(total=7, count=40),
+        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
+    )
+    cached.fetch_sync(request(*NAMES), client)  # nothing beyond the base filter: the search's own count is the total
+    response = cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert response.recordsTotal == 7
+    assert client.counts == []
 
 
 def test_the_total_count_keeps_the_base_filter():
@@ -137,7 +153,7 @@ def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
     """Also SPEC-R7.2: a value comes back as `_source` holds it, an HTML text unescaped."""
     html = '<b>x</b> & "y"'
     hit = {'_source': {'id': 'a', 'title': html, 'pages': 3, 'meta': {'author': 'Ann'}}, '_score': 1.0}
-    hooked = SearchTable('docs', COLUMNS, rows=RowHooks(row_id=lambda row: row['id']))
+    hooked = SearchTable('docs', COLUMNS, unique_key='id', rows=RowHooks(row_id=lambda row: row['id']))
     (row,) = hooked.fetch_sync(request(*NAMES), Client(hits=[hit])).data
     assert row == {
         'id': 'a', 'title': html, 'body': None, 'pages': 3, 'created': None, 'author': 'Ann', 'DT_RowId': 'a',
@@ -167,12 +183,15 @@ def test_a_partial_count_raises_too():
         table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
 
 
-def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
-    """The code of PRD-C12. Its counts and the pages PRD-C10 still serves are pinned below."""
-    client = Client()
+def test_a_page_beyond_the_result_window_asks_for_the_count_and_never_for_a_page():
+    """SPEC-C12.1, SPEC-C11.1, SPEC-C10.4's refusal: the refusal carries the real counts; the one count of the table's
+    query (the total is its reuse, PRD-C8) runs before it, and no page search."""
+    client = Client(count=20000)
     response = table.fetch_sync(request(*NAMES, start=9995, length=10), client)
     refused(response, 'page_out_of_range')
-    assert (client.searches, client.counts) == ([], [])
+    assert (response.recordsTotal, response.recordsFiltered) == (20000, 20000)
+    assert client.searches == []
+    assert client.counts == [{'query': {'bool': {'must': [{'term': {'published': True}}]}}}]
 
 
 @pytest.mark.parametrize(
@@ -201,14 +220,16 @@ def test_a_page_beyond_the_result_window_is_refused_before_anything_is_sent():
             'The filter on "pages" needs one number, written like 42 or -3.5.',
         ),
         (
-            SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')]),
+            SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages'),
             ('pages', 'created'),
             {'search': {'value': 'x'}},
             'invalid_filter',
             'No column of this table can be searched from the search box. Clear it and use a column filter instead.',
         ),
         (
-            SearchTable('docs', COLUMNS, max_result_window=3),  # the number in the text is the table's own
+            SearchTable(
+                'docs', COLUMNS, unique_key='id', max_result_window=3
+            ),  # the number in the text is the table's own
             NAMES,
             {'start': 4, 'length': 3},
             'page_out_of_range',
@@ -229,7 +250,9 @@ def test_a_user_error_found_while_the_body_is_built_says_what_is_wrong_and_what_
 def test_a_filter_mistake_comes_before_a_page_beyond_the_result_window():
     """SPEC-E3.5: step 4 before step 5, so the user first hears of the filter they can change."""
     params = request(*FLAG_NAMES, start=9995, length=10, **criterion('active', '=', 'yes'))
-    assert 'true or false' in refused(flags.fetch_sync(params, Client()))
+    client = Client()
+    assert 'true or false' in refused(flags.fetch_sync(params, client))
+    assert (client.searches, client.counts) == ([], [])  # the mistake of a lower step runs no count either
 
 
 @pytest.mark.parametrize('found_in_the_build', ['a column search that is no number', 'no column to search'])
@@ -241,34 +264,162 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
         params = request(*NAMES, column_search={'pages': {'value': 'abc'}}, **criterion('title', '=', 'a\x00b'))
         expected = 'invalid_character'
     else:  # step 4: only a number and a date column, which take no free text; beside a date of the wrong format
-        searched = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
+        searched = SearchTable(
+            'docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages'
+        )
         params = request('pages', 'created', search={'value': 'x'}, **criterion('created', '=', 'xx'))
         expected = 'invalid_date'
     refused(searched.fetch_sync(params, Client()), expected)
 
 
-@pytest.mark.xfail(
-    reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1, issue '
-    '#29)',
-    strict=True,
-    raises=AssertionError,
-)
-def test_a_page_out_of_range_carries_the_real_counts():
-    small = SearchTable('docs', COLUMNS, max_result_window=3)
-    response = small.fetch_sync(request(*NAMES, start=4, length=3), Client(total=10, count=10))
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 10, 10)
+# -- the counts before a refusal, and the empty page past the end (PRD-C3, PRD-C9, PRD-C11, PRD-C12) ---
+
+EVERYTHING = {'query': {'match_all': {}}}
 
 
-@pytest.mark.xfail(
-    reason='PRD-C3: a start past the end beyond the result window is refused, not answered with an empty page and '
-    'both counts (SPEC-C3.3, issue #29)',
-    strict=True,
-    raises=AssertionError,
+class Counting(Client):
+    """Answers a count by what it is asked: the query that matches everything (the total of a table without a base
+    filter) is `total`, any other `filtered`. The order of the calls is not part of the contract."""
+
+    def __init__(self, *, total: int, filtered: int, **answer: Any):
+        super().__init__(**answer)
+        self.numbers = {'total': total, 'filtered': filtered}
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.counts.append(body)
+        return {'count': self.numbers['total' if body == EVERYTHING else 'filtered'], '_shards': SHARDS}
+
+
+class AsyncCounting(Counting):
+    async def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Client.search(self, index=index, body=body)
+
+    async def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        return Counting.count(self, index=index, body=body)
+
+
+def bounded(window: int) -> SearchTable:
+    return SearchTable('docs', COLUMNS, unique_key='id', max_result_window=window)
+
+
+def test_a_refusal_with_counts_logs_one_line_and_an_empty_page_none(caplog: pytest.LogCaptureFixture):
+    """SPEC-E4.24 with the counts of C12.1: the refusal is logged once, and the line holds neither a count nor the
+    search text; the empty page of PRD-C3 is no refusal and logs nothing."""
+    client = Counting(total=4242, filtered=1717)
+    with caplog.at_level(logging.DEBUG):
+        bounded(3).fetch_sync(request(*NAMES, start=4, length=3, search={'value': 'MARKER'}), client)
+    assert [(record.levelname, record.msg) for record in caplog.records] == [
+        ('WARNING', 'datatables_page_out_of_range')
+    ]
+    logged = repr([vars(record) for record in caplog.records])
+    assert not any(text in logged for text in ('4242', '1717', 'MARKER'))
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        bounded(3).fetch_sync(request(*NAMES, start=5000), client)  # past the 4242 rows the unfiltered count gives
+    assert caplog.records == []
+
+
+async def test_the_async_fetch_counts_before_the_refusal_too():
+    """SPEC-C12.1, SPEC-C12.3, SPEC-C11.1 through `fetch`, which builds its answer apart from `fetch_sync`: a filtered
+    refusal, so that both of its counts are run."""
+    client = AsyncCounting(total=40, filtered=7)
+    response = await bounded(3).fetch(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert client.searches == []
+    assert len(client.counts) == 2
+    assert EVERYTHING in client.counts
+
+
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'filtered', 'start'),
+    [
+        ({}, 4, 4, 10),  # well past the end
+        # A start equal to the filtered count is past the last row, and the total is not what it is compared with
+        ({'search': {'value': 'x'}}, 40, 7, 7),
+    ],
+    ids=['past-the-end', 'at-the-end-of-a-filtered-set'],
 )
-def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window():
-    small = SearchTable('docs', COLUMNS, max_result_window=2)
-    response = small.fetch_sync(request(*NAMES, start=10), Client(total=4, count=4))
-    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, 4, 4)
+def test_a_start_past_the_end_is_an_empty_page_also_beyond_the_result_window(
+    filtering: dict[str, Any], total: int, filtered: int, start: int
+):
+    """SPEC-C3.3: PRD-C3 wins over PRD-C12, and no page is searched for."""
+    client = Counting(total=total, filtered=filtered)
+    response = bounded(2).fetch_sync(request(*NAMES, start=start, **filtering), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == (None, total, filtered)
+    assert response.data == []
+    assert client.searches == []
+
+
+def test_the_largest_start_is_an_empty_page_and_no_search_carries_it():
+    """SPEC-C3.2 on this backend: a `from` of 2^53-1 is one a cluster refuses, so none is sent."""
+    client = Counting(total=4, filtered=4)
+    response = SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(request(*NAMES, start=2**53 - 1), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered, response.data) == (None, 4, 4, [])
+    assert client.searches == []
+
+
+def test_a_filtered_refusal_counts_the_filtered_set_and_the_total_each_by_its_own_query():
+    """SPEC-C12.3: with a search the total is a count of its own (PRD-C8). Which answer is which is told by the call's
+    body: the order of the two calls is not part of the contract."""
+    sent = Client()
+    bounded(3).fetch_sync(request(*NAMES, length=3, search={'value': 'x'}), sent)  # what the same filter asks for
+    client = Counting(total=40, filtered=7)
+    response = bounded(3).fetch_sync(request(*NAMES, start=4, length=3, search={'value': 'x'}), client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert client.searches == []
+    assert len(client.counts) == 2
+    assert EVERYTHING in client.counts
+    assert {'query': sent.searches[0]['query']} in client.counts
+
+
+def test_the_total_cache_serves_the_refusal_too():
+    """SPEC-C12.4: the second refusal within the TTL runs only the count of the filtered set."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
+    client = Counting(total=40, filtered=7)
+    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    cached.fetch_sync(params, client)
+    response = cached.fetch_sync(params, client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert len(client.counts) == 3
+    assert client.counts.count(EVERYTHING) == 1
+
+
+async def test_the_total_cache_serves_the_async_refusal_too():
+    """SPEC-C12.4 through `fetch`, which fills and reads the cache by its own lines."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', max_result_window=3, total_cache=TotalCache(60))
+    client = AsyncCounting(total=40, filtered=7)
+    params = request(*NAMES, start=4, length=3, search={'value': 'x'})
+    await cached.fetch(params, client)
+    response = await cached.fetch(params, client)
+    assert (response.error_code, response.recordsTotal, response.recordsFiltered) == ('page_out_of_range', 40, 7)
+    assert len(client.counts) == 3
+    assert client.counts.count(EVERYTHING) == 1
+
+
+@pytest.mark.parametrize(
+    ('filtering', 'total', 'counts'),
+    [
+        ({}, 23456, 1),  # the filtered set is the whole table: its count is the total (PRD-C8)
+        ({'search': {'value': 'x'}}, 40000, 2),  # the total stays a count of its own
+    ],
+    ids=['unfiltered', 'filtered'],
+)
+def test_a_lower_bound_is_replaced_by_an_exact_count(filtering: dict[str, Any], total: int, counts: int):
+    """SPEC-C9.1, SPEC-C9.2: a search that answers `gte` 10,000 says only that there are at least that many."""
+    client = Counting(total=total, filtered=23456)
+    client.answer['hits']['total'] = {'value': 10000, 'relation': 'gte'}
+    response = SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(request(*NAMES, **filtering), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (total, 23456)
+    assert len(client.counts) == counts
+
+
+async def test_the_async_fetch_replaces_a_lower_bound_too():
+    """SPEC-C9.2 through `fetch`."""
+    client = AsyncCounting(total=40000, filtered=23456)
+    client.answer['hits']['total'] = {'value': 10000, 'relation': 'gte'}
+    plain = SearchTable('docs', COLUMNS, unique_key='id')
+    response = await plain.fetch(request(*NAMES, search={'value': 'x'}), client)
+    assert (response.recordsTotal, response.recordsFiltered) == (40000, 23456)
 
 
 @pytest.mark.parametrize(
@@ -432,7 +583,7 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
 
 
 def test_a_global_search_over_numbers_and_dates_only_is_refused():
-    numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')])
+    numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages')
     refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
 
 
@@ -533,7 +684,7 @@ def test_an_empty_entry_of_a_list_is_a_missing_field(column: str, values: list[s
 )
 def test_an_exact_match_on_a_column_the_library_does_not_fold_is_sent_plain(unfolded: Column):
     """A `term` without `case_insensitive`, and a list as one `terms` query: the field's mapping decides."""
-    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded], unique_key='id')
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', '=', 'A')), client)
     plain.fetch_sync(request('id', 'secret', column_search={'secret': {'multi_values': ['A', 'B']}}), client)
@@ -636,7 +787,7 @@ def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
 ):
     """SPEC-F9.15: the regexp is for the library's own fold. An exact match on a `fold_case=False` column is sent
     as before, and a search on it folds."""
-    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded])
+    plain = SearchTable('docs', [IndexColumn('id', text='keyword'), unfolded], unique_key='id')
     client = Client()
     plain.fetch_sync(request('id', 'secret', **criterion('secret', condition, 'ä')), client)
     assert client.searches[-1]['query']['bool']['must'] == [clause]
@@ -770,6 +921,7 @@ def test_sorting_uses_the_whole_string_and_puts_a_missing_value_lowest():
     assert client.searches[0]['sort'] == [
         {'title.keyword': {'order': 'desc', 'missing': '_last'}},
         {'pages': {'order': 'asc', 'missing': '_first'}},
+        {'id': {'order': 'desc', 'missing': '_last'}},  # PRD-O3: the key follows the first entry
     ]
 
 
@@ -780,34 +932,222 @@ def test_an_order_on_analysed_text_is_refused_or_skipped_as_the_request_marks_it
     refused(table.fetch_sync(request(*NAMES, order=order), client))
     assert client.searches == []
     table.fetch_sync(request(*NAMES, flags={'body': {'orderable': False}}, order=order), client)
-    assert client.searches[0]['sort'] == [{'pages': {'order': 'asc', 'missing': '_first'}}]
+    assert client.searches[0]['sort'] == [
+        {'pages': {'order': 'asc', 'missing': '_first'}},
+        {'id': {'order': 'asc', 'missing': '_first'}},
+    ]
 
 
 def test_analysed_text_declared_orderable_is_a_schema_error():
     """SPEC-O5.2. Declared unorderable, which it is anyway, it is no mistake."""
     with pytest.raises(SchemaError, match='body'):
-        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)])
-    SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=False)])
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=True)],
+            unique_key='id',
+        )
+    SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', orderable=False)], unique_key='id'
+    )
 
 
 def test_an_order_on_a_column_declared_unorderable_is_refused():
     """SPEC-O1.2, SPEC-D5.1: the declaration decides on this backend too, for a column the index could sort by."""
-    fixed = SearchTable('docs', [IndexColumn('id', text='keyword', orderable=False)])
+    fixed = SearchTable('docs', [IndexColumn('id', text='keyword', orderable=False)], unique_key='id')
     client = Client()
     refused(fixed.fetch_sync(request('id', order=[{'column': 0, 'dir': 'asc'}]), client))
     assert client.searches == []
 
 
-@pytest.mark.xfail(
-    reason='PRD-O3, PRD-O4, PRD-D11, issue #29: an OpenSearch table declares no unique key yet, so no tie-breaker '
-    'follows the order and a request without an order is sent without a sort',
-    strict=True,
-    raises=AssertionError,
-)
-def test_ties_are_broken_by_a_unique_key():
+# -- the declared unique key, the tie-breaker (PRD-D11, PRD-O3, PRD-O4) ---
+
+
+def keyed(key: str | tuple[str, ...], columns: list[Column] | None = None) -> SearchTable:
+    return SearchTable('docs', columns or COLUMNS, unique_key=key)
+
+
+ID_ASC = {'id': {'order': 'asc', 'missing': '_first'}}
+ID_DESC = {'id': {'order': 'desc', 'missing': '_last'}}
+TITLE_DESC = {'title.keyword': {'order': 'desc', 'missing': '_last'}}
+PAGES_ASC = {'pages': {'order': 'asc', 'missing': '_first'}}
+
+
+def test_a_request_without_an_order_is_sent_in_the_keys_ascending_order():
+    """SPEC-O4.1, SPEC-O3.4: without a sort OpenSearch returns ties in no stable order."""
     client = Client()
-    table.fetch_sync(request(*NAMES), client)
-    assert client.searches[0].get('sort') == [{'id': {'order': 'asc'}}]
+    keyed('id').fetch_sync(request(*NAMES), client)
+    assert client.searches[0]['sort'] == [ID_ASC]
+
+
+@pytest.mark.parametrize(
+    ('order', 'flags', 'expected'),
+    [
+        ([{'column': 1, 'dir': 'desc'}], {}, [TITLE_DESC, ID_DESC]),  # the key follows the first entry
+        ([{'column': 3, 'dir': 'asc'}], {}, [PAGES_ASC, ID_ASC]),
+        ([{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}], {}, [TITLE_DESC, PAGES_ASC, ID_DESC]),
+        # a skipped entry does not decide the direction: `body` is unorderable, so `title` is the first applied one
+        (
+            [{'column': 2, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}],
+            {'body': {'orderable': False}},
+            [TITLE_DESC, ID_DESC],
+        ),
+        ([{'column': 0, 'dir': 'desc'}], {}, [ID_DESC]),  # a key the order already names is not sent twice
+    ],
+)
+def test_the_key_comes_last_in_the_direction_of_the_first_applied_entry(
+    order: list[dict[str, Any]], flags: dict[str, Any], expected: list[dict[str, Any]]
+):
+    """SPEC-O3.4, SPEC-O3.3, SPEC-O8: the exact reverse of the ascending order holds only if the key follows."""
+    client = Client()
+    keyed('id').fetch_sync(request(*NAMES, flags=flags, order=order), client)
+    assert client.searches[0]['sort'] == expected
+
+
+def test_a_key_of_several_columns_follows_the_order_one_after_the_other():
+    """SPEC-D11.4: an index over an association has no single unique field. `title` is the user's own order here,
+    so it is named once."""
+    client = Client()
+    keyed(('title', 'id')).fetch_sync(request(*NAMES, order=[{'column': 1, 'dir': 'desc'}]), client)
+    assert client.searches[0]['sort'] == [TITLE_DESC, ID_DESC]
+    keyed(('author', 'id')).fetch_sync(request(*NAMES, order=[{'column': 3, 'dir': 'desc'}]), client)
+    assert client.searches[1]['sort'][1:] == [
+        {'meta.author.keyword': {'order': 'desc', 'missing': '_last'}},
+        ID_DESC,
+    ]
+
+
+def test_a_key_declared_unorderable_still_breaks_ties_but_cannot_be_ordered_by():
+    """SPEC-D11.1: `orderable=False` keeps the key out of the client's controls, not out of the tie-breaker."""
+    hidden = keyed('id', [IndexColumn('id', text='keyword', orderable=False), Column('pages', type='number')])
+    client = Client()
+    hidden.fetch_sync(request('id', 'pages', order=[{'column': 1, 'dir': 'asc'}]), client)
+    assert client.searches[0]['sort'] == [PAGES_ASC, ID_ASC]
+    assert client.searches[0]['_source'] == ['id', 'pages']  # a declared column, so its value is in every row
+    refused(hidden.fetch_sync(request('id', 'pages', order=[{'column': 0, 'dir': 'asc'}]), client))
+    assert len(client.searches) == 1
+
+
+def test_an_index_table_without_a_unique_key_is_a_schema_error():
+    """SPEC-D11.1: no index has a primary key, so without one the tie-breaker would be whatever OpenSearch does."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', COLUMNS)
+    assert 'unique_key=' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('key', 'text'),
+    [
+        ('nope', 'nope'),  # not a declared column
+        (('id', 'nope'), 'nope'),
+        ('body', 'body'),  # analysed text only: there is no whole string to sort by
+        ((), 'at least one'),
+    ],
+)
+def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(key: str | tuple[str, ...], text: str):
+    """SPEC-D11.1: the key must name a declared column the index can sort by."""
+    with pytest.raises(SchemaError, match=text) as raised:
+        keyed(key)
+    assert 'unique_key' in str(raised.value)
+
+
+# -- the document id: shown, never searched, sorted or used as the key (PRD-D11, issue #96) ---
+#
+# OpenSearch deprecates sorting on `_id` (field data): its log says so on 3.10.0 and on 2.19.7, so it is no key. A
+# column declared for it reads `hit['_id']`, which needs no field data.
+
+DOC_COLUMNS = [Column('_id'), Column('pages', type='number')]
+ID_ADVICE = 'Copy the id into a `keyword` field of the documents and name that column as the key.'
+
+
+def doc_hit(identifier: str, pages: int) -> dict[str, Any]:
+    return {'_id': identifier, '_source': {'pages': pages}}  # a document's `_id` is not in its `_source`
+
+
+def test_the_document_id_alone_is_an_unknown_name_for_the_unique_key():
+    """SPEC-D11.5: `_id` is no reserved key name, and no other name is read as a field."""
+    with pytest.raises(SchemaError, match='_id') as raised:
+        keyed('_id')
+    assert 'unique_key' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    'columns',
+    [
+        [Column('_id'), Column('pages', type='number')],
+        [Column('docid', field='_id'), Column('pages', type='number')],  # a column reads the id by its field
+    ],
+    ids=['by-name', 'by-field'],
+)
+def test_a_column_of_the_document_id_cannot_be_the_unique_key(columns: list[Column]):
+    """SPEC-D11.5: a sort on it is the deprecated one, so the error says what to do instead."""
+    with pytest.raises(SchemaError) as raised:
+        keyed(columns[0].name, columns)
+    assert str(raised.value) == f'OpenSearch deprecates sorting on `_id` (field data). {ID_ADVICE}'
+
+
+def test_a_column_declared_for_the_document_id_reads_the_hits_id():
+    """SPEC-D11.6: the value comes from `hit['_id']`, not from `_source`, where it would always be missing; `_source`
+    asks for the other columns only."""
+    client = Client(hits=[doc_hit('x7', 3)])
+    response = keyed('pages', DOC_COLUMNS).fetch_sync(request('_id', 'pages'), client)
+    assert response.data == [{'_id': 'x7', 'pages': 3}]
+    assert client.searches[0]['_source'] == ['pages']
+    assert client.searches[0]['sort'] == [PAGES_ASC]  # the key is the one declared; `_id` is not sorted on
+
+
+def test_an_order_on_a_column_of_the_document_id_is_refused_or_skipped_as_the_request_marks_it():
+    """SPEC-D11.6: held unorderable, so the plan refuses it as for any column that cannot be sorted by, and skips it
+    where the request itself marks it unorderable (DataTables' default order on the first column)."""
+    client = Client()
+    order = [{'column': 0, 'dir': 'asc'}]
+    refused(keyed('pages', DOC_COLUMNS).fetch_sync(request('_id', 'pages', order=order), client))
+    assert client.searches == []
+    keyed('pages', DOC_COLUMNS).fetch_sync(
+        request('_id', 'pages', flags={'_id': {'orderable': False}}, order=order), client
+    )
+    assert client.searches[0]['sort'] == [PAGES_ASC]
+
+
+def test_a_column_of_the_document_id_declared_orderable_is_a_schema_error():
+    """SPEC-D11.6: as for analysed text, an explicit `orderable=True` is refused; `None` and `False` are not."""
+    with pytest.raises(SchemaError) as raised:
+        keyed('pages', [Column('_id', orderable=True), Column('pages', type='number')])
+    assert str(raised.value) == (
+        'The column "_id" shows the document id and cannot be orderable: OpenSearch deprecates sorting on `_id` '
+        '(field data). Order by a `keyword` field instead.'
+    )
+    keyed('pages', [Column('_id', orderable=False), Column('pages', type='number')])
+
+
+def test_the_document_id_is_not_searchable_and_the_global_search_skips_it():
+    """SPEC-D11.6: a column search or a criterion on it is refused by the rule that refuses any column declared
+    unsearchable (no new code), and the global search leaves it out; there is no text to match in an `_id`."""
+    columns = [Column('_id'), IndexColumn('title')]
+    client = Client()
+    text = 'The column "_id" cannot be filtered. Remove the filter on it.'
+    column_search = request('_id', 'title', column_search={'_id': {'value': 'x'}})
+    assert refused(keyed('title', columns).fetch_sync(column_search, client)) == text
+    assert (
+        refused(keyed('title', columns).fetch_sync(request('_id', 'title', **criterion('_id', '=', 'x')), client))
+        == text
+    )
+    assert client.searches == []
+    keyed('title', columns).fetch_sync(request('_id', 'title', search={'value': 'abc'}), client)
+    assert '_id' not in json.dumps(client.searches[0]['query'])
+
+
+def test_a_column_that_reads_the_document_id_by_its_field_is_held_the_same_way():
+    """SPEC-D11.6: it is the field that says the column is the id, not the name; so a column `docid` over `_id`
+    shows the hit's id and is neither searched nor ordered by."""
+    columns = [Column('docid', field='_id'), IndexColumn('title')]
+    client = Client(hits=[{'_id': 'x7', '_source': {'title': 'T'}}])
+    response = keyed('title', columns).fetch_sync(request('docid', 'title'), client)
+    assert response.data == [{'docid': 'x7', 'title': 'T'}]
+    filtered = request('docid', 'title', column_search={'docid': {'value': 'x'}})
+    assert refused(keyed('title', columns).fetch_sync(filtered, client)).startswith('The column "docid" cannot be')
+    ordered = request('docid', 'title', order=[{'column': 0, 'dir': 'asc'}])
+    refused(keyed('title', columns).fetch_sync(ordered, client))
+    assert len(client.searches) == 1
 
 
 # -- a boolean column ---
@@ -815,7 +1155,11 @@ def test_ties_are_broken_by_a_unique_key():
 # What OpenSearch makes of these bodies is measured in test_opensearch_live.py.
 
 FLAG_NAMES = ('id', 'title', 'active')
-flags = SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('active', type='boolean')])
+flags = SearchTable(
+    'docs',
+    [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('active', type='boolean')],
+    unique_key='id',
+)
 
 
 def clauses(client: Client) -> list[dict[str, Any]]:
@@ -850,7 +1194,9 @@ def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
 def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(kind: Any):
     """SPEC-D14.1: the hook transforms text the user types. The message names the declared column and the fix."""
     with pytest.raises(SchemaError) as raised:
-        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('held', type=kind, search_value=str)])
+        SearchTable(
+            'docs', [IndexColumn('id', text='keyword'), Column('held', type=kind, search_value=str)], unique_key='id'
+        )
     assert str(raised.value) == (
         f'The column "held" has a search_value hook but is a {kind} column. Only a string column takes one: remove '
         'the hook.'
@@ -860,7 +1206,11 @@ def test_a_search_value_hook_on_a_column_that_is_no_string_is_a_schema_error(kin
 def test_two_columns_with_one_name_are_a_schema_error():
     """SPEC-D1.2: the name keys the request and each row, so the second column would silently replace the first."""
     with pytest.raises(SchemaError) as raised:
-        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('title', field='name')])
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('title', field='name')],
+            unique_key='id',
+        )
     assert str(raised.value) == (
         'Two columns are declared with the name "title". Give each its own name: Column(name, field=...) reads one '
         'field under another name.'
@@ -890,7 +1240,9 @@ def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimm
         seen.append(text)
         return stored(text)
 
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)], unique_key='id'
+    )
     client = Client()
     cases = ['Alpha', f' {chr(0xA0)}Alpha{chr(0x3000)}', '"Alpha"', '!x', 'a\nb']
     for text in cases:
@@ -903,7 +1255,9 @@ def test_a_column_search_on_a_hooked_column_is_one_term_of_the_transformed_trimm
 
 def test_a_column_search_on_a_hooked_column_of_blank_text_sends_no_clause():
     """SPEC-F6.3 with PRD-D12's trimming: text of only White_Space beyond PRD-F7's five is blank too."""
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)], unique_key='id'
+    )
     client = Client()
     hooked.fetch_sync(request('id', 'secret', column_search={'secret': {'value': chr(0xA0)}}), client)
     assert client.searches[-1]['query'] == {'match_all': {}}
@@ -928,7 +1282,9 @@ def test_the_global_search_on_a_hooked_column_is_one_term_of_the_transformed_tri
     is hooked, and `!Alpha` and `a` + LF + `b` are values like any other."""
     seen, recorded = recording_hook()
     hooked = SearchTable(
-        'docs', [IndexColumn('id', text='keyword', searchable=False), Column('secret', search_value=recorded)]
+        'docs',
+        [IndexColumn('id', text='keyword', searchable=False), Column('secret', search_value=recorded)],
+        unique_key='id',
     )
     client = Client()
     for text in GLOBAL_CASES:
@@ -943,7 +1299,9 @@ def test_the_global_search_adds_the_term_of_a_hooked_column_beside_the_words_of_
     """SPEC-D12.1, SPEC-D12.2: the words go to the other columns, each found in some column, and the hooked column
     adds the one term of the whole text, however many words it holds."""
     seen, recorded = recording_hook()
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=recorded)], unique_key='id'
+    )
     client = Client()
     hooked.fetch_sync(request('id', 'secret', search={'value': 'red Alpha'}), client)
     (clause,) = client.searches[-1]['query']['bool']['must']
@@ -956,7 +1314,9 @@ def test_the_global_search_adds_the_term_of_a_hooked_column_beside_the_words_of_
 def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value_before_anything_is_sent():
     """SPEC-D18.2: a `wildcard` on a transformed value means nothing. `starts` stands for the six conditions, which
     one rule refuses in the plan (test_sql.py has each)."""
-    hooked = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)])
+    hooked = SearchTable(
+        'docs', [IndexColumn('id', text='keyword'), Column('secret', search_value=stored)], unique_key='id'
+    )
     client = Client()
     response = hooked.fetch_sync(request('id', 'secret', **criterion('secret', 'starts', 'zzz')), client)
     assert refused(response) == (
@@ -997,7 +1357,9 @@ def test_the_widest_bool_of_a_request_of_the_budget_holds_at_most_the_default_cl
     catches a budget set above the limit, or a change that puts the clauses of a word in one `bool`."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET)]
     client = Client()
-    SearchTable('docs', columns).fetch_sync(request(*(c.name for c in columns), search={'value': 'ann'}), client)
+    SearchTable('docs', columns, unique_key='t0').fetch_sync(
+        request(*(c.name for c in columns), search={'value': 'ann'}), client
+    )
     leaves, _, widest = tally(client.searches[0]['query'])
     assert (leaves, widest) == (2 * BUDGET, BUDGET)
 
@@ -1008,7 +1370,7 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
     or counted after the search has gone out."""
     columns = [IndexColumn(f't{number}', field='title') for number in range(BUDGET + 1)]
     client = Client()
-    response = SearchTable('docs', columns).fetch_sync(
+    response = SearchTable('docs', columns, unique_key='t0').fetch_sync(
         request(*(c.name for c in columns), search={'value': 'ann'}), client
     )
     assert response.error_code == 'request_too_large'

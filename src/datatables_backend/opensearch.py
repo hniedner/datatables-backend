@@ -1,7 +1,7 @@
 """DataTables from an OpenSearch index, with the sync or the async client.
 
     reports = SearchTable('reports', [IndexColumn('title', text='text'), IndexColumn('id', text='keyword'),
-                                      Column('created', type='date')])
+                                      Column('created', type='date')], unique_key='id')
     response = await reports.fetch(params, AsyncOpenSearch(...))
 
 Requests are plain bodies (``client.search(index=..., body=...)``): no DSL library is needed, and any client with
@@ -14,6 +14,7 @@ from collections.abc import Awaitable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import replace
 import json
 import logging
 from typing import Any
@@ -35,6 +36,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
@@ -57,11 +59,19 @@ type TextKind = Literal['keyword', 'text', 'text+keyword']
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
 MAX_RESULT_WINDOW = 10_000
+#: The document's own id: a metadata field, read from the hit (never from ``_source``). OpenSearch deprecates sorting
+#: on it (field data), so a column for it is neither orderable nor a key, and it has no text to search
+DOCUMENT_ID = '_id'
 
 
 @dataclass(frozen=True, kw_only=True)
 class IndexColumn(Column):
-    """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``."""
+    """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
+
+    A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
+    ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
+    ``orderable=True`` on it raises ``SchemaError``.
+    """
 
     text: TextKind = 'text+keyword'
 
@@ -80,6 +90,12 @@ class AsyncClient(Protocol):
 class _Request:
     search: dict[str, Any]
     count: dict[str, Any] | None  # None: the search's own count is the total
+    beyond: InvalidFilter | None = None  # set: the page is past the result window, so only the counts run (PRD-C11)
+
+    @property
+    def filtered_count(self) -> dict[str, Any]:
+        """The count of the search's own query: the filtered set, exact where a search's total may be a lower bound."""
+        return {'query': self.search['query']}
 
 
 class SearchTable:
@@ -87,11 +103,20 @@ class SearchTable:
 
     Args:
         index: The index (or alias, or pattern) to search.
-        columns: The columns the client may see, search and sort on; only their fields are fetched.
+        columns: The columns the client may see, search and sort on; only their fields are fetched. A column whose
+            field is the document id (``_id``) reads the hit's id but is neither searchable (whatever its
+            ``searchable`` says) nor orderable (``orderable=True`` raises ``SchemaError``), and cannot be the key:
+            OpenSearch deprecates sorting on ``_id``.
+        unique_key: The name of a declared column, or of several, whose values are unique for every document: the
+            tie-breaker of every order (an index has no primary key). It must be sortable, so not analysed text only.
+            An index whose documents hold no unique field copies the id into a ``keyword`` field at ingest. Required:
+            a table without one raises ``SchemaError``.
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
-        max_result_window: The index's ``max_result_window``; a page beyond it is refused as the user's request.
+        max_result_window: The index's ``max_result_window``; a page beyond it is refused as the user's request, with
+            the real counts (one or two count calls, never a page search), or answered empty when ``start`` is past
+            the last row.
     """
 
     def __init__(
@@ -99,19 +124,36 @@ class SearchTable:
         index: str,
         columns: Sequence[Column],
         *,
+        unique_key: str | Sequence[str] | None = None,
         base_filter: Mapping[str, Any] | None = None,
         rows: RowHooks | None = None,
         total_cache: TotalCache | None = None,
         max_result_window: int = MAX_RESULT_WINDOW,
     ) -> None:
         self.index = index
-        self.columns = tuple(columns)
+        self.columns = tuple(_held(column) for column in columns)
         self.base_filter = dict(base_filter) if base_filter else None
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
         self.max_result_window = max_result_window
         self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
         check_declaration(self.columns, _type_of)
+        if unique_key is None:
+            raise SchemaError(
+                'An index has no primary key to break ties with. Declare one: SearchTable(..., unique_key="id") with '
+                'the name of a declared column whose values are unique (a tuple of names for a key of several).'
+            )
+        self.unique_key = declared_key(self.columns, unique_key)
+        if any(column.source == DOCUMENT_ID for column in self.unique_key):
+            raise SchemaError(
+                'OpenSearch deprecates sorting on `_id` (field data). Copy the id into a `keyword` field of the '
+                'documents and name that column as the key.'
+            )
+        if unkeyable := [column.name for column in self.unique_key if not _sortable(column)]:
+            raise SchemaError(
+                f'unique_key {", ".join(unkeyable)}: analysed text has no whole string to sort by. Declare the '
+                'column IndexColumn(..., text="keyword") (or "text+keyword"), or name a number or a date.'
+            )
         unsortable = [column.name for column in self.columns if column.orderable and not _sortable(column)]
         if unsortable:
             raise SchemaError(
@@ -121,15 +163,25 @@ class SearchTable:
     async def fetch(self, params: DTParams, client: AsyncClient) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
-        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
-        anything is sent; any other failure raises, a partial answer as ``PartialResultError``.
+        A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once; only a
+        page beyond the result window sends anything first, the counts of PRD-C11 and never a page search. Any other
+        failure raises, a partial answer as ``PartialResultError``.
         """
         try:
             request = self._request(params)
         except InvalidFilter as found:
             return refused(params, found)
+        if request.beyond is not None:
+            filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
+            total = self._cached_total(request, filtered)
+            if total is None:
+                total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
+                self._remember(total)
+            return self._past_the_window(params, request.beyond, total, filtered)
         answer = await client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
+        if _lower_bound(answer):
+            filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
@@ -142,8 +194,17 @@ class SearchTable:
             request = self._request(params)
         except InvalidFilter as found:
             return refused(params, found)
+        if request.beyond is not None:
+            filtered = self._count(client.count(index=self.index, body=request.filtered_count))
+            total = self._cached_total(request, filtered)
+            if total is None:
+                total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
+                self._remember(total)
+            return self._past_the_window(params, request.beyond, total, filtered)
         answer = client.search(index=self.index, body=request.search)
         filtered = self._filtered(answer)
+        if _lower_bound(answer):
+            filtered = self._count(client.count(index=self.index, body=request.filtered_count))
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
@@ -157,8 +218,8 @@ class SearchTable:
 
         Raises:
             InvalidFilter: the one of the user's mistakes that decides the answer, from the plan or from the clauses
-                built here; a page beyond the result window only when the request holds no other. It is raised in
-                one place, once every clause is built.
+                built here. It is raised in one place, once every clause is built. A page beyond the result window is
+                no raise: it is the last step of PRD-E3, and the request holds it for the counts to run first.
         """
         mistakes = Mistakes()
         request = plan(params, self.columns, _describe, mistakes)
@@ -170,25 +231,25 @@ class SearchTable:
                 must.append(_compile(column_search))
         if request.search_builder is not None:
             must.append(_compile(request.search_builder))
-        with mistakes.part():
-            if params.start + params.length > self.max_result_window:
-                raise mistake(
-                    'datatables_page_out_of_range',
-                    f'This table can be paged through its first {self.max_result_window:,} rows only. Go back to an '
-                    'earlier page, or narrow the search so fewer rows match.',
-                )
         mistakes.raise_first()
+        beyond = None
+        if params.start + params.length > self.max_result_window:  # the last step of PRD-E3, so any other mistake won
+            beyond = mistake(
+                'datatables_page_out_of_range',
+                f'This table can be paged through its first {self.max_result_window:,} rows only. Go back to an '
+                'earlier page, or narrow the search so fewer rows match.',
+            )
         search = {
             'query': {'bool': {'must': must}} if must else {'match_all': {}},
             'from': params.start,
             'size': params.length,
             'track_total_hits': True,
-            '_source': [column.source for column in self.columns],
+            # The id is in the hit, not in `_source`; the key is a column of another field, so the list is never empty
+            '_source': [column.source for column in self.columns if column.source != DOCUMENT_ID],
         }
-        if sort := _sort(request):
-            search['sort'] = sort
+        search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
-        return _Request(search, count if request.filtered else None)
+        return _Request(search, count if request.filtered else None, beyond)
 
     # -- running ----------------------------------------------------------------------------------------------------
 
@@ -215,13 +276,45 @@ class SearchTable:
             raise PartialResultError(f'The count of {self.index} did not cover every shard.')
         return int(answer['count'])
 
+    def _past_the_window(self, params: DTParams, beyond: InvalidFilter, total: int, filtered: int) -> DTResponse:
+        """The answer for a page beyond the result window, once the counts are in: an empty page when ``start`` is at
+        or past the end (PRD-C3 wins), else the refusal carrying the real counts (PRD-C12)."""
+        if params.start >= filtered:
+            return DTResponse(draw=params.draw, recordsTotal=total, recordsFiltered=filtered, data=[])
+        return refused(params, beyond).model_copy(update={'recordsTotal': total, 'recordsFiltered': filtered})
+
     def _response(self, params: DTParams, answer: Mapping[str, Any], total: int, filtered: int) -> DTResponse:
         hits = cast(list[Mapping[str, Any]], answer['hits']['hits'])
-        data = [self.rows.apply(self._row(hit.get('_source') or {})) for hit in hits]
+        data = [self.rows.apply(self._row(hit)) for hit in hits]
         return DTResponse(draw=params.draw, recordsTotal=total, recordsFiltered=filtered, data=data)
 
-    def _row(self, source: Mapping[str, Any]) -> dict[str, Any]:
-        return {column.name: _get(source, column.source) for column in self.columns}
+    def _row(self, hit: Mapping[str, Any]) -> dict[str, Any]:
+        source = hit.get('_source') or {}
+        return {
+            column.name: hit.get(DOCUMENT_ID) if column.source == DOCUMENT_ID else _get(source, column.source)
+            for column in self.columns
+        }
+
+
+def _lower_bound(answer: Mapping[str, Any]) -> bool:
+    """Whether the search's total says only "at least this many" (PRD-C9): ``track_total_hits`` is sent, but a server
+    or a proxy in between may not honour it."""
+    total = answer['hits']['total']
+    return isinstance(total, Mapping) and total.get('relation') == 'gte'
+
+
+def _held(column: Column) -> Column:
+    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
+    plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
+    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake."""
+    if column.source != DOCUMENT_ID:
+        return column
+    if column.orderable:
+        raise SchemaError(
+            f'The column "{column.name}" shows the document id and cannot be orderable: OpenSearch deprecates sorting '
+            'on `_id` (field data). Order by a `keyword` field instead.'
+        )
+    return replace(column, searchable=False, orderable=False)
 
 
 # -- query building ---
@@ -417,13 +510,22 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 
-def _sort(request: Plan) -> list[dict[str, Any]]:
-    """The user's order, a document without the field as the lowest value: left to itself OpenSearch puts it last
-    in either direction. A string is sorted by its keyword field; the plan lets no analysed-only text through."""
+def _sort(request: Plan, key: tuple[Column, ...]) -> list[dict[str, Any]]:
+    """The user's order, then the unique key (PRD-O3) in the direction of the first applied entry, ascending when
+    there is none (PRD-O4); a key column the order names is not named again. A document without the field is the
+    lowest value: left to itself OpenSearch puts it last in either direction. A string is sorted by its keyword
+    field; the plan lets no analysed-only text through, and the key is checked at construction."""
+    descending = bool(request.order) and request.order[0].descending
+    entries = [(item.column, item.type, item.descending) for item in request.order]
+    entries += [
+        (column, _type_of(column), descending)
+        for column in key
+        if all(column is not item.column for item in request.order)
+    ]
     sort: list[dict[str, Any]] = []
-    for item in request.order:
-        field = (_keyword(item.column) if item.type == 'string' else None) or item.column.source
-        placed = {'order': 'desc', 'missing': '_last'} if item.descending else {'order': 'asc', 'missing': '_first'}
+    for column, kind, reverse in entries:
+        field = (_keyword(column) if kind == 'string' else None) or column.source
+        placed = {'order': 'desc', 'missing': '_last'} if reverse else {'order': 'asc', 'missing': '_first'}
         sort.append({field: placed})
     return sort
 

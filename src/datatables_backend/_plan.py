@@ -345,6 +345,21 @@ def check_declaration(columns: Sequence[Column], type_of: Callable[[Column], Col
             )
 
 
+def declared_key(columns: Sequence[Column], key: str | Sequence[str]) -> tuple[Column, ...]:
+    """The declared columns a table's ``unique_key`` names (PRD-D11), one name or several. Raises ``SchemaError`` for an
+    empty key or a name that is no declared column. The messages name only what the server declared."""
+    names = (key,) if isinstance(key, str) else tuple(key)
+    if not names:
+        raise SchemaError('unique_key is empty. Name at least one declared column whose values are unique.')
+    by_name = {column.name: column for column in columns}
+    if unknown := [name for name in names if name not in by_name]:
+        raise SchemaError(
+            f'unique_key names {", ".join(unknown)}, which no declared column has as its name. Name a declared '
+            'column: unique_key reads the name the column is declared with, not its field.'
+        )
+    return tuple(by_name[name] for name in names)
+
+
 def plan(
     params: DTParams,
     columns: Sequence[Column],

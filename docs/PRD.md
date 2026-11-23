@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 38 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 41 of 2026-11-23 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -29,7 +29,12 @@
   (a table declares a column, and no two share a name); revision 37 adds a clause to PRD-D12 (text whose every token
   adds nothing under PRD-F6 adds nothing there either, and text with a word, a negated one included, is compared
   whole); revision 38 changes PRD-F30 (an unfinished SearchBuilder criterion adds nothing instead of being refused) and
-  a clause of PRD-P6, with a line in section 5; PRD-F36's reason follows). It replaces draft 1 (R1 to
+  a clause of PRD-P6, with a line in section 5; PRD-F36's reason follows; revision 39 adds clauses to PRD-D11 (the key
+  is `unique_key`, a declared column or a tuple of them, which replaces the primary key when declared; an OpenSearch key
+  is sortable; a SQL subquery selects every primary-key column of each table it reads) and to its reason; revision 40
+  adds a clause to PRD-C11 (the filtered count is a `_count` of the search's own query, so a lower-bound total never
+  stands); revision 41 adds a clause to PRD-D11 (`_id` cannot be the key, since OpenSearch deprecates sorting on it; a
+  declared `Column('_id')` shows the document id and is neither searchable nor orderable)). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -385,9 +390,15 @@ and ordered like any column.
 #### PRD-D11
 
 A table whose source has no primary key (every OpenSearch index; a SQL join or subquery without one) declares a unique
-key; constructing it without one raises `SchemaError`.
+key; constructing it without one raises `SchemaError`. The key is `unique_key`, the name of a declared column or a tuple
+of names for a composite key, and it replaces the primary key as the tie-breaker when declared. An OpenSearch key must
+be sortable (not analysed text only). On SQL, without `unique_key` a source must have a primary key, and a subquery
+must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a scalar subquery);
+otherwise constructing it raises `SchemaError`. A `UNION` is not checked. `_id` cannot be the key: OpenSearch deprecates
+sorting on it; a declared `Column('_id')` shows the document id and is neither searchable nor orderable.
 
-- **Reason:** The tie-breaker of PRD-O3 must be unique; the first column of a join is not.
+- **Reason:** The tie-breaker of PRD-O3 must be unique; the first column of a join is not. A declared column is read
+  with the type and sort field the table already knows; a bare field name would need the mapping read.
 - **Priority:** must
 
 #### PRD-D12
@@ -1108,7 +1119,8 @@ An OpenSearch page is served when `start + length <= max_result_window` (the ord
 #### PRD-C11
 
 To decide PRD-C10, the filtered count, plus the total count when PRD-C8 does not reuse it, may run before the page
-query; these are the only queries that may run before a refusal.
+query; these are the only queries that may run before a refusal. The filtered count is a `_count` of the search's own
+query, so it is exact whatever a search's total says (PRD-C9).
 
 - **Reason:** Telling a near-end page from a middle one needs the total.
 - **Priority:** must
