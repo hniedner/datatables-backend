@@ -160,8 +160,8 @@ logic.
 A request whose structure cannot be read (a top-level value that is not an object, a request parameter, or a field under
 one, of the wrong type (a `null` `data` excepted, PRD-P21), a flat key that is not text, an object value among flat
 keys, keys that collide or leave a gap in an index, an `order` index outside the request's columns (PRD-O1), a
-SearchBuilder condition outside the 16 the protocol model knows, such as its array condition `without`, a criterion
-with no condition, an empty one or the text `undefined` excepted, PRD-F30) raises `MalformedRequest`.
+SearchBuilder condition outside the 16 the protocol model knows, such as its array condition `without` (a missing or
+empty condition, or the text `undefined`, is none: the criterion is unfinished, PRD-F30)) raises `MalformedRequest`.
 
 - **Reason:** A structural error is an integration bug, not something the user can change.
 - **Priority:** must
@@ -859,7 +859,8 @@ A SearchBuilder criterion carrying more values than its condition takes is refus
 `!null` take no value and ignore every value entry they carry (`[]`, `['']` or leftovers): no entry is checked or
 transformed, PRD-F15 included, so they are never refused for one; a structural error (PRD-P6, PRD-P11) still raises.
 
-- **Reason:** Silently using the first value answers a different question than asked; `null` and `!null` read no value, so an entry cannot change their answer.
+- **Reason:** Silently using the first value answers a different question than asked; `null` and `!null` read no
+  value, so an entry cannot change their answer.
 - **Priority:** must
 
 #### PRD-F37
@@ -1653,10 +1654,11 @@ first release is published as version 0.1.0.
   and OpenSearch keyword fields); now case-insensitive on string columns on every backend, except on a hooked column
   (PRD-F9).
 - SearchBuilder: an unfinished criterion adds nothing instead of being refused (PRD-F30), as SearchBuilder's own
-  client sends one and an empty group adds nothing (PRD-F28); a criterion with too many values is refused (PRD-F36), and NULL satisfies every negative condition
-  (PRD-F37); the conditions each declared type takes are listed (PRD-F27), and a condition outside the 16 the protocol
-  model knows, such as SearchBuilder's array `without`, is a structural error (PRD-P6); a criterion on a column the
-  server declares unsearchable is refused, which draft 1's code did not check (PRD-F41).
+  client sends one and an empty group adds nothing (PRD-F28); a criterion with too many values is refused (PRD-F36),
+  and NULL satisfies every negative condition (PRD-F37); the conditions each declared type takes are listed
+  (PRD-F27), and a condition outside the 16 the protocol model knows, such as SearchBuilder's array `without`, is a
+  structural error (PRD-P6); a criterion on a column the server declares unsearchable is refused, which draft 1's
+  code did not check (PRD-F41).
 - Ordering: NULL placement was each database's default and the SQL tie-breaker always ascended; now NULL lowest and the
   tie-breaker follows the first applied entry's direction (PRD-O2, PRD-O3, PRD-O8); a source without a primary key
   declares a unique key (PRD-D11); an order on analysed-only text is refused instead of dropped, or skipped when the

@@ -1273,7 +1273,7 @@ BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}
         pytest.param({'condition': '=', 'origData': 'name', 'value': []}, id='equals with no value'),
         pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5']}, id='between with one value'),
         pytest.param({'condition': 'between', 'origData': 'age'}, id='between without a value key'),
-        # SearchBuilder's client does not apply a criterion with an empty input (R1 of #66)
+        # SearchBuilder's client does not apply a criterion with an empty input (SPEC-F30.5)
         pytest.param({'condition': '=', 'origData': 'name', 'value': ['']}, id='equals with an empty value'),
         pytest.param({'condition': '=', 'origData': 'age', 'value': ['']}, id='number equals with an empty value'),
         pytest.param({'condition': '=', 'origData': 'born', 'value': ['']}, id='date equals with an empty value'),
@@ -1282,9 +1282,9 @@ BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}
     ],
 )
 def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict[str, Any]):
-    """SPEC-F30.1 to SPEC-F30.3 (PRD-F30), as an empty group does (SPEC-F28.3). Alone it leaves every row; beside
-    `team = blue` it leaves that criterion's rows in an AND group and in an OR group: read as true it would give every
-    row in the OR group, and read as false none in the AND group."""
+    """SPEC-F30.1 to SPEC-F30.3 and SPEC-F30.5 (PRD-F30), as an empty group does (SPEC-F28.3). Alone it leaves every
+    row; beside `team = blue` it leaves that criterion's rows in an AND group and in an OR group: read as true it would
+    give every row in the OR group, and read as false none in the AND group."""
     alone = {'logic': 'AND', 'criteria': [unfinished]}
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=alone), session)) == [1, 2, 3, 4, 5]
     for logic in ('AND', 'OR'):
@@ -1311,7 +1311,7 @@ def test_a_surplus_value_is_refused_also_when_it_is_blank(session: Session):
 
 def flat_request(criteria: list[dict[str, str]], logic: str) -> DTParams:
     """The request DataTables 3 sends as a form: `undefined` is written as that word, an empty `value` list as no key
-    at all, and value1 and value2 beside it (R2 of #66)."""
+    at all, and value1 and value2 beside it (SPEC-F30.6)."""
     pairs: list[tuple[str, str]] = [('draw', '1'), ('start', '0'), ('length', '10')]
     for index, name in enumerate(ALL):
         pairs += [
@@ -1770,9 +1770,9 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.20, SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
-    condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
-    else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
+    """SPEC-E4.3 to SPEC-E4.20, SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a
+    text of its own, which names the condition and the fix, and a column only by the name the server declared. A text
+    is asserted here and nowhere else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
