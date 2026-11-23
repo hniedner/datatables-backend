@@ -93,8 +93,6 @@ it, as far as that is known when the mistake is found. A text is changed only to
 - **SPEC-E4.20** [all] SearchBuilder `contains` `3` on `price` →
   `The condition "contains" cannot be used on "price", which holds numbers. Choose another condition.` A string
   column `holds text`, a date column `holds dates`, a boolean column `holds true or false`.
-- **SPEC-E4.21** [all] SearchBuilder `=` with no value on `name` → `The filter on "name" needs a value.`;
-  `between` with one value on `price` → `The filter on "price" needs two values.`
 - **SPEC-E4.22** [all] SearchBuilder `=` `yes` on `active` →
   `The filter on "active" needs true or false (1 or 0 also work).`
 - **SPEC-E4.23** [OS] With `note` declared as analysed text without a keyword field, a column search on `note` with

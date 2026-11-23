@@ -948,10 +948,9 @@ def test_the_other_conditions_a_boolean_column_takes(
 @pytest.mark.parametrize(
     ('condition', 'values'),
     [
-        ('=', ['yes']),  # each of the four is a value some reading of "boolean" would take
+        ('=', ['yes']),  # each of the three is a value some reading of "boolean" would take
         ('=', ['2']),
         ('=', ['t']),
-        ('=', ['']),
         ('<', ['true']),  # a number's condition
         ('contains', ['true']),  # a string's condition
     ],
@@ -1258,6 +1257,140 @@ def test_searchbuilder_groups_nest_and_empty_groups_add_nothing(session: Session
         ],
     }  # fmt: skip
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [1, 5]
+
+
+BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}  # rows 2 and 5
+
+
+@pytest.mark.parametrize(
+    'unfinished',
+    [
+        pytest.param({'origData': 'name', 'value': ['Ann']}, id='no condition'),
+        pytest.param({'condition': '', 'origData': 'name', 'value': ['Ann']}, id='empty condition'),
+        pytest.param({'condition': '=', 'value': ['Ann']}, id='no column'),
+        pytest.param({'condition': '=', 'origData': '', 'data': '', 'value': ['Ann']}, id='empty column'),
+        pytest.param({'condition': '=', 'origData': 'name'}, id='equals without a value key'),
+        pytest.param({'condition': '=', 'origData': 'name', 'value': []}, id='equals with no value'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5']}, id='between with one value'),
+        pytest.param({'condition': 'between', 'origData': 'age'}, id='between without a value key'),
+        # SearchBuilder's client does not apply a criterion with an empty input (SPEC-F30.5)
+        pytest.param({'condition': '=', 'origData': 'name', 'value': ['']}, id='equals with an empty value'),
+        pytest.param({'condition': '=', 'origData': 'age', 'value': ['']}, id='number equals with an empty value'),
+        pytest.param({'condition': '=', 'origData': 'born', 'value': ['']}, id='date equals with an empty value'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['', '5']}, id='between with an empty first'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5', '']}, id='between with an empty last'),
+    ],
+)
+def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict[str, Any]):
+    """SPEC-F30.1 to SPEC-F30.3 and SPEC-F30.5 (PRD-F30), as an empty group does (SPEC-F28.3). Alone it leaves every
+    row; beside `team = blue` it leaves that criterion's rows in an AND group and in an OR group: read as true it would
+    give every row in the OR group, and read as false none in the AND group."""
+    alone = {'logic': 'AND', 'criteria': [unfinished]}
+    assert ids(table.fetch_sync(request(*ALL, searchBuilder=alone), session)) == [1, 2, 3, 4, 5]
+    for logic in ('AND', 'OR'):
+        tree = {'logic': logic, 'criteria': [BLUE, unfinished]}
+        assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [2, 5], logic
+
+
+def test_a_value_that_is_there_but_unreadable_is_refused_not_left_out(session: Session):
+    """SPEC-F30.4: only a missing value is unfinished; an unreadable one is the user's mistake."""
+    refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', 'abc')), session), 'invalid_number')
+
+
+def test_white_space_is_a_value_not_a_blank_one(session: Session):
+    """SPEC-F30.5: only the empty text is blank, as in SearchBuilder's client; `=` with one space still asks for the
+    rows whose name is one space, of which there are none."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('name', '=', ' ')), session)) == []
+
+
+def test_a_surplus_value_is_refused_also_when_it_is_blank(session: Session):
+    """SPEC-F30.5, SPEC-F36.1: the surplus is checked before a blank value counts as missing."""
+    refused(table.fetch_sync(request(*ALL, **criterion('name', '=', '', '')), session))
+    refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', '', '5', '6')), session))
+
+
+def flat_request(criteria: list[dict[str, str]], logic: str) -> DTParams:
+    """The request DataTables 3 sends as a form: `undefined` is written as that word, an empty `value` list as no key
+    at all, and value1 and value2 beside it (SPEC-F30.6)."""
+    pairs: list[tuple[str, str]] = [('draw', '1'), ('start', '0'), ('length', '10')]
+    for index, name in enumerate(ALL):
+        pairs += [
+            (f'columns[{index}][data]', name),
+            (f'columns[{index}][name]', ''),
+            (f'columns[{index}][searchable]', 'true'),
+            (f'columns[{index}][orderable]', 'true'),
+            (f'columns[{index}][search][value]', ''),
+            (f'columns[{index}][search][regex]', 'false'),
+        ]
+    pairs.append(('searchBuilder[logic]', logic))
+    for index, criterion_ in enumerate(criteria):
+        for key, value in criterion_.items():
+            suffix = '[value][]' if key == 'value[]' else f'[{key}]'  # a list sends one key per entry
+            pairs.append((f'searchBuilder[criteria][{index}]{suffix}', value))
+    return parse_request(pairs)
+
+
+FLAT_BLUE = {
+    'condition': '=',
+    'data': 'team',
+    'origData': 'team',
+    'type': 'string',
+    'value[]': 'blue',
+    'value1': 'blue',
+    'value2': 'undefined',
+}
+
+
+@pytest.mark.parametrize(
+    'fresh',
+    [
+        pytest.param(  # "Add condition" was clicked: nothing is chosen yet
+            {
+                'condition': 'undefined',
+                'data': 'undefined',
+                'origData': 'undefined',
+                'type': '',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a new criterion',
+        ),
+        pytest.param(  # a column is chosen, no condition yet
+            {
+                'condition': 'undefined',
+                'data': 'name',
+                'origData': 'name',
+                'type': 'string',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a column chosen',
+        ),
+        pytest.param(  # a condition is chosen, no value typed: the empty `value` list sends no key
+            {
+                'condition': '=',
+                'data': 'name',
+                'origData': 'name',
+                'type': 'string',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a condition chosen',
+        ),
+    ],
+)
+def test_a_criterion_a_form_sends_before_it_is_finished_adds_nothing(session: Session, fresh: dict[str, str]):
+    """SPEC-F30.6: every draw after the user clicks "Add condition" carries such a criterion; it must neither be
+    malformed nor change the rows, alone or beside another criterion in an AND or an OR group."""
+    assert ids(table.fetch_sync(flat_request([fresh], 'AND'), session)) == [1, 2, 3, 4, 5]
+    for logic in ('AND', 'OR'):
+        assert ids(table.fetch_sync(flat_request([FLAT_BLUE, fresh], logic), session)) == [2, 5], logic
+
+
+def test_the_extra_values_a_client_sends_beside_value_are_ignored(session: Session):
+    """SPEC-F27.7: SearchBuilder sends value1 and value2 beside value; a criterion that carries them is still answered."""
+    tree = {'criteria': [{'condition': '=', 'origData': 'name', 'value': ['Bob'], 'value1': 'x', 'value2': 'y'}]}
+    assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [2]
 
 
 def test_the_declared_type_decides_not_the_clients(session: Session):
@@ -1574,9 +1707,7 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
             'invalid_filter',
             f'The condition "<" cannot be used on "active", which holds true or false. {CONDITION}',
         ),
-        # SPEC-E4.21, E4.22
-        (WORDED, criterion('name', '='), 'invalid_filter', 'The filter on "name" needs a value.'),
-        (WORDED, criterion('age', 'between', '1'), 'invalid_filter', 'The filter on "age" needs two values.'),
+        # SPEC-E4.22
         (
             WORDED,
             criterion('active', '=', 'yes'),
@@ -1639,9 +1770,9 @@ LAST_DAY = 'The filter on "born" reaches the last day of the year 9999, which ca
 def test_a_user_error_says_what_is_wrong_and_what_to_do(
     session: Session, names: tuple[str, ...], body: dict[str, Any], *, code: str, text: str
 ):
-    """SPEC-E4.3 to SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a text of its own, which names the
-    condition and the fix, and a column only by the name the server declared. A text is asserted here and nowhere
-    else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
+    """SPEC-E4.3 to SPEC-E4.20, SPEC-E4.22, SPEC-E4.25 to SPEC-E4.28 and SPEC-E4.31 to SPEC-E4.35: each mistake has a
+    text of its own, which names the condition and the fix, and a column only by the name the server declared. A text
+    is asserted here and nowhere else. The rows are also the proof of their codes: SPEC-E1.2, SPEC-F21.6, SPEC-F24.1, SPEC-F25.1, SPEC-F25.2,
     SPEC-F39.1, SPEC-F40.1."""
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
