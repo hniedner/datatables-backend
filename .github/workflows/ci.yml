@@ -137,16 +137,18 @@ jobs:
 
   # Installs the built wheel as a user would, outside the checkout. With only the leg's extra, the core modules and that
   # extra's module must import. With every extra and greenlet installed, importing them must not load a package another
-  # extra requires directly (nor sqlalchemy.ext.asyncio on the sqlalchemy leg), which also catches such an import
+  # extra requires directly (nor sqlalchemy.ext.asyncio on the sqlalchemy legs), which also catches such an import
   # guarded by try/except; a guarded import of a transitive dependency (e.g. starlette, urllib3) is not caught. The
   # extras and their direct requirements come from the wheel's metadata, and the matrix must list every declared extra.
+  # An async extra's leg also runs what the extra is for: greenlet starts SQLAlchemy's asyncio module, aiohttp gives
+  # opensearch-py its AsyncOpenSearch.
   install-isolation:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python: ['3.12', '3.15']
-        extra: [core, sqlalchemy, opensearch, fastapi]
+        extra: [core, sqlalchemy, sqlalchemy-async, opensearch, opensearch-async, fastapi]
     env:
       EXTRA: ${{ matrix.extra }}
       PY: ${{ matrix.python }}
@@ -163,9 +165,10 @@ jobs:
           import importlib, os, re, sys
           from importlib.metadata import distribution, packages_distributions
           extra = os.environ['EXTRA']
+          backend = extra.removesuffix('-async')  # an async extra adds packages to its backend's module
           modules = ('protocol', 'columns', '_plan', 'rows', 'cache')
           core = ['datatables_backend', *(f'datatables_backend.{m}' for m in modules)]
-          for module in core if extra == 'core' else [*core, f'datatables_backend.{extra}']:
+          for module in core if extra == 'core' else [*core, f'datatables_backend.{backend}']:
               importlib.import_module(module)
           assert sys.version.startswith(os.environ['PY'] + '.'), sys.version
           where = sys.modules['datatables_backend'].__file__
@@ -195,7 +198,7 @@ jobs:
               unmapped = sorted(e for e in declared if not packages(e))
               assert not unmapped, f'extras whose requirements map to no installed package: {unmapped}'
               absent = set().union(*(packages(e) for e in declared if e != extra)) - own - packages(None)
-              if extra == 'sqlalchemy':
+              if backend == 'sqlalchemy':
                   absent.add('sqlalchemy.ext.asyncio')
               assert absent, f'{extra}: nothing to check'
               loaded = sorted(absent & set(sys.modules))
@@ -203,6 +206,13 @@ jobs:
               sys.exit(f'{extra} loaded {loaded}' if loaded else 0)
           for top in sorted(own):  # the extra's own packages import with only that extra installed
               importlib.import_module(top)
+          if extra == 'sqlalchemy-async':  # greenlet came with the extra: the asyncio module starts
+              import asyncio
+              from sqlalchemy.ext.asyncio import AsyncSession
+              from sqlalchemy.util import greenlet_spawn
+              assert asyncio.run(greenlet_spawn(lambda: 1)) == 1
+          if extra == 'opensearch-async':  # aiohttp came with the extra: the async client exists
+              from opensearchpy import AsyncOpenSearch
           print(f'{extra} on {sys.version.split()[0]}, only its own extra installed: imports')
           EOF
       - name: Imports with only its own extra installed

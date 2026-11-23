@@ -649,8 +649,14 @@ fastapi = [
 opensearch = [
     { name = "opensearch-py" },
 ]
+opensearch-async = [
+    { name = "opensearch-py", extra = ["async"] },
+]
 sqlalchemy = [
     { name = "sqlalchemy" },
+]
+sqlalchemy-async = [
+    { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
 [package.dev-dependencies]
@@ -687,13 +693,15 @@ dev = [
 requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.133" },
     { name = "opensearch-py", marker = "extra == 'opensearch'", specifier = ">=2.6" },
+    { name = "opensearch-py", extras = ["async"], marker = "extra == 'opensearch-async'", specifier = ">=2.6" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic", marker = "python_full_version >= '3.14'", specifier = ">=2.12" },
     { name = "pydantic", marker = "python_full_version >= '3.15'", specifier = ">=2.14" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.9" },
     { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0.31" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy-async'", specifier = ">=2.0.31" },
 ]
-provides-extras = ["fastapi", "opensearch", "sqlalchemy"]
+provides-extras = ["fastapi", "opensearch", "opensearch-async", "sqlalchemy", "sqlalchemy-async"]
 
 [package.metadata.requires-dev]
 containers = [

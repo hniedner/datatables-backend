@@ -66,6 +66,9 @@ library itself has a limit on one engine, [databases.md](databases.md) says so, 
   column of another type declared `type='string'`, are compared as sent. To have an expression folded, give it a
   string type: `func.upper(users.c.name, type_=String)` or `literal_column('upper(name)', String)`. A SQL function
   called through `func` has no type unless it is given one.
+- **Some columns take no part in the global search.** A boolean column never does, on any backend. A number or a date
+  column does on SQL, as text (a number as its canonical text, a date as `YYYY-MM-DD`: "7" finds 17), and does not on
+  OpenSearch.
 
 ## Errors
 
@@ -144,6 +147,14 @@ page keeps the ordinary page's rows all the same.
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an
 analysed-only column.
+
+**A column of analysed text only.** An OpenSearch column declared `text='text'` answers the word search (a word is an
+analysed match: `red` does not find `reddish`), `null` and `!null`, and a categorical filter or `multi_values` list of
+only empty entries, which means empty. A categorical filter, a `multi_values` list and the conditions `=`, `!=`,
+`starts`, `ends`, `contains` and their negations are refused with `invalid_filter`; SQL answers every condition.
+
+**A stored empty string.** "Empty" is a missing field on OpenSearch, so a stored `""` is not empty there; on SQL a
+column that stores text is empty when it holds NULL or `''`.
 
 ## SQL
 

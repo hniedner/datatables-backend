@@ -34,7 +34,10 @@ classifiers = [
 
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy>=2.0.31"]
+# Async SQL also needs an async driver of the database's own (aiosqlite, asyncpg, aiomysql, aioodbc).
+sqlalchemy-async = ["sqlalchemy[asyncio]>=2.0.31"]
 opensearch = ["opensearch-py>=2.6"]
+opensearch-async = ["opensearch-py[async]>=2.6"]
 fastapi = ["fastapi>=0.133", "python-multipart>=0.0.9"]
 
 [project.urls]
