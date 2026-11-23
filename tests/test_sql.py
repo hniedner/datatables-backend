@@ -56,6 +56,7 @@ from datatables_backend import RowHooks
 from datatables_backend import SchemaError
 from datatables_backend import TotalCache
 from datatables_backend import parse_request
+from datatables_backend.opensearch import IndexColumn
 from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import LARGEST_WORDS
@@ -1199,6 +1200,16 @@ def test_a_table_without_columns_is_a_schema_error():
     with pytest.raises(SchemaError) as raised:
         SQLTable(people, [])
     assert str(raised.value) == 'No column is declared. Declare at least one Column.'
+
+
+def test_an_index_column_on_a_sql_table_is_a_schema_error():
+    """An IndexColumn declares an OpenSearch field; a SQL table would ignore what it adds and look as if it used it."""
+    with pytest.raises(SchemaError) as raised:
+        SQLTable(people, [Column('id'), IndexColumn('team', text='text')])
+    assert str(raised.value) == (
+        'The column "team" is an IndexColumn, which declares an OpenSearch field, and a SQL table ignores what it '
+        'adds. Declare it as Column("team", ...) instead.'
+    )
 
 
 HOOKED = SQLTable(people, [Column('id'), Column('secret', search_value=lambda text: f's{text}')])

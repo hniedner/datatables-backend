@@ -52,6 +52,8 @@ from .protocol import PartialResultError
 from .protocol import SchemaError
 from .rows import RowHooks
 
+__all__ = ['IndexColumn', 'SearchTable', 'TextKind']
+
 log = logging.getLogger('datatables_backend')
 
 #: How a string field is mapped: ``keyword``; ``text`` (analysed only); or ``text`` with a ``.keyword`` subfield,
@@ -59,10 +61,10 @@ log = logging.getLogger('datatables_backend')
 type TextKind = Literal['keyword', 'text', 'text+keyword']
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
-MAX_RESULT_WINDOW = 10_000
+_MAX_RESULT_WINDOW = 10_000
 #: The document's own id: a metadata field, read from the hit (never from ``_source``). OpenSearch deprecates sorting
 #: on it (field data), so a column for it is neither orderable nor a key, and it has no text to search
-DOCUMENT_ID = '_id'
+_DOCUMENT_ID = '_id'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -77,12 +79,12 @@ class IndexColumn(Column):
     text: TextKind = 'text+keyword'
 
 
-class SyncClient(Protocol):
+class _SyncClient(Protocol):
     def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]: ...
     def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
-class AsyncClient(Protocol):
+class _AsyncClient(Protocol):
     def search(self, *, index: str, body: Mapping[str, Any]) -> Awaitable[Mapping[str, Any]]: ...
     def count(self, *, index: str, body: Mapping[str, Any]) -> Awaitable[Mapping[str, Any]]: ...
 
@@ -130,7 +132,7 @@ class SearchTable:
         base_filter: Mapping[str, Any] | None = None,
         rows: RowHooks | None = None,
         total_cache: TotalCache | None = None,
-        max_result_window: int = MAX_RESULT_WINDOW,
+        max_result_window: int = _MAX_RESULT_WINDOW,
     ) -> None:
         self.index = index
         self.columns = tuple(_held(column) for column in columns)
@@ -146,7 +148,7 @@ class SearchTable:
                 'the name of a declared column whose values are unique (a tuple of names for a key of several).'
             )
         self.unique_key = declared_key(self.columns, unique_key)
-        if any(column.source == DOCUMENT_ID for column in self.unique_key):
+        if any(column.source == _DOCUMENT_ID for column in self.unique_key):
             raise SchemaError(
                 'OpenSearch deprecates sorting on `_id` (field data). Copy the id into a `keyword` field of the '
                 'documents and name that column as the key.'
@@ -162,7 +164,7 @@ class SearchTable:
                 f'{", ".join(unsortable)}: analysed text has no whole string to sort by, so it cannot be orderable'
             )
 
-    async def fetch(self, params: DTParams, client: AsyncClient) -> DTResponse:
+    async def fetch(self, params: DTParams, client: _AsyncClient) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once; only a
@@ -195,7 +197,7 @@ class SearchTable:
             self._remember(total)
         return self._response(params, answer, total, filtered)
 
-    def fetch_sync(self, params: DTParams, client: SyncClient) -> DTResponse:
+    def fetch_sync(self, params: DTParams, client: _SyncClient) -> DTResponse:
         """``fetch`` with a sync client (``OpenSearch``)."""
         try:
             request = self._request(params)
@@ -256,7 +258,7 @@ class SearchTable:
             'size': params.length,
             'track_total_hits': True,
             # The id is in the hit, not in `_source`; the key is a column of another field, so the list is never empty
-            '_source': [column.source for column in self.columns if column.source != DOCUMENT_ID],
+            '_source': [column.source for column in self.columns if column.source != _DOCUMENT_ID],
         }
         search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
@@ -266,7 +268,7 @@ class SearchTable:
     # -- running ----------------------------------------------------------------------------------------------------
 
     def _filtered(self, answer: Mapping[str, Any]) -> int:
-        if partial_answer(answer, self.index):
+        if _partial_answer(answer, self.index):
             raise PartialResultError(f'The search of {self.index} did not cover every shard.')
         total = answer['hits']['total']
         # track_total_hits makes it exact; an older engine may still answer a bare number
@@ -284,7 +286,7 @@ class SearchTable:
             self.total_cache.put(self._total_key, total)
 
     def _count(self, answer: Mapping[str, Any]) -> int:
-        if partial_answer(answer, self.index):
+        if _partial_answer(answer, self.index):
             raise PartialResultError(f'The count of {self.index} did not cover every shard.')
         return int(answer['count'])
 
@@ -317,7 +319,7 @@ class SearchTable:
     def _row(self, hit: Mapping[str, Any]) -> dict[str, Any]:
         source = hit.get('_source') or {}
         return {
-            column.name: hit.get(DOCUMENT_ID) if column.source == DOCUMENT_ID else _get(source, column.source)
+            column.name: hit.get(_DOCUMENT_ID) if column.source == _DOCUMENT_ID else _get(source, column.source)
             for column in self.columns
         }
 
@@ -333,7 +335,7 @@ def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
     plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
     unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake."""
-    if column.source != DOCUMENT_ID:
+    if column.source != _DOCUMENT_ID:
         return column
     if column.orderable:
         raise SchemaError(
@@ -451,14 +453,14 @@ def _part(column: Column, field: str, value: str, *, start: bool = False, end: b
     """The whole string holds ``value`` in any case: anywhere, or at its ``start`` or its ``end``. A value with a
     fullwidth mark that a ``wildcard`` would misread is a ``regexp`` too. A hooked column's value is what its hook
     made of the text, and is sent as before."""
-    pattern = f'{"" if start else "*"}{escape_wildcard(value)}{"" if end else "*"}'
+    pattern = f'{"" if start else "*"}{_escape_wildcard(value)}{"" if end else "*"}'
     wildcard = {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
     if column.search_value is not None:
         return wildcard
     return _regexp(field, '' if start else '.*', value, '' if end else '.*', marks=True) or wildcard
 
 
-def escape_wildcard(value: str) -> str:
+def _escape_wildcard(value: str) -> str:
     """``value`` with the wildcard query's special characters escaped: ``\\``, ``*``, ``?``."""
     return value.replace('\\', '\\\\').replace('*', '\\*').replace('?', '\\?')
 
@@ -582,7 +584,7 @@ def _whole_number(value: object, minimum: int) -> int | None:
     return value if type(value) is int and value >= minimum else None
 
 
-def partial_answer(answer: object, index: str) -> bool:
+def _partial_answer(answer: object, index: str) -> bool:
     """Whether a search or count answer is not known to cover every shard, and so must not be shown as complete.
 
     Partial: a shard failed or the search timed out (OpenSearch answers 200 with the shards that did answer).
