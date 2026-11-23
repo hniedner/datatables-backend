@@ -114,9 +114,9 @@ class SQLTable:
         source: The rows: a ``Table``, a mapped class's ``__table__``, a join or a subquery.
         columns: The columns the client may see, search and sort on; nothing else is selected.
         unique_key: The name of a declared column, or of several, whose values are unique for every row: the
-            tie-breaker of every order, in place of the primary key. Required when the source has no primary key
-            that is unique for its rows (a view, or a join or subquery without one, or with only part of a
-            composite one): the table then raises ``SchemaError``.
+            tie-breaker of every order, in place of the primary key. Without it, a source must have a primary key,
+            and a subquery must select every primary-key column of each table it reads (in a join too, and in a
+            ``WHERE`` or a scalar subquery); otherwise the table raises ``SchemaError``. A ``UNION`` is not checked.
         base_filter: The rows the table shows at all; it applies to ``recordsTotal`` too.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` (one ``COUNT(*)`` per TTL instead of per draw).
@@ -146,7 +146,8 @@ class SQLTable:
         elif _key_is_not_unique(source):
             raise SchemaError(
                 'The source has no primary key that is unique for every row it shows: it is a view, or a join or '
-                'subquery with no primary key or with only part of a composite one. Declare one: '
+                'subquery with no primary key, or a subquery that does not select every primary-key column of each '
+                'table it reads. Declare one: '
                 'SQLTable(..., unique_key="id") with the name of a declared column whose values are unique (a tuple '
                 'of names for a key of several).'
             )
@@ -393,16 +394,17 @@ def _dialect(source: AsyncSource | SyncSource) -> Dialect:
 
 def _key_is_not_unique(source: FromClause) -> bool:
     """Whether the source's primary key cannot be trusted to tell its rows apart (PRD-D11): SQLAlchemy reports none,
-    or a table under it has none, or (outside a join, which keeps every table's key) a subquery selects only part of
-    a table's. A join keeps the key of each table whole, bar the equivalence of the columns it joins on, so only the
-    keys of its tables are checked. ``GROUP BY`` and ``DISTINCT`` are not looked at. A table a subquery reads only in
-    a ``WHERE`` or a scalar subquery counts too, so such a subquery is refused though its own key may be whole:
-    declare ``unique_key`` there."""
+    or a table under it has none, or it does not hold every primary-key column of each table it reads. A join is
+    checked side by side, since its reduced key drops a column equal to one it joins on. Every table a subquery
+    reads counts, also in a ``WHERE`` or a scalar subquery, so such a subquery is refused though its own key may be
+    whole: declare ``unique_key`` there. A ``UNION`` is not checked."""
+    if isinstance(source, Join):
+        return _key_is_not_unique(source.left) or _key_is_not_unique(source.right)
     primary_key = getattr(source, 'primary_key', None)
     tables = find_tables(source)
     if not primary_key or any(not table.primary_key for table in tables):
         return True
-    return not isinstance(source, Join) and any(
+    return any(
         not any(column in kept.proxy_set for kept in primary_key) for table in tables for column in table.primary_key
     )
 

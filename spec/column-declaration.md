@@ -43,7 +43,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   a primary key, no key need be declared. A declared key that is not a declared column raises too.
 - **SPEC-D11.3** [SQL] A subquery that selects some but not all of a table's primary-key columns reports a part of the
   key, which is not unique: without a declared key it is a `SchemaError` naming `unique_key=`, and with every key
-  column selected it is accepted. (`GROUP BY`, `DISTINCT` and nested subqueries are not checked.)
+  column selected it is accepted. The same holds for a subquery inside a join. (A `UNION` is not checked.)
 - **SPEC-D11.4** [all] A unique key of several columns breaks ties in the order of its names, each in the direction
   of the first applied entry (PRD-O3); a column the order already names is not named again.
 - **SPEC-D12.1** [all] Global search `Alpha` → rows 1 (the whole text equals the hooked value); `Alph` → none.

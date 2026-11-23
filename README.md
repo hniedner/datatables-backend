@@ -68,11 +68,12 @@ response = await reports.fetch(params, AsyncOpenSearch(hosts=[...]))
 unique for every document. Every order ends with it, in the direction of the first sort entry, and a request without
 an order comes in its ascending order, so pages are stable. Declare it `IndexColumn(..., text='keyword')` or as a
 number. A key is a declared column, so its value is sent in every row; `searchable=False` and `orderable=False` keep it
-out of the client's controls. A table without a key raises `SchemaError`. SQL needs the same key when its source has no
-primary key that is unique for its rows (a view, or a join or subquery without one); it is also checked for a subquery
-that selects only part of a composite key, but not for `GROUP BY`, `DISTINCT` or nested subqueries, which need a key
-declared as well. A table a subquery reads only in a `WHERE` or a scalar subquery counts too: declare `unique_key`
-there, or the subquery is refused though its own key may be whole.
+out of the client's controls. A table without a key raises `SchemaError`.
+
+SQL takes the same `unique_key`, which replaces the primary key when declared. Without it, a source must have a primary
+key, and a subquery must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a
+scalar subquery); otherwise it raises `SchemaError`. A `UNION` is not checked: declare `unique_key` on a subquery over
+one.
 
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Analysed text holds no spaces, so a search for a space finds nothing on an

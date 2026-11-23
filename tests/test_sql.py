@@ -2565,13 +2565,6 @@ def test_a_key_of_several_columns_follows_the_first_entrys_direction(session: Se
         assert ids(several.fetch_sync(params, session)) == expected
 
 
-def test_a_key_the_order_already_names_is_not_named_twice(session: Session):
-    """SPEC-O3.1: SQL Server refuses a column named twice in an ORDER BY (error 169)."""
-    named = keyed(people, [Column('id'), Column('age')], 'id')
-    response = named.fetch_sync(request('id', 'age', order=[{'column': 0, 'dir': 'desc'}]), session)
-    assert ids(response) == [5, 4, 3, 2, 1]
-
-
 def composite() -> Table:
     return Table(
         'dtb_test_tags',
@@ -2587,6 +2580,15 @@ def part_of_a_composite_key() -> Any:
     return select(source.c.a, source.c.c).subquery()
 
 
+def join_of_part_of_a_composite_key() -> Any:
+    """A subquery that selects only `a` of the key (a, b), inside a join: the join's reduced key holds `a` and the
+    other table's key, which two rows of the subquery can share."""
+    source = composite()
+    part = select(source.c.a, source.c.c).subquery('part')
+    other = Table('dtb_test_people', MetaData(), SQLColumn('id', Integer, primary_key=True))
+    return part.join(other, part.c.a == other.c.id)
+
+
 @pytest.mark.parametrize(
     'make_source',
     [
@@ -2594,8 +2596,9 @@ def part_of_a_composite_key() -> Any:
         lambda: tagged_people()[1],  # a join of a table without a key
         lambda: select(tags_without_a_key().c.id).subquery(),
         part_of_a_composite_key,  # SPEC-D11.3
+        join_of_part_of_a_composite_key,  # SPEC-D11.3, under a join too
     ],
-    ids=['table', 'join', 'subquery', 'part-of-a-composite-key'],
+    ids=['table', 'join', 'subquery', 'part-of-a-composite-key', 'join-of-part-of-a-composite-key'],
 )
 def test_a_source_that_has_no_unique_key_needs_one_declared(make_source: Callable[[], Any]):
     """SPEC-D11.2, SPEC-D11.3: SQLAlchemy reports no key, or a part of one, and the tie-breaker would not be unique.

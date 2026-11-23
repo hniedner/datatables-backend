@@ -256,7 +256,7 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
 
 @pytest.mark.xfail(
     reason='PRD-C11, PRD-C12: the counts are not run before the refusal yet, so it carries none (SPEC-C12.1, issue '
-    '#29)',
+    '#73)',
     strict=True,
     raises=AssertionError,
 )
@@ -268,7 +268,7 @@ def test_a_page_out_of_range_carries_the_real_counts():
 
 @pytest.mark.xfail(
     reason='PRD-C3: a start past the end beyond the result window is refused, not answered with an empty page and '
-    'both counts (SPEC-C3.3, issue #29)',
+    'both counts (SPEC-C3.3, issue #73)',
     strict=True,
     raises=AssertionError,
 )
@@ -891,20 +891,18 @@ def test_an_index_table_without_a_unique_key_is_a_schema_error():
 
 
 @pytest.mark.parametrize(
-    ('key', 'columns', 'text'),
+    ('key', 'text'),
     [
-        ('nope', COLUMNS, 'nope'),  # not a declared column
-        (('id', 'nope'), COLUMNS, 'nope'),
-        ('body', COLUMNS, 'body'),  # analysed text only: there is no whole string to sort by
-        ((), COLUMNS, 'at least one'),
+        ('nope', 'nope'),  # not a declared column
+        (('id', 'nope'), 'nope'),
+        ('body', 'body'),  # analysed text only: there is no whole string to sort by
+        ((), 'at least one'),
     ],
 )
-def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(
-    key: str | tuple[str, ...], columns: list[Column], text: str
-):
+def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(key: str | tuple[str, ...], text: str):
     """SPEC-D11.1: the key must name a declared column the index can sort by."""
     with pytest.raises(SchemaError, match=text) as raised:
-        keyed(key, columns)
+        keyed(key)
     assert 'unique_key' in str(raised.value)
 
 
