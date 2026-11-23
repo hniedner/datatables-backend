@@ -43,13 +43,18 @@ def test_a_malformed_request_answers_422_with_its_draw_naming_only_the_parameter
     """SPEC-A10.1: FastAPI's own shape, the draw inside `detail`, so a client can still match the answer."""
     response = client.post('/table', data={'draw': '5', 'length': 'my-secret'})
     assert response.status_code == 422
-    assert response.json() == {'detail': {'message': 'Invalid length parameter.', 'draw': 5}}
+    assert response.json() == {
+        'detail': {'message': 'Invalid length parameter: send a whole number, as DataTables does.', 'draw': 5}
+    }
 
 
 def test_a_422_leaves_out_a_draw_that_could_not_be_read():
     """SPEC-A10.1: no `draw` key at all, rather than a null or a guess."""
     response = client.post('/table', data={'draw': 'x', 'length': '10'})
-    assert (response.status_code, response.json()) == (422, {'detail': {'message': 'Invalid draw parameter.'}})
+    assert (response.status_code, response.json()) == (
+        422,
+        {'detail': {'message': 'Invalid draw parameter: send a whole number, as DataTables does.'}},
+    )
 
 
 def test_a_body_that_is_not_json_answers_422():

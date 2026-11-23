@@ -243,13 +243,58 @@ def test_a_searchbuilder_criterion_with_value1_and_value2_is_read_as_without_the
     assert parse_request({'searchBuilder': {'logic': 'AND', 'criteria': [extra]}}) == plain
 
 
+@pytest.mark.parametrize(
+    ('body', 'message'),
+    [
+        ({'draw': 'x'}, 'Invalid draw parameter: send a whole number, as DataTables does.'),
+        ({'draw': -1}, 'Invalid draw parameter: send a whole number from 0 to 2147483647.'),
+        ({'start': 1.5}, 'Invalid start parameter: send a whole number, as DataTables does.'),
+        ({'start': -5}, 'Invalid start parameter: send a whole number from 0 to 9007199254740991.'),
+        ({'length': '10.0'}, 'Invalid length parameter: send a whole number, as DataTables does.'),
+        ({'length': -1}, 'Invalid length parameter: send a whole number from 1 to 2147483647.'),
+        (
+            {'columns': [{'data': 'a'}, {'data': 'b'}], 'order': [{'column': 'x', 'dir': 'asc'}]},
+            'Invalid order parameter: column must be a whole number.',
+        ),
+        (
+            {'columns': [{'data': 'a'}], 'order': [{'column': 0, 'dir': 'up'}]},
+            'Invalid order parameter: dir must be asc or desc.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'searchable': 'yes'}]},
+            'Invalid columns parameter: searchable must be true or false.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'orderable': 1}]},
+            'Invalid columns parameter: orderable must be true or false.',
+        ),
+        (
+            {'columns': [{'data': 'a', 'search': {'regex': 'on'}}]},
+            'Invalid columns parameter: regex must be true or false.',
+        ),
+        ({'search': {'regex': 'on'}}, 'Invalid search parameter: regex must be true or false.'),
+        (
+            {'columns': [{'data': True}]},
+            'Invalid columns parameter: data must be text, a whole number, an object or null.',
+        ),
+        ({'columns': 'name'}, 'Invalid columns parameter.'),
+    ],
+)
+def test_a_malformed_request_says_what_to_send_and_never_shows_the_value(body: dict[str, Any], message: str):
+    """SPEC-P12.1 and the rule that an error says how to fix it: the parameter, what it must be, and the field inside
+    it where that is one of the protocol's own (never a key or a value of the client)."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(body)
+    assert str(refused.value) == message
+
+
 @pytest.mark.parametrize('index', [1, -1])
 def test_an_order_on_a_column_the_request_does_not_hold_is_malformed(index: int):
     """SPEC-O1.1, SPEC-P12.1: only an integration bug sends one, so it is not answered as the user's mistake. The
     request holds one column, index 0."""
     with pytest.raises(MalformedRequest) as refused:
         parse_request({'draw': 1, 'columns': [{'data': 'a'}], 'order': [{'column': index, 'dir': 'asc'}]})
-    assert str(refused.value) == 'Invalid order parameter.'
+    assert str(refused.value) == ("Invalid order parameter: column must be the index of one of the request's columns.")
 
 
 @pytest.mark.parametrize('request_data', [[{'draw': 1}], [1], 7])
@@ -334,7 +379,8 @@ def test_a_refused_value_names_the_parameter_and_never_the_key_or_the_value(capl
     """SPEC-P12.1, SPEC-E10.1: the path below the parameter is the client's own key when it sends dotted keys."""
     with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest) as refused:
         parse_request([('draw', '1'), (key, 'MARKER_V')])
-    assert str(refused.value) == 'Invalid columns parameter.'
+    # The message names the protocol's own field, from a table of ours; the log record names none
+    assert str(refused.value) == 'Invalid columns parameter: searchable must be true or false.'
     assert caplog.records
     logged = repr([vars(record) for record in caplog.records])
     assert 'MARKER_V' not in logged
