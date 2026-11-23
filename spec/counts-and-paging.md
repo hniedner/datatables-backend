@@ -26,6 +26,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C8.2** [OS] Recording: with a global search, a separate count gives `recordsTotal`.
 - **SPEC-C9.1** [OS] A search answering `hits.total.relation` `gte` → an exact count call is made, and its count is
   the answer.
+- **SPEC-C9.2** [OS] Recording, with a global search: a search answering `gte` → two count calls, the filtered set's
+  query (its count is `recordsFiltered`) and the base filter's (the total, PRD-C8); with no filter beyond the base
+  filter, one call, whose count is both.
 - **SPEC-C10.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 0, `length` 3 → rows 1, 2, 3 (ordinary).
 - **SPEC-C10.2** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 8, `length` 3 → rows 9, 10, in ascending
   order, fetched by a reversed sort (recording shows the reversed sort and `from` 0).
@@ -38,6 +41,11 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C12.1** [OS] With `max_result_window` 3 and rows 1 to 10: `start` 4, `length` 3 → error_code
   `page_out_of_range`, `recordsTotal` 10, `recordsFiltered` 10, `data` `[]`.
 - **SPEC-C12.2** [OS] Recording: no call changes index settings (`put_settings` is never called).
+- **SPEC-C12.3** [OS] Recording: with `max_result_window` 3, a global search, a filtered count of 7 and a total of 40,
+  `start` 4 and `length` 3 → `page_out_of_range`, `recordsFiltered` 7, `recordsTotal` 40: two count calls, told apart
+  by their query (the order is no part of the contract), and no page search.
+- **SPEC-C12.4** [OS] Recording: C12.3 with a `TotalCache`: the second request within the TTL runs one count call, the
+  filtered set's.
 - **SPEC-C13.1** [OS] Recording only, with scripted answers: with `max_result_window` 3, `start` 8 and `length` 3,
   the count answers 10 and the reversed page search answers the hits 11, 10 (an index that grew after the count) →
   rows 10, 11, no error, and no `create_pit` call.
@@ -47,6 +55,8 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C14.2** [all] With a `TotalCache` of TTL 2 seconds and a global search `red` (so the total is a count of
   its own, PRD-C8): the first request answers `recordsTotal` 4; a request made right after inserting row 5 still
   answers 4; after the test waits past the TTL, the next request counts again and answers 5.
+- **SPEC-C14.3** [OS] Recording: with a `TotalCache`, an unfiltered request (whose search count is the total, PRD-C8)
+  fills the cache: a global search right after it runs no total count, and answers that `recordsTotal`.
 - **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
   tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
   and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.

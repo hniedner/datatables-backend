@@ -197,13 +197,15 @@ library itself has a limit on one engine, [docs/databases.md](docs/databases.md)
   column searched, a selected value and a range once each; 16 words over 60 columns reach it), `invalid_number` or
   `invalid_date` for a value the column cannot read or hold, `page_out_of_range` for an OpenSearch page beyond the
   result window, and `invalid_filter` for any other (an unknown column, a value that is not a boolean, a condition the
-  column's type does not take, a regex search). When a request holds several, a control character, a value that is too
-  long, text of too many words and a structure over the bounds are answered first (the first the request holds in
-  reading order: the global search, then the column searches, then the SearchBuilder tree), and a request of too many
-  conditions after them, then a number or date mistake, then any other, and the page last. The list of codes is closed:
-  a code is added only in a release that says so, and a client that reads a code it does not know treats it as a refusal
-  of the request and shows `error`. Every other failure raises, so the app decides how to report it;
-  `DTResponse.query_failed(draw)` gives the usual shape.
+  column's type does not take, a regex search). A `page_out_of_range` answer carries the real `recordsTotal` and
+  `recordsFiltered`: the library runs the counts first (one or two count calls, never a page search), and a start at or
+  past the last row answers an empty page with both counts instead. When a request holds several, a control character, a
+  value that is too long, text of too many words and a structure over the bounds are answered first (the first the
+  request holds in reading order: the global search, then the column searches, then the SearchBuilder tree), and a
+  request of too many conditions after them, then a number or date mistake, then any other, and the page last. The list
+  of codes is closed: a code is added only in a release that says so, and a client that reads a code it does not know
+  treats it as a refusal of the request and shows `error`. Every other failure raises, so the app decides how to report
+  it; `DTResponse.query_failed(draw)` gives the usual shape.
 - **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
   request's own when that could be read. The FastAPI dependency answers it with 422 and
