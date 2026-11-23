@@ -439,6 +439,73 @@ def test_a_column_search_a_number_or_date_column_cannot_read_has_its_code(column
     assert (client.searches, client.counts) == ([], [])
 
 
+@pytest.mark.parametrize('condition', ['=', '!=', 'starts', '!starts', 'ends', '!ends'])
+def test_a_condition_that_needs_a_whole_string_is_refused_on_analysed_text(condition: str):
+    """SPEC-D19.1: analysed text holds no whole string to equal or to anchor on, so the plan refuses these, for the
+    user to read, before anything is sent."""
+    client = Client()
+    text = refused(table.fetch_sync(request(*NAMES, **criterion('body', condition, 'red fox')), client))
+    assert text == (
+        f'The condition "{condition}" cannot be used on "body", which holds analysed text only. Search the column '
+        'for words, or choose contains, !contains, null or !null.'
+    )
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ('body', 'expected'),
+    [
+        (criterion('body', 'contains', 'red fox'), {'match_phrase': {'body': 'red fox'}}),
+        (
+            criterion('body', '!contains', 'red fox'),
+            {'bool': {'must_not': [{'match_phrase': {'body': 'red fox'}}]}},
+        ),
+        (criterion('body', 'null'), {'bool': {'must_not': [{'exists': {'field': 'body'}}]}}),
+        (criterion('body', '!null'), {'exists': {'field': 'body'}}),
+        (
+            {'column_search': {'body': {'value': 'red fox'}}},
+            {'bool': {'must': [{'match_phrase': {'body': 'red'}}, {'match_phrase': {'body': 'fox'}}]}},
+        ),
+        ({'column_search': {'body': {'multi_values': ['']}}}, {'bool': {'must_not': [{'exists': {'field': 'body'}}]}}),
+        (
+            {'column_search': {'body': {'value': '^()$', 'regex': True}}},
+            {'bool': {'must_not': [{'exists': {'field': 'body'}}]}},
+        ),
+    ],
+    ids=['contains', 'not-contains', 'null', 'not-null', 'column-search', 'empty-list', 'empty-categorical'],
+)
+def test_analysed_text_still_answers_words_contains_null_and_an_empty_list(
+    body: dict[str, Any], expected: dict[str, Any]
+):
+    """SPEC-D19.2, SPEC-D19.3, SPEC-F11.7: the refusals of the test above reach no further than their list."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, **body), client)
+    assert query(client) == [expected]
+
+
+def test_a_hook_on_analysed_text_is_a_schema_error_that_names_the_column_and_the_fix():
+    """SPEC-D20.1: a hook compares by equality, which analysed text cannot answer (PRD-D19)."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('body', text='text', search_value=str.upper)],
+            unique_key='id',
+        )
+    assert str(raised.value) == (
+        'The column "body" has a search_value hook but holds analysed text only, which a hook compares by equality. '
+        'Declare it text="keyword" or "text+keyword", or remove the hook.'
+    )
+
+
+@pytest.mark.parametrize('kind', ['keyword', 'text+keyword'])
+def test_a_hook_on_a_column_with_a_keyword_field_is_declared(kind: str):
+    SearchTable(
+        'docs',
+        [IndexColumn('id', text='keyword'), IndexColumn('secret', text=cast(Any, kind), search_value=str.upper)],
+        unique_key='id',
+    )
+
+
 @pytest.mark.parametrize(
     ('column', 'code', 'event'),
     [
