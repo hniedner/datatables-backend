@@ -1274,6 +1274,12 @@ BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}
         pytest.param({'condition': '=', 'origData': 'name', 'value': []}, id='equals with no value'),
         pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5']}, id='between with one value'),
         pytest.param({'condition': 'between', 'origData': 'age'}, id='between without a value key'),
+        # SearchBuilder's client does not apply a criterion with an empty input (R1 of #66)
+        pytest.param({'condition': '=', 'origData': 'name', 'value': ['']}, id='equals with an empty value'),
+        pytest.param({'condition': '=', 'origData': 'age', 'value': ['']}, id='number equals with an empty value'),
+        pytest.param({'condition': '=', 'origData': 'born', 'value': ['']}, id='date equals with an empty value'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['', '5']}, id='between with an empty first'),
+        pytest.param({'condition': 'between', 'origData': 'age', 'value': ['5', '']}, id='between with an empty last'),
     ],
 )
 def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict[str, Any]):
@@ -1290,6 +1296,96 @@ def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict
 def test_a_value_that_is_there_but_unreadable_is_refused_not_left_out(session: Session):
     """SPEC-F30.4: only a missing value is unfinished; an unreadable one is the user's mistake."""
     refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', 'abc')), session), 'invalid_number')
+
+
+def test_white_space_is_a_value_not_a_blank_one(session: Session):
+    """SPEC-F30.5: only the empty text is blank, as in SearchBuilder's client; `=` with one space still asks for the
+    rows whose name is one space, of which there are none."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('name', '=', ' ')), session)) == []
+
+
+def test_a_surplus_value_is_refused_also_when_it_is_blank(session: Session):
+    """SPEC-F30.5, SPEC-F36.1: the surplus is checked before a blank value counts as missing."""
+    refused(table.fetch_sync(request(*ALL, **criterion('name', '=', '', '')), session))
+    refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', '', '5', '6')), session))
+
+
+def flat_request(criteria: list[dict[str, str]], logic: str) -> DTParams:
+    """The request DataTables 3 sends as a form: `undefined` is written as that word, an empty `value` list as no key
+    at all, and value1 and value2 beside it (R2 of #66)."""
+    pairs: list[tuple[str, str]] = [('draw', '1'), ('start', '0'), ('length', '10')]
+    for index, name in enumerate(ALL):
+        pairs += [
+            (f'columns[{index}][data]', name),
+            (f'columns[{index}][name]', ''),
+            (f'columns[{index}][searchable]', 'true'),
+            (f'columns[{index}][orderable]', 'true'),
+            (f'columns[{index}][search][value]', ''),
+            (f'columns[{index}][search][regex]', 'false'),
+        ]
+    pairs.append(('searchBuilder[logic]', logic))
+    for index, criterion_ in enumerate(criteria):
+        for key, value in criterion_.items():
+            suffix = '[value][]' if key == 'value[]' else f'[{key}]'  # a list sends one key per entry
+            pairs.append((f'searchBuilder[criteria][{index}]{suffix}', value))
+    return parse_request(pairs)
+
+
+FLAT_BLUE = {
+    'condition': '=',
+    'data': 'team',
+    'origData': 'team',
+    'type': 'string',
+    'value[]': 'blue',
+    'value1': 'blue',
+    'value2': 'undefined',
+}
+
+
+@pytest.mark.parametrize(
+    'fresh',
+    [
+        pytest.param(  # "Add condition" was clicked: nothing is chosen yet
+            {
+                'condition': 'undefined',
+                'data': 'undefined',
+                'origData': 'undefined',
+                'type': '',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a new criterion',
+        ),
+        pytest.param(  # a column is chosen, no condition yet
+            {
+                'condition': 'undefined',
+                'data': 'name',
+                'origData': 'name',
+                'type': 'string',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a column chosen',
+        ),
+        pytest.param(  # a condition is chosen, no value typed: the empty `value` list sends no key
+            {
+                'condition': '=',
+                'data': 'name',
+                'origData': 'name',
+                'type': 'string',
+                'value1': 'undefined',
+                'value2': 'undefined',
+            },
+            id='a condition chosen',
+        ),
+    ],
+)
+def test_a_criterion_a_form_sends_before_it_is_finished_adds_nothing(session: Session, fresh: dict[str, str]):
+    """SPEC-F30.6: every draw after the user clicks "Add condition" carries such a criterion; it must neither be
+    malformed nor change the rows, alone or beside another criterion in an AND or an OR group."""
+    assert ids(table.fetch_sync(flat_request([fresh], 'AND'), session)) == [1, 2, 3, 4, 5]
+    for logic in ('AND', 'OR'):
+        assert ids(table.fetch_sync(flat_request([FLAT_BLUE, fresh], logic), session)) == [2, 5], logic
 
 
 def test_the_extra_values_a_client_sends_beside_value_are_ignored(session: Session):
