@@ -3189,6 +3189,21 @@ def test_a_cached_total_is_counted_once_between_two_requests_within_the_ttl(sess
     assert (ran_first, ran_second) == (3, 2)  # total, filtered count, page; then the last two
 
 
+async def test_the_async_fetch_counts_a_cached_total_once_between_two_requests_within_the_ttl(
+    async_session: AsyncSession,
+):
+    """SPEC-C14.1 through `fetch`: the async path reads and fills the cache as `fetch_sync` does."""
+    statements: list[str] = []
+    event.listen(async_session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    cached = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=60))
+    first = await cached.fetch(request(*ALL, search={'value': 'red'}), async_session)
+    ran_first = len([s for s in statements if 'dtb_test_people' in s])
+    second = await cached.fetch(request(*ALL, search={'value': 'red'}), async_session)
+    ran_second = len([s for s in statements if 'dtb_test_people' in s]) - ran_first
+    assert (first.recordsTotal, second.recordsTotal) == (5, 5)
+    assert (ran_first, ran_second) == (3, 2)  # total, filtered count, page; then the last two
+
+
 def test_the_cached_total_is_counted_again_after_the_ttl(session: Session):
     """SPEC-C14.2: a row inserted at once is not seen; a request after the TTL (0.3 s, waited out) counts again."""
     cached = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=0.3))

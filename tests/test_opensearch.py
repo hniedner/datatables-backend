@@ -2022,6 +2022,15 @@ def test_a_cached_total_is_counted_once_between_two_requests_within_the_ttl():
     assert len(client.counts) == 1
 
 
+async def test_the_async_fetch_counts_a_cached_total_once_between_two_requests_within_the_ttl():
+    """SPEC-C14.1 through `fetch`: the async path has its own copy of the cache read and fill."""
+    client = AsyncClient(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60))
+    answers = [await cached.fetch(request(*NAMES, search={'value': 'x'}), client) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+
+
 class Indexes:
     """A recording client over several indexes, each with its own number of documents."""
 
