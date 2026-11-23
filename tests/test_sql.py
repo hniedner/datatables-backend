@@ -13,7 +13,9 @@ from datetime import timezone
 from decimal import Decimal
 import logging
 import os
+from pathlib import Path
 import re
+import time
 from typing import Any
 import uuid
 import warnings
@@ -32,6 +34,7 @@ from sqlalchemy import Table
 from sqlalchemy import Uuid
 from sqlalchemy import and_
 from sqlalchemy import cast
+from sqlalchemy import create_engine
 from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import literal_column
@@ -41,10 +44,12 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects import sqlite
 from sqlalchemy.engine import Dialect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import Pool
 from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.types import TypeDecorator
@@ -61,6 +66,7 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import LARGEST_WORDS
+from .conftest import ROWS
 from .conftest import async_engine
 from .conftest import checked_database
 from .conftest import criterion
@@ -121,6 +127,7 @@ def test_the_suite_runs_on_a_database_named_for_it(name: str):
 
 
 def test_a_page_comes_with_both_counts(session: Session):
+    """SPEC-C1.1: with no filter the total is every row."""
     response = table.fetch_sync(request(*ALL, start=1, length=2, draw=7), session)
     assert response.draw == 7
     assert (response.recordsTotal, response.recordsFiltered) == (5, 5)
@@ -149,6 +156,7 @@ def test_a_sync_connection_works_too(session: Session):
 
 
 def test_the_base_filter_limits_the_total_too(session: Session):
+    """SPEC-C1.1: a base filter limits the total. SPEC-C1.2: a search narrows the filtered count, not the total."""
     reds = SQLTable(people, COLUMNS, base_filter=people.c.team == 'red')
     response = reds.fetch_sync(request(*ALL, search={'value': 'ann'}), session)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 2)
@@ -204,6 +212,7 @@ def test_a_declared_column_the_source_lacks_fails_at_construction():
 
 
 def test_the_total_is_cached_until_the_ttl(session: Session):
+    """SPEC-C16.1: a write is not seen until `clear()`; the filtered count is always live."""
     cache = TotalCache(ttl=60)
     cached = SQLTable(people, COLUMNS, total_cache=cache)
     assert cached.fetch_sync(request(*ALL), session).recordsTotal == 5
@@ -3108,3 +3117,134 @@ def test_a_join_and_a_subquery_are_tables_too(session: Session, cased: SQLTable)
     assert ids(over_join.fetch_sync(request('id', 'name'), session)) == [2, 5]
     reds = select(people).where(people.c.team == 'red').subquery()
     assert ids(SQLTable(reds, [Column('id'), Column('team')]).fetch_sync(request('id', 'team'), session)) == [1, 3]
+
+
+# -- counts and paging (PRD-C) ---
+
+
+def test_a_page_shorter_than_the_filtered_set_still_counts_the_whole_set(session: Session):
+    """SPEC-C2.1: `red` finds Ann and Anna; with a length of 1 the page holds one row and `recordsFiltered` stays 2."""
+    whole = table.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+    assert (whole.recordsTotal, whole.recordsFiltered, ids(whole)) == (5, 2, [1, 3])
+    page = table.fetch_sync(request(*ALL, search={'value': 'red'}, length=1), session)
+    assert (page.recordsTotal, page.recordsFiltered, ids(page)) == (5, 2, [1])
+
+
+def test_a_search_that_finds_nothing_has_filtered_zero_and_the_total_intact(session: Session):
+    """SPEC-C2.2."""
+    response = table.fetch_sync(request(*ALL, search={'value': 'zzz'}), session)
+    assert (response.recordsTotal, response.recordsFiltered, response.data, response.error) == (5, 0, [], None)
+
+
+def test_a_start_equal_to_the_row_count_is_an_empty_page_with_both_counts(session: Session):
+    """SPEC-C3.1: the page after the last row is empty, not an error."""
+    response = table.fetch_sync(request(*ALL, start=5, length=10), session)
+    assert (response.recordsTotal, response.recordsFiltered, response.data, response.error) == (5, 5, [], None)
+
+
+def test_a_negated_column_search_counts_with_count_statements_and_keeps_the_null_row(session: Session):
+    """SPEC-C4.1: `!ann` on the email column leaves out Ann only: Bob's NULL email passes. Both counts are
+    `count(*)` statements, and `recordsFiltered` is the number of rows the page returns."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    response = table.fetch_sync(request(*ALL, column_search={'email': {'value': '!ann'}}), session)
+    assert ids(response) == [2, 3, 4, 5]
+    assert (response.recordsTotal, response.recordsFiltered) == (5, 4)
+    counts = [statement for statement in statements if 'count(' in statement.lower()]
+    assert len(counts) == 2
+
+
+def test_the_page_statement_limits_the_rows_in_the_database(session: Session):
+    """SPEC-C5.1: start 1, length 2 gives rows 2 and 3, and the page statement limits them itself: `LIMIT` on SQLite,
+    PostgreSQL and MySQL (`LIMIT x, y` there), `OFFSET ... FETCH` on SQL Server, whichever the leg is."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    assert ids(table.fetch_sync(request(*ALL, start=1, length=2), session)) == [2, 3]
+    page = [statement for statement in statements if 'count(' not in statement.lower()]
+    assert page
+    assert re.search(r'\b(LIMIT|FETCH|TOP)\b', page[-1].upper())
+
+
+def test_the_page_statement_selects_no_undeclared_column(session: Session):
+    """SPEC-C6.1: `secret`, `active` and `seen_tz` are not declared: the page statement names none and no row has one."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    response = table.fetch_sync(request(*ALL), session)
+    page = [statement for statement in statements if 'count(' not in statement.lower()][-1].lower()
+    assert not any(name in page for name in ('secret', 'active', 'seen_tz'))
+    assert all(not {'secret', 'active', 'seen_tz'} & set(row) for row in response.data)
+
+
+def test_a_cached_total_is_counted_once_between_two_requests_within_the_ttl(session: Session):
+    """SPEC-C14.1: with a search the total is a count of its own; the second request runs the filtered count and the
+    page only, and both answer the same total."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    cached = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=60))
+    first = cached.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+    ran_first = len(statements)
+    second = cached.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+    assert (first.recordsTotal, second.recordsTotal) == (5, 5)
+    assert (ran_first, len(statements) - ran_first) == (3, 2)  # total, filtered count, page; then the last two
+
+
+def test_the_cached_total_is_counted_again_after_the_ttl(session: Session):
+    """SPEC-C14.2: a row inserted at once is not seen; a request after the TTL (0.3 s, waited out) counts again."""
+    cached = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=0.3))
+    params = request(*ALL, search={'value': 'red'})
+    assert cached.fetch_sync(params, session).recordsTotal == 5
+    session.execute(people.insert(), {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6'})
+    assert cached.fetch_sync(params, session).recordsTotal == 5
+    time.sleep(0.35)
+    assert cached.fetch_sync(params, session).recordsTotal == 6
+
+
+def test_one_table_and_one_cache_never_share_a_total_between_two_databases(tmp_path: Path):
+    """SPEC-C15.2: two SQLite files holding 4 and 2 rows. The key holds the database URL on every dialect, so
+    this proves it for all."""
+    cache = TotalCache(ttl=60)
+    cached = SQLTable(people, COLUMNS, total_cache=cache)
+    totals: list[int] = []
+    for name, rows in (('four.db', ROWS[:4]), ('two.db', ROWS[:2])):
+        engine = create_engine(f'sqlite:///{tmp_path / name}')
+        people.metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(people.insert(), rows)
+        with Session(engine) as database_session:
+            totals.append(cached.fetch_sync(request(*ALL, search={'value': 'red'}), database_session).recordsTotal)
+        engine.dispose()
+    assert totals == [4, 2]
+
+
+def _listeners(*targets: Any) -> dict[tuple[str, str], int]:
+    """How many listeners each event of each target has: an engine, a pool, or the classes themselves."""
+    snapshot: dict[tuple[str, str], int] = {}
+    for target in targets:
+        label = f'class {target.__name__}' if isinstance(target, type) else f'{type(target).__name__} {id(target)}'
+        for name in target.dispatch._event_names:
+            collection = getattr(target.dispatch, name)
+            levels = getattr(collection, '_clslevel', None)
+            snapshot[label, name] = (
+                sum(len(each) for each in levels.values()) if levels is not None else len(collection)
+            )
+    return snapshot
+
+
+def test_building_and_using_a_table_and_a_cache_registers_no_listener(session: Session):
+    """SPEC-C16.2: engine and pool, and the classes every engine and pool shares, hold the same listeners before and
+    after a table and a cache are built and a cached request is answered (PRD-C16: a total is as old as its TTL)."""
+    engine = session.get_bind().engine
+    targets = (engine, engine.pool, Engine, Pool)
+    before = _listeners(*targets)
+
+    def spy(*args: Any) -> None:
+        pass
+
+    event.listen(engine, 'before_cursor_execute', spy)  # the snapshot sees a listener at all
+    assert _listeners(*targets) != before
+    event.remove(engine, 'before_cursor_execute', spy)
+    assert _listeners(*targets) == before
+    built = SQLTable(people, COLUMNS, total_cache=TotalCache(ttl=60))
+    assert _listeners(*targets) == before
+    built.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+    assert _listeners(*targets) == before

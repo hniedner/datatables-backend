@@ -12,6 +12,7 @@ column, which PRD v2 settles (PRD-F37). A boolean column follows PRD v2 already,
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
 import os
+import time
 from typing import Any
 
 from opensearchpy import AsyncOpenSearch
@@ -22,6 +23,7 @@ import pytest
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
+from datatables_backend import TotalCache
 from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
@@ -195,6 +197,7 @@ def test_the_cluster_is_the_one_asked_for(client: OpenSearch):
 
 
 def test_an_unfiltered_draw_counts_every_document_and_reads_dotted_fields(client: OpenSearch):
+    """SPEC-C1.1: no filter, the total is every document."""
     response = table.fetch_sync(request(*NAMES, order=[{'column': 0, 'dir': 'asc'}]), client)
     assert (response.recordsTotal, response.recordsFiltered) == (5, 5)
     assert response.data[0] == {
@@ -205,6 +208,7 @@ def test_an_unfiltered_draw_counts_every_document_and_reads_dotted_fields(client
 
 
 def test_a_filtered_draw_counts_the_total_apart(client: OpenSearch):
+    """SPEC-C1.2, SPEC-C8.2: a search narrows the filtered count; the total is a count of its own."""
     response = table.fetch_sync(request(*NAMES, search={'value': 'apple'}), client)
     assert (response.recordsTotal, response.recordsFiltered) == (5, 2)
 
@@ -242,6 +246,7 @@ def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
 
 
 def test_the_base_filter_limits_the_total_too(client: OpenSearch):
+    """SPEC-C1.1: a base filter limits the total."""
     long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
     response = long_reads.fetch_sync(request(*NAMES, search={'value': 'bread'}), client)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 1)
@@ -835,3 +840,49 @@ def test_the_page_walk_of_an_order_with_ties_holds_every_row_once_and_descending
     assert whole['desc'] == whole['asc'][::-1]
     assert walk('asc') == whole['asc']
     assert walk('desc') == whole['desc']
+
+
+def test_a_page_shorter_than_the_filtered_set_still_counts_the_whole_set(client: OpenSearch):
+    """SPEC-C2.1: `apple` finds two documents; with a length of 1 the page holds one and `recordsFiltered` stays 2."""
+    page = table.fetch_sync(request(*NAMES, search={'value': 'apple'}, length=1), client)
+    assert (page.recordsTotal, page.recordsFiltered, ids(page)) == (5, 2, ['a1'])
+
+
+def test_a_search_that_finds_nothing_has_filtered_zero_and_the_total_intact(client: OpenSearch):
+    """SPEC-C2.2."""
+    response = table.fetch_sync(request(*NAMES, search={'value': 'zzzzz'}), client)
+    assert (response.recordsTotal, response.recordsFiltered, response.data, response.error) == (5, 0, [], None)
+
+
+def test_a_start_equal_to_the_document_count_is_an_empty_page_with_both_counts(client: OpenSearch):
+    """SPEC-C3.1."""
+    response = table.fetch_sync(request(*NAMES, start=5, length=10), client)
+    assert (response.recordsTotal, response.recordsFiltered, response.data, response.error) == (5, 5, [], None)
+
+
+def add_document(client: OpenSearch) -> None:
+    client.index(index=INDEX, id='f6', body={'id': 'f6', 'title': 'Fig tart', 'body': 'figs'})
+    client.indices.refresh(index=INDEX)
+
+
+def test_the_cached_total_is_counted_again_after_the_ttl(client: OpenSearch):
+    """SPEC-C14.2: a document added at once is not seen; a request after the TTL (0.3 s, waited out) counts again."""
+    cached = SearchTable(INDEX, COLUMNS, unique_key='id', total_cache=TotalCache(ttl=0.3))
+    params = request(*NAMES, search={'value': 'apple'})
+    assert cached.fetch_sync(params, client).recordsTotal == 5
+    add_document(client)
+    assert cached.fetch_sync(params, client).recordsTotal == 5
+    time.sleep(0.35)
+    assert cached.fetch_sync(params, client).recordsTotal == 6
+
+
+def test_clear_makes_the_next_request_count_the_cluster_again(client: OpenSearch):
+    """SPEC-C16.1: a document added after the first request is not in the total until `clear()`."""
+    cache = TotalCache(ttl=3600)
+    cached = SearchTable(INDEX, COLUMNS, unique_key='id', total_cache=cache)
+    params = request(*NAMES, search={'value': 'apple'})
+    assert cached.fetch_sync(params, client).recordsTotal == 5
+    add_document(client)
+    assert cached.fetch_sync(params, client).recordsTotal == 5
+    cache.clear()
+    assert cached.fetch_sync(params, client).recordsTotal == 6
