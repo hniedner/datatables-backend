@@ -4,6 +4,24 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
+## [Unreleased]
+
+### Changed
+
+A tightening is a breaking change, and each is listed here with what to do.
+
+- Each public module has an `__all__`: `datatables_backend`, `datatables_backend.sqlalchemy` (`SQLTable`),
+  `datatables_backend.opensearch` (`SearchTable`, `IndexColumn`, `TextKind`) and `datatables_backend.fastapi`
+  (`DataTablesParams`, `parse_datatables_request`). Import from these; any other module is internal.
+- `InvalidFilter` is no longer exported by `datatables_backend`: it never reaches an application, since a user's mistake
+  is an answer.
+- The helpers each backend module defined without an underscore are internal now and renamed: `escape_like`,
+  `escape_wildcard`, `partial_answer`, `MSSQL_DECIMAL_DIGITS`, `MAX_RESULT_WINDOW`, `DOCUMENT_ID`, the FastAPI
+  adapter's `MALFORMED`, `FORM_FIELD_LIMIT` and `FORM_TYPES`, and the type aliases `AsyncSource`, `SyncSource`,
+  `SyncClient` and `AsyncClient`. Annotate with the type of your own session or client instead.
+- `SQLTable` raises `SchemaError` for an `IndexColumn`, which declares an OpenSearch field and which a SQL table
+  ignored. Declare it as `Column(...)`.
+
 ## [0.1.0rc2] - 2026-11-23
 
 Fixes and tightenings since 0.1.0rc1, which was tagged but not published.
