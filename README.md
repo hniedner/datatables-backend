@@ -87,6 +87,16 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
     return (await users.fetch(params, session)).to_dict()
 ```
 
+A shared `TotalCache`, `RowHooks`, the page-length and result-window limits and a table per request for a per-user
+filter are in [docs/usage.md][usage].
+
+## Tested with
+
+CI runs the tests on Python 3.12 to 3.15 and on SQLite (sync, and async with aiosqlite); PostgreSQL 18 (psycopg 3, sync
+and async; psycopg2 with asyncpg); MySQL 8.4 (pymysql, aiomysql); SQL Server 2022 (pyodbc, aioodbc, ODBC Driver 18);
+and OpenSearch 3.10.0 and 2.19.7. It also runs the oldest supported releases: SQLAlchemy 2.0.31, Pydantic 2.10,
+opensearch-py 2.6 and FastAPI 0.133.
+
 ## What the server decides
 
 The library does not change how a database compares values. Each rule below is stated in full in
@@ -113,17 +123,17 @@ The library does not change how a database compares values. Each rule below is s
 - On OpenSearch a page in the middle of more than `max_result_window` rows is refused (`page_out_of_range`), where the
   first and last pages work and SQL serves every page ([paging past the window][rules-opensearch]).
 - An OpenSearch column of analysed text only answers the word search, `null`, `!null` and empty lists, where SQL
-  answers every condition ([stated differences][prd-differences]).
-- OpenSearch's global search skips number and date columns, and every backend's skips boolean columns ([stated
-  differences][prd-differences]).
-- On OpenSearch a stored `""` is not empty, where on SQL it is ([stated differences][prd-differences]).
+  answers every condition ([the rule][rules-opensearch]).
+- OpenSearch's global search skips number and date columns, and every backend's skips boolean columns
+  ([the rule][rules-types]).
+- On OpenSearch a stored `""` is not empty, where on SQL it is ([the rule][rules-opensearch]).
 - On OpenSearch a number outside its field's mapped range fails the request, a stated limit of this library
   ([the entry][db-number-range], [issue #47][issue-47]).
 
 [prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
-[prd-differences]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md#5-stated-differences
 [db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
 [issue-47]: https://github.com/hniedner/datatables-backend/issues/47
+[usage]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md
 [rules]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md
 [databases]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md
 [rules-columns]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md#columns-and-ordering
