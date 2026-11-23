@@ -92,13 +92,34 @@ async def test_the_opensearch_example_searches_its_index():
     assert searches[0]['index'] == 'reports'
 
 
-def test_the_fastapi_example_reads_a_request_into_params():
+def bracketed(value: Any, key: str = '') -> dict[str, str]:
+    """A request as DataTables' own form POST encodes it: ``columns[0][search][value]=...``, booleans as text."""
+    if isinstance(value, dict | list):
+        pairs = value.items() if isinstance(value, dict) else enumerate(value)
+        return {
+            k: v for name, item in pairs for k, v in bracketed(item, f'{key}[{name}]' if key else str(name)).items()
+        }
+    return {key: str(value).lower() if isinstance(value, bool) else str(value)}
+
+
+def test_the_fastapi_example_reads_a_form_post_and_a_json_post_alike():
+    sent = {
+        **REQUEST,
+        'columns': [{**column, 'name': '', 'search': {'value': '', 'regex': False}} for column in REQUEST['columns']],
+        'order': [{'column': 1, 'dir': 'desc'}],
+        'search': {'value': 'ann', 'regex': False},
+    }
+    seen: list[DTParams] = []
+
     class Users:
         async def fetch(self, params: DTParams, session: int) -> DTResponse:
-            return DTResponse(draw=params.draw, recordsTotal=0, recordsFiltered=0, data=[])
+            seen.append(params)
+            return DTResponse(draw=params.draw)
 
-    session = Annotated[int, Depends(lambda: 1)]
     app = FastAPI()
-    asyncio.run(run('DataTablesParams', app=app, users=Users(), Any=Any, SessionDep=session))
-    answer = TestClient(app).post('/users/table', json=REQUEST)
-    assert answer.json()['draw'] == 3
+    asyncio.run(run('DataTablesParams', app=app, users=Users(), Any=Any, SessionDep=Annotated[int, Depends(lambda: 1)]))
+    client = TestClient(app)
+    assert client.post('/users/table', json=sent).json()['draw'] == 3  # `data: d => JSON.stringify(d)`
+    assert client.post('/users/table', data=bracketed(sent)).json()['draw'] == 3  # DataTables' default POST
+    assert seen[0] == seen[1]
+    assert (seen[0].search.value, seen[0].order[0].column, seen[0].columns[1].data) == ('ann', 1, 'email')

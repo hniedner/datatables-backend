@@ -114,6 +114,22 @@ user.id}}, total_cache=cache)`, and the cache key holds it.
 - A shared cache stays right because the filter is in its key (the docstring of `TotalCache`). Pass only values whose
   `repr` is the same on each request: a value whose `repr` holds an address never finds its total again.
 
+## The page's request: a form or JSON
+
+The FastAPI dependency reads a JSON body, a form, or a query string, and gives the same request for each (a test of
+the README sends the same request as a form and as JSON and compares them). DataTables' default POST is a form, so
+`ajax: { url, type: 'POST' }` needs nothing more, as the README shows. To send JSON instead:
+
+```js
+ajax: { url: '/users/table', type: 'POST', contentType: 'application/json', data: (d) => JSON.stringify(d) },
+```
+
+A form of more than 1,000 fields is refused by Starlette with HTTP 400 (`Too many fields`), before the library reads
+it. A table sends six fields for each column, so that is about 165 columns (measured through the FastAPI test client:
+160 columns passed, 170 were refused; the same request as JSON passed at 500). Send JSON for a table that wide.
+
+Source: `parse_datatables_request` in `datatables_backend/fastapi.py`; `tests/test_readme.py`.
+
 ## For client authors: several values in one column
 
 DataTables' own multi-select sends a column's selection as a regular expression, and the library reads it as a list of

@@ -28,8 +28,7 @@ If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 
 ```sh
 pip install "datatables-backend[sqlalchemy]"        # SQL, sync
-pip install "datatables-backend[sqlalchemy-async]"  # SQL, async (adds greenlet); also your database's async driver,
-                                                    # e.g. aiosqlite or asyncpg
+pip install "datatables-backend[sqlalchemy-async]"  # SQL, async (adds greenlet): also your async driver, e.g. asyncpg
 pip install "datatables-backend[opensearch]"        # OpenSearch, sync (installs opensearch-py)
 pip install "datatables-backend[opensearch-async]"  # OpenSearch, async (adds aiohttp)
 pip install "datatables-backend[fastapi]"           # the FastAPI dependency
@@ -90,8 +89,18 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
     return (await users.fetch(params, session)).to_dict()
 ```
 
-A shared `TotalCache`, `RowHooks`, the page-length and result-window limits and a table per request for a per-user
-filter are in [docs/usage.md][usage].
+On the page, DataTables' default POST (a form) is read as it comes, so the client needs no `data` or `contentType`:
+
+```js
+new DataTable('#users', {
+  serverSide: true,
+  processing: true,
+  ajax: { url: '/users/table', type: 'POST' },
+  columns: [{ data: 'id' }, { data: 'email' }, { data: 'joined' }],
+});
+```
+
+Options (`TotalCache`, `RowHooks`, page limits, a table per request for a per-user filter): [docs/usage.md][usage].
 
 ## Tested with
 
@@ -154,6 +163,4 @@ uv run pytest
 uv run ruff check . && uv run basedpyright
 ```
 
-## Licence
-
-MIT. See [LICENSE](https://github.com/hniedner/datatables-backend/blob/main/LICENSE).
+Licence: MIT ([LICENSE](https://github.com/hniedner/datatables-backend/blob/main/LICENSE)).
