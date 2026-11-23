@@ -5,6 +5,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D1.1** [all] A request naming the declared columns in any order, or only a subset of them, is answered;
   each row holds every declared column's client name, whichever the request names (the owner's decision of
   2026-11-20).
+- **SPEC-D1.2** [all] Constructing a table with two columns of one name, or with no column → `SchemaError`.
 - **SPEC-D2.1** [all] With the stored field renamed `colour_code` and the column declared
   `Column('colour', field='colour_code')`: a column search `blue` on `colour` → rows 3, and rows carry the key
   `colour`, never `colour_code`.

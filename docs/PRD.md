@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 35 of 2026-11-22 (revision 21 was revision 20
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 36 of 2026-11-22 (revision 21 was revision 20
   with the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he
   approved since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which
   follows PRD-F15's code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for
@@ -25,7 +25,8 @@
   PRD-E2, PRD-E3 and PRD-A11, extends the 255-code-point bound to every value the client sends, and drops PRD-F25's
   rule of 308 digits, which that bound makes unreachable, with lines in section 5; revision 35 gives PRD-C17 its
   budget of 960 conditions, the owner's sentence of 2026-11-22 and the new code `request_too_large`, in PRD-C17,
-  PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5). It replaces draft 1 (R1 to
+  PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5; revision 36 adds a clause to PRD-D1
+  (a table declares a column, and no two share a name)). It replaces draft 1 (R1 to
   R9); section 10 maps every draft-1 item to its place here. The first sentence and the priority of a requirement, a
   goal or non-goal, a public name and an error code change only by the owner. A requirement's further clauses, its
   reason and section 5 change in PR review by the reviewer, and the PR body lists each such change for the owner to
@@ -298,9 +299,10 @@ as on an undeclared name (PRD-D6, PRD-F41).
 
 #### PRD-D1
 
-The server declares the table's columns, each with the name the client uses.
+The server declares the table's columns, each with the name the client uses. A table declares at least one column, and
+no two share a name; constructing one otherwise raises `SchemaError`.
 
-- **Reason:** The server, not the client, decides what exists.
+- **Reason:** The server, not the client, decides what exists; the name keys the request and each response row.
 - **Priority:** must
 
 #### PRD-D2
