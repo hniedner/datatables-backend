@@ -3,6 +3,7 @@
 It runs on SQLite, or on the database DTB_SQL_URL names (the container jobs: PostgreSQL, MySQL, SQL Server).
 """
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC
 from datetime import date
@@ -60,6 +61,7 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import LARGEST_WORDS
+from .conftest import async_engine
 from .conftest import checked_database
 from .conftest import criterion
 from .conftest import exact_values
@@ -2968,3 +2970,141 @@ def test_a_column_declared_without_the_fold_still_searches_ignoring_case(session
     """SPEC-D21.3: `contains` `RED` on `plain` (`fold_case=False`) finds `red`, `reddish` and `RED`, as on `kind`."""
     for column in ('plain', 'kind'):
         assert ids(cased.fetch_sync(request(*CASED, **criterion(column, 'contains', 'RED')), session)) == [1, 2, 4]
+
+
+# -- ordering and the API (PRD-O, PRD-A) ---
+
+
+@pytest.mark.parametrize(
+    'order',
+    [
+        [{'column': 6, 'dir': 'asc'}, {'column': 3, 'dir': 'asc'}],
+        [{'column': 3, 'dir': 'asc'}, {'column': 6, 'dir': 'asc'}],
+    ],
+    ids=['first', 'second'],
+)
+def test_an_order_list_is_refused_whole_wherever_the_refused_entry_stands(
+    session: Session, order: list[dict[str, Any]]
+):
+    """SPEC-O1.8: `team` is unorderable for the server and the request calls it orderable; `age` is fine."""
+    refused(table.fetch_sync(request(*ALL, order=order), session))
+
+
+def test_the_page_walk_of_an_order_with_ties_holds_every_row_once_and_descending_is_its_reverse(session: Session):
+    """SPEC-O3.2: Ann and Cy tie at 31 and row 3 has no age; for every length from 1 to 6 the pages joined give each
+    row once, in the order of one big page, and descending gives exactly the reverse. Ages are numbers: no collation
+    decides this order."""
+
+    def walk(direction: str, length: int) -> list[int]:
+        order = [{'column': 3, 'dir': direction}]
+        pages = [
+            ids(table.fetch_sync(request(*ALL, start=s, length=length, order=order), session))
+            for s in range(0, 5, length)
+        ]
+        return [row for page in pages for row in page]
+
+    whole = {
+        direction: ids(table.fetch_sync(request(*ALL, order=[{'column': 3, 'dir': direction}]), session))
+        for direction in ('asc', 'desc')
+    }
+    assert sorted(whole['asc']) == [1, 2, 3, 4, 5]
+    assert whole['desc'] == whole['asc'][::-1]
+    for length in range(1, 7):
+        assert walk('asc', length) == whole['asc'], length
+        assert walk('desc', length) == whole['desc'], length
+
+
+def test_a_string_column_is_ordered_as_the_database_orders_it_with_no_collation_of_the_librarys(session: Session):
+    """SPEC-O6.1: the names come in the database's own order for `ORDER BY name`, whichever collation it uses. On SQLite
+    that is the code-point order, with `anna_100%` last, where an order that folded case would put it second."""
+    ordered = ids(table.fetch_sync(request(*ALL, order=[{'column': 1, 'dir': 'asc'}]), session))
+    assert ordered == [row.id for row in session.execute(select(people.c.id).order_by(people.c.name, people.c.id))]
+    if session.get_bind().dialect.name == 'sqlite':
+        assert ordered == [1, 2, 4, 5, 3]  # a case-folding order gives [1, 3, 2, 4, 5]
+
+
+def test_the_order_by_of_a_string_column_holds_no_collate_clause(session: Session):
+    """SPEC-O6.2: the library adds no collation of its own to a string column's ORDER BY."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    table.fetch_sync(request(*ALL, order=[{'column': 1, 'dir': 'asc'}]), session)
+    order_by = [statement for statement in statements if 'ORDER BY' in statement]
+    assert order_by
+    assert all('COLLATE' not in statement.upper() for statement in order_by)
+
+
+def test_one_table_answers_the_same_request_the_same_after_another(session: Session):
+    """SPEC-A1.1: request X, then Y (a column search and an order), then X again: the two answers to X are equal."""
+    x = request(*ALL, search={'value': 'red'})
+    y = request(*ALL, column_search={'team': {'value': 'blue'}}, order=[{'column': 3, 'dir': 'desc'}])
+    first = table.fetch_sync(x, session)
+    answer_y = table.fetch_sync(y, session)
+    assert table.fetch_sync(x, session) == first
+    assert answer_y != first
+    assert ids(answer_y) == [5, 2]
+
+
+def _varied_requests(count: int) -> list[DTParams]:
+    words = ['red', 'ann', 'example', 'zzz', '']
+    return [
+        request(
+            *ALL, search={'value': words[number % 5]}, order=[{'column': 3, 'dir': 'desc' if number % 2 else 'asc'}]
+        )
+        for number in range(count)
+    ]
+
+
+async def test_one_table_answers_100_requests_and_20_concurrent_ones_as_a_fresh_table_does(
+    session: Session, database: tuple[str, str]
+):
+    """SPEC-A2.1: each answer equals the one of a table built for that request; the concurrent ones each run on their
+    own `AsyncConnection`."""
+    for params in _varied_requests(100):
+        assert table.fetch_sync(params, session) == SQLTable(people, COLUMNS).fetch_sync(params, session)
+    engine = async_engine(database[1])
+
+    async def answer(params: DTParams) -> DTResponse:
+        async with engine.connect() as connection:
+            return await table.fetch(params, connection)
+
+    try:
+        concurrent = _varied_requests(20)
+        answers = await asyncio.gather(*(answer(params) for params in concurrent))
+    finally:
+        await engine.dispose()
+    assert answers == [SQLTable(people, COLUMNS).fetch_sync(params, session) for params in concurrent]
+
+
+def test_building_a_table_touches_no_database_and_the_first_statement_runs_inside_fetch(session: Session):
+    """SPEC-A3.1: the constructor takes no connection, so there is none to touch."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    built = SQLTable(people, COLUMNS)
+    assert statements == []
+    built.fetch_sync(request(*ALL), session)
+    assert statements
+
+
+async def test_an_async_session_and_an_async_connection_answer_the_base_request(async_session: AsyncSession):
+    """SPEC-A4.1."""
+    assert ids(await table.fetch(request(*ALL), async_session)) == [1, 2, 3, 4, 5]
+    assert ids(await table.fetch(request(*ALL), await async_session.connection())) == [1, 2, 3, 4, 5]
+
+
+def test_a_session_and_a_connection_answer_the_base_request(session: Session):
+    """SPEC-A5.1."""
+    assert ids(table.fetch_sync(request(*ALL), session)) == [1, 2, 3, 4, 5]
+    assert ids(table.fetch_sync(request(*ALL), session.connection())) == [1, 2, 3, 4, 5]
+
+
+def test_a_join_and_a_subquery_are_tables_too(session: Session, cased: SQLTable):
+    """SPEC-A7.1: a join of `people` to the rows of `dtb_test_tags` whose size is LARGE, its columns named
+    `<table>_<column>`, answers the two people it joins; a table over the subquery of the red people answers them."""
+    tags = cased.source
+    joined = people.join(tags, and_(people.c.id == tags.c.id, tags.c.size == 'LARGE'))
+    over_join = SQLTable(
+        joined, [Column('id', field='dtb_test_people_id'), Column('name', field='dtb_test_people_name')]
+    )
+    assert ids(over_join.fetch_sync(request('id', 'name'), session)) == [2, 5]
+    reds = select(people).where(people.c.team == 'red').subquery()
+    assert ids(SQLTable(reds, [Column('id'), Column('team')]).fetch_sync(request('id', 'team'), session)) == [1, 3]

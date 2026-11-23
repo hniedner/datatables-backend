@@ -6,13 +6,16 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.orm import Session
 
 from datatables_backend import Column
 from datatables_backend import DTResponse
 from datatables_backend.fastapi import DataTablesParams
 from datatables_backend.opensearch import SearchTable
+from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import criterion
+from .conftest import people
 
 app = FastAPI()
 
@@ -239,3 +242,27 @@ def test_a_request_over_the_budget_answers_http_200_with_its_code():
     response = client.post('/wide', json=body)
     assert response.status_code == 200
     assert (response.json()['draw'], response.json()['error_code']) == (4, 'request_too_large')
+
+
+def test_a_user_error_over_sql_answers_http_200_with_the_whole_body(session: Session):
+    """SPEC-A11.1: `=` `abc` on `age` is `invalid_number`, and the body is the 200 answer a client reads."""
+    sql_app = FastAPI()
+    people_table = SQLTable(people, [Column('id'), Column('age')])
+
+    @sql_app.post('/people')
+    def answer_people(params: DataTablesParams) -> DTResponse:
+        return people_table.fetch_sync(params, session)
+
+    columns = [{'data': name, 'searchable': True, 'orderable': True} for name in ('id', 'age')]
+    response = TestClient(sql_app).post('/people', json={'draw': 3, 'columns': columns, **criterion('age', '=', 'abc')})
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body['error'], str) and body['error']
+    assert body == {
+        'draw': 3,
+        'recordsTotal': 0,
+        'recordsFiltered': 0,
+        'data': [],
+        'error': body['error'],
+        'error_code': 'invalid_number',
+    }
