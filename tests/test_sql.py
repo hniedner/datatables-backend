@@ -64,6 +64,7 @@ from .conftest import checked_database
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
+from .conftest import labelled
 from .conftest import nested
 from .conftest import people
 from .conftest import request
@@ -125,6 +126,7 @@ def test_a_page_comes_with_both_counts(session: Session):
 
 
 def test_rows_carry_only_the_declared_columns_under_their_client_names(session: Session):
+    """SPEC-R1.1: `email` reads the stored `email_address`, which never reaches the client under its own name."""
     row = table.fetch_sync(request(*ALL, length=1), session).data[0]
     assert set(row) == set(ALL)
     assert row['email'] == 'ann@example.org'
@@ -165,6 +167,32 @@ def test_row_hooks_shape_rows_and_add_row_id_and_data(session: Session):
     first, second = hooked.fetch_sync(request(*ALL, length=2), session).data
     assert first == {'id': 1, 'label': 'ANN', 'DT_RowId': 'person-1', 'DT_RowData': {'pk': 1}}
     assert 'DT_RowData' not in second
+
+
+def test_a_row_shaped_through_a_model_carries_the_field_the_model_adds(session: Session):
+    """SPEC-R2.1: `shape` maps each row through a Pydantic model that adds `label`; every row carries it."""
+    shaped = SQLTable(people, COLUMNS, rows=labelled('name'))
+    rows = shaped.fetch_sync(request(*ALL), session).data
+    assert [(row['id'], row['label']) for row in rows] == [
+        (1, 'label Ann'), (2, 'label Bob'), (3, 'label anna_100%'), (4, 'label Cy'), (5, 'label Dee'),
+    ]  # fmt: skip
+    assert all(set(row) == {*ALL, 'label'} for row in rows)
+
+
+def test_the_row_id_hook_adds_dt_rowid_and_without_it_no_row_has_one(session: Session):
+    """SPEC-R3.1: a hook returning `row_<id>` gives each row its `DT_RowId`; the plain table adds none."""
+    hooked = SQLTable(people, COLUMNS, rows=RowHooks(row_id=lambda row: f'row_{row["id"]}'))
+    rows = hooked.fetch_sync(request(*ALL), session).data
+    assert [row['DT_RowId'] for row in rows] == [f'row_{number}' for number in range(1, 6)]
+    assert all('DT_RowId' not in row for row in table.fetch_sync(request(*ALL), session).data)
+
+
+def test_the_row_data_hook_adds_dt_rowdata_and_without_it_no_row_has_any(session: Session):
+    """SPEC-R4.1: a hook returning `{"pk": id}` gives each row its `DT_RowData`; the plain table adds none."""
+    hooked = SQLTable(people, COLUMNS, rows=RowHooks(row_data=lambda row: {'pk': row['id']}))
+    rows = hooked.fetch_sync(request(*ALL), session).data
+    assert [row['DT_RowData'] for row in rows] == [{'pk': number} for number in range(1, 6)]
+    assert all('DT_RowData' not in row for row in table.fetch_sync(request(*ALL), session).data)
 
 
 def test_a_declared_column_the_source_lacks_fails_at_construction():
