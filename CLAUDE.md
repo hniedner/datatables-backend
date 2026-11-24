@@ -24,8 +24,9 @@ requirements and milestones. Notes about the application this was derived from l
   database (CI uses `America/Adak`) and on PostgreSQL `PGTZ` too (CI uses `Pacific/Kiritimati`), or the timezone test
   fails; or
   `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC
-  Driver 18. The SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test
-  owns the indices `dtb-test-docs`, `dtb-test-docs-phrases` and `dtb-test-docs-lines`: each run drops them first.
+  Driver 18. The SQL tests own the tables `dtb_test_people`, `dtb_test_tags` and `dtb_test_stamps`, and the live
+  OpenSearch test owns the indices `dtb-test-docs`, `dtb-test-docs-phrases` and `dtb-test-docs-lines`: each run drops
+  them first.
 
 The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names. Without
 it they fail closed ("could not check"), so set it before committing; never read or print the list. CI skips them, and

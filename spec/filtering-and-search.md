@@ -252,6 +252,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `>` `2024-03-05` finds row 2 and not row 1; `<` `2024-03-06` finds row 1 and not row 2; `>=` `2024-03-06` finds row 2
   and not row 1; `<=` `2024-03-05` finds row 1 and not row 2; `between` `2024-03-05` and `2024-03-05` finds row 1 and
   not row 2 (both ends are whole days); `!between` of the same keeps row 2 and every row without an `at`.
+- **SPEC-F21.12** [MySQL, MariaDB] Given a `TIMESTAMP` column holding 23:30 UTC on 2026-07-15, written in a session at
+  `+00:00`: in a session at `+02:00`, where it reads as 01:30 on the 16th, SearchBuilder `=` `2026-07-16` → that row
+  and `=` `2026-07-15` → none; back in a session at `+00:00`, `=` `2026-07-15` → that row and `=` `2026-07-16` → none.
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
