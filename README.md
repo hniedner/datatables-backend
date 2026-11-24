@@ -30,8 +30,6 @@ datatables-backend is not affiliated with or endorsed by DataTables or SpryMedia
 
 ## Install
 
-pip installs no pre-release unless asked, so while 0.1.0 is a release candidate add `--pre` to each command.
-
 ```sh
 pip install "datatables-backend[sqlalchemy]"        # SQL, sync
 pip install "datatables-backend[sqlalchemy-async]"  # SQL, async (adds greenlet): also your async driver, e.g. asyncpg
