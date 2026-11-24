@@ -47,7 +47,7 @@ drop the override and `httpx`; on 3.14 pin `pydantic==2.12.0`, on 3.15 `pydantic
 ```sh
 uv venv -p 3.12 <scratch>/venv-min
 printf 'starlette==0.40.0\n' > <scratch>/overrides.txt
-uv pip install -p <scratch>/venv-min --override <scratch>/overrides.txt -e . --group dev sqlalchemy==2.0.31 \
+uv pip install -p <scratch>/venv-min --override <scratch>/overrides.txt -e . --group dev --group release sqlalchemy==2.0.31 \
   pydantic==2.10.0 fastapi==0.133.0 python-multipart==0.0.9 opensearch-py==2.6.0 httpx
 uv pip check -p <scratch>/venv-min
 <scratch>/venv-min/bin/python -c 'from importlib.metadata import version as v

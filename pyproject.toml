@@ -67,8 +67,8 @@ dev = [
     "starlette>=1.2",
     "zizmor>=1.32",
 ]
-# git-cliff computes the release version and notes (decision 009); release.yml runs it with `--only-group release`, and
-# scripts/test_cliff_config.py runs it on every pytest leg. It never ships.
+# git-cliff computes the release version and notes (decision 009); #76 part 3 will run it from release.yml with
+# `--only-group release`, and scripts/test_cliff_config.py runs it on every pytest leg. It never ships.
 release = ["git-cliff>=2.14.2"]
 # The drivers for the container tests (tests/conftest.py, DTB_SQL_URL): one implementation per database for sync and
 # async alike. SQL Server also needs Microsoft's ODBC Driver 18 on the machine.

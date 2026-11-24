@@ -61,7 +61,10 @@ def build_repo(path: Path, tag: str, *messages: str) -> Path:
 
 
 def cliff(repo: Path, *args: str) -> str:
-    assert CLIFF.exists(), 'git-cliff is missing from this environment: `uv sync` installs the `release` group'
+    assert CLIFF.exists(), (
+        'git-cliff is missing from this environment: `uv sync` installs the `release` group (a lock environment), '
+        'or add `--group release` to `uv pip install` (an environment outside the lock)'
+    )
     # git-cliff warns and falls back to its default configuration when the file is missing.
     assert (ROOT / 'cliff.toml').is_file()
     run = subprocess.run(
@@ -101,10 +104,11 @@ def test_free_prose_gives_no_bump(tmp_path: Path) -> None:
     assert bumped(tmp_path, 'v0.1.0', 'PRD: shorten the header') == 'v0.1.0'
 
 
-@pytest.mark.parametrize('kind', ['feat', 'fix'])
-def test_feat_and_fix_bump_the_patch_before_1_0(tmp_path: Path, kind: str) -> None:
-    """`features_always_bump_minor = true`, or a missing `^feat` or `^fix` parser, changes this."""
-    assert bumped(tmp_path, 'v0.1.0', f'{kind}: x') == 'v0.1.1'
+@pytest.mark.parametrize('header', ['feat: x', 'fix: x', 'feat(sql): x', 'fix(sql): x'])
+def test_feat_and_fix_bump_the_patch_before_1_0(tmp_path: Path, header: str) -> None:
+    """`features_always_bump_minor = true`, a missing `^feat` or `^fix` parser, or parsers that need the `:` right
+    after the type (so a scope releases nothing), change this."""
+    assert bumped(tmp_path, 'v0.1.0', header) == 'v0.1.1'
 
 
 @pytest.mark.parametrize('message', ['refactor!: x', 'refactor: x\n\nBREAKING CHANGE: y'])
