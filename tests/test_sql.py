@@ -904,7 +904,6 @@ def with_blank_rows(session: Session, cased: SQLTable) -> Table:
     [
         ('wrapped', [6, 7]),  # a `TypeDecorator` over a string type stores text
         ('nested', [6, 7]),  # and so does one over that
-        ('day', [6, 7]),  # so does a string column, whatever it is declared as: a blank cell is empty
         ('ref', [6, 7]),  # `''` is compared with what is stored: the type `Guid` itself refuses to convert it
         # An enum without `''` among its values: PostgreSQL refuses to compare a native enum with it. Only the
         # `postgresql` leg proves this row: the other databases answer the comparison, with the same rows
@@ -915,7 +914,7 @@ def with_blank_rows(session: Session, cased: SQLTable) -> Table:
 def test_empty_is_the_empty_string_too_where_the_column_stores_text(
     session: Session, cased: SQLTable, column: str, expected: list[int]
 ):
-    """SPEC-F26.3: what the column stores decides, seen through a `TypeDecorator`, not what it is declared as."""
+    """SPEC-F26.3: what the column stores decides, seen through a `TypeDecorator`."""
     tags = with_blank_rows(session, cased)
     stored = SQLTable(
         tags,
@@ -926,7 +925,6 @@ def test_empty_is_the_empty_string_too_where_the_column_stores_text(
             Column('ref'),
             Column('size'),
             Column('uid'),
-            Column('day', field='kind', type='date'),
         ],
     )
     assert ids(stored.fetch_sync(request('id', column, **criterion(column, 'null')), session)) == expected
@@ -2416,13 +2414,13 @@ def test_a_criterion_with_more_values_than_its_condition_takes_is_refused(
     refused(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session), code)
 
 
-WIDE = ('id', 'ratio', 'exact', 'digits', 'count', 'untyped')
+WIDE = ('id', 'ratio', 'exact', 'count', 'untyped')
 TWO_64 = 2**64
 
 
 def wide(session: Session) -> SQLTable:
     """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float), in `exact` (a
-    `Numeric(32, 2)`) and, as text, in `digits` (a string column declared a number). Its `count` holds the largest
+    `Numeric(32, 2)`). Its `count` holds the largest
     value the column takes: the column is declared MySQL's unsigned BIGINT, which only MySQL and MariaDB create
     unsigned, so 2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type,
     declared a number. Row 2 holds NULL."""
@@ -2433,7 +2431,6 @@ def wide(session: Session) -> SQLTable:
         SQLColumn('id', Integer, primary_key=True, autoincrement=False),
         SQLColumn('ratio', Float),
         SQLColumn('exact', Numeric(32, 2)),
-        SQLColumn('digits', String(40)),
         SQLColumn('count', mysql.BIGINT(unsigned=True)),
     )
     numbers.create(session.connection())
@@ -2441,8 +2438,8 @@ def wide(session: Session) -> SQLTable:
     session.execute(
         numbers.insert(),
         [
-            {'id': 1, 'ratio': 2.0**64, 'exact': Decimal(TWO_64), 'digits': str(TWO_64), 'count': largest},
-            {'id': 2, 'ratio': None, 'exact': None, 'digits': None, 'count': None},
+            {'id': 1, 'ratio': 2.0**64, 'exact': Decimal(TWO_64), 'count': largest},
+            {'id': 2, 'ratio': None, 'exact': None, 'count': None},
         ],
     )
     source = select(*numbers.c, literal_column('ratio').label('untyped')).subquery()
@@ -2452,7 +2449,6 @@ def wide(session: Session) -> SQLTable:
             Column('id'),
             Column('ratio'),
             Column('exact'),
-            Column('digits', type='number'),
             Column('count'),
             Column('untyped', type='number'),
         ],
@@ -2466,7 +2462,6 @@ def wide(session: Session) -> SQLTable:
         {'column_search': {'ratio': {'multi_values': [str(TWO_64)]}}},  # the list reads its values in its own place
         criterion('untyped', '=', str(TWO_64)),  # a column without a number type of its own compares as a float too
         criterion('exact', '=', str(TWO_64)),
-        criterion('digits', '=', str(TWO_64)),  # text is compared with the digits, not with a float's text
     ],
 )
 def test_a_whole_number_outside_64_bits_is_answered_on_a_column_that_is_no_integer(
@@ -2474,7 +2469,7 @@ def test_a_whole_number_outside_64_bits_is_answered_on_a_column_that_is_no_integ
 ):
     """SPEC-F25.4, SPEC-F25.5: a driver sends a whole number as a 64-bit integer, so this one failed the request on
     SQLite, PostgreSQL and SQL Server. It goes as the column compares: the nearest float, a decimal to a `Numeric`
-    column, its digits to a column that stores text."""
+    column."""
     assert ids(wide(session).fetch_sync(request(*WIDE, **body), session)) == [1]
 
 
@@ -3117,17 +3112,16 @@ def test_a_value_the_number_column_cannot_hold_matches_nothing(session: Session)
 
 @pytest.mark.skipif(
     os.environ.get('DTB_SQL_DIALECT', 'sqlite') != 'sqlite',
-    reason='a column declared a number that the database holds as a Boolean or a Date is refused by PostgreSQL (boolean '
-    '= integer) and SQL Server (date and int) themselves, for a list as for `=` (the leg runs showed it): a wrong '
+    reason='a column declared a number that the database holds as a Boolean is refused by PostgreSQL (boolean = '
+    'integer) and SQL Server (bit and int) themselves, for a list as for `=` (the leg runs showed it): a wrong '
     'declaration, not a request. SQLite compares across types',
 )
-@pytest.mark.parametrize('column', ['active', 'born'], ids=['boolean', 'date'])
-def test_a_number_list_on_a_column_of_another_type_matches_nothing(session: Session, column: str):
-    """SPEC-F25.8: a column declared a number that SQLite holds as a Boolean or a Date compares a list entry as `=`
-    does, so `2` finds no row. Binding it as the column's type made the type refuse it: `StatementError` on the
-    Boolean, `TypeError` on the Date."""
-    odd = SQLTable(people, [Column('id'), Column(column, type='number')])
-    params = request('id', column, column_search={column: {'multi_values': ['2']}})
+def test_a_number_list_on_a_boolean_column_declared_a_number_matches_nothing(session: Session):
+    """SPEC-F25.8: a column declared a number that SQLite holds as a Boolean compares a list entry as `=` does, so `2`
+    finds no row. Binding it as the column's type made the type refuse it: `StatementError`. (A `Date` declared a
+    number is refused at construction, SPEC-D22.1.)"""
+    odd = SQLTable(people, [Column('id'), Column('active', type='number')])
+    params = request('id', 'active', column_search={'active': {'multi_values': ['2']}})
     assert ids(odd.fetch_sync(params, session)) == []
 
 
