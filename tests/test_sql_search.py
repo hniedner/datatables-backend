@@ -207,6 +207,18 @@ def test_a_search_with_no_word_asks_for_no_searchable_column(session: Session):
     assert ids(unsearchable.fetch_sync(request('id', 'team', **glob('!x')), session)) == [1, 2, 3, 4, 5]
 
 
+def test_a_search_with_a_word_on_a_table_with_no_searchable_column_is_refused(session: Session):
+    """SPEC-F13.1: nothing can answer `red`, so it is the user's mistake and not an empty page."""
+    refused(unsearchable.fetch_sync(request('id', 'team', **glob('red')), session))
+
+
+@pytest.mark.parametrize('text', ['', '   '])
+def test_an_empty_search_on_a_table_with_no_searchable_column_asks_for_nothing(session: Session, text: str):
+    """SPEC-F13.3: no word, so no column is needed and every row is answered (`!x` is the other such text, in the test
+    above)."""
+    assert ids(unsearchable.fetch_sync(request('id', 'team', **glob(text)), session)) == [1, 2, 3, 4, 5]
+
+
 @pytest.mark.parametrize('space', SPACES)
 def test_each_of_the_five_space_characters_splits_words(session: Session, space: str):
     """SPEC-F7.3: `aa bb` finds the row holding `aa` and `bb` apart and the row holding `aabb`, never `bb` alone."""
@@ -408,6 +420,23 @@ def test_a_column_search_on_a_hooked_column_of_blank_text_adds_nothing(session: 
     ]
 
 
+@pytest.mark.parametrize(
+    'search',
+    [
+        {'multi_values': ['1', '2']},
+        {'value': '^(1|2)$', 'regex': True},
+    ],
+)
+def test_a_list_of_values_on_a_hooked_column_gives_the_hook_each_value_once(session: Session, search: dict[str, Any]):
+    """SPEC-D15.1: `multi_values` and a categorical filter find the rows whose stored value is the hook's answer for
+    either value, and the hook is called for `1` and for `2` once each. A list given to the hook whole, or a value
+    transformed twice, shows in what it saw."""
+    seen, tables = recording()
+    response = tables['hooked'].fetch_sync(request('id', 'secret', column_search={'secret': search}), session)
+    assert ids(response) == [1, 2]
+    assert seen == ['1', '2']
+
+
 # -- the bounds of search text (PRD-F14), each with its own code (PRD-E2) ---
 
 EMOJI = chr(0x1F600)
@@ -437,14 +466,17 @@ TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hook
         ('mixed', glob(words(17)), '16'),  # PRD-D12: otherwise the whole request is refused
         ('hooked', glob(words(17)), None),  # ... and the cap is lifted when every searchable column is hooked
         ('hooked', glob('a' * 256), '255'),
-        ('hooked', column(words(17), 'secret'), None),  # PRD-D17: no word cap on a hooked column's own search
+        ('hooked', column(words(20), 'secret'), None),  # SPEC-D17.2: no word cap on a hooked column's own search
         ('hooked', column('a' * 256, 'secret'), '255'),
+        # SPEC-D12.8: `Alpha` and 251 spaces around it, so 5 characters after trimming: the raw text is measured
+        ('hooked', glob(' ' * 125 + 'Alpha' + ' ' * 126), '255'),
     ],
 )
 def test_search_text_is_bound_in_code_points_and_words(
     session: Session, which: str, body: dict[str, Any], bound: str | None
 ):
-    """SPEC-F14.1 to SPEC-F14.3, SPEC-D12 and SPEC-D17. A refusal names its bound and echoes nothing sent."""
+    """SPEC-F14.1, SPEC-F14.2, SPEC-F14.3, SPEC-D12.6, SPEC-D12.8, SPEC-D17.2. A refusal names its bound and echoes
+    nothing sent."""
     source, names = TABLES[which]
     response = source.fetch_sync(request(*names, **body), session)
     if bound is None:
