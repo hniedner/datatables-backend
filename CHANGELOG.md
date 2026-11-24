@@ -4,13 +4,22 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
-## [Unreleased]
+## [0.1.0rc4] - 2026-11-24
+
+Changes since 0.1.0rc3.
 
 ### Added
 
 - `datatables_backend.ErrorCode` and `datatables_backend.MAX_PAGE_LENGTH`, and
   `datatables_backend.opensearch.partial_answer(answer, *, index)`, for code that works beside a table (see
   `docs/usage.md`).
+- `docs/databases.md` says that an OpenSearch date or number field declared as a plain column fails a global search
+  with the client's `RequestError`, and that declaring it `type='date'` or `type='number'` fixes it; the README's
+  example says to declare every date, number and boolean field.
+
+### Fixed
+
+- Five dead or moved links, in the README and in a docstring of `protocol.py`.
 
 ### Changed
 
@@ -118,6 +127,7 @@ The first release, a release candidate: install it with `pip install --pre datat
 - Not answered: DataTables' fixed and grouped searches, SearchPanes and ColumnControl filters. A request that carries one
   is refused (a malformed request, 422 in the FastAPI dependency) rather than answered with fewer filters.
 
+[0.1.0rc4]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc4
 [0.1.0rc3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc3
 [0.1.0rc2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc2
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1
