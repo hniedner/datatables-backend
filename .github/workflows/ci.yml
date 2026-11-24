@@ -163,6 +163,26 @@ jobs:
           echo "$checked commit(s) checked, $BASE..$HEAD_SHA"
           exit "$failed"
 
+  # A pull request that changes `__version__` is a release pull request (a branch name is no sign: past ones were
+  # `release/0.1.0rc3`, `release/0.1.0-prep` and `release/0.1.1`): its version must be git-cliff's for the commits it
+  # releases and have a dated CHANGELOG section, as the tag run will check (scripts/check_release.py). Any other pull
+  # request, and a push, is not checked. The `if:` is on the step, not the job, because `gate` fails on a skipped job.
+  release-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: A new version is git-cliff's, with a dated CHANGELOG section
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: uv run --frozen --only-group release --python 3.14 python scripts/check_release.py pr "$BASE"
+
   # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
   # nothing; this job scans what a push publishes. The release binary is checked against its published SHA-256.
   # GITLEAKS_VERSION, GITLEAKS_SHA256 and the gitleaks rev in .pre-commit-config.yaml move together.
@@ -696,8 +716,9 @@ jobs:
   gate:
     if: always()
     needs:
-      [lint, types, tests, pre-commit, commits, secrets, install-isolation, dist, dist-check, minimum-versions,
-       postgresql, postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver, opensearch]
+      [lint, types, tests, pre-commit, commits, release-version, secrets, install-isolation, dist, dist-check,
+       minimum-versions, postgresql, postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver,
+       opensearch]
     runs-on: ubuntu-latest
     outputs:
       passed: ${{ steps.passed.outputs.passed }}
