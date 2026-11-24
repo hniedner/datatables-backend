@@ -1,8 +1,9 @@
 name: Release
 
-# Pushing the tag v<version> publishes that version to PyPI by trusted publishing (OIDC: no token is stored). A manual
-# run on main is a rehearsal: everything but `publish`. A manual run on a commit that is not in main fails in
-# `check-tag`.
+# Pushing the tag v<version> publishes that version to PyPI by trusted publishing (OIDC: no token is stored), after a
+# draft GitHub release exists, and makes the release public once the upload succeeded. A manual run on main is a
+# rehearsal: everything but the three release jobs, and `check-tag` prints the CHANGELOG notes for the version in the
+# source. A manual run on a commit that is not in main fails in `check-tag`.
 on:
   push:
     tags: ['v*']
@@ -45,6 +46,13 @@ jobs:
         run: uv run --no-project --python 3.14 python scripts/check_dist.py tag "$TAG"
       - name: The commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      # What `draft-release` will put in the release, for the version in the source: a missing or empty CHANGELOG entry
+      # fails the rehearsal, before a tag is pushed. It prints the notes and writes no file.
+      - name: The CHANGELOG has notes for the version in the source (a rehearsal)
+        if: github.ref_type != 'tag'
+        run: |
+          version="$(sed -n "s/^__version__ = '\(.*\)'$/\1/p" src/datatables_backend/__init__.py)"
+          uv run --no-project --python 3.14 python scripts/changelog_notes.py "$version"
 
   # The whole CI workflow on this commit, `gate` included. Its `dist` job builds and uploads the two files, and its
   # `dist-check` job checks that upload.
@@ -58,13 +66,51 @@ jobs:
     # the jobs that build or check a release restore no cache because setup-uv runs with `enable-cache: false`.
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
 
+  # Creates the GitHub release as a draft, before anything is uploaded: the notes are the version's CHANGELOG section
+  # (scripts/changelog_notes.py) and the two files are the `dist` artifact of this run. It is the only job here with
+  # `contents: write` besides `publish-release`, and it runs the repository's script, which is why `publish`, the job
+  # that holds the PyPI token, is not this job: a job that writes a release must not be the one that can publish. Same
+  # condition as `publish`. If it fails, `publish` never starts, so nothing is uploaded and no release exists.
+  draft-release:
+    needs: ci
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.ci.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release and attaches the files
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}" # check-tag proved the tag is v plus the version in the source
+          uv run --no-project --python 3.14 python scripts/changelog_notes.py "$version" > "$RUNNER_TEMP/notes.md"
+          flags=()
+          if [[ "$version" =~ [0-9](a|b|rc)[0-9]+$ ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --draft --verify-tag --title "datatables-backend $version" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}" dist/*
+
   # Runs no code from the repository: it downloads what `dist` uploaded in this run and hands it to PyPI. It publishes
   # only on the output ci.yml's `gate` sets after seeing every job succeed, so a break anywhere on that path means no
   # release. The `if:` holds no status function, so the job is also skipped when `ci` did not succeed; whether a failed
   # job inside the called workflow fails `ci` is not something GitHub's documentation states, hence the output. PyPI
-  # accepts a trusted publisher only from the top-level workflow, which is why this job is here and not in ci.yml.
+  # accepts a trusted publisher only from the top-level workflow, which is why this job is here and not in ci.yml. It
+  # needs the draft, so nothing is uploaded without one, and it has no `contents` permission: the job that publishes
+  # cannot write a release.
   publish:
-    needs: ci
+    needs: [ci, draft-release]
     if: >-
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.ci.outputs.passed == 'true'
     runs-on: ubuntu-latest
@@ -79,3 +125,25 @@ jobs:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  # Makes the draft public once `publish` has succeeded: as the latest release, unless the version is a pre-release.
+  # It runs no repository code and checks nothing out. If it fails, the package is on PyPI and the release stays a
+  # draft, to be made public by hand (`gh release edit <tag> --draft=false`). A failed upload leaves a draft, never a
+  # public release without a package.
+  publish-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # turns the draft into a public release
+    steps:
+      - name: Make the release public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "${TAG#v}" =~ [0-9](a|b|rc)[0-9]+$ ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
