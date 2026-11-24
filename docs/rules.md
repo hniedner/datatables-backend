@@ -155,8 +155,9 @@ before it names the condition.
   holds at most 256 values in one list and 512 in all its lists, at most 64 column searches, and a SearchBuilder tree
   of at most 8 groups deep and 64 criteria; one beyond them is answered with `invalid_filter`. One budget of 960
   conditions per request, the same on every backend, keeps every request within every supported database's limits (a
-  request over it is answered with `request_too_large` before anything is queried); a `base_filter` and expression
-  columns add to what the database receives and are not counted, see `docs/databases.md` for what that leaves. If you
+  request over it is answered with `request_too_large` before anything is queried); a `base_filter`, a `scope` and
+  expression columns add to what the database receives and are not counted, see `docs/databases.md` for what that
+  leaves. If you
   need more, please report it.
 
 ## OpenSearch

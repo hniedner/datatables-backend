@@ -178,6 +178,20 @@ def test_the_base_filter_limits_the_total_too(session: Session):
     assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (2, 1, [3])
 
 
+def test_a_scope_limits_the_total_the_count_and_the_page_together_with_the_base_filter(session: Session):
+    """SPEC-F31.2: the base filter `team = 'red'` alone gives rows 1 and 3, and the scope `id > 1` alone rows 2 to 5; the
+    two apply together, to the total and to the filtered set (its count and its page come from one statement). A scope
+    that replaced the base filter shows rows 2 to 5, one that missed the total a total of 2, and one that missed the
+    filtered set rows 1 and 3. SPEC-F31.3: a scope of `None` answers as no scope does."""
+    reds, scope = SQLTable(people, COLUMNS, base_filter=people.c.team == 'red'), people.c.id > 1
+    response = reds.fetch_sync(request(*ALL), session, scope=scope)
+    assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (1, 1, [3])
+    response = reds.fetch_sync(request(*ALL, search={'value': 'ann'}), session, scope=scope)
+    assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (1, 1, [3])  # row 1 holds `ann` too
+    params = request(*ALL, search={'value': 'ann'})
+    assert reds.fetch_sync(params, session, scope=None) == reds.fetch_sync(params, session)
+
+
 def test_row_hooks_shape_rows_and_add_row_id_and_data(session: Session):
     hooked = SQLTable(
         people,
@@ -269,6 +283,26 @@ async def test_the_async_fetch_keeps_two_scopes_apart_too(async_session: AsyncSe
     cache, params = TotalCache(ttl=60), request('id', 'name', search={'value': 'e'})
     totals = [
         (await _scoped_in_a_subquery(team, cache).fetch(params, async_session)).recordsTotal
+        for team in ('red', 'green')
+    ]
+    assert totals == [2, 1]
+
+
+def test_two_scopes_passed_to_fetch_never_share_a_total(session: Session):
+    """SPEC-C15.8: one table without a base filter and one cache, and the scopes `team = 'red'` (rows 1 and 3) then
+    `green` (row 4) on the same request. A key built from the table alone shows `green` the total of `red`."""
+    cache, params = TotalCache(ttl=60), request('id', 'name', search={'value': 'e'})
+    cached = SQLTable(people, [Column('id'), Column('name')], total_cache=cache)
+    totals = [cached.fetch_sync(params, session, scope=people.c.team == team).recordsTotal for team in ('red', 'green')]
+    assert totals == [2, 1]
+
+
+async def test_the_async_fetch_keeps_two_scopes_apart_too_when_they_are_passed_to_fetch(async_session: AsyncSession):
+    """SPEC-C15.8 through `fetch`, which reads and fills the cache in code of its own."""
+    cache, params = TotalCache(ttl=60), request('id', 'name', search={'value': 'e'})
+    cached = SQLTable(people, [Column('id'), Column('name')], total_cache=cache)
+    totals = [
+        (await cached.fetch(params, async_session, scope=people.c.team == team)).recordsTotal
         for team in ('red', 'green')
     ]
     assert totals == [2, 1]

@@ -357,6 +357,12 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   with the condition `=` and no `value` key each add nothing, with the three results of `SPEC-F30.1`.
 - **SPEC-F31.1** [all] With the base filter `price` not null: no filter → rows 1, 2, 3, `recordsTotal` 3,
   `recordsFiltered` 3; global search `red` → rows 1, 2, `recordsTotal` 3, `recordsFiltered` 2.
+- **SPEC-F31.2** [all] With the base filter `price` not null and the scope `id` above 1 (SQL `id > 1`, OS `range id gt
+  1`) passed to `fetch`: no filter → rows 2, 3, `recordsTotal` 2, `recordsFiltered` 2; global search `red` → row 2,
+  `recordsTotal` 2, `recordsFiltered` 1; global search `apple` → no rows, `recordsTotal` 2, `recordsFiltered` 0.
+  The two apply together: the base filter alone gives rows 1, 2, 3 and the scope alone rows 2, 3, 4.
+- **SPEC-F31.3** [all] A scope of `None`, and on OS an empty mapping, answers exactly as no scope does: on SQL the same
+  rows and counts, on OS the same request bodies sent.
 - **SPEC-F32.1** [OS] Global search `17` → none; `2024` → none (the number and date columns are skipped).
 - **SPEC-F33.1** [OS] Column search on `price`: `7` → rows 1 (not 17).
 - **SPEC-F33.2** [OS] Column search on `price`: `7 8`, `!78`, `"7"` and `abc` → error_code `invalid_number`.

@@ -13,8 +13,9 @@ class TotalCache:
     Nothing outside the process tells it about writes: a total can be up to ``ttl`` seconds old. Call ``clear`` after a
     write that must show at once.
 
-    A total is kept under what the table sends: on SQL the database's URL and the count with every bound value, on
-    OpenSearch the index's name and the base filter. Rows scoped by anything else share a total, so give each such
+    A total is kept under what the table sends: on SQL the database's URL and the count with every bound value (the
+    request's ``scope`` included), on OpenSearch the index's name, the base filter and the request's ``scope``. Rows
+    scoped by anything else share a total, so give each such
     scope a cache of its own: a database session's state (row-level security, a role, a schema search path or
     schema translation, the current database), OpenSearch's document-level security, or a second cluster with the
     same index name.

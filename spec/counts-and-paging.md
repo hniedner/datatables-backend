@@ -56,6 +56,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   by their query (the order is no part of the contract), and no page search.
 - **SPEC-C12.4** [OS] Recording: C12.3 with a `TotalCache`: the second request within the TTL runs one count call, the
   filtered set's.
+- **SPEC-C12.5** [OS container] With the scope `exists pages` (4 documents) and `max_result_window` 2, ordered by `id`:
+  `start` 3 and `length` 1, the reversed last page, → row `e5` and counts 4 and 4; `start` 1 and `length` 2 →
+  `page_out_of_range`, `recordsTotal` 4 (not 5, the index's count) and `recordsFiltered` 4.
 - **SPEC-C13.1** [OS] Recording only, with scripted answers: with `max_result_window` 3, `start` 8 and `length` 3,
   the count answers 10 and the reversed page search answers the hits 11, 10 (an index that grew after the count) →
   rows 10, 11, no error, and no `create_pit` call.
@@ -97,6 +100,21 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C15.7** [SQL] A table of 5 rows with a `TotalCache` and a base filter that is true for every row, built
   from a construct SQLAlchemy can compile for the database under test and not for its default dialect → a request
   answers `recordsTotal` 5.
+- **SPEC-C15.8** [SQL] As `SPEC-C15.1`, with one table that has no base filter and one cache, and the scopes `team =
+  'red'` and `team = 'green'` passed to `fetch`, each sent a global search `e`, in turn through `fetch_sync` and through
+  `fetch` → `recordsTotal` 2 and 1.
+- **SPEC-C15.9** [OS] Recording: one table with no base filter and one `TotalCache`, and a client that counts 4
+  documents for the scope `term team red` and 2 for `term team green`. An unfiltered request with the first scope
+  fills the cache (PRD-C8); a global search `red` with the second sends a total count of its own, whose body holds its
+  scope, and answers `recordsTotal` 2, not 4.
+- **SPEC-C15.10** [OS] Recording, with the table, cache and client of `SPEC-C15.9`: requests with a global search `red`
+  and the scopes `term team red`, `term team green`, `term team red` answer `recordsTotal` 4, 2, 4 and send two total
+  counts, each body holding its own scope; the third is served from the cache.
+- **SPEC-C15.11** [OS] Recording, with the table and cache of `SPEC-C15.9` and a client whose search and count calls
+  yield to the event loop before answering, as `SPEC-C15.10`'s do by their query: two `fetch` calls with a global search
+  `red`, one per scope, run together (`asyncio.gather`) answer `recordsTotal` 4 and 2, each its own, and each total
+  count sent holds its own scope: the cache key belongs to the request, not to the table, whichever request is half
+  way when the other starts.
 - **SPEC-C16.1** [all] With a `TotalCache` (TTL far longer than the test) and a global search `red`: the first
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).

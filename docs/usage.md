@@ -18,10 +18,11 @@ users = SQLTable(users_table, columns, total_cache=cache)
 
 - A total can be up to `ttl` seconds old: nothing outside the process tells the cache about a write. Call
   `cache.clear()` after a write that must show at once.
-- A total is kept under what the table sends: on SQL the database's URL and the count with every bound value, on
-  OpenSearch the index's name and the base filter. Rows scoped by anything else share a total, so give each such
-  scope a cache of its own: a database session's state (row-level security, a role, a schema search path, the current
-  database), OpenSearch's document-level security, or a second cluster with the same index name.
+- A total is kept under what the table sends: on SQL the database's URL and the count with every bound value (the
+  request's scope included), on OpenSearch the index's name, the base filter and the request's scope. Rows scoped by
+  anything else share a total, so give each such scope a cache of its own: a database session's state (row-level
+  security, a role, a schema search path, the current database), OpenSearch's document-level security, or a second
+  cluster with the same index name.
   [databases.md](databases.md#a-shared-totalcache-cannot-tell-two-scopes-apart-that-the-session-sets) has the case.
 - A bound value enters the key by its `repr`, which must not change between requests.
 - The cache holds at most `max_entries` totals (10,000 by default, about 2.6 MB; PRD-C14). When it is full, the total
@@ -100,38 +101,33 @@ refused with `page_out_of_range`.
 
 Source: the docstring of `SearchTable`; PRD-C10 and PRD-C12.
 
-## A filter per user: build the table for the request
+## A filter per user: pass it to `fetch`
 
 A table is built once and reused (PRD-A2), and its `base_filter` is fixed when it is built. A filter that differs by
-user or tenant therefore needs a table for each request. Building a table opens no connection and makes no request:
-`SQLTable` reads only the declared columns of the `Table` it is given, and `SearchTable` takes no client, which comes
-with `fetch`.
+user or tenant goes to `fetch` as `scope`, for that request only. It applies with the `base_filter` to `recordsTotal`,
+`recordsFiltered` and the page alike (PRD-F31).
 
 ```python
 cache = TotalCache()
+users = SQLTable(users_table, columns, total_cache=cache)  # built once, at module level
 
 
-def users_for(user):
-    return SQLTable(
-        users_table,
-        columns,
-        base_filter=users_table.c.owner_id == user.id,
-        total_cache=cache,  # shared: the bound value of the filter is part of the key
-    )
-
-
-response = await users_for(current_user).fetch(params, session)
+response = await users.fetch(params, session, scope=users_table.c.owner_id == current_user.id)
 ```
 
-On OpenSearch the filter is a query: `SearchTable('reports', columns, unique_key='id', base_filter={'term': {'owner':
-user.id}}, total_cache=cache)`, and the cache key holds it.
+On OpenSearch the scope is a query: `await reports.fetch(params, client, scope={'term': {'owner': user.id}})`, and
+`fetch_sync` takes the same keyword. `None` adds nothing, and on OpenSearch neither does an empty mapping.
 
-- Measured: building an `SQLTable` of 12 columns with one `base_filter` took 10 microseconds on a development laptop,
-  with no engine in the process (2,000 builds). A table of more columns, or a source reflected on each request, was not
-  measured.
-- A shared cache stays right because the filter is in its key (the docstring of `TotalCache`). Pass only values whose
-  `repr` is the same on each request: a value whose `repr` holds an address never finds its total again, and one entry
-  is stored for each request until `max_entries` (the cache stays bounded).
+- Build the scope on the server, from the authenticated user, never from the request's parameters: a scope taken from
+  the request lets a client choose another user's rows.
+- A scope is written in the terms of the stored fields, as `base_filter` is, so column hooks (`search_value`, `field=`,
+  `IndexColumn.text`) do not apply to it. On SQL it is a condition on the source's columns.
+- The total cache keeps a total per scope (the docstring of `TotalCache`), so one shared cache stays right; set its
+  `max_entries` to at least the number of users, as above. Pass only values whose `repr` is the same on each request: a
+  value whose `repr` holds an address, or a `datetime.now()`, never finds its total again, and one entry is stored for
+  each request until `max_entries` (the cache stays bounded).
+- A table per request still works, and is needed only when the columns differ per user: building a table opens no
+  connection and makes no request.
 
 ## The page's request: a form or JSON
 

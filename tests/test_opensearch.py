@@ -2090,6 +2090,135 @@ def test_two_tables_over_one_index_with_two_base_filters_never_share_a_total():
     assert client.counted == ['red', 'green']
 
 
+RED, GREEN = {'term': {'team': 'red'}}, {'term': {'team': 'green'}}
+
+
+def _team(body: Mapping[str, Any]) -> str:
+    """The team the scope of a body names: its first clause, which is the scope when the table has no base filter."""
+    return body['query']['bool']['must'][0]['term']['team']
+
+
+class Scopes:
+    """A recording client over documents of two teams. A search or a count answers the size of the team its scope
+    names, so a total taken from the wrong key shows."""
+
+    def __init__(self, sizes: dict[str, int]):
+        self.sizes = sizes
+        self.counts: list[Mapping[str, Any]] = []
+
+    def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        hits = {'total': {'value': self.sizes[_team(body)], 'relation': 'eq'}, 'max_score': None, 'hits': []}
+        return {'timed_out': False, '_shards': SHARDS, 'hits': hits}
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.counts.append(body)
+        return {'count': self.sizes[_team(body)], '_shards': SHARDS}
+
+
+class AsyncScopes(Scopes):
+    """The same, and each call yields to the event loop ``delays[team]`` times before it answers: a request whose scope
+    is slow is half way when a faster one starts and finishes."""
+
+    def __init__(self, sizes: dict[str, int], delays: dict[str, int] | None = None):
+        super().__init__(sizes)
+        self.delays = delays or {}
+
+    async def _yield(self, body: Mapping[str, Any]) -> None:
+        for _ in range(max(1, self.delays.get(_team(body), 1))):
+            await asyncio.sleep(0)
+
+    async def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        await self._yield(body)
+        return Scopes.search(self, index=index, body=body)
+
+    async def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:  # type: ignore[override]
+        await self._yield(body)
+        return Scopes.count(self, index=index, body=body)
+
+
+def test_a_scope_is_anded_with_the_base_filter_in_the_search_and_in_the_total_count():
+    """SPEC-F31.2, recorded: the search's `must` holds the base filter, then the scope, then the request's clauses; the
+    total count holds both and nothing else. A scope that replaced the base filter, or one left out of the count body
+    (the count would then answer the base filter's documents as the total), shows here."""
+    base = {'term': {'published': True}}
+    scope = {'range': {'pages': {'gt': 1}}}
+    client = Client(total=3, count=40)
+    table.fetch_sync(request(*NAMES, search={'value': 'x'}), client, scope=scope)  # type: ignore[arg-type]
+    must = client.searches[-1]['query']['bool']['must']
+    assert must[:2] == [base, scope]
+    assert len(must) > 2
+    assert client.counts == [{'query': {'bool': {'must': [base, scope]}}}]
+    client = Client(total=3, count=40)
+    table.fetch_sync(request(*NAMES), client, scope=scope)  # type: ignore[arg-type]
+    assert client.searches[-1]['query'] == {'bool': {'must': [base, scope]}}
+    assert client.counts == []
+
+
+@pytest.mark.parametrize('scope', [None, {}], ids=['none', 'empty-mapping'])
+@pytest.mark.parametrize('search', ['', 'x'])
+def test_a_scope_of_none_or_an_empty_mapping_sends_what_no_scope_sends(scope: dict[str, Any] | None, search: str):
+    """SPEC-F31.3, recorded: the bodies equal those of a request with no scope. An empty mapping appended to `must`
+    would be an empty clause, which OpenSearch refuses (INFERRED, not run; the live test sends it)."""
+    plain, scoped = Client(total=3, count=40), Client(total=3, count=40)
+    params = request(*NAMES, search={'value': search})
+    expected = table.fetch_sync(params, plain)
+    assert table.fetch_sync(params, scoped, scope=scope) == expected  # type: ignore[arg-type]
+    assert (scoped.searches, scoped.counts) == (plain.searches, plain.counts)
+
+
+def test_a_scope_that_differs_never_shares_the_total_an_unfiltered_request_filled():
+    """SPEC-C15.9: an unfiltered request with the scope `red` fills the cache with its own count, 4 (PRD-C8). A global
+    search with the scope `green` then counts for itself, and answers 2. A key without the scope answers 4."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(ttl=60))
+    client = Scopes({'red': 4, 'green': 2})
+    assert cached.fetch_sync(request(*NAMES), client, scope=RED).recordsTotal == 4  # type: ignore[arg-type]
+    assert client.counts == []
+    response = cached.fetch_sync(request(*NAMES, search={'value': 'red'}), client, scope=GREEN)  # type: ignore[arg-type]
+    assert response.recordsTotal == 2
+    assert client.counts == [{'query': {'bool': {'must': [GREEN]}}}]
+
+
+def test_a_total_counted_for_a_scope_is_served_to_that_scope_only():
+    """SPEC-C15.10: the scopes `red`, `green`, `red` on one table with one cache answer 4, 2, 4 and send two total
+    counts, each holding its own scope; the third is served from the cache. A key without the scope sends one count
+    and answers 4, 4, 4."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(ttl=60))
+    client = Scopes({'red': 4, 'green': 2})
+    totals = [
+        cached.fetch_sync(request(*NAMES, search={'value': 'red'}), client, scope=scope).recordsTotal  # type: ignore[arg-type]
+        for scope in (RED, GREEN, RED)
+    ]
+    assert totals == [4, 2, 4]
+    assert client.counts == [{'query': {'bool': {'must': [RED]}}}, {'query': {'bool': {'must': [GREEN]}}}]
+
+
+async def test_the_async_fetch_serves_a_total_to_the_scope_it_was_counted_for_too():
+    """SPEC-C15.10 through `fetch`, which reads and fills the cache in code of its own."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(ttl=60))
+    client = AsyncScopes({'red': 4, 'green': 2})
+    totals = [
+        (await cached.fetch(request(*NAMES, search={'value': 'red'}), client, scope=scope)).recordsTotal  # type: ignore[arg-type]
+        for scope in (RED, GREEN, RED)
+    ]
+    assert totals == [4, 2, 4]
+    assert client.counts == [{'query': {'bool': {'must': [RED]}}}, {'query': {'bool': {'must': [GREEN]}}}]
+
+
+async def test_two_requests_half_way_together_each_keep_the_cache_key_of_their_own_scope():
+    """SPEC-C15.11: `red` answers slowly (5 yields a call) and `green` fast (1), run together. `green` is counted and
+    cached before `red` reads the cache. A key held on the table, set by the later request, makes `red` read the key
+    of `green` and answer 2 with no count of its own."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(ttl=60))
+    client = AsyncScopes({'red': 4, 'green': 2}, delays={'red': 5, 'green': 1})
+    params = request(*NAMES, search={'value': 'red'})
+    red, green = await asyncio.gather(
+        cached.fetch(params, client, scope=RED),  # type: ignore[arg-type]
+        cached.fetch(params, client, scope=GREEN),  # type: ignore[arg-type]
+    )
+    assert (red.recordsTotal, green.recordsTotal) == (4, 2)
+    assert sorted(_team(body) for body in client.counts) == ['green', 'red']
+
+
 def test_clear_makes_the_next_request_count_again():
     """SPEC-C16.1: without `clear()` the cached total stays; after it the next request counts the cluster again."""
     client, cache = Client(total=3, count=40), TotalCache(ttl=3600)

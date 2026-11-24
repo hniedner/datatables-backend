@@ -822,10 +822,16 @@ with a value it cannot read, or with more values than its condition takes (PRD-F
 
 #### PRD-F31
 
-An optional base filter (a SQL expression or an OpenSearch query) limits the rows the table shows at all, for
-`recordsTotal`, `recordsFiltered` and the page alike.
+An optional base filter (a SQL expression or an OpenSearch query), and an optional scope passed to `fetch` for one
+request, limit the rows the table shows at all, for `recordsTotal`, `recordsFiltered` and the page alike; the two apply
+together.
 
-- **Reason:** Row-level scoping belongs to the server, not the client.
+A scope is written in the terms of the stored fields, as the base filter is, so column hooks do not apply to it. A scope
+of `None`, and on OpenSearch an empty mapping, adds nothing.
+
+- **Reason:** Row-level scoping belongs to the server, not the client; a scope that differs per user is passed per
+  request so the table can stay shared (PRD-A2). A scope is built by the server from the authenticated user, never from
+  the request.
 - **Priority:** must
 
 #### PRD-F32
@@ -1047,7 +1053,7 @@ too, whatever its direction: it can change nothing.
 
 #### PRD-C1
 
-`recordsTotal` counts the rows under the base filter.
+`recordsTotal` counts the rows under the base filter and the scope.
 
 - **Reason:** DataTables' meaning; SvelteDT shows it as the pager's unfiltered total (its PRD-B26).
 - **Priority:** must
@@ -1096,7 +1102,7 @@ OpenSearch returns the page and the exact filtered count in one search.
 
 #### PRD-C8
 
-On OpenSearch, `recordsTotal` reuses the filtered count when nothing beyond the base filter applies.
+On OpenSearch, `recordsTotal` reuses the filtered count when nothing beyond the base filter and the scope applies.
 
 - **Reason:** The second count would give the same number.
 - **Priority:** must
@@ -1163,9 +1169,12 @@ it, or most of its requests count. A bound below 1 is refused when the cache is 
 
 #### PRD-C15
 
-Two tables that differ only in a bound value (e.g. per tenant), in the source or in the base filter, never share a
-cached total: the cache key covers the count's statement or query with its bound values, and the database (its URL)
-or the index (its name).
+Two tables that differ only in a bound value (e.g. per tenant), in the source or in the base filter, and two requests to
+one table that differ in their scope, never share a cached total: the cache key covers the count's statement or query
+with its bound values, and the database (its URL) or the index (its name).
+
+Two requests with equal scopes may share a total within the TTL. That is a saving the cache happens to make, not a
+promise: nothing may rely on it.
 
 - **Reason:** A shared total would show one tenant another's count.
 - **Priority:** must
@@ -1186,8 +1195,8 @@ every supported database's limits.
 One word on one column, one list value and one range each count one condition, and a request of more than 960 is
 refused with `request_too_large` before anything is queried (PRD-E3). The global search counts a word once for each
 column it covers, so alone it allows 16 words over 60 columns, 8 over 120, 4 over 240, 2 over 480 and 1 over 960;
-every column search word, list value, range and criterion takes one from that. A `base_filter` and an expression
-column add conditions of their own, which the budget does not count.
+every column search word, list value, range and criterion takes one from that. A `base_filter`, a scope and an
+expression column add conditions of their own, which the budget does not count.
 
 - **Reason:** A request a client can send must never fail on a database's limit: SQL Server's parameters or SQLite's
   expression depth. The number is measured, not computed (`docs/decisions/005-the-largest-request-the-bounds-allow.md`),
@@ -1397,9 +1406,10 @@ A table object holds only the server-side declaration: the source, the columns, 
 
 #### PRD-A2
 
-A table object is built once and reused across requests.
+A table object is built once and reused across requests; what differs per request, such as a user's rows, is passed to
+`fetch`.
 
-- **Reason:** Declarations are configuration.
+- **Reason:** Declarations are configuration; a table per request would rebuild them for one value.
 - **Priority:** must
 
 #### PRD-A3

@@ -95,6 +95,9 @@ class _Request:
     count: dict[str, Any] | None  # None: the search's own count is the total
     beyond: InvalidFilter | None = None  # set: the page is past the result window, so the counts run first (PRD-C11)
     flipped: list[dict[str, Any]] = field(default_factory=list)  # the sort of a reversed page (PRD-C10), if beyond
+    #: The total cache's key: the index, the base filter and this request's scope. It belongs to the request, since two
+    #: async requests of one table run half way together. Empty when the table has no cache.
+    key: str = ''
 
     @property
     def filtered_count(self) -> dict[str, Any]:
@@ -115,7 +118,8 @@ class SearchTable:
             tie-breaker of every order (an index has no primary key). It must be sortable, so not analysed text only.
             An index whose documents hold no unique field copies the id into a ``keyword`` field at ingest. Required:
             a table without one raises ``SchemaError``.
-        base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too.
+        base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too. For
+            a filter that differs per request, such as a user's documents, pass ``scope`` to ``fetch`` instead.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
         max_result_window: The index's ``max_result_window``. A page beyond it that ends within that many rows of
@@ -140,7 +144,6 @@ class SearchTable:
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
         self.max_result_window = max_result_window
-        self._total_key = f'{index} {json.dumps(self.base_filter, sort_keys=True, default=str)}'
         check_declaration(self.columns, _describe)
         if unique_key is None:
             raise SchemaError(
@@ -164,8 +167,17 @@ class SearchTable:
                 f'{", ".join(unsortable)}: analysed text has no whole string to sort by, so it cannot be orderable'
             )
 
-    async def fetch(self, params: DTParams, client: _AsyncClient) -> DTResponse:
+    async def fetch(
+        self, params: DTParams, client: _AsyncClient, *, scope: Mapping[str, Any] | None = None
+    ) -> DTResponse:
         """Answer one request with an async client (``AsyncOpenSearch``).
+
+        ``scope`` is a query that limits the documents for this request only, together with the table's
+        ``base_filter``, to ``recordsTotal``, ``recordsFiltered`` and the page alike (PRD-F31). It is written in the
+        terms of the stored fields, as ``base_filter`` is, and built by the server from the authenticated user and
+        never from the request: a scope taken from the request would let a client choose another user's documents.
+        Column hooks do not apply to it. ``None``, and an empty mapping, add nothing. Requests with equal scopes may
+        share a cached total; those with different ones never do (PRD-C15).
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once; only a
         page beyond the result window sends anything first, the counts of PRD-C11, and then a reversed search for a
@@ -173,7 +185,7 @@ class SearchTable:
         ``PartialResultError``.
         """
         try:
-            request = self._request(params)
+            request = self._request(params, scope)
         except InvalidFilter as found:
             return refused(params, found)
         if request.beyond is not None:
@@ -181,7 +193,7 @@ class SearchTable:
             total = self._cached_total(request, filtered)
             if total is None:
                 total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-                self._remember(total)
+                self._remember(total, request.key)
             if (page := self._reversed_page(params, request, filtered)) is None:
                 return self._past_the_window(params, request.beyond, total, filtered)
             answer = await client.search(index=self.index, body=page)
@@ -194,13 +206,15 @@ class SearchTable:
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-            self._remember(total)
+            self._remember(total, request.key)
         return self._response(params, answer, total, filtered)
 
-    def fetch_sync(self, params: DTParams, client: _SyncClient) -> DTResponse:
-        """``fetch`` with a sync client (``OpenSearch``)."""
+    def fetch_sync(
+        self, params: DTParams, client: _SyncClient, *, scope: Mapping[str, Any] | None = None
+    ) -> DTResponse:
+        """``fetch`` with a sync client (``OpenSearch``), with the same ``scope``."""
         try:
-            request = self._request(params)
+            request = self._request(params, scope)
         except InvalidFilter as found:
             return refused(params, found)
         if request.beyond is not None:
@@ -208,7 +222,7 @@ class SearchTable:
             total = self._cached_total(request, filtered)
             if total is None:
                 total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-                self._remember(total)
+                self._remember(total, request.key)
             if (page := self._reversed_page(params, request, filtered)) is None:
                 return self._past_the_window(params, request.beyond, total, filtered)
             answer = client.search(index=self.index, body=page)
@@ -221,12 +235,12 @@ class SearchTable:
         total = self._cached_total(request, filtered)
         if total is None:
             total = self._count(client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-            self._remember(total)
+            self._remember(total, request.key)
         return self._response(params, answer, total, filtered)
 
     # -- building ---------------------------------------------------------------------------------------------------
 
-    def _request(self, params: DTParams) -> _Request:
+    def _request(self, params: DTParams, scope: Mapping[str, Any] | None) -> _Request:
         """Both request bodies, built before either is sent.
 
         Raises:
@@ -236,7 +250,9 @@ class SearchTable:
         """
         mistakes = Mistakes()
         request = plan(params, self.columns, _describe, mistakes)
-        must: list[dict[str, Any]] = [self.base_filter] if self.base_filter else []
+        # The base filter and the scope limit every count; an empty mapping is no clause, which OpenSearch would refuse
+        limits = [limit for limit in (self.base_filter, dict(scope) if scope else None) if limit]
+        must: list[dict[str, Any]] = list(limits)
         if request.global_search is not None:
             must.append(_compile(request.global_search))
         for column_search in request.column_searches:
@@ -261,9 +277,10 @@ class SearchTable:
             '_source': [column.source for column in self.columns if column.source != _DOCUMENT_ID],
         }
         search['sort'] = _sort(request, self.unique_key)
-        count = {'query': {'bool': {'must': [self.base_filter]}} if self.base_filter else {'match_all': {}}}
+        count = {'query': {'bool': {'must': limits}} if limits else {'match_all': {}}}
         flipped = _sort(request, self.unique_key, flip=True) if beyond else []
-        return _Request(search, count if request.filtered else None, beyond, flipped)
+        key = f'{self.index} {json.dumps(limits, sort_keys=True, default=str)}' if self.total_cache else ''
+        return _Request(search, count if request.filtered else None, beyond, flipped, key)
 
     # -- running ----------------------------------------------------------------------------------------------------
 
@@ -277,13 +294,13 @@ class SearchTable:
     def _cached_total(self, request: _Request, filtered: int) -> int | None:
         """The total without asking again: the search's own count when the request filters nothing, else the cache."""
         if request.count is None:
-            self._remember(filtered)
+            self._remember(filtered, request.key)
             return filtered
-        return self.total_cache.get(self._total_key) if self.total_cache else None
+        return self.total_cache.get(request.key) if self.total_cache else None
 
-    def _remember(self, total: int) -> None:
+    def _remember(self, total: int, key: str) -> None:
         if self.total_cache:
-            self.total_cache.put(self._total_key, total)
+            self.total_cache.put(key, total)
 
     def _count(self, answer: Mapping[str, Any]) -> int:
         if partial_answer(answer, index=self.index):

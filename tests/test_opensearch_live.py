@@ -259,6 +259,20 @@ def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
     assert (response.recordsTotal, response.recordsFiltered) == counts
 
 
+def test_a_page_within_a_scope_is_read_from_the_end_or_refused_by_the_counts_of_the_scope(client: OpenSearch):
+    """SPEC-C12.5: the scope `exists pages` holds 4 of the 5 documents (a1, b2, d4, e5), the window is 2, ordered by
+    id. `start` 3 and `length` 1 is the reversed last page: row e5, counts 4 and 4. `start` 1 and `length` 2 ends 3 rows
+    from the last one, beyond the window: `page_out_of_range` with the total 4 and the filtered count 4, not the
+    index's 5. A scope left out of the count body, or of the reversed search, answers 5 or another row."""
+    scoped = SearchTable(INDEX, COLUMNS, unique_key='id', max_result_window=2)
+    order, scope = [{'column': 0, 'dir': 'asc'}], {'exists': {'field': 'pages'}}
+    last = scoped.fetch_sync(request(*NAMES, start=3, length=1, order=order), client, scope=scope)
+    assert (ids(last), (last.recordsTotal, last.recordsFiltered)) == (['e5'], (4, 4))
+    refused = scoped.fetch_sync(request(*NAMES, start=1, length=2, order=order), client, scope=scope)
+    assert (refused.error_code, refused.data) == ('page_out_of_range', [])
+    assert (refused.recordsTotal, refused.recordsFiltered) == (4, 4)
+
+
 def test_the_base_filter_limits_the_total_too(client: OpenSearch):
     """SPEC-C1.1: a base filter limits the total. SPEC-F31.1: with no search the rows and both counts are its own."""
     long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
@@ -266,6 +280,32 @@ def test_the_base_filter_limits_the_total_too(client: OpenSearch):
     assert (everything.recordsTotal, everything.recordsFiltered, found(everything)) == (2, 2, ['b2', 'e5'])
     response = long_reads.fetch_sync(request(*NAMES, search={'value': 'bread'}), client)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 1)
+
+
+@pytest.mark.parametrize(
+    ('search', 'expected', 'counts'),
+    [('', ['b2'], (1, 1)), ('bread', ['b2'], (1, 1)), ('apple', [], (1, 0))],
+    ids=['no-search', 'bread', 'apple'],
+)
+def test_a_scope_and_the_base_filter_apply_together_in_the_search_and_in_the_count(
+    client: OpenSearch, search: str, expected: list[str], counts: tuple[int, int]
+):
+    """SPEC-F31.2 on the cluster: the base filter `pages >= 30` alone finds b2 and e5, the scope `body` matches
+    `green` alone b2 and d4; together only b2. The cluster accepts `must: [base, scope, ...]` in the search and in the
+    count, and the total is 1, not 2 (the base filter alone, or the scope alone)."""
+    long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
+    response = long_reads.fetch_sync(
+        request(*NAMES, search={'value': search}), client, scope={'match': {'body': 'green'}}
+    )
+    assert (found(response), (response.recordsTotal, response.recordsFiltered)) == (expected, counts)
+
+
+def test_an_empty_scope_is_no_scope_on_the_cluster_too(client: OpenSearch):
+    """SPEC-F31.3 on the cluster: an empty mapping adds no clause, so it answers as no scope does; an empty clause
+    in `must` is refused by OpenSearch (INFERRED, not run)."""
+    params = request(*NAMES, search={'value': 'apple'}, order=[{'column': 0, 'dir': 'asc'}])
+    assert table.fetch_sync(params, client, scope={}) == table.fetch_sync(params, client)
+    assert table.fetch_sync(params, client, scope=None) == table.fetch_sync(params, client)
 
 
 async def test_the_async_client_answers_like_the_sync_one(client: OpenSearch, async_client: AsyncOpenSearch):

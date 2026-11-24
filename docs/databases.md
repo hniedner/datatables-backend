@@ -118,9 +118,10 @@ or an OpenSearch setting has an entry below.
 - **What you see:** SQL Server 2022 with ODBC Driver 18 answered a statement of 2,097 bound parameters and refused
   2,098 (error 8003 from the server). The budget of PRD-C17 keeps the largest statement of a request, the page's,
   at 1,538 parameters (two for each day of a list on a column that may hold a time and for each range, one for every
-  other condition, and the page's offset and limit), which leaves 559 for a `base_filter` and for expression
+  other condition, and the page's offset and limit), which leaves 559 for a `base_filter`, a `scope` and for expression
   columns. Those bind in all three statements (the total, the filtered count and the page) and are stated here, not
-  budgeted: a `base_filter` that binds more than 559 parameters can make a request at the budget fail on SQL Server.
+  budgeted: a `base_filter` and a `scope` that together bind more than 559 parameters can make a request at the budget
+  fail on SQL Server.
 - **Example:** the global search `ann` over 2,098 columns binds 2,098 parameters in the filtered count and is refused;
   over 2,097 columns the count is answered and its page, which binds two more, is refused.
 - **How it is known:** MEASURED 2026-11-22 on SQL Server 2022 with ODBC Driver 18 (CI runs 45083578654 and
@@ -211,8 +212,8 @@ or an OpenSearch setting has an entry below.
   (maximum depth 1000)"). SQLite reads a chain of conditions joined by AND or OR from the left, so each adds a level.
   Across the shapes of a request measured (a chain of words, the global search over many columns, negated words,
   criteria, nested groups, lists of days), the depth was at most 9 above the number of conditions, so the budget of
-  960 conditions stays inside it. A `base_filter` or an expression column that is deep adds levels of its own, stated
-  here, not budgeted. A SQLite build may set another depth (`SQLITE_MAX_EXPR_DEPTH`): documented, not run.
+  960 conditions stays inside it. A `base_filter`, a `scope` or an expression column that is deep adds levels of its
+  own, stated here, not budgeted. A SQLite build may set another depth (`SQLITE_MAX_EXPR_DEPTH`): documented, not run.
 - **Example:** a negated word of the global search over 991 columns is answered and over 992 is refused.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1 with Python 3.14.7, the build limit 1,000 read from the
   error text (`docs/decisions/005-the-largest-request-the-bounds-allow.md`).
@@ -297,8 +298,8 @@ the count statement with its bound values, and it sees nothing else.
 - **What you see:** two requests whose rows differ only by the state of their database session share one cached
   `recordsTotal`, so one scope can be shown the total of another. That state is row-level security or `SET ROLE`
   on PostgreSQL, a tenant per schema through `search_path` or SQLAlchemy's `schema_translate_map`, and `USE` of
-  another database on MySQL or SQL Server. A scope written into the source or the base filter is told apart. Give
-  each such scope a `TotalCache` of its own.
+  another database on MySQL or SQL Server. A scope written into the source, the base filter or the `scope` of `fetch`
+  is told apart. Give each such scope a `TotalCache` of its own.
 - **Example:** one engine, one `SQLTable` with a cache, and `SET ROLE` per request with a row-level security
   policy: the second role is answered the first role's total until the TTL ends.
 - **How it is known:** read in the code (the key is built from the URL and the compiled count); not run on a
@@ -363,8 +364,8 @@ filter, and it sees nothing else.
   `TotalCache` of its own.
 - **Example:** one `SearchTable` over `docs` with a cache, used with the clients of two clusters: the second
   cluster is answered the first cluster's total until the TTL ends.
-- **How it is known:** read in the code (the key is built from the index name and the base filter); not run on a
-  server.
+- **How it is known:** read in the code (the key is built from the index name, the base filter and the request's
+  scope); not run on a server.
 - **Requirement:** PRD-C15.
 
 ### A number outside the range of its field fails the request
@@ -666,8 +667,8 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 
   Every word of a column search, list value, range and criterion takes one from that. The columns are those that take
   part in the global search: declared searchable and searchable as text (a boolean is not, nor is a number or a date
-  on OpenSearch). A hooked column counts one however many words the text holds. A `base_filter` and an expression
-  column add to what the database receives and are stated here, not budgeted.
+  on OpenSearch). A hooked column counts one however many words the text holds. A `base_filter`, a `scope` and an
+  expression column add to what the database receives and are stated here, not budgeted.
 - **Example:** 16 words over a table of 61 searchable columns hold 976 conditions and are refused; 15 words hold 915.
 - **How it is known:** the number is MEASURED (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the
   table is its arithmetic.
