@@ -105,7 +105,7 @@ or an OpenSearch setting has an entry below.
   `CONVERT(VARCHAR(10), ..., 23)` for its day text. Neither is tied to a level that Microsoft's pages name. The SQL
   that SQLAlchemy's SQL Server dialect writes (the page's offset and limit, for one) is SQLAlchemy's, and its needs
   are not checked here: unknown.
-- **Example:** after `ALTER DATABASE dtb SET COMPATIBILITY_LEVEL = 120`, no run of this project has answered a request.
+- **Example:** a database set to `COMPATIBILITY_LEVEL = 120` is the case no run of this project covers.
 - **How it is known:** READ in `src/datatables_backend/sqlalchemy.py:633` and `:655`, and `.github/workflows/ci.yml`
   (job `sqlserver`, no level set). Documented, not run: the pages for
   [SWITCHOFFSET](https://learn.microsoft.com/en-us/sql/t-sql/functions/switchoffset-transact-sql) and
@@ -319,8 +319,8 @@ A column is a string column unless it is declared, because the library does not 
 - **What you see:** a column over a `boolean` field, declared as a string or as `IndexColumn(..., text='keyword')`,
   matches nothing on `=` (a string column queries a `.keyword` subfield the field lacks) or, for a keyword column,
   fails the request with the client's `RequestError` for a term other than `true` or `false`.
-- **What to do:** declare the column `Column('active', type='boolean')`. `1` and `0` are then read as `true` and `false`,
-  and any other word is refused with `invalid_filter` (PRD-F43).
+- **What to do:** declare the column `Column('active', type='boolean')`. `1` and `0` are then read as `true` and
+  `false`, and any other word is refused with `invalid_filter` (PRD-F43).
 - **How it is known:** pinned by `tests/test_opensearch_live.py`, which CI's `opensearch` job runs on a live cluster.
 - **Requirement:** PRD-D8, PRD-F43.
 
@@ -490,11 +490,9 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 
 ### A page in the middle of a large result is refused
 
-- **What you see:** OpenSearch reads at most `max_result_window` rows from the start of a search, 10,000 by default.
-  The first pages and the last pages are served at any size, and a page in the middle of a larger result is refused
-  with `page_out_of_range` and the real counts. SQL serves every page. The library never changes the cluster's
-  setting; give the table the index's own window. The rule is in
-  [the OpenSearch notes](rules.md#opensearch) ("Paging past the window").
+- **What you see:** OpenSearch reads at most `max_result_window` rows from the start of a search, 10,000 by default,
+  so a page in the middle of a larger result is refused with `page_out_of_range` and the real counts, where SQL
+  serves every page. The rule is in [the OpenSearch notes](rules.md#opensearch) ("Paging past the window").
 - **Example:** 50,000 matching documents, `start` 20,000: `page_out_of_range`, with `recordsTotal` and
   `recordsFiltered`; the last page of the same result is answered.
 - **How it is known:** the library's refusal and the reversed last page are pinned by `tests/test_opensearch_live.py`
@@ -509,11 +507,9 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 ### A text-only column cannot be ordered, and answers some conditions only
 
 - **What you see:** a column over an analysed `text` field with no `keyword` subfield (declared `text='text'`) has no
-  whole string to sort by or to compare. An order on it is refused or skipped as PRD-O1 says, and declaring it
-  orderable raises `SchemaError`. It answers the word search, `contains`, `!contains`, `null`, `!null` and a list of
-  only empty entries, and refuses `=`, `!=`, `starts`, `ends` and their negations and any other list with
-  `invalid_filter`; SQL orders and answers every condition. Declare `text='text+keyword'` for a column that needs
-  them. The rule is in [the OpenSearch notes](rules.md#opensearch) ("A column of analysed text only").
+  whole string, so it cannot be ordered and it refuses `=`, `starts`, `ends` and the other conditions that need one,
+  where SQL orders and answers every condition. The rule is in [the OpenSearch notes](rules.md#opensearch)
+  ("A column of analysed text only").
 - **Example:** `=` `red fox` on a column declared `text='text'` is `invalid_filter`; `contains` `red fox` is
   answered.
 - **How it is known:** pinned by `tests/test_opensearch.py` through a recording client
@@ -527,12 +523,14 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 
 - **What you see:** on an analysed column, text or `text+keyword`, a word the analyser splits also matches as a phrase
   of its tokens, and `!` excludes it; on a text-only column a word is an analysed match, so `red` does not find
-  `reddish`. SQL matches substrings only. The rule is in [the OpenSearch notes](rules.md#opensearch)
-  ("Analysed text").
+  `reddish`. SQL matches substrings only. What the analyser drops, such as quote marks, a leading `-` and padding,
+  does not tell rows apart either: `-red` also finds `red`. The rule is in
+  [the OpenSearch notes](rules.md#opensearch) ("Analysed text").
 - **Example:** `a-b` finds `a b` and `!a-b` leaves it out; `a` alone is not found by `a-b`.
 - **How it is known:** MEASURED, pinned by `tests/test_opensearch_live.py`
-  (`test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens`), which CI's `opensearch` job runs on 3.10.0 and
-  2.19.7.
+  (`test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens` and
+  `test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword`), which CI's `opensearch` job runs on
+  3.10.0 and 2.19.7.
 - **Requirement:** PRD-F11.
 
 ## Every backend
@@ -548,8 +546,10 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
   `utf8mb4_0900_ai_ci`).
 - **How it is known:** pinned under a case-sensitive collation by `tests/test_sql.py`
   (`test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sent`), which every SQL job of CI runs;
-  the tests declare that collation on each engine, so they do not show the difference between engines, which is
-  documented by the collation's name, not run.
+  the tests declare that collation on each engine, so they do not show the difference between engines. That
+  `utf8mb4_0900_ai_ci` is case-insensitive is documented, not run: MySQL's manual says `_ci` in a collation name is
+  case-insensitive and names `utf8mb4_0900_ai_ci` "explicitly case-insensitive and accent-insensitive"
+  (https://dev.mysql.com/doc/refman/8.4/en/charset-collation-names.html, opened 2026-11-23).
 - **Requirement:** PRD-D21, PRD-F9.
 
 ### Only the drivers that CI runs are tested
