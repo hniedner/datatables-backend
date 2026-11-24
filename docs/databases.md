@@ -392,6 +392,25 @@ A column is a string column unless it is declared, because the library does not 
 - **How it is known:** pinned by `tests/test_opensearch_live.py`, which CI's `opensearch` job runs on a live cluster.
 - **Requirement:** PRD-D8, PRD-F43.
 
+### A date or number field takes part in the global search unless it is declared
+
+A column is a string column unless it is declared, because the library does not read the mapping (PRD-D8), and the
+global search puts a string column's text on its field.
+
+- **What you see:** a column over a `date` field, declared as a plain `Column('created')`, sends the search text to
+  that field as a `match_phrase`. The server refuses it with a 400 (it failed to parse the date field), which reaches
+  the application as the client's `RequestError`, for any global search text. A column over a number field declared
+  the same way is expected to fail alike.
+- **Example:** the global search `apple` over a table that declares `Column('created')` on a `date` field.
+- **What to do:** declare every date and number column `Column('created', type='date')` or
+  `Column('pages', type='number')`. A declared date or number column takes no part in the global search (see
+  [The global search skips number and date columns](#the-global-search-skips-number-and-date-columns)).
+- **How it is known:** date: pinned by `tests/test_opensearch_live.py` (an undeclared column over a `date` field raises
+  `RequestError`; the declared case is `test_the_global_search`, whose table declares `created` a date), which CI's
+  `opensearch` job runs on a live cluster; the same failure was seen on OpenSearch 3.10.0 in an adopter trial. The
+  query the library sends was recorded: a `match_phrase` on the field. Number: read from the same query, not run.
+- **Requirement:** PRD-D8, PRD-F32.
+
 ### A text field mapped without positions refuses a phrase
 
 A word on analysed text is a `match_phrase`, which needs the token positions the default mapping stores.
