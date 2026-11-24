@@ -1,14 +1,16 @@
-# 009: Release automation (draft for the owner)
+# 009: Release automation
+
+**Status: decided (owner, 2026-11-24, following the advisor).** The decisions are in section 9.
 
 This is the evaluation for issue #45 (part 45a): how releases are made once #76 is built. SvelteDT (its PRD-S7) needs
-the same answers, so this note is shared with it; each section says whether it is **shared** or **Python only**, and
-sections 2, 3 and 5 apply only if the automatic trigger is kept. **Nothing here is decided.** Once the owner has
-chosen, his choices are recorded in this file and the options he rejected are cut to one line each.
+the same answers, so this note is shared with it; each section says whether it is **shared** or **Python only**. The
+options and their reasons in sections 1 to 8 stay as the record of the choice, including the ones not chosen. Sections
+2, 3 and 5, and every part marked "automatic trigger", are recorded options: they are not built.
 
-**The model itself is put to the owner again** (section 7). Under the automatic trigger a rejected or abandoned
-approval leaves a permanent tag, a draft release and a skipped version, which has already happened once by hand
-(0.1.0rc1); at this project's merge rate an approval would be pending almost always; and adopters are better served by
-fewer, coherent releases.
+**The model was put to the owner again** (section 7), and he chose that he starts releases. Under the automatic
+trigger a rejected or abandoned approval leaves a permanent tag, a draft release and a skipped version, which has
+already happened once by hand (0.1.0rc1); at this project's merge rate an approval would be pending almost always; and
+adopters are better served by fewer, coherent releases.
 
 Labels: READ (a repository file, an issue or a PR, with its place), RUN (a command run on 2026-11-24, named; git-cliff
 runs used `uvx --from git-cliff==2.14.2` on a scratch clone of `main` at `0daf2f4` or on scratch repositories, all
@@ -370,64 +372,101 @@ and its checks; (i) the version from the tag, shippable on the hand path only if
 `sed` and replaces `check_dist.py tag`; (iii) `tag.yml`, the dispatch, rule P and the rehearsal, which need (i), (ii)
 and the owner's first sentence of the new PRD requirement.
 
-## 9. Owner decides
+## 9. Decided (owner, 2026-11-24, following the advisor)
 
-**(1) Who starts a release.** Recommendation: **you do** (section 7): a merge-started release leaves an
-unremovable tag that you can only approve or burn, as 0.1.0rc1 showed; an approval would be pending almost always; and
-adopters get fewer, coherent releases. This would amend your decision of 2026-11-22 and depart from SvelteDT's PRD-S7;
-it is your choice alone.
+1. **The owner starts releases, through a release PR** (section 7). This amends the model of 2026-11-22 (#45) and
+   departs from SvelteDT's PRD-S7. Reason: a merge-started release leaves an unremovable tag that can only be approved
+   or burnt, as 0.1.0rc1 showed; an approval would be pending almost always; adopters get fewer, coherent releases.
+2. **Before 1.0, `feat` and `fix` give a patch and a breaking change gives a minor** (`features_always_bump_minor =
+   false`, `breaking_always_bump_major = false`; from 1.0 the same file gives feat minor, fix patch, breaking major,
+   RUN, section 1). **The next release is 0.1.1.** Reason: a 0.x patch never breaks, so `~=0.1.0` takes features and
+   fixes, and a minor means "read the changelog". The README's policy sentence (before 1.0 a patch release may add
+   features and never breaks, a minor release may break) is the owner's; it is written in #76 part (ii) and he
+   approves it there.
+3. **Conventional commits are adopted**: every non-merge commit, header at most 100 characters (section 4). It
+   changes every commit from now on. Reason: git-cliff can only compute or check a version from typed commits; it is
+   SvelteDT's rule; no merge setting changes.
+4. **"Done as recommended" stands**: git-cliff from a uv `release` group with the catch-all skip,
+   `protect_breaking_commits`, the final-only `tag_pattern` and the bump test (section 1); the `pygrep` commit-msg
+   hook after the private-word hook plus the CI `commits` job, which also refuses `fixup!` commits (section 4); the
+   tag ruleset unchanged (section 6); an unpublished tag handled as measured in section 7. Dispatch option A
+   (section 2) applies only if a tagging workflow is ever built.
+5. **Step 0: release 0.1.1 now by today's hand path** (section 8). The tag and the PyPI approval need the owner's
+   explicit OK at that time.
+6. **Security: who can approve a publish.** Facts: the `pypi` environment has a branch policy and one required
+   reviewer, `hniedner`, with `prevent_self_review` false (RUN, `gh api
+   repos/hniedner/datatables-backend/environments/pypi`). The `gh` login on this machine is the account `hniedner`,
+   with the token scopes `gist`, `read:org`, `repo`, `workflow` (RUN, `gh auth status`; no token printed). "Required
+   reviewers with read access to the repository contents and deployments can use this endpoint", `POST
+   /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments` with `state: approved`, and classic tokens "need
+   the repo scope" (FETCHED, docs.github.com/en/rest/actions/workflow-runs, "Review pending deployments for a workflow
+   run"). So an agent session using the owner's `gh` login could approve a PyPI publish as the owner (INFERRED; the
+   endpoint was not called).
 
-**(2) The 0.x bump rule and (4) release now**, side by side; the version number is the first consequence of the rule.
+   The fine-grained token page lists (FETCHED,
+   docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens):
+   `POST /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments`, write, under "Deployments" only (the
+   "Actions" section lists only its GET); `PUT /repos/{owner}/{repo}/environments/{environment_name}`, `POST
+   /repos/{owner}/{repo}/rulesets` and `PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}`, write, under
+   "Administration". All three match what was expected.
 
-| (2) The 0.x bump rule | (4) Release now |
-|---|---|
-| Recommendation: before 1.0, `feat` and `fix` -> patch, a breaking change -> minor (`features_always_bump_minor = false`, `breaking_always_bump_major = false`; from 1.0 the same file gives feat minor, fix patch, breaking major, RUN). Reason: a 0.x patch then never breaks, so `~=0.2.0` takes features and fixes, and a minor means "read the changelog". The README's policy sentence must then say once that before 1.0 a patch release may add features and never breaks, and a minor release may break; that sentence is yours, decided with this item. | Recommendation: release `[Unreleased]` now by today's hand path (needs your explicit OK to publish). Under the recommended rule it is **0.1.1**, since nothing in it breaks; under the draft's rule it would be 0.2.0 (section 8, step 0). |
+   Decided:
+   - **(a) Now:** the owner adds a deny rule in his Claude Code settings for the `pending_deployments` and run-approval
+     API calls. Its exact form is his to check against the settings documentation. It is only as strong as the
+     harness, not a GitHub control.
+   - **Then:** the sessions move from the owner's classic `repo` token to a fine-grained token without the
+     "Deployments" and "Administration" permissions, so the token itself cannot approve a deployment or change an
+     environment or a ruleset. The owner approves in the browser. Before the switch, the list below is checked.
+   - Both are the owner's, by hand. No session creates, stores or switches a token, or tests the approval call.
+   - **(b)** `check-tag` refuses a version with no `## [X] - <date>` section in CHANGELOG.md on `main` (it runs before
+     `publish` through `needs`; `publish` runs no repository code, READ, `release.yml:105`). It is built as part of
+     `check-tag`, but it is not counted as a defence against this risk: a session that can approve a deployment can
+     also merge a CHANGELOG section.
+   - A GitHub-side control (a second required reviewer, or `prevent_self_review`) would lock the owner out of his own
+     releases on a one-owner repository (INFERRED); revisit when a second maintainer joins.
+7. **#76 is part (ii) of section 8** (the convention, the hook, the `commits` job, `cliff.toml` and its test, the
+   README sentence of item 2) **plus `check-tag`** (the git-cliff version comparison, the CHANGELOG-section check of
+   item 6 (b), and the notes with `--ignore-tags` over the range from the last published tag, as measured in section
+   7) **and the release-PR version check.** The (i)/(iii) split, `tag.yml`, hatch-vcs and option P are not built.
 
-**(3) The commit convention.** Recommendation: **every non-merge commit** conventional, header at most 100
-characters (section 4). It changes every commit from now on: a typed, short header, the detail in the body. Reason:
-git-cliff can only compute or check a version from typed commits, under either trigger; it is SvelteDT's rule; and it
-needs no change to the merge settings.
+## To verify before the token switch (the owner's)
 
-**(5) Who can approve a publish.** Facts: the `pypi` environment has a branch policy and one required reviewer,
-`hniedner`, with `prevent_self_review` false (RUN, `gh api repos/hniedner/datatables-backend/environments/pypi`). The
-`gh` login on this machine is the account `hniedner`, with the token scopes `gist`, `read:org`, `repo`, `workflow`
-(RUN, `gh auth status`; no token printed). "Required reviewers with read access to the repository contents and
-deployments can use this endpoint", `POST /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments` with `state:
-approved`, and classic tokens "need the repo scope" (FETCHED, docs.github.com/en/rest/actions/workflow-runs, "Review
-pending deployments for a workflow run"). So an agent session using the owner's `gh` login could approve a PyPI
-publish as the owner (INFERRED; the endpoint was not called).
+**To verify: not tested.** The calls the sessions use routinely, with the fine-grained permission each needs. Every
+row is from the fine-grained token page named in item 6 (FETCHED 2026-11-24); no API was called to test them. `gh`
+subcommands may use GraphQL instead of these REST routes (NOT ESTABLISHED per command), so each is checked once after
+the switch.
 
-| Measure | Cost |
-|---|---|
-| (a) A deny rule in the owner's Claude Code settings for that API call, for example a Bash deny pattern matching `gh api` calls on `pending_deployments`; the shape is a suggestion to check against the settings documentation, not a verified rule, and it is the owner's to add (no session edits permissions) | One settings entry. It is only as strong as the harness: a command that reaches the endpoint another way is not caught, and it is not a GitHub control. |
-| (b) Optionally, `check-tag` refuses a version that has no `## [X] - <date>` section in CHANGELOG.md on `main`, i.e. no merged release PR (it runs before `publish` through `needs`; `publish` itself runs no repository code, READ, `release.yml:105`) | A few lines in `check-tag`. It stops a publish nobody prepared; it does not stop an approval of a prepared one. |
-| A GitHub-side control: a second required reviewer, or `prevent_self_review` | On a one-owner repository either would lock the owner out of his own releases (INFERRED). |
+| Use (`gh` command or `gh api` call) | REST route on the page | Permission |
+|---|---|---|
+| Merge a PR (`gh pr merge`) | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` | Contents: write |
+| View a PR (`gh pr view`) | `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Contents: read, or Pull requests: read |
+| List and view runs (`gh run list`, `gh run view`, `gh run watch`) | `GET .../actions/runs`, `GET .../actions/runs/{run_id}` | Actions: read |
+| Run logs (`gh run view --log`, `gh api .../logs`) | `GET .../actions/runs/{run_id}/logs`, `GET .../actions/jobs/{job_id}/logs` | Actions: read |
+| Start a workflow (`gh workflow run`, the rehearsal) | `POST .../actions/workflows/{workflow_id}/dispatches` | Actions: write |
+| Re-run a run (`gh run rerun`) | `POST .../actions/runs/{run_id}/rerun` | Actions: write |
+| Read an issue (`gh issue view`) | `GET .../issues/{issue_number}` | Issues: read |
+| Create an issue (`gh issue create`) | `POST .../issues` | Issues: write |
+| Edit or close an issue (`gh issue edit`, `gh issue close`) | `PATCH .../issues/{issue_number}` | Issues: write, or Pull requests: write |
+| Comment (`gh issue comment`, `gh pr comment`) | `POST .../issues/{issue_number}/comments` | Issues: write, or Pull requests: write |
+| Code-scanning alerts: read, dismiss | `GET .../code-scanning/alerts`, `PATCH .../code-scanning/alerts/{alert_number}` | Code scanning alerts: read, write |
+| Dependabot alerts: read, dismiss | `GET .../dependabot/alerts`, `PATCH .../dependabot/alerts/{alert_number}` | Dependabot alerts: read, write |
+| Secret-scanning alerts: read, dismiss | `GET .../secret-scanning/alerts`, `PATCH .../secret-scanning/alerts/{alert_number}` | Secret scanning alerts: read, write |
+| Environment read (`gh api .../environments/pypi`, its branch policies) | `GET .../environments/{environment_name}`, `GET .../environments/{environment_name}/deployment-branch-policies` | Actions: read |
+| Releases: view, create, edit (`gh release view/create/edit`) | `GET .../releases/tags/{tag}`, `POST .../releases`, `PATCH .../releases/{release_id}` | Contents: read / write (create and edit also listed under Workflows: write) |
+| Rulesets: read | `GET .../rulesets`, `GET .../rulesets/{ruleset_id}` | Metadata: read |
+| Repository settings: read | `GET /repos/{owner}/{repo}` | Metadata: read |
+| Branch protection: read | `GET .../branches/{branch}/protection` | **Administration: read**. Leaving out Administration loses this read; the repository uses rulesets and has no classic protection on `main` (RUN, 404 "Branch not protected"), so the ruleset reads above cover it. |
 
-Recommendation: (a), and (b) since it is cheap; revisit the GitHub-side control when a second maintainer joins.
-
-**Done as recommended unless you object:**
-
-- Tool: git-cliff from a uv `release` group (section 1), with the catch-all skip, `protect_breaking_commits`, the
-  final-only `tag_pattern` and a test that a breaking change always bumps.
-- The check: a `pygrep` commit-msg hook after the private-word hook, and a `commits` job in CI needed by `gate` that
-  also refuses `fixup!` commits (section 4).
-- Tag ruleset unchanged (section 6).
-- A tag that was not published: the version is computed past it, the notes include its commits through
-  `--ignore-tags` over the range from the last published tag, and the list of such tags is built from PyPI in each run
-  (section 7).
-- Only if the automatic trigger is kept: dispatch option A with `GITHUB_TOKEN` (section 2); hatch-vcs (section 3);
-  `workflow_run` in `tag.yml` (section 5); one release in flight (section 7); changelog option P and the split
-  (ii), (i), (iii) (section 8).
+Every row asked for was found on the page; none is marked "not found".
 
 ## Not established (to verify before relying on it)
 
-- Whether the GitHub Actions App (`GITHUB_TOKEN`) can be a ruleset bypass actor.
-- The exact form of a Claude Code deny rule that catches the `pending_deployments` call (item 5 (a)).
-- That a job past the 30-day approval limit fails and leaves the draft release as described (section 7).
-- Whether a workflow called with `workflow_call` that holds a job asking for more permissions than the caller grants
-  fails or runs.
-- hatch-vcs (automatic trigger only): the version a shallow checkout of a non-tag commit gets.
-- Whether Dependabot moves `build-constraint-dependencies`.
-- Whether `gh release view` without a tag skips a draft (section 7 names the tag instead).
-- git-cliff reading only merge commits (option b of section 4); not needed by the recommendation.
+- The exact form of a Claude Code deny rule that catches the `pending_deployments` and run-approval calls (item 6).
+- Which REST or GraphQL calls each `gh` subcommand makes, and so whether the table above is complete for it.
+- That a job past the 30-day approval limit fails and leaves a draft release as described (section 7).
+- Automatic trigger only, not built: whether the GitHub Actions App (`GITHUB_TOKEN`) can be a ruleset bypass actor;
+  whether a `workflow_call` job asking for more permissions than the caller grants fails or runs; the hatch-vcs version
+  of a shallow non-tag checkout; whether Dependabot moves `build-constraint-dependencies`; whether `gh release view`
+  without a tag skips a draft.
+- git-cliff reading only merge commits (option b of section 4); not needed by the decision.
 - Scorecard's `checks.md` was fetched from its raw file; its rendered page answered 503.
