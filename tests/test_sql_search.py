@@ -16,6 +16,7 @@ from datatables_backend import Column
 from datatables_backend import DTResponse
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import criterion
 from .conftest import people
 from .conftest import request
 
@@ -66,10 +67,18 @@ def column(text: str, name: str = 'team') -> dict[str, Any]:
     return {'column_search': {name: {'value': text}}}
 
 
+def found_by(session: Session, rows: Sequence[str | None], *bodies: dict[str, Any]) -> list[list[int]]:
+    """For each of ``bodies``, the positions (from 1) of the rows of ``rows`` that it finds in ``teams``; the rows are
+    inserted once."""
+    session.execute(people.insert(), [{'id': 10 + n, 'team': text, 'secret': 's'} for n, text in enumerate(rows, 1)])
+    return [
+        [row_id - 10 for row_id in ids(teams.fetch_sync(request('id', 'team', **body), session))] for body in bodies
+    ]
+
+
 def found(session: Session, rows: Sequence[str | None], body: dict[str, Any]) -> list[int]:
     """The positions (from 1) of the rows of ``rows`` that ``body`` finds in ``teams``."""
-    session.execute(people.insert(), [{'id': 10 + n, 'team': text, 'secret': 's'} for n, text in enumerate(rows, 1)])
-    return [row_id - 10 for row_id in ids(teams.fetch_sync(request('id', 'team', **body), session))]
+    return found_by(session, rows, body)[0]
 
 
 def words(count: int) -> str:
@@ -133,8 +142,16 @@ def test_a_phrase_is_read_only_where_a_word_begins(session: Session, text: str, 
 def test_a_phrase_is_one_word_with_its_quotes_read_as_datatables_reads_them(
     session: Session, rows: list[str | None], body: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F4.1 to SPEC-F4.8. The last row: a phrase keeps the spaces inside its quotes."""
+    """SPEC-F4.1, SPEC-F4.2, SPEC-F4.3, SPEC-F4.4, SPEC-F4.5, SPEC-F4.6, SPEC-F4.7, SPEC-F4.8. The last row: a phrase
+    keeps the spaces inside its quotes."""
     assert found(session, rows, body) == expected
+
+
+def test_an_unclosed_quote_opens_no_phrase_and_each_word_after_it_matches_alone(session: Session):
+    """SPEC-F4.9: `"apple red` is the words `apple` and `red`, which row 1 holds in the other order; read as a phrase
+    to the end of the text it finds no row (as `"apple red"` does, SPEC-F4.1)."""
+    rows = ['red apple', 'apple', 'red']
+    assert found_by(session, rows, glob('"apple red'), glob('apple red'), glob('"apple red"')) == [[1], [1], []]
 
 
 @pytest.mark.parametrize(
@@ -152,8 +169,16 @@ def test_a_phrase_is_one_word_with_its_quotes_read_as_datatables_reads_them(
 def test_a_word_with_a_bang_excludes_the_rows_that_hold_it(
     session: Session, rows: list[str | None], body: dict[str, Any], expected: list[int]
 ):
-    """SPEC-F5.1 to SPEC-F5.3, SPEC-F6.1, SPEC-F35.1, SPEC-F35.2: a NULL column passes, and `!x` is no condition."""
+    """SPEC-F5.1, SPEC-F5.2, SPEC-F5.3, SPEC-F6.1, SPEC-F35.1, SPEC-F35.2: a NULL column passes, and `!x` is no
+    condition."""
     assert found(session, rows, body) == expected
+
+
+def test_an_empty_quote_next_to_other_words_adds_nothing(session: Session):
+    """SPEC-F6.5: the empty quote is dropped, so the row whose `team` is NULL still passes `!pipe` (kept as an empty
+    word it would be a condition the NULL cannot meet)."""
+    rows = ['pipe', 'x', None]
+    assert found_by(session, rows, column('!pipe ""'), column('!pipe')) == [[2, 3], [2, 3]]
 
 
 def test_a_negated_word_is_looked_for_in_the_text_of_a_date_too(session: Session):
@@ -186,6 +211,48 @@ def test_a_search_with_no_word_asks_for_no_searchable_column(session: Session):
 def test_each_of_the_five_space_characters_splits_words(session: Session, space: str):
     """SPEC-F7.3: `aa bb` finds the row holding `aa` and `bb` apart and the row holding `aabb`, never `bb` alone."""
     assert found(session, ['aa bb', 'aabb', 'bb'], glob(f'aa{space}bb')) == [1, 2]
+
+
+@pytest.mark.parametrize('space', SPACES)
+def test_a_line_break_in_search_text_is_a_space(session: Session, space: str):
+    """SPEC-F7.1: `red` and `apple` split by any of the five are the words of `red apple`."""
+    rows = ['red apple', 'red', 'apple']
+    assert found_by(session, rows, glob(f'red{space}apple'), glob('red apple')) == [[1], [1]]
+
+
+def test_an_exact_value_with_a_line_break_is_never_rewritten(session: Session):
+    """SPEC-F7.2: `a` + LF + `b` is that value and not `a b`, in `multi_values` and in SearchBuilder `=`."""
+    rows = ['a\nb', 'a b']
+    listed = {'column_search': {'team': {'multi_values': ['a\nb']}}}
+    assert found_by(session, rows, listed, criterion('team', '=', 'a\nb')) == [[1], [1]]
+
+
+def test_a_leading_minus_is_part_of_the_word(session: Session):
+    """SPEC-F8.2: `-red` is searched as text, so `red` alone does not match."""
+    assert found(session, ['-red', 'red', 'blue'], glob('-red')) == [1]
+
+
+@pytest.mark.parametrize(('text', 'expected'), [('red*', [1]), ('re?', [4])])
+def test_wildcard_characters_in_search_text_are_text(session: Session, text: str, expected: list[int]):
+    """SPEC-F8.3: `*` and `?` match themselves and no other character."""
+    assert found(session, ['red*', 'red', 'redx', 're?', 'rex'], glob(text)) == expected
+
+
+def test_a_star_in_contains_is_text(session: Session):
+    """SPEC-F8.4: `a*b` is found inside `xa*by` and not in `xaby`."""
+    assert found(session, ['xa*by', 'xaby'], criterion('team', 'contains', 'a*b')) == [1]
+
+
+@pytest.mark.parametrize(('value', 'rows'), [('x_y', ['x_y', 'xay']), ('50%', ['50%', '50 plum'])])
+def test_the_like_wildcards_in_contains_are_text(session: Session, value: str, rows: list[str]):
+    """SPEC-F8.5: `_` and `%` match themselves; SQL's `LIKE` would match `xay` and `50 plum` too."""
+    assert found(session, rows, criterion('team', 'contains', value)) == [1]
+
+
+@pytest.mark.parametrize('text', ['red NOT apple', 'red not apple'])
+def test_not_is_a_word_and_negates_nothing(session: Session, text: str):
+    """SPEC-F8.6: only the row holding `not` is found; as a negation `red NOT apple` would find row 2."""
+    assert found(session, ['red apple', 'red', 'apple', 'red not apple'], glob(text)) == [4]
 
 
 # -- a hooked column in the global search (PRD-D12) ---

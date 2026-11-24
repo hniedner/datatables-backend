@@ -490,11 +490,13 @@ def test_the_enforced_requirements_of_the_script_are_the_default(tmp_path: Path)
     module = importlib.util.module_from_spec(loaded)
     loaded.loader.exec_module(module)
     ids = [entry[4:] if entry.startswith('PRD-') else f'{entry}1' for entry in module.ENFORCED]
-    prd = PRD + ''.join(f'\n#### PRD-{rid}' + VALID for rid in ids)
-    specs = COMPLETE + ''.join(f'- **SPEC-{rid}.1** Stated, see PRD-F1.\n' for rid in ids)
+    held = [rid for rid in ('F1', 'F2') if rid in ids]  # the requirements COMPLETE already holds, in its order
+    fresh = [rid for rid in ids if rid not in held]
+    prd = PRD + ''.join(f'\n#### PRD-{rid}' + VALID for rid in fresh)
+    specs = COMPLETE + ''.join(f'- **SPEC-{rid}.1** Stated, see PRD-F1.\n' for rid in fresh)
     result = run(tmp_path, {'F.md': specs}, prd=prd, enforce=None)
     assert result.returncode == 1
-    assert result.stderr == ''.join(f'SPEC-{rid}.1 is cited by no test\n' for rid in ids)
+    assert result.stderr == ''.join(f'SPEC-{rid}.1 is cited by no test\n' for rid in [*held, *fresh])
 
 
 def test_an_enforce_entry_that_names_no_requirement_fails(tmp_path: Path) -> None:
