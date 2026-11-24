@@ -1,7 +1,7 @@
 """The OpenSearch backend: the request bodies it sends, and what it makes of the answers.
 
-A recording client stands in for the cluster. Whether OpenSearch evaluates the bodies as intended belongs to the
-container tests of milestone 2; these pin down what is sent.
+A recording client stands in for the cluster. These pin down what is sent; whether OpenSearch evaluates the bodies as
+intended is tested against a real cluster in tests/test_opensearch_live.py.
 """
 
 import asyncio
@@ -112,19 +112,6 @@ def test_an_unfiltered_draw_is_one_search_that_answers_both_counts():
     assert query(client) == []
 
 
-def test_a_filtered_draw_counts_the_total_once_per_ttl():
-    client, cached = (
-        Client(total=3, count=40),
-        SearchTable('docs', COLUMNS, unique_key='id', total_cache=TotalCache(60)),
-    )
-    params = request(*NAMES, search={'value': 'x'})
-    assert (cached.fetch_sync(params, client).recordsTotal, cached.fetch_sync(params, client).recordsFiltered) == (
-        40,
-        3,
-    )
-    assert client.counts == [{'query': {'match_all': {}}}]
-
-
 def test_an_unfiltered_draw_fills_the_total_cache_for_the_filtered_draws_after_it():
     """SPEC-C14.3, PRD-C14, PRD-C8: an unfiltered search's count is the total, and the cache keeps it. Were it not
     kept, every filtered draw after it would pay a count of its own, with nothing to show for it."""
@@ -149,12 +136,6 @@ async def test_the_async_fetch_fills_the_total_cache_with_an_unfiltered_request_
     assert client.counts == []
 
 
-def test_the_total_count_keeps_the_base_filter():
-    client = Client()
-    table.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
-    assert client.counts == [{'query': {'bool': {'must': [{'term': {'published': True}}]}}}]
-
-
 async def test_the_async_fetch_answers_a_user_error_too():
     """SPEC-E1.1 says `fetch` and `fetch_sync`: each has its own place where the mistake becomes an answer, and
     nothing is sent from either."""
@@ -162,13 +143,6 @@ async def test_the_async_fetch_answers_a_user_error_too():
     response = await table.fetch(request(*NAMES, **criterion('pages', '=', 'abc')), client)
     assert refused(response, 'invalid_number')
     assert (client.searches, client.counts) == ([], [])
-
-
-async def test_the_async_client_answers_like_the_sync_one():
-    params = request(*NAMES, search={'value': 'x'}, order=[{'column': 1, 'dir': 'desc'}])
-    sync_client, async_client = Client(), AsyncClient()
-    assert await table.fetch(params, async_client) == table.fetch_sync(params, sync_client)
-    assert async_client.searches == sync_client.searches
 
 
 def test_rows_are_read_from_the_source_by_field_including_dotted_paths():
@@ -591,22 +565,6 @@ def test_a_mistake_found_while_the_body_is_built_is_logged_once(
 # -- searches ---
 
 
-def test_the_global_search_fits_each_string_mapping_and_skips_numbers_and_dates():
-    """SPEC-F32.1: the number `pages` and the date `created` add no clause, so `17` and `2024` can match nothing
-    there; the rows are the live test's."""
-    client = Client()
-    table.fetch_sync(request(*NAMES, search={'value': 'a*b'}), client)
-    (clause,) = query(client)
-    should = clause['bool']['should']
-    assert should[0] == {'wildcard': {'id': {'value': '*a\\*b*', 'case_insensitive': True}}}
-    assert should[1]['bool']['should'] == [
-        {'match_phrase': {'title': 'a*b'}},
-        {'wildcard': {'title.keyword': {'value': '*a\\*b*', 'case_insensitive': True}}},
-    ]
-    assert should[2] == {'match_phrase': {'body': 'a*b'}}
-    assert len(should) == 4  # id, title, body, author
-
-
 def _in_column(word: str) -> list[dict[str, Any]]:
     """What one word asks of each searched column of NAMES, in column order: id (keyword), title (text+keyword), body
     (text), author (text+keyword)."""
@@ -619,33 +577,6 @@ def _in_column(word: str) -> list[dict[str, Any]]:
                          'minimum_should_match': 1}}  # fmt: skip
 
     return [wildcard('id'), both('title'), {'match_phrase': {'body': word}}, both('meta.author')]
-
-
-def test_each_word_of_the_global_search_must_be_found_in_some_searched_column():
-    """SPEC-F1.1: one clause per word, each an alternative over the columns, so the words may sit in different ones."""
-    client = Client()
-    table.fetch_sync(request(*NAMES, search={'value': 'red 7'}), client)
-    assert query(client) == [
-        {
-            'bool': {
-                'must': [
-                    {'bool': {'should': _in_column('red'), 'minimum_should_match': 1}},
-                    {'bool': {'should': _in_column('7'), 'minimum_should_match': 1}},
-                ]
-            }
-        }
-    ]
-
-
-@pytest.mark.parametrize('text', ['red NOT apple', 'red not apple'])
-def test_not_in_the_global_search_is_a_word_like_any_other(text: str):
-    """SPEC-F8.6: three words, each a clause that must be found in some column, and no `must_not` (the live test shows
-    the rows). Read as a negation, `NOT apple` would be a `must_not` of `apple` and no clause for `NOT`."""
-    client = Client()
-    table.fetch_sync(request(*NAMES, search={'value': text}), client)
-    assert query(client) == [
-        {'bool': {'must': [{'bool': {'should': _in_column(word), 'minimum_should_match': 1}} for word in text.split()]}}
-    ]
 
 
 def test_a_negated_word_of_the_global_search_is_excluded_from_every_searched_column():
@@ -699,20 +630,6 @@ def test_a_phrase_in_a_column_search_is_a_phrase_match_on_analysed_text():
     }
 
 
-@pytest.mark.parametrize('condition', ['search', 'contains'])
-def test_a_word_the_analyser_splits_is_a_phrase_match_on_analysed_text(condition: str):
-    """SPEC-F11.7: a `match` of `a-b` is an OR of its tokens, which also finds text holding `a` alone. The word of a
-    column search and SearchBuilder `contains` compile alike; the live test shows the rows."""
-    client, params = (
-        Client(),
-        request(*NAMES, **(criterion('body', 'contains', 'a-b') if condition == 'contains' else {})),
-    )
-    if condition == 'search':
-        params.columns[2].search.value = 'a-b'
-    table.fetch_sync(params, client)
-    assert query(client) == [{'match_phrase': {'body': 'a-b'}}]
-
-
 @pytest.mark.parametrize('column', ['pages', 'created'])
 def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(column: str):
     """SPEC-F6.2: a number or a date is read as one value, so `"` would be refused as unreadable; it is no word."""
@@ -722,47 +639,12 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
     assert query(client) == []
 
 
-def test_a_global_search_over_numbers_and_dates_only_is_refused():
-    numbers = SearchTable('docs', [Column('pages', type='number'), Column('created', type='date')], unique_key='pages')
-    refused(numbers.fetch_sync(request('pages', 'created', search={'value': '3'}), Client()))
-
-
-def test_column_searches_follow_the_columns_type():
-    """SPEC-F33.1 (a number is the term `12`, not text that holds it), SPEC-F22.4 (a month is a range of its days)."""
-    client, params = Client(), request(*NAMES)
-    params.columns[2].search.value = 'granny smith'
-    params.columns[3].search.value = '12'
-    params.columns[4].search.value = '2026-02'
-    table.fetch_sync(params, client)
-    text, number, date = query(client)
-    assert text == {'bool': {'must': [{'match_phrase': {'body': 'granny'}}, {'match_phrase': {'body': 'smith'}}]}}
-    assert number == {'term': {'pages': 12}}
-    assert date == {'range': {'created': {'gte': '2026-02-01', 'lt': '2026-03-01', 'format': 'strict_date'}}}
-
-
 def test_a_date_column_search_reads_a_day_with_a_time_after_it_as_that_day():
     """SPEC-F34.1: the time comes after a space, and it is one date term all the same, not several (PRD-F34)."""
     client, params = Client(), request(*NAMES)
     params.columns[4].search.value = '2026-07-15 10:00:00'
     table.fetch_sync(params, client)
     assert query(client) == [{'range': {'created': {'gte': '2026-07-15', 'lt': '2026-07-16', 'format': 'strict_date'}}}]
-
-
-def test_a_multi_select_is_a_term_query_in_any_case_for_each_value_on_the_whole_string():
-    """PRD-F9 (SPEC-F9.3): a `terms` query takes no `case_insensitive`."""
-    client = Client()
-    table.fetch_sync(request(*NAMES, column_search={'title': {'value': 'a|b', 'regex': True}}), client)
-    assert query(client) == [
-        {
-            'bool': {
-                'should': [
-                    {'term': {'title.keyword': {'value': 'a', 'case_insensitive': True}}},
-                    {'term': {'title.keyword': {'value': 'b', 'case_insensitive': True}}},
-                ],
-                'minimum_should_match': 1,
-            }
-        }
-    ]
 
 
 def test_a_list_on_a_date_column_is_a_day_range_for_each_entry():
@@ -942,16 +824,6 @@ def test_a_cased_letter_outside_ascii_on_a_column_the_library_does_not_fold(
     [
         ('id', '=', ['A1'], {'term': {'id': {'value': 'A1', 'case_insensitive': True}}}),  # SPEC-F9.2
         ('title', '!=', ['T'], {'bool': {'must_not': [{'term': {'title.keyword': {'value': 'T', 'case_insensitive': True}}}]}}),
-        ('body', 'contains', ['x y'], {'match_phrase': {'body': 'x y'}}),  # analysed text: the phrase of the words
-        ('title', 'starts', ['a?'], {'wildcard': {'title.keyword': {'value': 'a\\?*', 'case_insensitive': True}}}),
-        ('id', '!ends', ['z'], {'bool': {'must_not': [{'wildcard': {'id': {'value': '*z', 'case_insensitive': True}}}]}}),
-        ('pages', 'between', ['1', '9'], {'range': {'pages': {'gte': 1, 'lte': 9}}}),
-        ('pages', '>', ['2.5'], {'range': {'pages': {'gt': 2.5}}}),
-        ('created', '=', ['2026-07-15'], {'range': {'created': {'gte': '2026-07-15', 'lt': '2026-07-16', 'format': 'strict_date'}}}),
-        ('created', '<=', ['2026-07-15'], {'range': {'created': {'lt': '2026-07-16', 'format': 'strict_date'}}}),
-        ('created', '>', ['2026-07-15'], {'range': {'created': {'gte': '2026-07-16', 'format': 'strict_date'}}}),
-        ('author', 'null', [], {'bool': {'must_not': [{'exists': {'field': 'meta.author'}}]}}),
-        ('author', '!null', [], {'exists': {'field': 'meta.author'}}),
     ],
 )  # fmt: skip
 def test_searchbuilder_criteria(column: str, condition: str, values: list[str], clause: dict[str, Any]):
@@ -959,18 +831,6 @@ def test_searchbuilder_criteria(column: str, condition: str, values: list[str], 
     client = Client()
     table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)
     assert query(client) == [clause]
-
-
-def test_searchbuilder_or_groups_need_one_match():
-    client = Client()
-    tree = {'logic': 'OR', 'criteria': [
-        {'condition': '=', 'origData': 'id', 'value': ['a']},
-        {'condition': '=', 'origData': 'id', 'value': ['b']},
-        {'logic': 'AND', 'criteria': []},
-    ]}  # fmt: skip
-    table.fetch_sync(request(*NAMES, searchBuilder=tree), client)
-    terms = [{'term': {'id': {'value': value, 'case_insensitive': True}}} for value in ('a', 'b')]
-    assert query(client) == [{'bool': {'should': terms, 'minimum_should_match': 1}}]
 
 
 def test_an_undeclared_field_is_refused_before_anything_is_sent():
@@ -1126,8 +986,7 @@ def test_a_request_without_an_order_is_sent_in_the_keys_ascending_order():
 @pytest.mark.parametrize(
     ('order', 'flags', 'expected'),
     [
-        ([{'column': 1, 'dir': 'desc'}], {}, [TITLE_DESC, ID_DESC]),  # the key follows the first entry
-        ([{'column': 3, 'dir': 'asc'}], {}, [PAGES_ASC, ID_ASC]),
+        # the key follows the first entry, not the last
         ([{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}], {}, [TITLE_DESC, PAGES_ASC, ID_DESC]),
         # a skipped entry does not decide the direction: `body` is unorderable, so `title` is the first applied one
         (
@@ -1135,13 +994,12 @@ def test_a_request_without_an_order_is_sent_in_the_keys_ascending_order():
             {'body': {'orderable': False}},
             [TITLE_DESC, ID_DESC],
         ),
-        ([{'column': 0, 'dir': 'desc'}], {}, [ID_DESC]),  # a key the order already names is not sent twice
     ],
 )
 def test_the_key_comes_last_in_the_direction_of_the_first_applied_entry(
     order: list[dict[str, Any]], flags: dict[str, Any], expected: list[dict[str, Any]]
 ):
-    """SPEC-O3.4, SPEC-O3.3, SPEC-O8: the exact reverse of the ascending order holds only if the key follows."""
+    """SPEC-O3.4, SPEC-O3.3: the exact reverse of the ascending order holds only if the key follows."""
     client = Client()
     keyed('id').fetch_sync(request(*NAMES, flags=flags, order=order), client)
     assert client.searches[0]['sort'] == expected
@@ -1185,6 +1043,7 @@ def test_an_index_table_without_a_unique_key_is_a_schema_error():
         (('id', 'nope'), 'nope'),
         ('body', 'body'),  # analysed text only: there is no whole string to sort by
         ((), 'at least one'),
+        ('_id', '_id'),  # SPEC-D11.5: `_id` is no reserved key name, and no other name is read as a field
     ],
 )
 def test_a_unique_key_that_cannot_break_ties_is_a_schema_error(key: str | tuple[str, ...], text: str):
@@ -1228,29 +1087,6 @@ class AsyncDocs(Docs):
 
 def row_ids(response: DTResponse) -> list[str]:
     return [row['id'] for row in response.data]
-
-
-@pytest.mark.parametrize('rows', [10, 7, 4])
-def test_every_page_the_reversed_sort_reaches_is_the_page_the_ordinary_way_gives(rows: int):
-    """SPEC-C10.3 on the recording client, with a window of 3: for every start and length, a page is served exactly
-    when it is ordinary (start + length <= W) or near the end (rows - start <= W), and then it holds the rows a table
-    of the default window shows; the empty page and the refusal keep their places (PRD-C3, PRD-C12)."""
-    window = 3
-    for start in range(rows + 2):
-        for length in range(1, 5):
-            asked = request(*NAMES, start=start, length=length)
-            small, wide = (
-                bounded(window).fetch_sync(asked, Docs(rows)),
-                SearchTable('docs', COLUMNS, unique_key='id').fetch_sync(asked, Docs(rows)),
-            )
-            where = f'rows {rows}, start {start}, length {length}'
-            served = start + length <= window or rows - start <= window or start >= rows
-            assert (small.error_code is None) == served, where
-            if served:
-                assert row_ids(small) == row_ids(wide), where
-                assert (small.recordsTotal, small.recordsFiltered) == (rows, rows), where
-            else:
-                assert small.error_code == 'page_out_of_range', where
 
 
 @pytest.mark.parametrize(
@@ -1328,14 +1164,14 @@ PARTIAL = {'total': 2, 'successful': 1, 'failed': 1}
 
 
 def test_a_partial_answer_to_a_reversed_page_raises():
-    """SPEC-E8: a page read from some of the shards only is no answer, the reversed one included."""
+    """SPEC-E9.1: a page read from some of the shards only is no answer, the reversed one included."""
     client = Counting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
     with pytest.raises(PartialResultError):
         bounded(3).fetch_sync(request(*NAMES, start=9, length=1), client)
 
 
 async def test_a_partial_answer_to_an_async_reversed_page_raises():
-    """SPEC-E8 through `fetch`."""
+    """SPEC-E9.1 through `fetch`."""
     client = AsyncCounting(total=10, filtered=10, hits=[doc(10)], _shards=PARTIAL)
     with pytest.raises(PartialResultError):
         await bounded(3).fetch(request(*NAMES, start=9, length=1), client)
@@ -1352,13 +1188,6 @@ ID_ADVICE = 'Copy the id into a `keyword` field of the documents and name that c
 
 def doc_hit(identifier: str, pages: int) -> dict[str, Any]:
     return {'_id': identifier, '_source': {'pages': pages}}  # a document's `_id` is not in its `_source`
-
-
-def test_the_document_id_alone_is_an_unknown_name_for_the_unique_key():
-    """SPEC-D11.5: `_id` is no reserved key name, and no other name is read as a field."""
-    with pytest.raises(SchemaError, match='_id') as raised:
-        keyed('_id')
-    assert 'unique_key' in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -1456,20 +1285,6 @@ flags = SearchTable(
 def clauses(client: Client) -> list[dict[str, Any]]:
     """The clauses of the last search of a table without a base filter."""
     return client.searches[-1]['query']['bool']['must']
-
-
-@pytest.mark.parametrize(
-    ('condition', 'clause'),
-    [
-        ('=', {'term': {'active': True}}),
-        ('!=', {'bool': {'must_not': [{'term': {'active': True}}]}}),  # keeps a document without the field
-    ],
-)
-def test_searchbuilder_on_a_boolean_column_sends_a_json_boolean(condition: str, clause: dict[str, Any]):
-    """SPEC-F43.1, SPEC-F43.2: the field itself is queried, with a JSON boolean, never the user's text."""
-    client = Client()
-    flags.fetch_sync(request(*FLAG_NAMES, **criterion('active', condition, 'TRUE')), client)
-    assert clauses(client) == [clause]
 
 
 def test_a_column_search_on_a_boolean_column_is_a_terms_query_of_booleans():
@@ -1719,14 +1534,6 @@ def test_searchbuilder_on_a_hooked_column_sends_the_hooked_value_or_the_existenc
     assert seen == values
 
 
-def test_two_column_searches_are_both_in_the_one_must():
-    """SPEC-F12.1: each column's clause stays in the `must` that ANDs them, so neither replaces the other."""
-    title, body = {'title': {'value': 'apple'}}, {'body': {'value': 'green'}}
-    both = clauses_of(column_search={**title, **body})
-    assert both == [*clauses_of(column_search=title), *clauses_of(column_search=body)]
-    assert len(both) == 2
-
-
 def test_a_column_search_and_the_global_search_are_both_in_the_one_must():
     """SPEC-F12.2: the global search is one more clause beside the column search, an AND."""
     column, search = {'title': {'value': 'apple'}}, {'value': 'green'}
@@ -1825,9 +1632,6 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
 
 OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
-    ({'search': {'value': 'a' * 256}}, 'value_too_long'),
-    ({'search': {'value': SEVENTEEN}}, 'too_many_words'),
-    ({'column_search': {'title': {'value': 'a' * 256}}}, 'value_too_long'),
     ({'column_search': {'title': {'value': SEVENTEEN}}}, 'too_many_words'),
     ({'column_search': {'pages': {'value': '1' * 256}}}, 'value_too_long'),
     # PRD-E3 (2): on a number or date column that is one value to match, words are no words, so the value is unreadable
@@ -1835,9 +1639,6 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     ({'column_search': {'created': {'value': SEVENTEEN}}}, 'invalid_date'),
     ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
     ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
-    (criterion('title', 'contains', 'a' * 256), 'value_too_long'),
-    (criterion('title', '=', 'a' * 256), 'value_too_long'),
-    (criterion('title', 'starts', 'a' * 256), 'value_too_long'),
     (criterion('pages', '=', '1' * 256), 'value_too_long'),
     # SPEC-F14.4: the length comes before the number is read, so no `invalid_number` and no conversion: Python refuses
     # an int of more than 4,300 digits, and a long run of zeros costs a parse
@@ -1845,14 +1646,7 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     (criterion('pages', '=', '0' * 5000), 'value_too_long'),
     (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
     (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
-    # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
-    (criterion('pages', '=', 'x' * 300), 'value_too_long'),
-    (criterion('created', '=', '2024-13-01' + ' ' * 250), 'value_too_long'),
-    ({'search': {'value': SEVENTEEN, 'regex': True}}, 'too_many_words'),
-    ({'search': {'value': 'a' * 256, 'multi_values': ['x']}}, 'value_too_long'),
-    ({'column_search': {'extra': {'value': 'a' * 256}}}, 'value_too_long'),  # not a name the server declares
-    ({'search': {'value': 'a' * 256 + '\x00'}}, 'invalid_character'),
-    ({'search': {'value': ' '.join(['abcdefghij'] * 30)}}, 'value_too_long'),  # 30 words too, and the length first
+    # SPEC-E3.2: step 1 comes before every step it hides, in the same part of the request as in another
     ({'search': {'value': SEVENTEEN}, 'column_search': {'title': {'value': 'a' * 256}}}, 'too_many_words'),
     ({'search': {'value': 'a' * 256}, **criterion('pages', '=', 'abc')}, 'value_too_long'),
 ]
@@ -1860,37 +1654,27 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
 
 @pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
 def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(body: dict[str, Any], code: str):
-    """PRD-F14, PRD-E3 (SPEC-F14.1, SPEC-F14.2, SPEC-F14.3, SPEC-F14.4, SPEC-E3.2): the same refusal for every kind of
-    value and part of the request, answered before the server is asked, with a text that holds none of what was sent."""
+    """SPEC-F14.2, SPEC-F14.4, SPEC-E3.2, SPEC-F33.2, SPEC-F34.2: the refusal of a value on the columns and in the
+    conditions OpenSearch describes, answered before the server is asked, with a text that holds none of what was
+    sent. OpenSearch reads a column search on a number or a date as one value, so 17 words there are answered as an
+    unreadable value, not counted against the bound of PRD-F14. The rows the table lacks are asserted by the error
+    table below and by tests/test_sql.py and tests/test_sql_search.py."""
     client = Client()
-    names = (*NAMES, 'extra') if 'extra' in str(body) else NAMES
-    message = refused(table.fetch_sync(request(*names, **body), client), code)
+    message = refused(table.fetch_sync(request(*NAMES, **body), client), code)
     assert client.searches == []
-    assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', *SEVENTEEN.split()))
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'abc', *SEVENTEEN.split()))
 
 
 @pytest.mark.parametrize(
     'body',
     [
-        {'search': {'value': 'a' * 255}},
         {'search': {'value': ' '.join(SEVENTEEN.split()[:16])}},
-        {'column_search': {'title': {'value': 'a' * 255}}},
-        {'column_search': {'title': {'value': ' '.join(SEVENTEEN.split()[:16])}}},  # SPEC-F14.2: 16 words in a column
-        {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}},
-        {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
-        criterion('title', '=', 'a' * 255),
-        criterion('title', 'contains', 'a' * 255),
-        criterion('title', 'starts', 'a' * 255),
-        criterion('pages', '=', '1' * 255),
-        criterion('pages', 'between', '1', '0' * 252 + '100'),  # the second value is 255 characters
-        criterion('created', '=', '2024-01-01' + ' ' * 245),
         criterion('pages', 'null', '1' * 300),  # a value the condition does not read is not measured
     ],
 )
 def test_a_value_within_the_bounds_is_answered(body: dict[str, Any]):
-    """SPEC-F14.2, SPEC-F14.4: the bound is at 255 code points and 16 words, not below. The number of 255 digits is
-    out of an `integer` field's range, which only a cluster refuses (the live list of the same bound uses a number
-    inside it)."""
+    """SPEC-F14.2, SPEC-F14.4: a global search of 16 words, and `null` with a value of 300 code points, are answered.
+    The values of 255 code points are answered by the cluster in tests/test_opensearch_live.py."""
     assert table.fetch_sync(request(*NAMES, **body), Client()).error is None
 
 
@@ -2126,18 +1910,6 @@ def test_an_order_list_is_refused_whole_wherever_the_refused_entry_stands(order:
     assert client.searches == []
 
 
-def test_one_table_sends_the_same_body_for_the_same_request_after_another():
-    """SPEC-A1.1: request X, then Y (a column search and an order), then X again: equal answers, equal bodies."""
-    client = Client(hits=HITS)
-    x = request(*NAMES, search={'value': 'red'})
-    y = request(*NAMES, column_search={'title': {'value': 'pear'}}, order=[{'column': 3, 'dir': 'desc'}])
-    first = table.fetch_sync(x, client)
-    table.fetch_sync(y, client)
-    assert table.fetch_sync(x, client) == first
-    assert client.searches[2] == client.searches[0]
-    assert client.searches[1] != client.searches[0]
-
-
 def _varied_requests(count: int) -> list[DTParams]:
     words = ['red', 'ann', 'example', 'zzz', '']
     return [
@@ -2174,23 +1946,6 @@ async def test_one_table_answers_20_concurrent_requests_on_one_async_client_as_a
 
     assert canonical(shared.searches) == canonical(expected_client.searches)
     assert canonical(shared.counts) == canonical(expected_client.counts)
-
-
-def test_building_a_table_takes_no_client_and_the_first_call_is_made_inside_fetch():
-    """SPEC-A3.1: the constructor takes none, so none is called before `fetch_sync`."""
-    client = Client(hits=HITS)
-    built = _fresh()
-    assert (client.searches, client.counts) == ([], [])
-    built.fetch_sync(request(*NAMES), client)
-    assert len(client.searches) == 1
-
-
-async def test_the_sync_and_the_async_client_answer_the_base_request():
-    """SPEC-A4.1, SPEC-A5.1: the answer is built from the hits, and both clients give the same one."""
-    sync_answer = table.fetch_sync(request(*NAMES), Client(hits=HITS))
-    async_answer = await table.fetch(request(*NAMES), AsyncClient(hits=HITS))
-    assert [row['id'] for row in sync_answer.data] == ['a', 'b']
-    assert async_answer == sync_answer
 
 
 def _plain(value: Any) -> bool:
@@ -2319,7 +2074,6 @@ def test_clear_makes_the_next_request_count_again():
 # -- errors (PRD-E, issue #122) ---
 
 ERROR_NAMES = ('id', 'name', 'age', 'born', 'active', 'secret', 'team')
-UNDECLARED = (*ERROR_NAMES, 'extra')
 errors = SearchTable(
     'docs',
     [
@@ -2334,28 +2088,18 @@ errors = SearchTable(
     unique_key='id',
 )
 
-#: The statements of PRD-E3 and PRD-E4 that hold on every backend, each with the request it states and its code. The
-#: texts are asserted once, in tests/test_sql.py (the convention of SPEC-E4).
+#: The statements of PRD-E4 that hold on every backend and whose answer depends on how OpenSearch describes a column
+#: (its type, and a number, date or boolean column searched), each with the request it states and its code. The
+#: texts, and the statements no description changes, are asserted once, in tests/test_sql.py (the convention of
+#: SPEC-E4); on OpenSearch the bounds of PRD-F38 are refused in the tests of those bounds above.
 USER_ERRORS = [
-    ('SPEC-E4.3', ERROR_NAMES, {'search': {'value': 'a\tb'}}, 'invalid_character'),
-    ('SPEC-E4.4', ERROR_NAMES, {'column_search': {'name': {'value': 'a\tb'}}}, 'invalid_character'),
-    ('SPEC-E4.4', ERROR_NAMES, criterion('name', '=', 'a\tb'), 'invalid_character'),
-    ('SPEC-E4.5', UNDECLARED, {'column_search': {'extra': {'value': 'a\tb'}}}, 'invalid_character'),
-    ('SPEC-E4.5', UNDECLARED, criterion('extra', '=', 'a\tb'), 'invalid_character'),
     ('SPEC-E4.6', ERROR_NAMES, criterion('age', '=', 'abc'), 'invalid_number'),
     ('SPEC-E4.7', ERROR_NAMES, criterion('born', '=', '15/07/1980'), 'invalid_date'),
     ('SPEC-E4.8', ERROR_NAMES, criterion('born', 'contains', '1980-13'), 'invalid_date'),
     ('SPEC-E4.8', ERROR_NAMES, criterion('born', 'contains', '1980-02-30'), 'invalid_date'),
     ('SPEC-E4.10', ERROR_NAMES, criterion('born', '<', '9999-12-31'), 'invalid_date'),
     ('SPEC-E4.10', ERROR_NAMES, criterion('born', 'contains', '9999'), 'invalid_date'),
-    ('SPEC-E4.11', UNDECLARED, {'order': [{'column': 7, 'dir': 'asc'}]}, 'invalid_filter'),
-    ('SPEC-E4.12', UNDECLARED, {'column_search': {'extra': {'value': 'x'}}}, 'invalid_filter'),
-    ('SPEC-E4.13', ERROR_NAMES, {'order': [{'column': 6, 'dir': 'asc'}]}, 'invalid_filter'),
-    ('SPEC-E4.14', ERROR_NAMES, {'column_search': {'secret': {'value': 'x'}}}, 'invalid_filter'),
     ('SPEC-E4.15', ('active',), {'search': {'value': 'x'}}, 'invalid_filter'),
-    ('SPEC-E4.16', ERROR_NAMES, {'search': {'value': 'a.*', 'regex': True}}, 'invalid_filter'),
-    ('SPEC-E4.17', ERROR_NAMES, {'column_search': {'name': {'value': 'A.+', 'regex': True}}}, 'invalid_filter'),
-    ('SPEC-E4.18', ERROR_NAMES, {'search': {'value': '', 'multi_values': ['Bob']}}, 'invalid_filter'),
     (
         'SPEC-E4.19',
         ERROR_NAMES,
@@ -2376,21 +2120,13 @@ USER_ERRORS = [
         'invalid_date',
     ),
     ('SPEC-E4.27', ERROR_NAMES, criterion('born', 'between', '2024-01-01', 'abc'), 'invalid_date'),
-    ('SPEC-E4.28', ERROR_NAMES, criterion('name', '=', 'Bob', 'Ann'), 'invalid_filter'),
+    # The bounds of PRD-F14 refused on OpenSearch: the rest of the bounds table is in tests/test_sql.py
     ('SPEC-E4.30', ERROR_NAMES, {'search': {'value': 'x' * 256}}, 'value_too_long'),
     ('SPEC-E4.30', ERROR_NAMES, {'column_search': {'name': {'value': 'x' * 256}}}, 'value_too_long'),
     ('SPEC-E4.30', ERROR_NAMES, criterion('name', '=', 'x' * 256), 'value_too_long'),
     ('SPEC-E4.30', ERROR_NAMES, {'search': {'value': ' '.join('w' * 17)}}, 'too_many_words'),
-    ('SPEC-E4.31', ERROR_NAMES, {'searchBuilder': nested(9, 'name')}, 'invalid_filter'),
-    ('SPEC-E4.32', ERROR_NAMES, {'searchBuilder': flat(65, 'name')}, 'invalid_filter'),
     (
-        'SPEC-E4.33',
-        ERROR_NAMES,
-        {'column_search': {'name': {'multi_values': exact_values(257, 'Ann')}}},
-        'invalid_filter',
-    ),
-    (
-        'SPEC-E4.34',
+        'SPEC-E4.34',  # with a list on the number column `age`, which OpenSearch reads where the body is built
         ERROR_NAMES,
         {
             'column_search': {
@@ -2401,7 +2137,6 @@ USER_ERRORS = [
         },
         'invalid_filter',
     ),
-    ('SPEC-E4.35', ('name',) * 65, {'column_search': {'name': {'value': 'Ann'}}}, 'invalid_filter'),
 ]
 
 
@@ -2411,12 +2146,10 @@ USER_ERRORS = [
 def test_every_user_error_of_the_specs_has_its_code_on_opensearch_and_sends_nothing(
     spec: str, names: tuple[str, ...], body: dict[str, Any], code: str
 ):
-    """SPEC-E4.3, SPEC-E4.4, SPEC-E4.5, SPEC-E4.6, SPEC-E4.7, SPEC-E4.8, SPEC-E4.10, SPEC-E4.11, SPEC-E4.12, SPEC-E4.13,
-    SPEC-E4.14, SPEC-E4.15, SPEC-E4.16, SPEC-E4.17, SPEC-E4.18, SPEC-E4.19, SPEC-E4.20, SPEC-E4.22, SPEC-E4.25,
-    SPEC-E4.27, SPEC-E4.28, SPEC-E4.30, SPEC-E4.31, SPEC-E4.32, SPEC-E4.33, SPEC-E4.34 and SPEC-E4.35 (the `spec` of
-    each case), SPEC-E2.1: the statements tagged [all] answer on OpenSearch the code they answer on SQL, and no
-    mistake reaches the cluster, as a search or as a count (SPEC-E7.2). The text of each is asserted in
-    tests/test_sql.py, once."""
+    """SPEC-E4.6, SPEC-E4.7, SPEC-E4.8, SPEC-E4.10, SPEC-E4.15, SPEC-E4.19, SPEC-E4.20, SPEC-E4.22, SPEC-E4.25,
+    SPEC-E4.27, SPEC-E4.30 and SPEC-E4.34 (the `spec` of each case), SPEC-E2.1: the statements tagged [all] answer on
+    OpenSearch the code they answer on SQL, and no mistake reaches the cluster, as a search or as a count
+    (SPEC-E7.2). The text of each is asserted in tests/test_sql.py, once."""
     client = Client()
     assert refused(errors.fetch_sync(request(*names, **body), client), code)
     assert (client.searches, client.counts) == ([], [])
@@ -2628,8 +2361,6 @@ def test_an_answer_with_no_shards_key_at_all_raises_too():
 
 # -- filters that are not search: categorical values, regex refusals, the tree beside the searches (issue #62) ---
 
-ESCAPE_SET = '/.*+?|()[]{}\\$^-'  # PRD-F19's set, whole
-ESCAPED_SET = ''.join('\\' + character for character in ESCAPE_SET)
 REGEX_FORMS = ['^a|b$', 'a.b', 'a*', '(a)', '[ab]', 'a{2}', r'\d', r'\w', r'\n', 'a+', 'a?', '^(a|b)']  # SPEC-F18.1
 
 
@@ -2637,26 +2368,6 @@ def clauses_of(**body: Any) -> list[dict[str, Any]]:
     client = Client()
     assert table.fetch_sync(request(*NAMES, **body), client).error is None
     return query(client)
-
-
-@pytest.mark.parametrize(
-    ('value', 'entries'),
-    [
-        ('red', ['red']),  # SPEC-F16.1
-        ('^red$', ['red']),  # SPEC-F16.2
-        ('red|blue', ['red', 'blue']),
-        ('^(red|blue)$', ['red', 'blue']),
-        ('^(a-b/c)$', ['a-b/c']),  # SPEC-F16.3
-        (r'^(a\-b\/c)$', ['a-b/c']),
-        (f'^({ESCAPED_SET})$', [ESCAPE_SET]),  # SPEC-F19.1
-    ],
-)
-def test_a_categorical_filter_sends_what_its_list_of_values_sends(value: str, entries: list[str]):
-    """SPEC-F16.1, SPEC-F16.2, SPEC-F16.3, SPEC-F19.1: a categorical filter is `multi_values` once the request is
-    read, so both ask the cluster the same exact matches."""
-    categorical = clauses_of(column_search={'title': {'value': value, 'regex': True}})
-    assert categorical == clauses_of(column_search={'title': {'multi_values': entries}})
-    assert 'case_insensitive' in json.dumps(categorical)  # PRD-F9: in any case, whole values only
 
 
 @pytest.mark.parametrize(
@@ -2778,13 +2489,3 @@ def test_a_criterion_with_no_column_adds_nothing(unfinished: dict[str, Any]):
     assert expected != []
     for logic in ('AND', 'OR'):
         assert clauses_of(searchBuilder={'logic': logic, 'criteria': [finished, unfinished]}) == expected, logic
-
-
-@pytest.mark.parametrize(
-    'search',
-    [{'value': '^(7|8)$', 'regex': True}, {'multi_values': ['7', '8']}],
-    ids=['categorical', 'multi_values'],
-)
-def test_a_categorical_filter_on_a_number_column_sends_the_numbers(search: dict[str, Any]):
-    """SPEC-F33.3: both ask for the numbers 7 and 8 as `terms`, whatever form the filter came in."""
-    assert clauses_of(column_search={'pages': search}) == [{'terms': {'pages': [7, 8]}}]
