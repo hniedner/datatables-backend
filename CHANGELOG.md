@@ -13,6 +13,13 @@ The first release: the code of 0.1.0rc4, with its version, and one documentation
 - `docs/rules.md` states the 422 answer of the FastAPI dependency for a malformed request, with each shape the tests
   pin ([#152]).
 
+### Changed
+
+- Since 0.1.0rc3, `SQLTable` refuses a declared type that cannot fit the column's SQL type with a `SchemaError` when the
+  table is built ([#46]): a table that constructed on 0.1.0rc3 or earlier may be refused. The refused cases are a
+  string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`; the message
+  names the column and both fixes.
+
 ## [0.1.0rc4] - 2026-11-24
 
 Changes since 0.1.0rc3.
