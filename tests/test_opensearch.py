@@ -1632,22 +1632,37 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
 
 OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
+    ({'column_search': {'title': {'value': SEVENTEEN}}}, 'too_many_words'),
+    ({'column_search': {'pages': {'value': '1' * 256}}}, 'value_too_long'),
     # PRD-E3 (2): on a number or date column that is one value to match, words are no words, so the value is unreadable
     ({'column_search': {'pages': {'value': SEVENTEEN}}}, 'invalid_number'),
     ({'column_search': {'created': {'value': SEVENTEEN}}}, 'invalid_date'),
+    ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
+    ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
+    (criterion('pages', '=', '1' * 256), 'value_too_long'),
+    # SPEC-F14.4: the length comes before the number is read, so no `invalid_number` and no conversion: Python refuses
+    # an int of more than 4,300 digits, and a long run of zeros costs a parse
+    (criterion('pages', '=', '1' * 4301), 'value_too_long'),
+    (criterion('pages', '=', '0' * 5000), 'value_too_long'),
+    (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
+    (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
+    # SPEC-E3.2: step 1 comes before every step it hides, in the same part of the request as in another
+    ({'search': {'value': SEVENTEEN}, 'column_search': {'title': {'value': 'a' * 256}}}, 'too_many_words'),
+    ({'search': {'value': 'a' * 256}, **criterion('pages', '=', 'abc')}, 'value_too_long'),
 ]
 
 
 @pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
 def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(body: dict[str, Any], code: str):
-    """SPEC-F33.2, SPEC-F34.2: OpenSearch reads a column search on a number or a date as one value, so 17 words there
-    are not counted against the bound of PRD-F14 but answered as an unreadable value, before the server is asked,
-    with a text that holds none of what was sent. The bounds every backend shares are asserted in tests/test_sql.py
-    and tests/test_sql_search.py."""
+    """SPEC-F14.2, SPEC-F14.4, SPEC-E3.2, SPEC-F33.2, SPEC-F34.2: the refusal of a value on the columns and in the
+    conditions OpenSearch describes, answered before the server is asked, with a text that holds none of what was
+    sent. OpenSearch reads a column search on a number or a date as one value, so 17 words there are answered as an
+    unreadable value, not counted against the bound of PRD-F14. The rows the table lacks are asserted by the error
+    table below and by tests/test_sql.py and tests/test_sql_search.py."""
     client = Client()
     message = refused(table.fetch_sync(request(*NAMES, **body), client), code)
     assert client.searches == []
-    assert not any(word in message for word in SEVENTEEN.split())
+    assert not any(sent in message for sent in ('aaa', 'bbb', 'abc', *SEVENTEEN.split()))
 
 
 @pytest.mark.parametrize(
