@@ -4,12 +4,21 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
-## [Unreleased]
+## [0.1.0] - 2026-11-24
+
+The first release: the code of 0.1.0rc4, with its version, and one documentation addition.
 
 ### Added
 
 - `docs/rules.md` states the 422 answer of the FastAPI dependency for a malformed request, with each shape the tests
   pin ([#152]).
+
+### Changed
+
+- Since 0.1.0rc3, `SQLTable` refuses a declared type that cannot fit the column's SQL type with a `SchemaError` when the
+  table is built ([#46]): a table that constructed on 0.1.0rc3 or earlier may be refused. The refused cases are a
+  string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`; the message
+  names the column and both fixes.
 
 ## [0.1.0rc4] - 2026-11-24
 
@@ -134,6 +143,7 @@ The first release, a release candidate: install it with `pip install --pre datat
 - Not answered: DataTables' fixed and grouped searches, SearchPanes and ColumnControl filters. A request that carries one
   is refused (a malformed request, 422 in the FastAPI dependency) rather than answered with fewer filters.
 
+[0.1.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0
 [0.1.0rc4]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc4
 [0.1.0rc3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc3
 [0.1.0rc2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc2

@@ -15,9 +15,9 @@ and [SearchBuilder](https://datatables.net/manual/extensions/searchbuilder/) cri
 
 The library is read-only and framework-agnostic.
 
-> Status: release candidate (0.1.0rc4). Until 1.0, a minor release (0.x) may break the Python API; each such change is
-> listed in [CHANGELOG.md][changelog]. The wire format and the error codes change only in a release whose notes say so.
-> See [docs/PRD.md][prd] for the scope and design.
+> Status: 0.1.0, alpha (PyPI classifier "Development Status :: 3 - Alpha"). Until 1.0, a minor release (0.x) may break
+> the Python API; each such change is listed in [CHANGELOG.md][changelog]. The wire format and the error codes change
+> only in a release whose notes say so. See [docs/PRD.md][prd] for the scope and design.
 
 If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 [`datatables_server`](https://pypi.org/project/datatables-server/). This library adds:
@@ -29,8 +29,6 @@ If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
 datatables-backend is not affiliated with or endorsed by DataTables or SpryMedia.
 
 ## Install
-
-pip installs no pre-release unless asked, so while 0.1.0 is a release candidate add `--pre` to each command.
 
 ```sh
 pip install "datatables-backend[sqlalchemy]"        # SQL, sync
