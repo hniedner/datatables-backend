@@ -14,7 +14,7 @@ Include:
 
 ## Supported versions
 
-Only the latest release receives security fixes. Until 0.1.0 is published, that is the `main` branch.
+Only the latest release on PyPI receives security fixes.
 
 ## What to expect
 
