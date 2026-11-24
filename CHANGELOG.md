@@ -33,10 +33,11 @@ change here; the wire format and the error codes change only in a release whose 
 - A `TotalCache` that would hold more than 10,000 distinct totals now drops the oldest (a request for it counts again),
   where it grew without limit before. Pass a larger `max_entries` to keep more.
 - The FastAPI dependency answers HTTP 400 when the client disconnects while the request body is read (a user who leaves
-  the page, a proxy that times out), with `{"detail": "The request body could not be read: the client disconnected."}`
-  ([#151]; PRD-A9). Until now Starlette's `ClientDisconnect` left the dependency, and the server logged an
-  unhandled-exception traceback for each one. It is no 422, which stays the answer for a request the library cannot
-  read; an app that maps 4xx answers sees one new status, 400, for an event nobody receives the answer to.
+  the page, a proxy that times out), with the `detail` "The request body could not be read: the client disconnected;
+  send the request again." ([#151]; PRD-A9). Until now Starlette's `ClientDisconnect` escaped the dependency, so the
+  server tried to send a 500 into the dead connection and logged an unhandled-exception traceback for each one; an app
+  that counts 5xx answers sees these become 400s, and its logs lose the tracebacks. It is no 422, which stays the answer
+  to a `MalformedRequest`.
 
 ## [0.1.0] - 2026-11-24
 

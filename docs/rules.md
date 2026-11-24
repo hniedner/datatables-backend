@@ -150,12 +150,17 @@ before it names the condition.
   the 422 can match the status and `detail.draw`; the PRD fixes those, and does not fix the wording of `message`.
   Like any other wire format, the shape changes only in a release whose notes say so (the versioning policy in the
   status note of the [README](../README.md) and the [CHANGELOG](../CHANGELOG.md)).
+- **A client that disconnects while the body is read is nobody's mistake.** A user who leaves the page, or a proxy that
+  times out, is answered HTTP 400 by the FastAPI dependency, where FastAPI answers a body it cannot parse with 400 too,
+  and it is no 422:
 
-  A client that disconnects while the dependency reads the body (a user who leaves the page, a proxy that times out) is
-  answered HTTP 400, as FastAPI answers a body it cannot parse, with `{"detail": "The request body could not be read:
-  the client disconnected."}`. Nobody is there to read it, and it is no 422: a disconnect is neither the integrator's
-  nor the user's mistake. No exception leaves the dependency, so the server logs no traceback for it, and the library
-  logs nothing of its own (PRD-A9).
+  ```json
+  {"detail": "The request body could not be read: the client disconnected; send the request again."}
+  ```
+
+  Nobody is there to read it. Unlike the 422 it carries no `draw`, since the body was never read (PRD-A10). No exception
+  leaves the dependency, so the server does not try a 500 and log a traceback for it, and the library logs nothing of
+  its own (PRD-A9).
 - **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), `start` goes up to
   2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped. A request
   holds at most 256 values in one list and 512 in all its lists, at most 64 column searches, and a SearchBuilder tree

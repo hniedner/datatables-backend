@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
-from starlette.requests import ClientDisconnect
+from starlette.requests import ClientDisconnect  # Starlette is FastAPI's own dependency; FastAPI does not re-export it
 
 from .protocol import DTParams
 from .protocol import MalformedRequest
@@ -24,7 +24,7 @@ from .protocol import parse_request
 __all__ = ['DataTablesParams', 'parse_datatables_request']
 
 _MALFORMED = 'The table request is malformed: send it as a JSON object or as a form.'
-_DISCONNECTED = 'The request body could not be read: the client disconnected.'
+_DISCONNECTED = 'The request body could not be read: the client disconnected; send the request again.'
 #: The most fields Starlette reads from a form, which a form read here without its parser is held to as well
 _FORM_FIELD_LIMIT = 1000
 #: The media types whose body Starlette's own form parser reads

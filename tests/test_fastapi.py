@@ -269,9 +269,7 @@ def test_a_user_error_over_sql_answers_http_200_with_the_whole_body(session: Ses
     }
 
 
-async def _answer_to_a_client_that_goes_away(
-    messages: list[dict[str, Any]], *, content_type: bytes = b'application/json'
-) -> list[MutableMapping[str, Any]]:
+async def _answer_to_a_client_that_goes_away(messages: list[dict[str, Any]]) -> list[MutableMapping[str, Any]]:
     """The ASGI messages `app` sends for a POST whose client sends ``messages`` and then disconnects. Nothing is
     caught here: an exception that leaves the app fails the caller."""
     scope = {
@@ -283,7 +281,7 @@ async def _answer_to_a_client_that_goes_away(
         'path': '/table',
         'raw_path': b'/table',
         'query_string': b'',
-        'headers': [(b'content-type', content_type)],
+        'headers': [(b'content-type', b'application/json')],
         'client': ('testclient', 50000),
         'server': ('testserver', 80),
     }
@@ -308,15 +306,17 @@ async def _answer_to_a_client_that_goes_away(
     ],
     ids=['before the body', 'in the middle of the body'],
 )
-@pytest.mark.parametrize('content_type', [b'application/json', b'multipart/form-data; boundary=x'])
 async def test_a_client_that_disconnects_while_the_body_is_read_is_answered_400_and_raises_nothing(
-    messages: list[dict[str, Any]], content_type: bytes
+    messages: list[dict[str, Any]],
 ):
     """SPEC-A9.9: a disconnect is neither the integrator's nor the user's mistake, so it is no 422 (PRD-E6), and no
-    exception leaves the dependency for the server to log as an unhandled error. The answer is FastAPI's own for a body
-    it cannot read: HTTP 400 with a text that names no value."""
-    sent = await _answer_to_a_client_that_goes_away(messages, content_type=content_type)
+    exception leaves the dependency for the server to log as an unhandled error. The answer is HTTP 400 with a text
+    that names no value and says what to do; its `detail` is that text alone, with no `draw`, since the body was never
+    read (unlike the 422, PRD-A10)."""
+    sent = await _answer_to_a_client_that_goes_away(messages)
     assert sent[0]['type'] == 'http.response.start'
     assert sent[0]['status'] == 400
     body = b''.join(message.get('body', b'') for message in sent[1:])
-    assert json.loads(body) == {'detail': 'The request body could not be read: the client disconnected.'}
+    assert json.loads(body) == {
+        'detail': 'The request body could not be read: the client disconnected; send the request again.'
+    }

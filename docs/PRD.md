@@ -1498,8 +1498,11 @@ leaves the dependency; it is no 422, since a disconnect is neither the integrato
   (READ: its `ajax()` sets JSON only when `!options.contentType`, and its defaults carry form-urlencoded), so choosing
   the parser by Content-Type would read the JSON as a form. A user who leaves the page, or a proxy that times out,
   disconnects mid-request (MEASURED on #151, Starlette 0.40.0 and 1.10.0, with a raw ASGI receive and a real uvicorn
-  0.54.0): left alone, Starlette's `ClientDisconnect` ends as an unhandled-exception traceback in the adopter's log for
-  each one. FastAPI's own body parsing answers 400 with no traceback, and the dependency does the same.
+  0.54.0): left alone, Starlette's `ClientDisconnect` leaves the dependency, the error middleware tries a 500 into the
+  dead connection and re-raises, and the server logs an unhandled-exception traceback for each one. FastAPI's own body
+  parsing wraps any exception in `HTTPException(400, "There was an error parsing the body")` for a route with a body
+  parameter, so such a route answers 400 with no traceback (READ, `fastapi/routing.py` of FastAPI 0.133.0 and 0.165.0,
+  not run); the dependency answers 400 too.
 - **Priority:** must
 
 #### PRD-A10

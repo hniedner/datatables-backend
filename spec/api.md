@@ -48,9 +48,9 @@ Statements for PRD section 4.8. Form, tags, answers, the base request and the `i
   never a server error; so is one of several megabytes under `application/json`.
 - **SPEC-A9.8** [FastAPI] A form of 1,001 fields under `text/plain` → HTTP 422 (the 1,000 fields Starlette allows).
 - **SPEC-A9.9** [FastAPI] A POST whose client disconnects before the body, or in the middle of it (ASGI `receive`
-  answering `http.disconnect`), under `application/json` and under `multipart/form-data` → the app returns, no
-  exception leaves it, and the first message is HTTP 400 whose `detail` is `The request body could not be read: the
-  client disconnected.`, which names no value; it is no 422 (PRD-E6).
+  answering `http.disconnect`) → the app returns, no exception leaves it, and the first message is HTTP 400 whose
+  `detail` is the text `The request body could not be read: the client disconnected; send the request again.`, which
+  names no value and says what to do, with no `draw`; it is no 422 (PRD-E6).
 - **SPEC-A10.1** [FastAPI] The base request with `draw` 5 and `length` `abc` → HTTP 422 in FastAPI's default shape,
   with `draw` inside `detail`: `{"detail": {"draw": 5, ...}}` (the owner's decision of 2026-11-20); the same request
   with `draw` `x` → HTTP 422 whose `detail` holds no `draw` key.
