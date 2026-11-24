@@ -20,8 +20,9 @@ requirements and milestones. Notes about the application this was derived from l
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
   `uv run pytest tests/test_sql.py tests/test_sql_search.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a
   database called `dtb`, `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and
-  `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its dialect, and on PostgreSQL `PGTZ` and `TZ` naming
-  zones far from UTC (CI uses `Pacific/Kiritimati` and `America/Adak`), or the timezone test fails; or
+  `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its dialect, and `TZ` naming a zone far from UTC on every
+  database (CI uses `America/Adak`) and on PostgreSQL `PGTZ` too (CI uses `Pacific/Kiritimati`), or the timezone test
+  fails; or
   `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC
   Driver 18. The SQL tests own the tables `dtb_test_people` and `dtb_test_tags`, and the live OpenSearch test
   owns the indices `dtb-test-docs`, `dtb-test-docs-phrases` and `dtb-test-docs-lines`: each run drops them first.
