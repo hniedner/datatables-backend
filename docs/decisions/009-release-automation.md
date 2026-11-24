@@ -1,33 +1,41 @@
 # 009: Release automation (draft for the owner)
 
-This is the evaluation for issue #45 (part 45a): how to meet the owner's release model of 2026-11-22. The build is #76.
-SvelteDT (its PRD-S7) needs the same answers, so this note is shared with it; each section says whether it is
-**shared** or **Python only**. **Nothing here is decided.** Once the owner has chosen, his choices are recorded in this
-file and the options he rejected are cut to one line each.
+This is the evaluation for issue #45 (part 45a): how releases are made once #76 is built. SvelteDT (its PRD-S7) needs
+the same answers, so this note is shared with it; each section says whether it is **shared** or **Python only**, and
+sections 2, 3 and 5 apply only if the automatic trigger is kept. **Nothing here is decided.** Once the owner has
+chosen, his choices are recorded in this file and the options he rejected are cut to one line each.
 
-Labels: READ (a repository file or an issue, with its place), RUN (a command run on 2026-11-24, named; git-cliff runs
-used `uvx --from git-cliff==2.14.2` on a scratch clone of `main` at `0daf2f4` or on scratch repositories, all removed
-afterwards), FETCHED (a primary source, with its URL, fetched 2026-11-24), INFERRED (reasoning from the facts given),
-NOT ESTABLISHED (to verify before #76 relies on it; all are listed at the end).
+**The model itself is put to the owner again** (section 7). Under the automatic trigger a rejected or abandoned
+approval leaves a permanent tag, a draft release and a skipped version, which has already happened once by hand
+(0.1.0rc1); at this project's merge rate an approval would be pending almost always; and adopters are better served by
+fewer, coherent releases.
+
+Labels: READ (a repository file, an issue or a PR, with its place), RUN (a command run on 2026-11-24, named; git-cliff
+runs used `uvx --from git-cliff==2.14.2` on a scratch clone of `main` at `0daf2f4` or on scratch repositories, all
+removed afterwards), RUN by the independent review (a command the independent review of this draft ran on
+2026-11-24, not re-run here), FETCHED (a primary source, with its URL, fetched 2026-11-24), INFERRED (reasoning from
+the facts given), NOT ESTABLISHED (to verify before #76 relies on it; all are listed at the end).
 
 ## The model, and where today's repository stands
 
-The model (READ, #45 body, not reopened here): after CI has passed on a push to `main`, a workflow computes the next
-version from the conventional commit messages since the last release, creates the tag `v<version>` and a GitHub
-release with a changelog generated from those commits, and pushes no commit to `main`. The publish runs in a run on
-that tag, publishes the build of that tag, stays in the `pypi` environment and waits for the owner. The job that tags
-cannot publish; the job that publishes cannot tag. An existing tool, no release script of our own. A rehearsal that
-publishes nothing stays possible (READ, #76 body). Owner rule of 2026-11-23 (READ, #76 comment): the workflow creates
-the GitHub release as a draft before the publish job and makes it public after PyPI accepted the upload; its notes are
-the version's section of CHANGELOG.md.
+The model (READ, #45 body; the owner's decision of 2026-11-22): after CI has passed on a push to `main`, a workflow
+computes the next version from the conventional commit messages since the last release, creates the tag `v<version>`
+and a GitHub release with a changelog generated from those commits, and pushes no commit to `main`. The publish runs
+in a run on that tag, publishes the build of that tag, stays in the `pypi` environment and waits for the owner. The
+job that tags cannot publish; the job that publishes cannot tag. An existing tool, no release script of our own. A
+rehearsal that publishes nothing stays possible (READ, #76 body). Owner rule of 2026-11-23 (READ, #76 comment): the
+workflow creates the GitHub release as a draft before the publish job and makes it public after PyPI accepted the
+upload; its notes are the version's section of CHANGELOG.md.
 
 | Fact | Source |
 |---|---|
 | `release.yml` publishes on a hand-pushed `v*` tag, and a manual run on `main` is the rehearsal; its jobs are `check-tag`, `ci` (all of ci.yml), `draft-release` (`contents: write`), `publish` (`pypi` environment, `id-token: write` only), `publish-release` | READ, `.github/workflows/release.yml:1-19, 30-149` |
 | PyPI's trusted publisher is `release.yml` (top level only) | READ, `release.yml:108-109` |
 | The version is written by hand: `__version__ = '0.1.0'`; hatchling reads it | READ, `src/datatables_backend/__init__.py:8`, `pyproject.toml:1-3, 13, 86-87` |
+| 0.1.0's release PR changed `__version__`, the classifier, the README status line and CHANGELOG.md's `## [0.1.0] - 2026-11-24` (4 files) | READ, PR #169 (`gh pr view 169`) |
 | `check_dist.py tag` compares the tag with that source version; `check_dist.py dist` checks the files against it | READ, `scripts/check_dist.py:3-7, 50-53, 85-86, 151-169` |
 | Release notes come from `CHANGELOG.md`, hand-written Keep a Changelog prose with an `[Unreleased]` section | READ, `scripts/changelog_notes.py:3-6`, `CHANGELOG.md:1-7` |
+| 0.1.0rc1 was "Tagged but not published: its deployment was rejected before upload" | READ, `CHANGELOG.md:143, 177` |
 | README promises every breaking change "is listed in CHANGELOG.md" and names the version ("Status: 0.1.0") | READ, `README.md:18-19` |
 | `pypi` environment: deployments from the tag pattern `v*` only, the owner as required reviewer, `can_admins_bypass: false`, `prevent_self_review: false` | RUN, `gh api .../environments/pypi` and `.../environments/pypi/deployment-branch-policies` |
 | Tag ruleset "release tags" on `refs/tags/v*`: deletion, non-fast-forward and update blocked, no bypass actor; creation is not restricted | RUN, `gh api .../rulesets/27804950` |
@@ -46,66 +54,81 @@ the version's section of CHANGELOG.md.
   or the release path; only criterion 6 of section 6 names "the release workflow" (READ, `docs/PRD.md:1531-1638,
   1858`). The hand-pushed tag is described in `release.yml`'s comments.
 
-## 1. The tool (shared)
+## 1. The tool and the bump rule (shared)
 
 "Pushes no commit to `main`" rules out every mode that commits a version or opens a release pull request.
 
 | Tool | Can it tag and create a release from a runner without a commit? | How it is pinned |
 |---|---|---|
 | release-please | **No.** It "maintains Release PRs"; a release is made "when you're ready to tag a release, simply merge the release PR". No documented mode tags without a merged release PR (FETCHED, github.com/googleapis/release-please and github.com/googleapis/release-please-action). **Ruled out.** | JS action by SHA |
-| python-semantic-release (PSR) 10.7.0 | **Yes.** With `--no-commit --tag --push` it tags the existing HEAD, pushes only the tag and creates the VCS release; it still edits and stages the version files and changelog locally, uncommitted (FETCHED, `src/semantic_release/cli/commands/version.py` on the `master` branch of python-semantic-release/python-semantic-release). Its release is created public, so the owner's draft-first rule needs `--no-vcs-release` and today's `gh release create --draft`. It ignores merge commits by default (`ignore_merge_commits = True`); `feat` minor, `fix`/`perf` patch, other types no release (FETCHED, `.../commit_parser/conventional/options.py`). | The action is a Docker action built at run time (FETCHED, `action.yml`). Its `requirements.txt` pins PSR itself (`python-semantic-release == 10.7.0`), but the image is `FROM python:3.14-slim-trixie` (a tag), `apt install` takes current packages, and `pip install --upgrade pip setuptools wheel` and `pip install --pre -r requirements.txt` resolve PSR's dependencies unpinned (FETCHED, `src/gh_action/requirements.txt` and `src/gh_action/Dockerfile`). So a SHA pin of the action does not pin what runs. As a CLI from `uv.lock` it is hash-pinned, at the cost of about 12 more runtime packages in the lock (gitpython, requests, python-gitlab, jinja2, click, rich, ...) (FETCHED, pypi.org/pypi/python-semantic-release/json). Python only. |
-| git-cliff 2.14.2 | It computes and prints; it creates no tag and no release (`--bumped-version` "Prints bumped version for unreleased changes", FETCHED, git-cliff.org/docs/usage/args). The tag and the draft release are steps the workflow runs itself (section 8). | On PyPI as `git-cliff`: binary wheels for Linux, macOS and Windows, **no dependencies** (FETCHED, pypi.org/pypi/git-cliff/2.14.2/json): a uv dependency group, hash-pinned by `uv.lock`, moved by Dependabot's `uv` updates with their 7-day cooldown (READ, `dependabot.yml:21-31`). On npm as `git-cliff` for SvelteDT (FETCHED, git-cliff.org/docs/installation/npm). |
+| python-semantic-release (PSR) 10.7.0 | **Yes.** With `--no-commit --tag --push` it tags the existing HEAD, pushes only the tag and creates the VCS release; it still edits and stages the version files and changelog locally, uncommitted (FETCHED, `src/semantic_release/cli/commands/version.py` on the `master` branch of python-semantic-release/python-semantic-release). Its release is created public, so the owner's draft-first rule needs `--no-vcs-release` and today's `gh release create --draft`. It ignores merge commits by default; `feat` minor, `fix`/`perf` patch, other types no release (FETCHED, `.../commit_parser/conventional/options.py`). | A Docker action built at run time (FETCHED, `action.yml`). Its `requirements.txt` pins PSR itself (`python-semantic-release == 10.7.0`), but the image is `FROM python:3.14-slim-trixie` (a tag), `apt install` takes current packages, and `pip install --upgrade pip setuptools wheel` and `pip install --pre -r requirements.txt` resolve PSR's dependencies unpinned (FETCHED, `src/gh_action/requirements.txt` and `src/gh_action/Dockerfile`). So a SHA pin of the action does not pin what runs. As a CLI from `uv.lock` it is hash-pinned, at the cost of about 12 more runtime packages in the lock (FETCHED, pypi.org/pypi/python-semantic-release/json). Python only. |
+| git-cliff 2.14.2 | It computes and prints; it creates no tag and no release (`--bumped-version` "Prints bumped version for unreleased changes", FETCHED, git-cliff.org/docs/usage/args). | On PyPI as `git-cliff`: binary wheels for Linux, macOS and Windows, **no dependencies** (FETCHED, pypi.org/pypi/git-cliff/2.14.2/json): a uv dependency group, hash-pinned by `uv.lock`, moved by Dependabot's `uv` updates with their 7-day cooldown (READ, `dependabot.yml:21-31`). On npm as `git-cliff` for SvelteDT (FETCHED, git-cliff.org/docs/installation/npm). |
 | None (a regex of our own) | Ruled out by "no release script of our own" (READ, #45). | |
 
-**Recommendation: git-cliff, from a uv dependency group of its own (`release`).** Reasons: one tool and one
-configuration (`cliff.toml`) for both projects, since SvelteDT can run it from npm; no dependencies; it does the one
-thing the model needs from a tool (version and notes), while tagging and the draft release stay in steps the
-repository already has. PSR's Docker action is out under the repository's pinning rule, because its pin does not pin
-what runs.
+**Recommendation: git-cliff, from a uv dependency group of its own (`release`),** under either trigger of section 7.
+One tool and one `cliff.toml` for both projects; no dependencies; it gives the version and the notes and nothing else.
+PSR's Docker action is out under the repository's pinning rule, because its pin does not pin what runs.
 
-**How git-cliff bumps, measured (RUN).** Without configuration it bumps **every** parsed commit that is not `feat` or
-breaking as a patch: on `main` today `git-cliff --bumped-version` prints `v0.1.1`, from the three free-prose headers
-that parse as types `PRD` and `Changelog`; a lone `docs:` commit after a tag gives `v0.1.1` too. The source agrees: a
-commit not skipped sets `Patch` by default, and `no_increment_regex` is tested **before** the breaking check and
-`continue`s (FETCHED, `crates/next_version/src/version_increment.rs` on `main` of release-plz/release-plz, the crate
-git-cliff calls; the regex is matched against the conventional type, or the whole message if it is not conventional).
-Configurations run on scratch repositories with `v0.1.0` and then the commits named:
+**How git-cliff bumps (RUN).** Without configuration it bumps **every** parsed commit that is not `feat` or breaking as
+a patch: on `main` today `git-cliff --bumped-version` prints `v0.1.1`, from the three free-prose headers. The source
+agrees: a commit not skipped sets `Patch` by default, and `no_increment_regex` is tested **before** the breaking check
+and `continue`s (FETCHED, `crates/next_version/src/version_increment.rs` on `main` of release-plz/release-plz, the
+crate git-cliff calls). Measured on scratch repositories (`v0.1.0`, then the commits named):
 
-| `cliff.toml` | `docs:` only | `docs:` and `refactor!:` | `docs(readme):` and `refactor:` with a `BREAKING CHANGE:` footer |
+| `cliff.toml` | `docs:` only | `docs:` and `refactor!:` | `refactor:` with a `BREAKING CHANGE:` footer |
 |---|---|---|---|
-| default rules (with the 0.x settings below) | `v0.1.1` (wrong) | `v0.2.0` | not run |
-| `no_increment_regex = "^(build\|chore\|ci\|docs\|refactor\|style\|test)"` (documented: "Configures commit types that should not increment the version", FETCHED, git-cliff.org/docs/configuration/bump) | `v0.1.0`, "nothing to bump" | **`v0.1.0`: the breaking change is lost** | not run |
+| default rules | `v0.1.1` (wrong) | `v0.2.0` | not run |
+| `no_increment_regex` for the non-releasing types (documented: "Configures commit types that should not increment the version", FETCHED, git-cliff.org/docs/configuration/bump) | `v0.1.0` | **`v0.1.0`: the breaking change is lost** | not run |
 | `filter_commits = true` with parsers for `feat` and `fix` only | not run | **`v0.1.0`: lost** | not run |
-| **parsers `^feat` and `^fix` grouped, then `{ message = ".*", skip = true }`, with `protect_breaking_commits = true`** | `v0.1.0`, "nothing to bump" (RUN with the other types listed in a skip parser instead of `.*`; with `.*`, RUN on `main`'s free-prose history, same result) | **`v0.2.0`** | **`v0.2.0`**, listed and marked breaking |
+| **parsers `^feat` and `^fix`, then `{ message = ".*", skip = true }`, with `protect_breaking_commits = true`** | `v0.1.0` | **`v0.2.0`** | **`v0.2.0`**, listed and marked breaking |
 
-The reviewer reported 0.1.1 for the two naive fixes; on my scratch history they gave 0.1.0 ("nothing to bump"). Both
-results mean the same: the breaking change is dropped. The last row keeps it: `protect_breaking_commits` means "any
-breaking changes will be protected against being skipped due to any commit parser" (FETCHED,
-git-cliff.org/docs/configuration/git). The same configuration on `main` today gives `v0.1.0`, "nothing to bump" (RUN),
-because the free-prose headers fall to the catch-all skip. This differs from the reviewer's proposed fix (allow `!`
-only on `feat` and `fix`): it needs no extra commit rule.
+The reviewer reported 0.1.1 for the two naive fixes; on my scratch history they gave 0.1.0. Both mean the breaking
+change is dropped. The last row keeps it: `protect_breaking_commits` means "any breaking changes will be protected
+against being skipped due to any commit parser" (FETCHED, git-cliff.org/docs/configuration/git). On `main` today that
+configuration gives "nothing to bump" (RUN), as the free-prose headers fall to the catch-all skip. It needs no extra
+commit rule; restricting `!` to `feat` and `fix` (the reviewer's proposal) stays available as a second guard.
 
-**The bump table** (recommended), with `features_always_bump_minor = true` and `breaking_always_bump_major = false`
-(FETCHED, configuration/bump: when false, a breaking change "bumps the minor version if the major version is 0"):
+**The 0.x bump rule.** git-cliff: with `features_always_bump_minor = false`, "a feature bumps the patch version if the
+major version is 0"; with `breaking_always_bump_major = false`, "a breaking change bumps the minor version if the major
+version is 0" (FETCHED, git-cliff.org/docs/configuration/bump).
 
-| Commit | Before 1.0 | From 1.0 |
-|---|---|---|
-| `feat:` | minor (0.2.0 to 0.3.0) | minor |
-| `fix:` | patch (RUN: `fix(plan):` after `v0.1.0` gives `v0.1.1`) | patch |
-| any type with `!` or a `BREAKING CHANGE:` footer | **minor** (the README's policy: a 0.x minor may break the Python API, READ `README.md:18-19`) | major (flip `breaking_always_bump_major` at 1.0) |
-| any other type, and anything that does not parse | no release | no release |
+| Rule | `feat` | `fix` | breaking (`!` or footer) | other types, free prose |
+|---|---|---|---|---|
+| Earlier draft: `features_always_bump_minor = true` | minor | patch | minor | nothing |
+| **Recommended: `features_always_bump_minor = false`, `breaking_always_bump_major = false`** | **patch** | patch | **minor** | nothing |
 
-`perf` is not listed: it releases nothing under this configuration; a performance change adopters should get is a
-`fix:`. A runtime floor raised in `pyproject.toml` changes what adopters install, so it is a `fix:` or `feat:` (or `!`),
-not `build:`; Dependabot's `build(deps)` touches only `uv.lock` and releases nothing.
+RUN, the recommended `cliff.toml` (the catch-all row above, plus `tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"`,
+`features_always_bump_minor = false`, `breaking_always_bump_major = false`), each case a scratch repository with an
+annotated `v0.1.0` and then one commit; `git-cliff --config cliff.toml --bumped-version` printed:
 
-**Costs:** one dependency (`git-cliff`, in a `release` group, not in `dev`); one config file (`cliff.toml`); a test in
+| Commit after `v0.1.0` | Output |
+|---|---|
+| `feat: a new option` | `INFO git_cliff > Using configuration from: .../cliff.toml` then `v0.1.1` |
+| `fix: a wrong bound` | `INFO ... Using configuration from: .../cliff.toml` then `v0.1.1` |
+| `refactor!: drop an old name` | `INFO ... Using configuration from: .../cliff.toml` then `v0.2.0` |
+| `docs: a note` | `INFO ... Using configuration from: .../cliff.toml`, `WARN git_cliff > There is nothing to bump`, then `v0.1.0` |
+| `PRD: shorten the header` | `INFO ... Using configuration from: .../cliff.toml`, `WARN git_cliff > There is nothing to bump`, then `v0.1.0` |
+
+So a plain `feat:` bumps only a patch, and a breaking change at 0.x a minor, as documented. From 1.0 the same file
+gives the usual rule without any change: after an annotated `v1.0.0`, `feat: another option` gave `v1.1.0` and
+`fix!: a changed default` gave `v2.0.0` (RUN). Whether and when to go to 1.0 is a decision for then.
+
+**Recommendation: the recommended rule.** The README says a 0.x minor may break the Python API (READ, `README.md:18-19`).
+Under this rule a patch never breaks, so an adopter's `~=0.2.0` takes features and fixes and never a break, and a minor
+means "read the changelog". **Cost:** the README's policy sentence must then say once that before 1.0 a patch release
+may add features and never breaks, and a minor release may break. That sentence is the owner's, decided with this rule;
+this draft does not edit the README.
+
+`perf` is not a type here: a performance change adopters should get is a `fix:`. A runtime floor raised in
+`pyproject.toml` is a `fix:` or `feat:` (or `!`), not `build:`; Dependabot's `build(deps)` touches only `uv.lock` and
+releases nothing.
+
+**Costs of git-cliff:** one dependency (`git-cliff`, in a `release` group, not in `dev`); one `cliff.toml`; a test in
 #76 that runs the pinned git-cliff with `cliff.toml` on a scratch repository and fails unless `refactor!:` and a
-`BREAKING CHANGE:` footer each give a minor bump and `docs:` gives none, so a later edit of `cliff.toml` cannot drop a
-breaking change silently. If the owner wants a second guard, the commit rule can also allow `!` and the footer only on
-`feat` and `fix` (the reviewer's proposal); with the configuration above it is not needed for correctness.
+`BREAKING CHANGE:` footer give a minor, `feat:` and `fix:` a patch, and `docs:` nothing, so a later edit of `cliff.toml`
+cannot drop a breaking change silently.
 
-## 2. How the tag starts the publish run (shared)
+## 2. How the tag starts the publish run (shared; automatic trigger only)
 
 FETCHED, docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow ("Triggering
 a workflow from a workflow"): "events triggered by the `GITHUB_TOKEN` will not create a new workflow run", and
@@ -120,297 +143,238 @@ is the tag pattern `v*` (RUN, above).
 
 | Option | Ref of the publish job | Accepted by `pypi` (`v*` tags)? | Cost |
 |---|---|---|---|
-| A. The tagging job creates the tag, then runs `gh workflow run release.yml --ref v<version>` with `GITHUB_TOKEN` | `workflow_dispatch`: `GITHUB_REF` is the "Branch or tag that received dispatch" (FETCHED, docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows), so `refs/tags/v<version>`; and "Each workflow run will use the version of the workflow that is present in the associated commit SHA or Git ref of the event" (FETCHED, docs.github.com/en/actions/concepts/workflows-and-actions/workflows), so the tag's `release.yml` runs | **Yes** | `actions: write` on the tagging job (the dispatch endpoint needs "Actions" write, FETCHED, docs.github.com/en/rest/authentication/permissions-required-for-github-apps). No new identity, no secret. PyPI's publisher stays `release.yml`. The dispatch answers 200 with `workflow_run_id`, `run_url` and `html_url` (FETCHED, docs.github.com/en/rest/actions/workflows, "Create a workflow dispatch event"), so the tagging job can print the link to the release run. |
-| B. A GitHub App token pushes the tag; `release.yml` starts on `push: tags` as today | `refs/tags/v<version>` | **Yes** | A new identity: register an App, store its client ID as a variable and its private key as a secret, install it (FETCHED, docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/making-authenticated-api-requests-with-a-github-app-in-a-github-actions-workflow), plus `actions/create-github-app-token`. The owner owns the App and its key and rotates it; a stored key is what trusted publishing was chosen to avoid. A personal token is the same with the owner's own account behind it: worse. |
+| A. The tagging job creates the tag, then runs `gh workflow run release.yml --ref v<version>` with `GITHUB_TOKEN` | `workflow_dispatch`: `GITHUB_REF` is the "Branch or tag that received dispatch" (FETCHED, docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows), so `refs/tags/v<version>`; and "Each workflow run will use the version of the workflow that is present in the associated commit SHA or Git ref of the event" (FETCHED, docs.github.com/en/actions/concepts/workflows-and-actions/workflows), so the tag's `release.yml` runs | **Yes** | `actions: write` on the tagging job (the dispatch endpoint needs "Actions" write, FETCHED, docs.github.com/en/rest/authentication/permissions-required-for-github-apps). No new identity, no secret. PyPI's publisher stays `release.yml`. The dispatch answers 200 with `workflow_run_id`, `run_url` and `html_url` (FETCHED, docs.github.com/en/rest/actions/workflows, "Create a workflow dispatch event"). |
+| B. A GitHub App token pushes the tag; `release.yml` starts on `push: tags` as today | `refs/tags/v<version>` | **Yes** | A new identity: register an App, store its client ID as a variable and its private key as a secret, install it (FETCHED, docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/making-authenticated-api-requests-with-a-github-app-in-a-github-actions-workflow), plus `actions/create-github-app-token`. The owner owns the App and rotates its key; a stored key is what trusted publishing was chosen to avoid. A personal token is worse. |
 | C. One workflow: the publish job in the tagging run | `workflow_run` has `GITHUB_REF` = default branch (FETCHED, events page) | **No**, and it breaks "the publish runs in a run on that tag" | ruled out |
 | D. `repository_dispatch` | `GITHUB_REF`: "Default branch"; `GITHUB_SHA`: "Last commit on default branch" (FETCHED, events page) | **No** | ruled out |
 
-**Recommendation: A.** It meets the environment's rule with the token the run already has. `release.yml` then tells
-a release from a rehearsal by `github.ref_type == 'tag'` instead of `github.event_name == 'push'` (READ,
+**Recommendation: A.** It meets the environment's rule with the token the run already has; `release.yml` tells a
+release from a rehearsal by `github.ref_type == 'tag'` instead of `github.event_name == 'push'` (READ,
 `release.yml:76-77, 114-115`). The job that dispatches has no `id-token`; the publish job has no `contents` or
-`actions` permission: the separation holds. **Cost:** `actions: write` on one job (it can also cancel and re-run
-workflows). Whether `release.yml` keeps `push: tags` for a hand path is the owner's choice in section 7.
+`actions` permission. **Cost:** `actions: write` on one job (it can also cancel and re-run workflows).
 
-## 3. The version from the tag at build time (Python only)
+## 3. The version from the tag at build time (Python only; automatic trigger only)
 
 The backend is hatchling, reading `__version__` from the source (READ, `pyproject.toml:1-3, 86-87`). With no commit to
-`main`, the version has to come from the tag.
+`main`, the version has to come from the tag. Under the owner-started trigger (section 7) none of this section is
+needed: the release PR writes the version, as today.
 
 | Option | Facts | Verdict |
 |---|---|---|
-| hatch-vcs 0.5.0 (`[tool.hatch.version] source = "vcs"`) | "uses your preferred version control system (like Git)", options `tag-pattern`, `fallback-version`, `raw-options` (FETCHED, github.com/ofek/hatch-vcs). Requires `hatchling>=1.1.0` and `setuptools-scm>=8.2.0` (FETCHED, pypi.org/pypi/hatch-vcs/json); setuptools-scm 10.3.4 requires `vcs-versioning`, `packaging`, `setuptools` (FETCHED, pypi.org/pypi/setuptools-scm/json). setuptools-scm: on a clean tag the version is `{tag}`; N commits later `{next_version}.dev{distance}+g{hash}`; dirty adds `+dYYYYMMDD`; PKG-INFO is a version source, which is what a wheel built from the sdist reads; a shallow repository warns by default (FETCHED, setuptools-scm.readthedocs.io/en/latest/usage/ and /config/). | **Recommended** |
-| hatchling's built-in `env` source | No new dependency, but an unset variable raises `RuntimeError("environment variable ... is not set")` (FETCHED, `backend/src/hatchling/version/source/env.py` in pypa/hatch). `uv sync` builds the project, so every checkout and every CI job would need the variable. | Rejected: a surprise for every contributor |
+| hatch-vcs 0.5.0 (`[tool.hatch.version] source = "vcs"`) | Options `tag-pattern`, `fallback-version`, `raw-options` (FETCHED, github.com/ofek/hatch-vcs). Requires `hatchling>=1.1.0` and `setuptools-scm>=8.2.0` (FETCHED, pypi.org/pypi/hatch-vcs/json); setuptools-scm 10.3.4 requires `vcs-versioning`, `packaging`, `setuptools` (FETCHED, pypi.org/pypi/setuptools-scm/json). setuptools-scm: on a clean tag `{tag}`; N commits later `{next_version}.dev{distance}+g{hash}`; dirty adds `+dYYYYMMDD`; PKG-INFO is a version source; a shallow repository warns by default; without `fallback_version` it "will error if it fails to detect the version" (FETCHED, setuptools-scm.readthedocs.io/en/latest/usage/ and /config/). The default `tag-pattern` drops the `v`; a depth-1 checkout of a tag ref gives the tag's version; an untracked `dist/` does not change the version (RUN by the independent review). | **Recommended** |
+| hatchling's built-in `env` source | No new dependency, but an unset variable raises `RuntimeError("environment variable ... is not set")` (FETCHED, `backend/src/hatchling/version/source/env.py` in pypa/hatch); `uv sync` builds the project, so every checkout and CI job would need the variable. | Rejected |
 | Stamp the version into the file at build time | The sdist would then differ from the commit, which `check_dist.py` refuses (READ, `check_dist.py:18`) | Rejected |
 
-What changes with hatch-vcs:
-
-- **A build from the tag** (the publish run): version = the tag without `v` (FETCHED: `{tag}` on a clean tag;
-  INFERRED that the default `tag-pattern` drops the `v`, verify). Give `dist` `fetch-depth: 0` (today it checks out
-  with the default depth, READ, `ci.yml:242-248`); whether a depth-1 checkout of a tag ref holds the tag is NOT
-  ESTABLISHED.
-- **A build from a commit that is not a tag** (the rehearsal, every pull request): a `.devN+g<hash>` version. PyPI
-  refuses a local version, so a rehearsal cannot produce an uploadable name (INFERRED).
-- **From the sdist** (uv builds the sdist, then the wheel from it, FETCHED, docs.astral.sh/uv/concepts/projects/build/):
-  setuptools-scm reads PKG-INFO, so both files carry the same version without git.
-- **`__version__`** becomes `importlib.metadata.version('datatables-backend')` (standard library, so PRD-Q3 holds).
-  `dist-check`'s assertion that `__version__` equals the installed metadata (READ, `ci.yml:294-295`) can then no
-  longer fail and goes; its check that the wheel's file name carries the metadata version stays.
-- **uv's cache**: uv rebuilds a local project only when `pyproject.toml` (or `setup.py`/`setup.cfg`) changes; for a
-  version from tags it documents `cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true }
-  }]` (FETCHED, docs.astral.sh/uv/concepts/cache/). Without it a local checkout reports a stale version.
-- **`uv.lock`** holds no project version today (READ, above), so a new tag cannot change the lock.
-- **`scripts/check_dist.py`**: `tag TAG` goes (the version can no longer differ from the tag). `dist DIR` takes the
-  expected version as an argument (the tag without `v` in a tag run); without a tag it requires the sdist and wheel to
-  state the same `.dev` version. The members-against-the-commit rules stay; hatch-vcs writes no version file unless
-  its `version-file` hook is configured (INFERRED from its README), so the sdist still holds only tracked files plus
-  PKG-INFO. `release.yml`'s `sed` of `__version__` (READ, `release.yml:54`) goes.
+What changes with hatch-vcs: `dist` gets `fetch-depth: 0` (READ, `ci.yml:242-248`, default depth today); a build from
+a non-tag commit gets a `.devN+g<hash>` version, which PyPI refuses (INFERRED), so a rehearsal cannot produce an
+uploadable name; a wheel built from the sdist reads PKG-INFO (uv builds the sdist, then the wheel from it, FETCHED,
+docs.astral.sh/uv/concepts/projects/build/); a build from a git-less source archive has no version unless a fallback
+is set (INFERRED from setuptools-scm's "will error"); `__version__` becomes `importlib.metadata.version(...)`
+(standard library, PRD-Q3 holds) and `dist-check`'s `__version__` assertion (READ, `ci.yml:294-295`) can no longer
+fail and goes; `[tool.uv] cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]`
+(FETCHED, docs.astral.sh/uv/concepts/cache/) keeps a local checkout's version fresh; `uv.lock` holds no project
+version (READ, above), so tags cannot change it; `check_dist.py tag` goes, `dist DIR` takes the expected version; the
+rehearsal's `sed` of `__version__` (READ, `release.yml:54`) goes.
 
 **Costs:** four packages join the build environment (hatch-vcs, setuptools-scm, vcs-versioning, setuptools), unpinned
-as hatchling is today (READ, `ci.yml:235-238`). They can be hash-pinned with `[tool.uv] build-constraint-dependencies`
-and `require-build-hashes` (FETCHED, uv build page); whether Dependabot moves such pins is NOT ESTABLISHED, so the
-recommendation keeps today's posture: unpinned, judged by `dist-check` from a job they never ran in. The build stays
-as offline-safe as today, which is not offline.
+as hatchling is today (READ, `ci.yml:235-238`); hash pins are possible with `build-constraint-dependencies` (FETCHED,
+uv build page), but whether Dependabot moves them is NOT ESTABLISHED.
 
 **SvelteDT's counterpart:** npm publishes a folder "containing a program described by a package.json file" or a
 tarball of it (FETCHED, docs.npmjs.com/cli/v11/commands/npm-publish), and SvelteDT's `package.json` holds `"version":
-"0.0.0"` (READ, sveltedt `package.json:4`). So the version is stamped into `package.json` in the release run before
-packing, without a commit or tag: `npm --no-git-tag-version version <version>` ("Setting this to false results in no
-commit being made at all", FETCHED, docs.npmjs.com/cli/v11/commands/npm-version). SvelteDT packs with pnpm and
-publishes that tarball (READ, sveltedt `docs/decisions/001-quality-tooling.md:188-190`); its `ci.yml` has no pack or
-publish step yet (RUN, grep of sveltedt `.github/workflows/ci.yml`), so where the stamp goes is its own build's
-choice.
+"0.0.0"` (READ, sveltedt `package.json:4`). Under an automatic trigger the version is stamped before packing with `npm
+--no-git-tag-version version <version>` ("Setting this to false results in no commit being made at all", FETCHED,
+docs.npmjs.com/cli/v11/commands/npm-version). SvelteDT packs with pnpm and publishes that tarball (READ, sveltedt
+`docs/decisions/001-quality-tooling.md:188-190`); its `ci.yml` has no pack or publish step yet (RUN, grep).
 
 ## 4. Commit convention and its check (shared rule; the hook mechanics are Python only)
 
-This is the largest consequence for daily work.
+This is the consequence for daily work, under either trigger: git-cliff can only compute or check a version from
+typed commits.
 
 **What the tool reads.** `main` is merge-only by ruleset (RUN, above), so it holds the PR's own commits, GitHub's
-"Merge pull request #N from ..." commits and "Merge branch 'main' into ..." commits from updating a branch. With the
-recommended `cliff.toml`, merge headers are unconventional and are dropped by `filter_unconventional`, or else fall to
-the catch-all skip; a separate `{ message = "^Merge", skip = true }` would be redundant (harmless). PSR ignores merges by
-default (FETCHED, section 1).
+"Merge pull request #N from ..." commits and "Merge branch 'main' into ..." commits. With the recommended `cliff.toml`
+merge headers are dropped by `filter_unconventional` or the catch-all skip; a separate `^Merge` skip would be
+redundant (harmless).
 
 | Option | What changes for every commit and PR | Repository setting | Verdict |
 |---|---|---|---|
-| a. **Every non-merge commit** is conventional, header at most 100 characters (SvelteDT's rule) | Every header becomes `type(scope)!: subject`, at most 100 characters; today's long descriptive headers move into the body. Review-round commits are typed by what they change (`test:`, `docs:`, `fix:`). A commit made in GitHub's web editor ("Update x.py") or a revert made with GitHub's button (`Revert "..."`) fails the check and is reworded. | none | **Recommended** |
-| b. **The PR title** is conventional and becomes the merge commit's header; the tool reads merge commits only | Branch commits stay free prose; one changelog entry per PR | merge commit title `PR_TITLE`, body `PR_BODY`; the check must rerun on a title edit (`pull_request` type `edited`) | Possible; reading only merge commits in git-cliff (skip on `merge_commit = false`) is NOT ESTABLISHED |
-| c. **Squash merges**, PR title as the commit | One commit per PR on `main` | squash on, merge off, in the repository **and** the `main` ruleset | Not recommended: the separate commits the project relies on (a red test before its fix, a removal "as its own commit", READ `docs/PRD.md:1931`, e.g. `f56b814`) vanish from `main`. No tracked file records why squash is off (RUN, grep of CLAUDE.md, PRD, spec); that reason is the owner's. |
-
-**Recommendation: (a)**, for parity with SvelteDT and no change to the repository's settings.
+| a. **Every non-merge commit** is conventional, header at most 100 characters (SvelteDT's rule) | Every header becomes `type(scope)!: subject`, at most 100 characters; today's long descriptive headers move into the body. Review-round commits are typed by what they change. A commit from GitHub's web editor ("Update x.py") or its revert button (`Revert "..."`) fails the check and is reworded. | none | **Recommended** |
+| b. **The PR title** is conventional and becomes the merge commit's header; the tool reads merge commits only | Branch commits stay free prose; one changelog entry per PR | merge commit title `PR_TITLE`, body `PR_BODY`; the check reruns on a title edit | Possible; reading only merge commits in git-cliff is NOT ESTABLISHED |
+| c. **Squash merges**, PR title as the commit | One commit per PR on `main` | squash on, merge off, in the repository **and** the `main` ruleset | Not recommended: the separate commits the project relies on (a red test before its fix, a removal "as its own commit", READ `docs/PRD.md:1931`, e.g. `f56b814`) vanish from `main`. No tracked file records why squash is off (RUN, grep); that reason is the owner's. |
 
 **The rule** (one regex): a type out of `feat`, `fix`, `docs`, `test`, `ci`, `build`, `refactor`, `chore`, `style`;
-an optional `(scope)`; an optional `!`; `: ` and a subject; a header of at most 100 characters. git's own `Merge `
-headers pass. A revert is written as a typed commit (`fix: revert ...`, or `fix!:`/`feat!:` when it takes back a
-released feature), because git's `Revert "..."` header would be dropped as unconventional (INFERRED from
-`filter_unconventional`) and so would never release or appear in the notes. `fixup!`, `squash!` and `amend!` headers
-pass the local hook, so `git commit --fixup` keeps working, and the CI job refuses them, so none reaches `main`
-(SvelteDT's rule too, READ, sveltedt `scripts/check-repo.ts:2405-2407, 2434-2435`).
+an optional `(scope)`; an optional `!`; `: ` and a subject; at most 100 characters. git's own `Merge ` headers pass. A
+revert is a typed commit (`fix: revert ...`, or `!` when it takes back a released feature), since git's `Revert "..."`
+header would be dropped as unconventional (INFERRED). `fixup!`, `squash!`, `amend!` pass the local hook, so `git commit
+--fixup` keeps working, and the CI job refuses them (SvelteDT's rule too, READ, sveltedt `scripts/check-repo.ts:2405-2407,
+2434-2435`).
 
-**The check:**
+**The check:** locally a commit-msg hook of pre-commit's built-in `pygrep` language, `args: [--negate, --multiline]`
+("To require all files to match, use `args: [--negate]`"; commit-msg hooks get the message file, FETCHED,
+pre-commit.com), after `private-words-message`, which keeps `fail_fast` and runs first (READ,
+`.pre-commit-config.yaml:7-25`); `commit-msg` is already installed (READ, `.pre-commit-config.yaml:3`). In CI a
+`commits` job, needed by `gate`, runs only that hook by its id on each non-merge commit of the PR or push: `pre-commit
+run <id> --hook-stage commit-msg --commit-msg-filename <file>` (RUN, `uvx --from pre-commit==4.7.0 pre-commit run
+--help`, the version `uv.lock` holds: `[hook]` "A single hook-id to run", `--commit-msg-filename`), so
+`private-words-message` does not run there, as CI skips the private-word hooks today (READ, `ci.yml:112-114`). SvelteDT's
+`commits` step runs in its gate only, not in its pre-push hook (READ, sveltedt `scripts/check-repo.ts:2456-2493,
+3038-3115`). The private-word hooks are unchanged; what GitHub authors stays unscanned, as today (READ,
+`CLAUDE.md:31-33`).
 
-- Locally: a commit-msg hook in `.pre-commit-config.yaml` of pre-commit's built-in `pygrep` language, `args:
-  [--negate, --multiline]` ("To require all files to match, use `args: [--negate]`"; commit-msg hooks get the message
-  file, FETCHED, pre-commit.com). No new dependency and no script. It runs **after** `private-words-message`, which
-  keeps `fail_fast` and runs first (READ, `.pre-commit-config.yaml:7-25`), so a message holding a private word stops
-  before any other hook sees it. `default_install_hook_types` already installs `commit-msg` (READ,
-  `.pre-commit-config.yaml:3`).
-- In CI: a `commits` job in `ci.yml`, needed by `gate`, that writes each non-merge commit's message of the pull
-  request (`base..head`) or of the push (`before..after`) to a file and runs only the new hook by its id: `pre-commit
-  run <id> --hook-stage commit-msg --commit-msg-filename <file>` (RUN, `uvx --from pre-commit==4.7.0 pre-commit run
-  --help`, the version `uv.lock` holds: `[hook]` "A single hook-id to run" and `--commit-msg-filename`). Running one id
-  means `private-words-message` does not run there, as CI skips the private-word hooks today (READ, `ci.yml:112-114`).
-  The job also refuses `fixup!`/`squash!`/`amend!` headers. A manual or `workflow_call` run has no range and the job
-  says so, as the coverage step does (READ, `ci.yml:84-90`).
-- SvelteDT's `commits` step runs in its gate only; its pre-push hook runs the secret scans, not `commits` (READ,
-  sveltedt `scripts/check-repo.ts:2456-2493, 3038-3115`, `.githooks/pre-push`). Here, too, CI is the check that binds.
-- The private-word hooks stay unchanged and keep working: the new hook neither reads nor prints the word list. What
-  GitHub authors (merge commits, PR titles) stays unscanned, as today (READ, `CLAUDE.md:31-33`).
+**Costs:** every contributor writes shorter, typed headers; one hook and one CI job; the types are listed in the hook's
+regex and in `cliff.toml`, so a test that the lists agree belongs in #76 (SvelteDT's decision 001 asks the same, READ,
+sveltedt `docs/decisions/001-quality-tooling.md:273-283`).
 
-**Costs:** every contributor writes shorter, typed headers; one hook and one CI job; the types are listed in two
-places (the hook's regex and `cliff.toml`), so a test that the two lists agree belongs in #76 (SvelteDT's decision
-001 asks for the same, READ, sveltedt `docs/decisions/001-quality-tooling.md:273-283`).
-
-## 5. `workflow_run` or a job after `gate` in ci.yml (shared)
+## 5. `workflow_run` or a job after `gate` in ci.yml (shared; automatic trigger only)
 
 FETCHED, events page: `workflow_run` "will only trigger a workflow run if the workflow file exists on the default
-branch"; its `GITHUB_SHA` is the "Last commit on default branch" and `GITHUB_REF` the default branch; "A workflow run
-is triggered regardless of the conclusion of the previous workflow" (so the conclusion must be checked); it "is able
-to access secrets and write tokens"; at most three levels of chaining. The run object carries `head_branch`,
-`head_sha`, `event`, `conclusion` (FETCHED, docs.github.com/en/rest/actions/workflow-runs, "Get a workflow run").
-zizmor's `dangerous-triggers` audit flags `workflow_run` (FETCHED, docs.zizmor.sh/audits/); Scorecard's
-Dangerous-Workflow flags `workflow_run` only together with a checkout of pull-request code (FETCHED,
-raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md).
+branch"; its `GITHUB_SHA` is the "Last commit on default branch"; "A workflow run is triggered regardless of the
+conclusion of the previous workflow"; it "is able to access secrets and write tokens". The run object carries
+`head_branch`, `head_sha`, `event`, `conclusion` (FETCHED, docs.github.com/en/rest/actions/workflow-runs). zizmor's
+`dangerous-triggers` audit flags `workflow_run` (FETCHED, docs.zizmor.sh/audits/); Scorecard's Dangerous-Workflow flags
+it only with a checkout of pull-request code (FETCHED, raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md).
 
 | | A job after `gate` in ci.yml | A new workflow on `workflow_run` of CI |
 |---|---|---|
-| Runs after CI passed on `main` | `needs: gate` plus `if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.outputs.passed == 'true'` | `if: conclusion == 'success' && event == 'push' && head_branch == 'main'`, same repository; checks out `head_sha` |
-| Concurrency | ci.yml's group cancels in progress (READ, `ci.yml:22-24`): a newer push to `main` can cancel the job between creating the tag and dispatching | its own group, `cancel-in-progress: false`; a newer pending run replaces an older pending one (FETCHED, docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), harmless since the newer commit holds the older |
-| Permissions | ci.yml is also called by `release.yml` (READ, `ci.yml:8-12`, `release.yml:59-67`). A job asking `contents: write` and `actions: write` inside it would make `release.yml`'s `ci` job grant them, or fail; which one is NOT ESTABLISHED. Either way the release run's CI would hold write permissions it never needs | only this workflow's one job has them |
-| Definition | the commit's own ci.yml | `main`'s copy, which is what should decide tagging |
-| Lint cost | none | one `# zizmor: ignore[dangerous-triggers]` with its reason: the run checks out a commit already on `main`, never pull-request code |
+| Concurrency | ci.yml's group cancels in progress (READ, `ci.yml:22-24`): a newer push can cancel the job between creating the tag and dispatching | its own group, `cancel-in-progress: false` |
+| Permissions | ci.yml is also called by `release.yml` (READ, `ci.yml:8-12`, `release.yml:59-67`); a write-permission job inside it would make the release run's CI grant them, or fail (NOT ESTABLISHED which) | only this workflow's one job has them |
+| Definition | the commit's own ci.yml | `main`'s copy |
+| Lint cost | none | one `# zizmor: ignore[dangerous-triggers]` with its reason |
 
-**Recommendation: `workflow_run`** in a new `.github/workflows/tag.yml`. **Cost:** one workflow file and one zizmor
-ignore with a reason.
+**Recommendation: `workflow_run`** in a new `tag.yml`. **Cost:** one workflow file and one zizmor ignore.
 
 ## 6. Tag protection beyond the environment (shared)
 
-Today: "release tags" blocks deletion, update and non-fast-forward on `refs/tags/v*`, with no bypass actor (RUN).
-Anyone with write access can still **create** a `v*` tag. What stops a hostile one is the `pypi` environment (owner
-approval, READ `release.yml:26-29`).
+Today: "release tags" blocks deletion, update and non-fast-forward on `refs/tags/v*`, with no bypass actor (RUN);
+anyone with write access can still create a `v*` tag, and the `pypi` environment's reviewer stops a hostile one (READ,
+`release.yml:26-29`). "Restrict creations: If selected, only users with bypass permissions can create branches or tags
+whose name matches the pattern" (FETCHED, docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets);
+bypass may go to repository admins, roles, teams, "GitHub Apps" and Dependabot, not listed: `GITHUB_TOKEN` (FETCHED,
+.../creating-rulesets-for-a-repository). Whether the Actions App can be a bypass actor is NOT ESTABLISHED, so "restrict
+creations" would block section 2's option A unless an own App is added.
 
-FETCHED, docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets:
-"Restrict creations: If selected, only users with bypass permissions can create branches or tags whose name matches
-the pattern". FETCHED, .../creating-rulesets-for-a-repository: bypass may go to repository admins, the maintain or
-write role, teams, "GitHub Apps" and Dependabot; `GITHUB_TOKEN` and github-actions are not listed. The required checks
-name the Actions integration `15368` (RUN, `main` ruleset), but whether that App can be put on a bypass list is NOT
-ESTABLISHED.
+**Recommendation: keep the ruleset as it is.** Revisit if a collaborator with write access joins. **Cost:** none.
 
-| Option | Effect on section 2 |
-|---|---|
-| Keep the ruleset as it is | Option A works unchanged. A tag cannot be moved or deleted, so a tag whose publish is rejected stays (section 7). |
-| Add "restrict creations", bypass: repository admin role | Blocks option A's `GITHUB_TOKEN` unless the Actions App can bypass (NOT ESTABLISHED). Works for a hand-pushed tag by the owner. |
-| Add "restrict creations", bypass: our own App | Works, but needs option B's App. |
+## 7. Who starts a release (shared): the owner, or every merge
 
-**Recommendation: keep the ruleset as it is.** The environment's required reviewer already guards every publish, and
-restricting creation would either need an App or rest on a fact not established. Revisit if a collaborator with write
-access joins. **Cost:** none.
+SvelteDT's PRD-S7 releases automatically after CI on `main` (READ, sveltedt `docs/PRD.md:840-849`); #45's model does
+the same. Both options below are complete.
 
-## 7. The trigger: automatic after CI, or a hand-pushed tag (shared)
-
-SvelteDT's PRD-S7 releases automatically after CI on `main` with a computed version, the publish waiting for the
-owner in the `npm` environment (READ, sveltedt `docs/PRD.md:840-849`). Here a release is a hand-pushed tag today
-(READ, `release.yml:3-10`). #45's model is the automatic one.
-
-| | Automatic after CI (the model) | Hand-pushed tag, with version-from-tag and generated notes |
+| | **Owner starts** (the smaller scope) | **Every merge starts** (the model) |
 |---|---|---|
-| Who starts a release | every merge to `main` whose commits include a `feat`, `fix` or breaking change | the owner, by pushing `v<version>` |
-| Version | computed by git-cliff | the owner types it; `check-tag` refuses a tag that differs from git-cliff's |
-| Needs | `tag.yml` (sections 2, 5), `actions: write` | nothing new: `push: tags` already starts `release.yml` |
-| Pending approvals | one per releasable merge, each with its own permanent tag | one per tag the owner pushes |
-| A rejected or abandoned approval | the tag stays (the ruleset blocks deletion), the draft release stays, the version is never on PyPI, and the tag becomes git-cliff's last release, so its commits never appear in a later generated list (INFERRED: `--unreleased` "Processes the commits that do not belong to a tag", FETCHED, usage/args) | the owner does not push |
-| A job waiting for approval | waits "up to 30 days on environment approvals"; a run lasts at most 35 days including the wait (FETCHED, docs.github.com/en/actions/reference/limits) | same |
-| Same as SvelteDT | yes | no |
+| How | Changes go under `[Unreleased]` as today. One release PR renames it to `## [X] - <date>` and sets `__version__`, as #169 did for 0.1.0 (READ). After it merges the owner pushes `v<X>`; `release.yml` runs as today. | After CI passes on `main`, `tag.yml` computes the version, creates the tag and dispatches `release.yml` on it (sections 2, 5). |
+| Version | the release PR writes it; CI on that PR fails unless it equals `git-cliff --bumped-version` for the PR's merge commit (`main` is strict, so the PR is up to date, INFERRED); `check-tag` also refuses a tag whose version differs from `git-cliff --ignore-tags "^<tag>$" --bumped-version` (RUN: on a commit tagged `v0.2.0` whose commits give a patch, that command printed `v0.1.1`) | computed by git-cliff |
+| Notes | the `## [X]` section, as the owner's rule of 2026-11-23 says | the PR that causes the release writes `## [X]` (section 8, option P) |
+| A rejected or abandoned approval | the owner pushed the tag knowingly; it stays (the ruleset blocks deletion), as with 0.1.0rc1 (READ, `CHANGELOG.md:177`) | the tag stays, the draft release stays, the version is skipped, and the tag becomes git-cliff's last release, so its commits never appear in a later generated list (INFERRED: `--unreleased` "Processes the commits that do not belong to a tag", FETCHED, usage/args). Once the tag exists the owner's choice is approve or burn. |
+| Pending approvals | one per release the owner starts | one per releasable merge; at this project's merge rate (RUN, `git log --merges --first-parent v0.1.0..0daf2f4`: 8 pull requests merged into `main` since `v0.1.0`, all on 2026-11-24) one would be pending almost always |
+| A job waiting for approval | waits "up to 30 days on environment approvals" (FETCHED, docs.github.com/en/actions/reference/limits) | same |
+| New in #76 | part (ii) of section 8 (the convention, the hook, the `commits` job, `cliff.toml` and its test) plus the two version checks | part (ii) plus `tag.yml`, `workflow_run`, the dispatch, hatch-vcs (4 build packages, `importlib.metadata`, uv `cache-keys`, the `check_dist.py` rewrite) and the changelog rule |
+| Not needed | none of sections 2, 3, 5; none of hatch-vcs's open questions | |
+| Same as SvelteDT | no | yes |
 
-**Recommendation: automatic, as the model says, with one release in flight.** Before it creates a tag, `tag.yml`
-looks up the release of the latest `v*` tag by name (`gh release view v<latest> --json isDraft`; without a tag,
-`gh release view` shows the latest release, which may skip a draft: NOT ESTABLISHED, so name the tag) and creates
-nothing while that release is a draft. Commits merged meanwhile are released by the next merge after the publish. To
-release them without waiting for a merge, the owner dispatches `tag.yml` on `main`: that run has no `workflow_run`
-payload, so it works on `main`'s latest commit and must check itself that CI's run for that commit concluded
-`success`. After a rejected publish the owner deletes the draft release (the tag stays and its number is skipped),
-which unblocks the next run. Pre-releases (`rc`) are not produced by the automatic path. If the owner keeps a hand path
-for `rc` tags, `cliff.toml` **must** set `tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"`: with an rc tag `v0.1.1rc1` as
-the latest tag, git-cliff exits 1 with "Semver error: `unexpected character 'v' while parsing major version number`";
-with that `tag_pattern` it ignores the rc tag and computes `v0.2.0` (RUN, scratch repository). The pattern costs
-nothing and belongs in `cliff.toml` either way. **Cost:** about eight lines in `tag.yml` (the draft look-up and the
-dispatch path's CI check).
+**Recommendation: the owner starts a release.** Under the automatic trigger every merge with a `feat` or `fix` makes a
+tag that cannot be removed, so the owner can only approve or burn a version; that has already happened once
+(0.1.0rc1); at this merge rate an approval would be pending almost always; and adopters are served by fewer, coherent
+releases. **This would amend the owner's decision of 2026-11-22 (#45's model) and depart from SvelteDT's PRD-S7; the
+choice is his alone.** **Cost:** one release PR per release (four files for 0.1.0) and a hand-pushed tag, as today.
+**Revisit when** release PRs become a burden, or a second maintainer joins.
+
+If the owner keeps the automatic trigger, the rest stands as drafted: one release in flight (`tag.yml` looks up the
+latest tag's release by name, `gh release view v<latest> --json isDraft`, and creates nothing while it is a draft; a
+dispatch of `tag.yml` on `main` releases pending commits after a publish and checks CI's conclusion for `main`'s head
+itself; after a rejection the owner deletes the draft release), no automatic `rc`, and `tag_pattern =
+"^v[0-9]+\\.[0-9]+\\.[0-9]+$"` in `cliff.toml`, which is needed under either trigger while rc tags exist: with
+`v0.1.1rc1` as the latest tag git-cliff exits 1 with "Semver error: `unexpected character 'v' while parsing major
+version number`", and with the pattern it ignores the rc tag (RUN).
 
 ## 8. Proposal and size of #76
 
-**The changelog (Python only; SvelteDT has no CHANGELOG.md).** The model says the notes are generated from commits;
-the owner's rule of 2026-11-23 says they are the version's CHANGELOG.md section; with no commit to `main` the
-workflow cannot write CHANGELOG.md; and the README promises breaking changes are listed there.
+**Step 0: release what is waiting** (both triggers). `[Unreleased]` on `main` holds (READ, `CHANGELOG.md:7-40`): the
+total cache bound `TotalCache(max_entries=...)` (#50); `scope=` on `fetch` and `fetch_sync` (#79, marked "Not
+breaking"); ColumnControl's per-column filters answered on both backends (#163, #164, #165); and the FastAPI
+dependency's HTTP 400 on a client disconnect (#151).
+
+The next release is 0.1.1 under the recommended rule, since nothing in it breaks: an application on 0.1.0 can take
+`scope=`, ColumnControl, the cache bound and the disconnect fix without changing code. Under the draft's rule the same
+release would be 0.2.0.
+
+- ColumnControl: answered where it was refused, a loosening; nothing that was answered before answers differently.
+- The cache bound: it costs time, not results; a dropped total is recounted to the same number.
+- The disconnect 400: a fix; nobody can rely on a 500 sent into a dead connection.
+- `scope=`: a new optional keyword (READ, `CHANGELOG.md:13-15`).
+
+**Recommendation: release it now by today's hand path** (a release PR as #169, then the owner's tag). It needs the
+owner's explicit OK to publish.
+
+**If the owner starts releases** (recommended): #76 shrinks to part (ii) below plus the two version checks of section
+7, and its rehearsal stays as today, printing git-cliff's next version besides the notes. Files: `.pre-commit-config.yaml`
+(the hook), `.github/workflows/ci.yml` (the `commits` job, the release-PR version check, `gate`), `release.yml`
+(`check-tag`'s git-cliff comparison), `cliff.toml` and its test, `pyproject.toml`/`uv.lock` (the `release` group),
+`docs/PRD.md` and `spec/` (a requirement for the release path and the convention, its first sentence the owner's,
+READ, `CLAUDE.md:91-92`), `README.md` (the policy sentence of section 1), `CHANGELOG.md` header, `CLAUDE.md`.
+
+**If the automatic trigger is kept**, the changelog has three options:
 
 | Option | How | Cost |
 |---|---|---|
-| P. **The releasing PR writes the section** (the reviewer's proposal) | The `commits` job also runs `git-cliff --bumped-version` on the PR. `main` is strict (up to date), so the PR's merge commit is what `main` will hold and the output is the version the merge would release (INFERRED). Rule: if it prints a new version X, CHANGELOG.md must have `## [X]` holding the changes; otherwise the changes go under `[Unreleased]`. `draft-release` keeps reading the `## [X]` section (`changelog_notes.py X`), optionally followed by git-cliff's list for the tag. | The owner's rule of 2026-11-23 holds as written. No rename PR. On the tag, git-cliff prints the tag itself ("nothing to bump", RUN above), so the check passes inside `release.yml`'s `ci` too. A PR that turns a pending patch into a minor renames the section. A rejected version's section stays in CHANGELOG.md and needs a line saying it was never published. |
-| Q. `[Unreleased]` at the tag plus the generated list, renamed by the next PR, with a CI check that the latest tag has its section (the earlier draft) | as named | **Deadlocks**: in `release.yml`'s `ci` on the tag CHANGELOG.md has only `[Unreleased]`, so `gate` fails and nothing publishes; every PR is red between a tag and the rename PR; it demands a section after a rejected release. Workable only with the check kept out of the `workflow_call` path; it would amend the owner's rule, if he agrees. |
-| R. Generated notes only, CHANGELOG.md frozen at 0.1.0 | git-cliff renders the notes | Least work, but would change the owner's rule and the README's promise, and moves the explanation of each breaking change into commit bodies. |
+| P. **The releasing PR writes the section** | The `commits` job runs `git-cliff --bumped-version` on the PR; `main` is strict, so this is the version the merge would release (INFERRED). If it prints a new version X, CHANGELOG.md must have `## [X] - <date>`; otherwise the changes go under `[Unreleased]`. | The owner's rule of 2026-11-23 holds as written. No rename PR. On the tag git-cliff prints the tag itself ("nothing to bump", RUN), so the check passes in `release.yml`'s `ci`. A rejected version's section stays and needs a line saying it was never published. |
+| Q. `[Unreleased]` at the tag, renamed by the next PR, checked in CI | as named | **Deadlocks**: in `release.yml`'s `ci` CHANGELOG.md has only `[Unreleased]`, so `gate` fails; every PR is red between a tag and the rename PR. It would amend the owner's rule, if he agrees. |
+| R. Generated notes only, CHANGELOG.md frozen | git-cliff renders the notes | Would change the owner's rule and the README's promise. |
 
-**Recommendation: P.** It keeps the owner's rule literally, has no deadlock and no extra PR, and puts the
-adopter-facing prose in the PR that causes the release, where the reviewer sees it. The date in `## [X] - date` is
-unknown until the merge; `changelog_notes.py` already accepts a heading without one (READ,
-`scripts/changelog_notes.py:28`), so whether the rule asks for a date is the owner's call.
-
-**Step 0, before #76's tagging part lands** (owner's choice). With the recommended `cliff.toml`, a run on today's
-history computes nothing (RUN: "nothing to bump", section 1); with git-cliff's defaults it would compute 0.1.1.
-
-| Option | Effect |
-|---|---|
-| 0a. Release the pending `[Unreleased]` work (scope, ColumnControl, the cache bound, the 400) as 0.2.0 by today's hand path | It reaches adopters before #76; needs the owner's OK to publish. |
-| 0b. No hand release | The first `feat:` after #76 computes 0.2.0 (the 0.x rule), and under option P that PR moves the `[Unreleased]` prose into `## [0.2.0]`. The pending work waits for that PR. |
-
-Recommendation: 0b unless the owner wants the pending work out sooner; it costs no extra release.
-
-**The pipeline** (recommendation only):
-
-1. A PR merges to `main`; CI runs as today, including `commits` (section 4) and the changelog rule (option P).
-2. `tag.yml` (`on: workflow_run` of CI, `types: [completed]`, `branches: [main]`, plus `workflow_dispatch`; workflow
-   `permissions: {}`; group `tag`, no cancel). One job, `permissions: contents: write, actions: write`, no
-   environment: checks the conclusion, event and branch (or, when dispatched, CI's conclusion for `main`'s head);
-   checks out that commit with `fetch-depth: 0` and `persist-credentials: false`; runs `uv run --frozen --only-group
-   release git-cliff --bumped-version` (`--only-group`: "The project and its dependencies will be omitted", FETCHED,
-   docs.astral.sh/uv/reference/cli/, so no build backend runs in a job that holds write tokens); compares the output
-   with the latest `v*` tag and stops if they are equal (RUN: with nothing to release git-cliff prints a warning on
-   stderr and the **last** tag, e.g. `v0.1.0`, on stdout, and exits 0; the output already carries the `v`); stops if
-   that tag's release is a draft (section 7); creates the annotated tag through the REST API with `gh api` (`POST
-   /repos/{owner}/{repo}/git/tags`, then `POST .../git/refs`; both need "Contents" write, FETCHED, permissions page),
-   so no git credential is stored in the checkout; runs `gh workflow run release.yml --ref v<version>` and prints the
-   run's link.
-3. `release.yml` (`on: workflow_dispatch`, plus `push: tags` only if the owner keeps a hand path): `check-tag`
-   (`contents: read`: the commit is on `main`; on `main` without a tag, the rehearsal prints the next version, the tag
-   it would create and the notes); `ci` (all of ci.yml; `dist` builds with hatch-vcs, `dist-check` compares with the
-   tag); `draft-release` (`contents: write`; condition `github.ref_type == 'tag'`); `publish` (`pypi`, `id-token:
-   write` only, waits for the owner); `publish-release` (`contents: write`). The tagging job has no `id-token`; the
-   publish job has neither `contents` nor `actions`.
-
-**Files #76 would change:**
-
-| File | Change |
-|---|---|
-| `.github/workflows/tag.yml` | new (sections 2, 5, 7) |
-| `.github/workflows/release.yml` | triggers, the release-or-rehearsal condition, the rehearsal's next-version step, `sed` of `__version__` removed |
-| `.github/workflows/ci.yml` | `commits` job (with the changelog rule) and its place in `gate`; `fetch-depth: 0` for `dist` and `dist-check`; the dist check's version argument; the `__version__` assertion dropped |
-| `cliff.toml` | new: parsers, `protect_breaking_commits`, 0.x bump rules, `tag_pattern`, the notes template |
-| `pyproject.toml`, `uv.lock` | `hatch-vcs` in `build-system.requires`, `source = "vcs"`, `[tool.uv] cache-keys`, a `release` group with `git-cliff` |
-| `src/datatables_backend/__init__.py` | `__version__` from `importlib.metadata` |
-| `scripts/check_dist.py`, `scripts/test_check_dist.py` | `tag` goes; `dist` takes the expected version |
-| a test of `cliff.toml` | `refactor!:` and a `BREAKING CHANGE:` footer bump minor, `docs:` nothing |
-| `.pre-commit-config.yaml` | the commit-msg `pygrep` hook |
-| `docs/PRD.md`, `spec/` | a packaging requirement for the release path and the commit convention (its first sentence is the owner's, READ, `CLAUDE.md:91-92`); section 6, criterion 6 |
-| `README.md` | the status line stops naming a version; how a release happens |
-| `CHANGELOG.md` header, `CLAUDE.md` | the convention and the release path |
-
-INFERRED: this is more than the two-day ceiling under which #45 was split (READ, #45 comment of 2026-11-22). A split
-that keeps each part shippable, in this order:
-
-1. **(ii) The convention and its checks** first: the hook, the `commits` job, `cliff.toml` and its test. Nothing in
-   the release path changes, and every commit after it is readable by git-cliff.
-2. **(i) The version from the tag** (hatch-vcs, `__version__`, `check_dist.py`). Shippable on today's hand-pushed path
-   only if the same part also removes `release.yml`'s rehearsal `sed` of `__version__` and replaces `check_dist.py
-   tag`; otherwise the next hand release breaks.
-3. **(iii) `tag.yml`, the dispatch, the changelog rule, the rehearsal**: needs (i) and (ii), and the owner's first
-   sentence of the new PRD requirement.
+Recommendation for that case: P. The pipeline: (1) a PR merges, CI runs with `commits` and rule P; (2) `tag.yml`
+(`workflow_run` of CI on `main`, plus `workflow_dispatch`; one job with `contents: write` and `actions: write`; checks
+the conclusion, checks out the commit with `fetch-depth: 0` and `persist-credentials: false`; runs `uv run --frozen
+--only-group release git-cliff --bumped-version`, where `--only-group` means "The project and its dependencies will be
+omitted", FETCHED, docs.astral.sh/uv/reference/cli/, so no build backend runs in a job holding write tokens; stops when
+the output equals the latest tag, since with nothing to release git-cliff prints a warning and the **last** tag and
+exits 0, RUN; stops while that tag's release is a draft; creates the annotated tag with `gh api` `POST .../git/tags`
+then `POST .../git/refs`, both "Contents" write, FETCHED, permissions page, so no git credential is stored; dispatches
+`release.yml` on the tag); (3) `release.yml` on the tag: `check-tag`, `ci` (hatch-vcs build), `draft-release`,
+`publish` (`pypi`), `publish-release`. Files beyond the owner-started list: `tag.yml`, `release.yml` triggers and
+conditions, `ci.yml` (`fetch-depth: 0` for `dist`, the version argument, the `__version__` assertion dropped),
+`pyproject.toml` (hatch-vcs, `cache-keys`), `__init__.py`, `check_dist.py` and its test. That is more than the two-day
+ceiling under which #45 was split (INFERRED; READ, #45 comment of 2026-11-22); the order would be (ii) the convention
+and its checks; (i) the version from the tag, shippable on the hand path only if the same part removes the rehearsal's
+`sed` and replaces `check_dist.py tag`; (iii) `tag.yml`, the dispatch, rule P and the rehearsal, which need (i), (ii)
+and the owner's first sentence of the new PRD requirement.
 
 ## 9. Owner decides
 
-1. Tool. Recommendation: **git-cliff** from a uv `release` group (not PSR's Docker action; release-please ruled out).
-2. Bump. Recommendation: `feat` and any breaking change -> minor before 1.0, `fix` -> patch, everything else nothing;
-   `cliff.toml` with a catch-all skip and `protect_breaking_commits`, guarded by a test.
-3. Publish trigger. Recommendation: **option A**, the tagging job dispatches `release.yml` on the tag with
-   `GITHUB_TOKEN` (no App).
-4. Version source. Recommendation: **hatch-vcs**, build environment unpinned as today; `check_dist.py tag` goes.
-5. Commit convention. Recommendation: **every non-merge commit** conventional, header at most 100 characters; merges
-   stay the only merge method; reverts written as typed commits.
-6. Check. Recommendation: a `pygrep` commit-msg hook after the private-word hook, and a `commits` job in CI needed by
-   `gate` that also refuses `fixup!` commits.
-7. After CI. Recommendation: **`workflow_run`** in a new `tag.yml`, not a job in ci.yml.
-8. Tag ruleset. Recommendation: **unchanged** (no "restrict creations").
-9. Trigger. Recommendation: **automatic**, one release in flight; no automatic `rc`; drop the hand `push: tags` path
-   (a dispatch of `release.yml` on an existing tag covers a failed publish); the final-only `tag_pattern` either way.
-10. Notes. Recommendation: **option P**, the releasing PR writes `## [X]`, checked in CI; the 2026-11-23 rule stays
-    as written. Whether the heading needs a date: the owner's call.
-11. Step 0. Recommendation: **0b**, no hand release; 0a if the pending work should reach adopters before #76.
-12. #76. Recommendation: split into (ii), (i), (iii), in that order.
+**(1) Who starts a release.** Recommendation: **you do** (section 7): a merge-started release leaves an
+unremovable tag that you can only approve or burn, as 0.1.0rc1 showed; an approval would be pending almost always; and
+adopters get fewer, coherent releases. This would amend your decision of 2026-11-22 and depart from SvelteDT's PRD-S7;
+it is your choice alone.
+
+**(2) The 0.x bump rule and (4) release now**, side by side; the version number is the first consequence of the rule.
+
+| (2) The 0.x bump rule | (4) Release now |
+|---|---|
+| Recommendation: before 1.0, `feat` and `fix` -> patch, a breaking change -> minor (`features_always_bump_minor = false`, `breaking_always_bump_major = false`; from 1.0 the same file gives feat minor, fix patch, breaking major, RUN). Reason: a 0.x patch then never breaks, so `~=0.2.0` takes features and fixes, and a minor means "read the changelog". The README's policy sentence must then say once that before 1.0 a patch release may add features and never breaks, and a minor release may break; that sentence is yours, decided with this item. | Recommendation: release `[Unreleased]` now by today's hand path (needs your explicit OK to publish). Under the recommended rule it is **0.1.1**, since nothing in it breaks; under the draft's rule it would be 0.2.0 (section 8, step 0). |
+
+**(3) The commit convention.** Recommendation: **every non-merge commit** conventional, header at most 100
+characters (section 4). It changes every commit from now on: a typed, short header, the detail in the body. Reason:
+git-cliff can only compute or check a version from typed commits, under either trigger; it is SvelteDT's rule; and it
+needs no change to the merge settings.
+
+**Done as recommended unless you object:**
+
+- Tool: git-cliff from a uv `release` group (section 1), with the catch-all skip, `protect_breaking_commits`, the
+  final-only `tag_pattern` and a test that a breaking change always bumps.
+- The check: a `pygrep` commit-msg hook after the private-word hook, and a `commits` job in CI needed by `gate` that
+  also refuses `fixup!` commits (section 4).
+- Tag ruleset unchanged (section 6).
+- Only if the automatic trigger is kept: dispatch option A with `GITHUB_TOKEN` (section 2); hatch-vcs (section 3);
+  `workflow_run` in `tag.yml` (section 5); one release in flight (section 7); changelog option P and the split
+  (ii), (i), (iii) (section 8).
 
 ## Not established (to verify before relying on it)
 
 - Whether the GitHub Actions App (`GITHUB_TOKEN`) can be a ruleset bypass actor.
 - Whether a workflow called with `workflow_call` that holds a job asking for more permissions than the caller grants
   fails or runs.
-- hatch-vcs: that the default `tag-pattern` drops the `v`; whether a depth-1 checkout of a tag ref holds the tag; that
-  the untracked `dist/` does not make the tree dirty; the version a shallow non-tag checkout gets.
+- hatch-vcs (automatic trigger only): the version a shallow checkout of a non-tag commit gets.
 - Whether Dependabot moves `build-constraint-dependencies`.
-- Whether `gh release view` without a tag skips a draft (section 7 avoids relying on it by naming the tag).
-- git-cliff: reading only merge commits (option b of section 4); not needed by the recommendation.
+- Whether `gh release view` without a tag skips a draft (section 7 names the tag instead).
+- git-cliff reading only merge commits (option b of section 4); not needed by the recommendation.
 - Scorecard's `checks.md` was fetched from its raw file; its rendered page answered 503.
