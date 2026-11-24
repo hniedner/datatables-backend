@@ -52,7 +52,7 @@ from .protocol import PartialResultError
 from .protocol import SchemaError
 from .rows import RowHooks
 
-__all__ = ['IndexColumn', 'SearchTable', 'TextKind']
+__all__ = ['IndexColumn', 'SearchTable', 'TextKind', 'partial_answer']
 
 log = logging.getLogger('datatables_backend')
 
@@ -268,7 +268,7 @@ class SearchTable:
     # -- running ----------------------------------------------------------------------------------------------------
 
     def _filtered(self, answer: Mapping[str, Any]) -> int:
-        if _partial_answer(answer, self.index):
+        if partial_answer(answer, index=self.index):
             raise PartialResultError(f'The search of {self.index} did not cover every shard.')
         total = answer['hits']['total']
         # track_total_hits makes it exact; an older engine may still answer a bare number
@@ -286,7 +286,7 @@ class SearchTable:
             self.total_cache.put(self._total_key, total)
 
     def _count(self, answer: Mapping[str, Any]) -> int:
-        if _partial_answer(answer, self.index):
+        if partial_answer(answer, index=self.index):
             raise PartialResultError(f'The count of {self.index} did not cover every shard.')
         return int(answer['count'])
 
@@ -584,12 +584,13 @@ def _whole_number(value: object, minimum: int) -> int | None:
     return value if type(value) is int and value >= minimum else None
 
 
-def _partial_answer(answer: object, index: str) -> bool:
+def partial_answer(answer: object, *, index: str) -> bool:
     """Whether a search or count answer is not known to cover every shard, and so must not be shown as complete.
 
-    Partial: a shard failed or the search timed out (OpenSearch answers 200 with the shards that did answer).
-    Unverifiable: ``_shards`` or its counts, or ``timed_out``, are missing or of the wrong type. Both are logged at
-    ERROR with counts and names, never values.
+    Returns True for an unverifiable answer as well as a partial one. Partial: a shard failed or the search timed out
+    (OpenSearch answers 200 with the shards that did answer). Unverifiable: ``_shards`` or its counts, or
+    ``timed_out``, are missing or of the wrong type, or the answer is not a mapping. It logs at ERROR when it returns
+    True, with counts and names, never values. It is meant for the answers of ``search`` and ``count``.
     """
     if not isinstance(answer, Mapping):
         log.error('opensearch_answer_unverifiable', extra={'index': index, 'unreadable': ['answer']})
