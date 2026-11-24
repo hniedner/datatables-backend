@@ -284,8 +284,9 @@ def test_brackets_and_a_backslash_in_a_word_are_text(session: Session):
 
 
 def test_a_word_matches_inside_a_longer_value(session: Session):
-    """SPEC-F11.5: `ple` is found in the middle of `red apple` and `maple pie`, as a substring and not only at an end."""
-    assert found(session, ['red apple', 'maple', 'pie'], glob('ple')) == [1, 2]
+    """SPEC-F11.5: `ple` is found in the middle of `apples`, at the start of `plex` and at the end of `maple`, and not
+    in `pie`: a match anchored at either end, or on the whole value, would miss one of the three."""
+    assert found(session, ['apples', 'plex', 'maple', 'pie'], glob('ple')) == [1, 2, 3]
 
 
 @pytest.mark.parametrize('text', ['red NOT apple', 'red not apple'])
