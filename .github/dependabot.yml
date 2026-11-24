@@ -12,7 +12,7 @@ updates:
     cooldown:
       default-days: 7
     groups:
-      actions-minor-and-patch:
+      actions-minor:
         applies-to: version-updates
         update-types: [minor, patch]
       actions-security:
@@ -30,7 +30,7 @@ updates:
       default-days: 7
       semver-major-days: 30
     groups:
-      uv-minor-and-patch:
+      uv-minor:
         applies-to: version-updates
         update-types: [minor, patch]
       uv-security:

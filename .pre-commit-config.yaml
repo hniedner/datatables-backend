@@ -82,6 +82,18 @@ repos:
 
   - repo: local
     hooks:
+      # The commit message's header (decision 009, section 4): a type, an optional (scope) and `!`, `: ` and a subject,
+      # at most 100 characters; git's own `Merge ` headers pass. Leading blank and `#` lines are skipped: git hands the
+      # hook the message before it strips them. `fixup!`, `squash!` and `amend!` pass here; ci.yml's `commits` refuses
+      # them. pygrep prints only the message file's name, never the message.
+      # Local-only known limits, left to review: a 100-character header ending in CRLF or a space, a first line of
+      # spaces only, and a non-ASCII scope.
+      - id: commit-header
+        name: commit header (conventional, at most 100 characters)
+        language: pygrep
+        entry: '\A(?:#[^\n]*\n|\n)*(?:(?=(?:[^\n\x80-\xbf][\x80-\xbf]*){1,100}$)(?:feat|fix|docs|test|ci|build|refactor|chore|style)(?:\([\w./-]+\))?!?: \S|Merge |(?:fixup|squash|amend)! )'
+        args: [--negate, --multiline]
+        stages: [commit-msg]
       - id: ruff-format
         name: ruff format
         entry: uv run --frozen ruff format
