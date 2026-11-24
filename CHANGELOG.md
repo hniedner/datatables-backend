@@ -13,9 +13,19 @@ change here; the wire format and the error codes change only in a release whose 
 - `scope=` on `fetch` and `fetch_sync` of `SQLTable` and `SearchTable`: a filter for one request, such as a user's rows,
   ANDed with `base_filter` and kept apart in the total cache, so one table and one cache serve every user ([#79]). Not
   breaking.
+- ColumnControl's per-column filters are answered on both backends ([#163], [#164], [#165]; PRD-F45): its text, number
+  and list controls, with every logic (`contains`, `notContains`, `equal`, `notEqual`, `starts`, `ends`, `empty`,
+  `notEmpty`, and the number control's `greater`, `greaterOrEqual`, `less`, `lessOrEqual`). Each answers as the column
+  search or SearchBuilder condition it matches, so the type rules are those of that condition. ColumnControl needs
+  `ajax: { submitAs: 'json' }` (README).
 
 ### Changed
 
+- A request with an active ColumnControl search or list is no longer refused as a whole: until now any active one raised
+  `MalformedRequest` ("Invalid columns parameter."), the 422 of the FastAPI adapter. What is still refused raises
+  `MalformedRequest` with a message that says what to change: ColumnControl's date control when it is active, a logic
+  outside the set, a value with no logic, a list entry that is neither text nor a whole number, and a list that is no
+  array and no object keyed by indexes.
 - A `TotalCache` that would hold more than 10,000 distinct totals now drops the oldest (a request for it counts again),
   where it grew without limit before. Pass a larger `max_entries` to keep more.
 
@@ -173,3 +183,6 @@ What it does: see [0.1.0].
 [#75]: https://github.com/hniedner/datatables-backend/issues/75
 [#79]: https://github.com/hniedner/datatables-backend/issues/79
 [#152]: https://github.com/hniedner/datatables-backend/issues/152
+[#163]: https://github.com/hniedner/datatables-backend/issues/163
+[#164]: https://github.com/hniedner/datatables-backend/issues/164
+[#165]: https://github.com/hniedner/datatables-backend/issues/165
