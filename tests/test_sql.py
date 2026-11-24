@@ -87,6 +87,7 @@ from .conftest import labelled
 from .conftest import nested
 from .conftest import people
 from .conftest import request
+from .test_measure_56 import test_measure_56_decimal_binds  # noqa: F401  TEMPORARY, #56 measurement, never merged
 
 ALL = ('id', 'name', 'email', 'age', 'born', 'seen', 'team')
 COLUMNS = [
