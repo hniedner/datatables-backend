@@ -1,0 +1,29 @@
+# The release version and notes (decision 009). Only feat and fix release; a breaking change (`!` or a BREAKING CHANGE
+# footer, on any type) is kept by protect_breaking_commits. Before 1.0 feat and fix bump the patch and a breaking change
+# the minor; from 1.0 feat bumps the minor, fix the patch and a breaking change the major. An rc tag is not a release.
+# scripts/test_cliff_config.py pins each of these.
+[changelog]
+body = """
+## {% if version %}{{ version | trim_start_matches(pat="v") }}{% else %}unreleased{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {% if commit.breaking %}**breaking:** {% endif %}{{ commit.message | split(pat="\n") | first | trim }} ({{ commit.id | truncate(length=7, end="") }})
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+protect_breaking_commits = true
+commit_parsers = [
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = ".*", skip = true },
+]
+tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+[bump]
+features_always_bump_minor = false
+breaking_always_bump_major = false

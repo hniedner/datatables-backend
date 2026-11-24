@@ -67,6 +67,9 @@ dev = [
     "starlette>=1.2",
     "zizmor>=1.32",
 ]
+# git-cliff computes the release version and notes (decision 009); #76 part 3 will run it from release.yml with
+# `--only-group release`, and scripts/test_cliff_config.py runs it on every pytest leg. It never ships.
+release = ["git-cliff>=2.14.2"]
 # The drivers for the container tests (tests/conftest.py, DTB_SQL_URL): one implementation per database for sync and
 # async alike. SQL Server also needs Microsoft's ODBC Driver 18 on the machine.
 containers = [
@@ -82,6 +85,10 @@ containers = [
 mysqlclient = [
     "mysqlclient>=2.2",
 ]
+
+# A plain `uv sync` also installs git-cliff, which scripts/test_cliff_config.py needs; the container groups stay opt-in.
+[tool.uv]
+default-groups = ["dev", "release"]
 
 [tool.hatch.version]
 path = "src/datatables_backend/__init__.py"
@@ -120,6 +127,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 "scripts/test_*.py" = ["S101", "S603"]
 "scripts/test_private_word_scan.py" = ["S607"]
 "scripts/test_check_dist.py" = ["S607"]
+"scripts/test_cliff_config.py" = ["S607"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
