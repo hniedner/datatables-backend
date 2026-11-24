@@ -24,9 +24,25 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   `columns[0][search][fixed]` → `MalformedRequest`; an empty one (JSON `[]`, or the key absent in a form) parses.
 - **SPEC-P5.2** [core] `searchPanes[colour][0]=red` → `MalformedRequest`; `searchPanes` with only empty panes (JSON
   `{"colour": []}`), and an empty `searchPanes_null` (JSON `{}`), parse.
-- **SPEC-P5.3** [core] `columns[0][columnControl][list][0]=x` → `MalformedRequest`;
-  `columns[0][columnControl][search]` with an empty value and logic `contains` parses; with value `x`, or with logic
-  `empty` or `notEmpty`, → `MalformedRequest`.
+- **SPEC-P5.3** [core] An idle ColumnControl search (an empty value and a logic other than `empty` and `notEmpty`:
+  `contains`, `starts`, `greater`), the date control's idle shape (`type` `date`, `mask` empty) and a list `{}` parse,
+  as JSON and as a form, and add nothing: the request equals the same one without them in everything but its
+  `columnControl` fields.
+- **SPEC-P5.4** [core] An active ColumnControl search (`contains` with a value; `empty`; `notEmpty`; `greater` with a
+  value) and a list (JSON `{"0":"a","1":"b"}`; form `[list][0]=a&[list][1]=b`; a JSON array `["a","b"]` is the same
+  list) parse and are kept, not dropped, and the JSON and the form give equal `DTParams`.
+- **SPEC-P5.5** [core] A ColumnControl search whose logic is outside the set (`like`, `Contains`), with a value and with
+  none, as JSON and as a form, raises `MalformedRequest` with the message `Invalid columns parameter: a ColumnControl
+  search sent a logic the server does not answer. Offer only contains, notContains, equal, notEqual, starts, ends,
+  empty and notEmpty (a number control also greater, greaterOrEqual, less and lessOrEqual), or remove the control from
+  the table.` and nothing the client sent.
+- **SPEC-P5.6** [core] A list entry `true`, `null`, `1.5` or `{}` raises `MalformedRequest` with the message `Invalid
+  columns parameter: a ColumnControl list holds a value that is neither text nor a whole number. Give each option a text
+  or whole-number value.`; the entry `1`, as a JSON number and as form text, reads as the text `1`.
+- **SPEC-P5.7** [core] An active ColumnControl search with `type` `date` (a value, `empty` or `notEmpty`), as JSON and
+  as a form, raises `MalformedRequest` with the message `Invalid columns parameter: ColumnControl's date search is not
+  answered. Remove the date control from this column, or give the column a text search control.`; the idle date shape
+  parses (`SPEC-P5.3`).
 - **SPEC-P6.1** [core] A decoded JSON list of objects or of numbers (`[{"draw": 1}]`, `[1]`) → `MalformedRequest`
   (a list of key-value pairs is valid, PRD-P1); `columns` as text → `MalformedRequest`;
   `columns[0][searchable]` as an object → `MalformedRequest`; `columns[0][data]` JSON `null` parses (PRD-P21).
@@ -38,7 +54,8 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P6.5** [core] `order[0][dir]` other than exactly `asc` or `desc` (`up`, `ASC`, or empty) →
   `MalformedRequest` (the reviewer's decision of 2026-11-20 in `README.md`).
 - **SPEC-P6.6** [core] A SearchBuilder group whose `logic` is neither `AND` nor `OR` (for example `XOR`) →
-  `MalformedRequest`.
+  `MalformedRequest` with the message `Invalid searchBuilder parameter.`: ColumnControl's `logic` is a field of its own,
+  so its refusal texts leave this one unchanged.
 - **SPEC-P7.1** [core] On a request whose only column is `columns[0]`, a flat key at the next free index in a bad
   form, where a lenient parser would read it as column 1, → `MalformedRequest`: `columns[01][data]` and
   `columns[١][data]` (U+0661, an Arabic-Indic one). So do `columns[1234567890][data]` (10 digits),

@@ -445,3 +445,6 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F44.3** [all] Categorical `^(true|0)$` on `active` → rows 1, 2, 4; `multi_values` `["", "1"]` → rows 1, 3,
   4.
 - **SPEC-F44.4** [all] `multi_values` `[" ", "1"]` on `active` → rows 1, 3, 4 (white space is an empty entry).
+- **SPEC-F45.1** [core] A ColumnControl search is read with its value and its logic (`ann`, `contains`), and a list with
+  its entries as text in index order: the JSON `{"1":"b","0":""}` and the form `[list][1]=b&[list][0]=` both give `""`
+  then `b`, the empty entry being the client's "Empty" option.
