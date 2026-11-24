@@ -589,6 +589,8 @@ def test_a_mistake_found_while_the_body_is_built_is_logged_once(
 
 
 def test_the_global_search_fits_each_string_mapping_and_skips_numbers_and_dates():
+    """SPEC-F32.1: the number `pages` and the date `created` add no clause, so `17` and `2024` can match nothing
+    there; the rows are the live test's."""
     client = Client()
     table.fetch_sync(request(*NAMES, search={'value': 'a*b'}), client)
     (clause,) = query(client)
@@ -712,6 +714,7 @@ def test_a_global_search_over_numbers_and_dates_only_is_refused():
 
 
 def test_column_searches_follow_the_columns_type():
+    """SPEC-F33.1 (a number is the term `12`, not text that holds it), SPEC-F22.4 (a month is a range of its days)."""
     client, params = Client(), request(*NAMES)
     params.columns[2].search.value = 'granny smith'
     params.columns[3].search.value = '12'
@@ -1876,7 +1879,7 @@ def test_a_criterion_on_an_undeclared_name_is_refused_at_any_depth_beside_a_matc
 
 
 def test_the_clients_type_is_ignored_both_ways():
-    """SPEC-D7.1: `<` on `pages` sent as a string is still a range; `contains` on it is refused, with nothing sent."""
+    """SPEC-D7.1, SPEC-F27.4: `<` on `pages` sent as a string is still a range; `contains` on it is refused, with nothing sent."""
     client = Client()
     typed: dict[str, Any] = {
         'searchBuilder': {'criteria': [{'condition': '<', 'origData': 'pages', 'type': 'string', 'value': ['8']}]}
@@ -2541,3 +2544,53 @@ def test_a_filter_with_a_value_on_an_undeclared_column_is_refused_and_an_empty_o
     assert (client.searches, client.counts) == ([], [])
     assert table.fetch_sync(request(*names, column_search={'extra': {'multi_values': []}}), client).error is None
     assert query(client) == []
+
+
+# -- typed filters: what a condition the type does not take, an unfinished criterion and a list of numbers send ---
+
+
+@pytest.mark.parametrize(
+    ('column', 'conditions', 'values'),
+    [
+        ('title', ('<', '<=', '>', '>=', 'between', '!between'), ['b', 'm']),  # SPEC-F27.1
+        ('pages', ('contains', '!contains', 'starts', '!starts', 'ends', '!ends'), ['3']),  # SPEC-F27.2
+        ('created', ('starts', 'ends', '!starts', '!ends'), ['19']),  # SPEC-F27.3, SPEC-F27.8
+    ],
+)
+def test_a_condition_the_type_does_not_take_is_refused_and_nothing_is_sent(
+    column: str, conditions: tuple[str, ...], values: list[str]
+):
+    """SPEC-F27.1, SPEC-F27.2, SPEC-F27.3, SPEC-F27.8: `between` reads two values, the others one."""
+    for condition in conditions:
+        client = Client()
+        body = criterion(column, condition, *(values if 'between' in condition else values[:1]))
+        refused(table.fetch_sync(request(*NAMES, **body), client))
+        assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(
+    'unfinished',
+    [
+        pytest.param({'condition': '=', 'value': ['Ann']}, id='no column'),
+        pytest.param({'condition': '=', 'origData': '', 'data': '', 'value': ['Ann']}, id='empty column'),
+    ],
+)
+def test_a_criterion_with_no_column_adds_nothing(unfinished: dict[str, Any]):
+    """SPEC-F30.2: alone it sends no clause, and beside a finished criterion, in an AND group and in an OR group, the
+    search is that criterion's alone."""
+    finished = {'condition': '=', 'origData': 'title', 'value': ['Apple pie']}
+    assert clauses_of(searchBuilder={'logic': 'AND', 'criteria': [unfinished]}) == []
+    expected = clauses_of(searchBuilder={'logic': 'AND', 'criteria': [finished]})
+    assert expected != []
+    for logic in ('AND', 'OR'):
+        assert clauses_of(searchBuilder={'logic': logic, 'criteria': [finished, unfinished]}) == expected, logic
+
+
+@pytest.mark.parametrize(
+    'search',
+    [{'value': '^(7|8)$', 'regex': True}, {'multi_values': ['7', '8']}],
+    ids=['categorical', 'multi_values'],
+)
+def test_a_categorical_filter_on_a_number_column_sends_the_numbers(search: dict[str, Any]):
+    """SPEC-F33.3: both ask for the numbers 7 and 8 as `terms`, whatever form the filter came in."""
+    assert clauses_of(column_search={'pages': search}) == [{'terms': {'pages': [7, 8]}}]

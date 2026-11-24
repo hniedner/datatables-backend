@@ -213,7 +213,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   4; `>` → rows 2; `>=` → rows 1, 2; `between` `2024-01-01` and `2024-03-05` → rows 1.
 - **SPEC-F21.2** [all] SearchBuilder on `at`: `=` `2024-03-05` → rows 1; `=` `2024-03-06` → rows 2 (UTC days, though
   the two instants are an hour apart).
-- **SPEC-F21.3** [PostgreSQL] With the session `TimeZone` set to `America/Los_Angeles`, F21.2 holds unchanged.
+- **SPEC-F21.3** [PostgreSQL] With the session `TimeZone` set to a zone far from UTC, F21.2 holds unchanged.
 - **SPEC-F21.4** [SQL] With `at` redeclared as a naive `DateTime` and row 1 storing `2024-03-05T10:00`:
   SearchBuilder `=` `2024-03-05` on `at` → rows 1.
 - **SPEC-F21.5** [all] Categorical `^(2024-03-05)$` and `multi_values` `["2024-03-05"]` on `made` → rows 1; on `at`
@@ -232,6 +232,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F21.10** [all] SearchBuilder `=` on `made` with `2024-03-05xyz`, `2024-03-05T10:00Z`, `20240305`,
   `2024-03-05T10:00+02:00`, `2024-03-05 24:00`, `2024-03-05T10`, a time in digits outside ASCII or only white space
   → error_code `invalid_date`; so does `contains` with the day in digits outside ASCII.
+- **SPEC-F21.11** [all] SearchBuilder on `at` compares the UTC day for every range condition, as `=` does (F21.2):
+  `>` `2024-03-05` finds row 2 and not row 1; `<` `2024-03-06` finds row 1 and not row 2; `>=` `2024-03-06` finds row 2
+  and not row 1; `<=` `2024-03-05` finds row 1 and not row 2; `between` `2024-03-05` and `2024-03-05` finds row 1 and
+  not row 2 (both ends are whole days); `!between` of the same keeps row 2 and every row without an `at`.
 - **SPEC-F22.1** [all] SearchBuilder `contains` on `made`: `2024` → rows 1, 2; `2024-03` → rows 1; `2024-03-05` →
   rows 1; `!contains` `2024` → rows 3, 4.
 - **SPEC-F22.2** [all] SearchBuilder `contains` on `made` with `2024-3`, `24` or `2024-03-5` → error_code
@@ -276,6 +280,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `multi_values` list of `2` → answered, no row. (PostgreSQL and SQL Server refuse such a comparison themselves.)
 - **SPEC-F25.9** [all] SearchBuilder `=` on `price` with `nan`, `NaN`, `inf`, `-inf` or `Infinity` → error_code
   `invalid_number`: Python's own number reader takes these texts, and no column holds such a number (PRD-F25).
+- **SPEC-F25.10** [all] On `price`, an integer column, given a row whose `price` is 8: `>` `7.5` finds it, `<` `7.5`
+  does not, `=` `8.0` finds it, `=` `7.5` finds nothing, `between` `7.5` and `8.5` finds it: a number with a fraction
+  is compared as that number, not cut to a whole one.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
@@ -303,6 +310,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   rows 2, 4 (PRD-F37).
 - **SPEC-F27.7** [all] SearchBuilder sends `value1` and `value2` beside `value`; they are ignored: `=` on `name` with
   `Red Apple` and them → rows 1.
+- **SPEC-F27.8** [all] On `made` (date), `!starts` and `!ends` → error_code `invalid_filter`, as `starts` and `ends`
+  are (F27.3).
 - **SPEC-F28.1** [all] Group OR of `colour = blue` and `price = 7` → rows 1, 3.
 - **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 17` and `price null` → rows 4
   (dropping the nested group would give rows 1, 4; OR throughout would give rows 1, 2, 4).
@@ -352,6 +361,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F37.1** [all] On `note`: `!=` `x_y` → rows 1, 2, 4; `!contains` `pipe` → rows 1, 2, 3; `!starts` `5` →
   rows 1, 2, 3; `!ends` `y` → rows 1, 2, 4. Row 1 (NULL or missing) satisfies each.
 - **SPEC-F37.2** [all] On `price`: `!=` `7` → rows 2, 3, 4; `!between` `0` and `100` → rows 4.
+- **SPEC-F37.3** [all] On `made` (date): `!=` `2024-03-05`, and `!between` `2024-03-05` and `2024-03-05`, keep row 3,
+  whose `made` is NULL or missing.
 - **SPEC-F38.1** [all] A SearchBuilder tree 8 groups deep, the root group counted as depth 1, is answered; 9 deep →
   error_code `invalid_filter`. A root group holding 9 groups side by side, each with one criterion, is answered: they
   are 2 deep.
