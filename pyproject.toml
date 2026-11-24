@@ -17,7 +17,7 @@ dependencies = [
     "pydantic>=2.14; python_version >= '3.15'",
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
