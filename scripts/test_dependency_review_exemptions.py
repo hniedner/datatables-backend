@@ -5,6 +5,10 @@ this test fails: re-check the new version's licence, then update the version her
 list does not allow) must name a package that never ships: one the dependency groups need and the wheel's requirements,
 extras included, do not. The test computes that set from uv.lock, so a package that comes to be needed by the wheel
 fails it.
+
+The rule is the owner's (2026-11-24): a package that never ships with the package (one only the dependency groups
+reach) may be exempted, since its licence terms are not engaged by the distribution; the dev group is one of those
+groups.
 """
 
 from __future__ import annotations
