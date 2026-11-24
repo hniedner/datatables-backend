@@ -54,8 +54,8 @@
   2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
   number as the table shows it is found, and adds a section-5 entry for the spellings (#71); revision 55 adds
   MariaDB's default collation to section 5's entry for trailing spaces (#58); revision 56 adds PRD-D22 (the owner's
-  first sentence of 2026-11-24) (#46)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its
-  place here.
+  first sentence of 2026-11-24) and removes PRD-F25's clause on a column that stores text (#46)). It replaces draft 1
+  (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -816,10 +816,11 @@ Server a number with more than 38 digits before the decimal point is out of rang
 precision the column declares (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a
 `Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a whole number
 outside the signed 64-bit range is compared as the column compares: exactly on a `Numeric` column (see section 5 for
-SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a type. A number is a value like any other (PRD-F14), so one of more than 255 characters is
-`value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
-`.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is `invalid_number`,
-among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
+SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a type. A number
+is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in
+ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
+(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII,
+a digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
