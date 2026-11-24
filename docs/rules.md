@@ -68,8 +68,10 @@ library itself has a limit on one engine, [databases.md](databases.md) says so, 
   string type: `func.upper(users.c.name, type_=String)` or `literal_column('upper(name)', String)`. A SQL function
   called through `func` has no type unless it is given one.
 - **Some columns take no part in the global search.** A boolean column never does, on any backend. A number or a date
-  column does on SQL, as text (a number as its canonical text, a date as `YYYY-MM-DD`: "7" finds 17), and does not on
-  OpenSearch.
+  column does on SQL, as text (a whole number as its digits, any other number as the database spells it, a date as
+  `YYYY-MM-DD`: "7" finds 17), and does not on OpenSearch. A search for a number as the table shows it finds its row
+  on a double-precision or decimal column; the spelling of an exponent, a trailing `.0` and a decimal's trailing zeros
+  is each database's ([databases.md](databases.md#a-numbers-search-text-is-the-databases-own-spelling-of-it)).
 
 ## Errors
 

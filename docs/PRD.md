@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 53 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 54 of 2026-11-24 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -50,8 +50,10 @@
   one to PRD-F12 (the SearchBuilder tree combines with AND too); revision 51 adds a sentence to PRD-F25 (a number with
   a fraction is compared as that number against an integer column); revision 52 lays out section 5 as a list, one
   entry per difference, no word changed (#42); revision 53 adds to section 5's entry for PRD-F11 that what the
-  analyser drops does not tell rows apart (#131)). It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item
-  to its place here.
+  analyser drops does not tell rows apart (#131); revision 54 rewords PRD-F23's first sentence (the owner's decision of
+  2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
+  number as the table shows it is found, and adds a section-5 entry for the spellings (#71)). It replaces draft 1
+  (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -774,8 +776,10 @@ it included.
 #### PRD-F23
 
 On SQL, a number or a date column takes part in the global and column searches as text (categorical filters and
-`multi_values` lists on a number or date column excepted, PRD-F21, PRD-F33): a number as its canonical text, a date as
-`YYYY-MM-DD`; "7" finds 17.
+`multi_values` lists on a number or date column excepted, PRD-F21, PRD-F33): a whole number as its digits, any other
+number as the database spells it, a date as `YYYY-MM-DD`; "7" finds 17. A search for a number as the table shows it
+finds its row on a double-precision or decimal column; how a database spells an exponent, a trailing `.0` or a
+decimal's trailing zeros is its own (section 5), and PostgreSQL's single-precision `real` is not covered.
 
 - **Reason:** As in SvelteDT's search text, which holds every column as text.
 - **Priority:** must
@@ -1752,6 +1756,11 @@ where a database decides. Each difference is stated here; every other answer is 
   it is a smart search of the date's text.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F22, PRD-F23, PRD-F34
+- A number's search text is spelled by the database: SQLite writes a whole float as `17.0`, exponents read `1.0e+20`,
+  `1e+20`, `1e20` or `1E+20`, MySQL writes 1e-7 as `0.0000001`, a decimal keeps its trailing zeros except on SQLite,
+  and PostgreSQL's `real` writes 1234567 as `1.234567e+06`, which a search for `1234567` misses.
+  - **Between:** SQLite, PostgreSQL, MySQL and SQL Server
+  - **Requirement:** PRD-F23
 - DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between`
   over a range holding 0; the server lets NULL satisfy every negative condition.
   - **Between:** Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=`

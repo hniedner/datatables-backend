@@ -467,6 +467,37 @@ def test_a_column_search_on_a_number_or_a_date_reads_its_text(
     assert ids(table.fetch_sync(request(*ALL, column_search={column: {'value': text}}), session)) == expected
 
 
+@pytest.mark.parametrize('column', ['double', 'decimal'])
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [('7', [1, 3]), ('12.5', [2]), ('1234567', [3]), ('-3.25', [4])],
+    ids=['a-digit-of-two', 'a-fraction', 'seven-digits', 'a-negative-fraction'],
+)
+def test_a_number_as_the_table_shows_it_finds_its_row(session: Session, column: str, text: str, expected: list[int]):
+    """SPEC-F23.4, PRD-F23: a double-precision column and a decimal one hold 17, 12.5, 1234567 and -3.25. A database
+    that cast a double to text with six digits (SQL Server's `CAST`: `1.23457e+006`) would lose the row of 1234567 to
+    the search `1234567`. Single precision is left out: PostgreSQL's `real` still misses it, and the test must not
+    freeze that."""
+    numbers = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('double', Float(53)),
+        SQLColumn('decimal', Numeric(10, 2)),
+    )
+    numbers.create(session.connection())
+    session.execute(
+        numbers.insert(),
+        [
+            {'id': id_, 'double': value, 'decimal': Decimal(str(value))}
+            for id_, value in enumerate((17, 12.5, 1234567, -3.25), start=1)
+        ],
+    )
+    shown = SQLTable(numbers, [Column('id'), Column('double'), Column('decimal')])
+    params = request('id', column, column_search={column: {'value': text}})
+    assert ids(shown.fetch_sync(params, session)) == expected
+
+
 def test_a_column_search_narrows_by_that_column(session: Session):
     params = request(*ALL)
     params.columns[6].search.value = 'RED'

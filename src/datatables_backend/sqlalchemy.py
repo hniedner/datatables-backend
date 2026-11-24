@@ -542,9 +542,13 @@ def _folds(declared: Column, column: ColumnElement[Any]) -> bool:
 
 def _text(column: ColumnElement[Any]) -> ColumnElement[Any]:
     """The column as text, for a search or a fold: itself when it holds text, else cast. An ``Enum`` is cast too:
-    PostgreSQL stores one as a type of its own, which has no text functions."""
+    PostgreSQL stores one as a type of its own, which has no text functions. A float column (``Float``, ``REAL``,
+    ``DOUBLE``, also under a ``TypeDecorator``; a ``Numeric`` is none) is written by ``_number_text``, so that no
+    database writes it with fewer digits than the table shows (PRD-F23)."""
     if _is_text(column) and not isinstance(column.type, Enum):
         return column
+    if isinstance(_sql_type(column), Float):
+        return _number_text(column)
     return sql_cast(column, String)
 
 
@@ -664,3 +668,26 @@ def _day_text_postgresql(element: _day_text, compiler: SQLCompiler, **kw: Any) -
 @compiles(_day_text, 'mariadb')
 def _day_text_mysql(element: _day_text, compiler: SQLCompiler, **kw: Any) -> str:
     return f"DATE_FORMAT({compiler.process(element.clauses, **kw)}, '%%Y-%%m-%%d')"
+
+
+class _number_text(FunctionElement[str]):  # noqa: N801
+    """A float column as text, so a free-text search can match the number as the table shows it (PRD-F23). The
+    database's own cast, except on SQL Server, whose ``CAST`` keeps six digits (``1.23457e+006`` for 1234567) and
+    would lose the row to a search for the number shown. Not on a ``Numeric``, which every database writes whole."""
+
+    type = String()
+    inherit_cache = True
+
+
+@compiles(_number_text)
+def _number_text_default(element: _number_text, compiler: SQLCompiler, **kw: Any) -> str:
+    return compiler.process(sql_cast(element.clauses.clauses[0], String), **kw)
+
+
+# Not measured: coverage is taken on the SQLite leg and this runs only on SQL Server, where
+# test_a_number_as_the_table_shows_it_finds_its_row runs it. FORMAT without a culture follows the session's language
+# (Microsoft's documentation, not run here); with 'de-DE' it writes a comma, and it refuses 'invariant' (measured,
+# docs/decisions/006)
+@compiles(_number_text, 'mssql')
+def _number_text_mssql(element: _number_text, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
+    return f"FORMAT({compiler.process(element.clauses, **kw)}, 'R', 'en-US')"
