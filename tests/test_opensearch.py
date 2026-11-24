@@ -2059,6 +2059,37 @@ def test_two_tables_over_two_indexes_never_share_a_total():
     assert sorted(client.counted) == ['items_a', 'items_b']
 
 
+class Teams:
+    """A client that counts the documents of the `team` a total count's base filter names."""
+
+    def __init__(self, sizes: dict[str, int]):
+        self.sizes = sizes
+        self.counted: list[str] = []
+
+    def search(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        hits = {'total': {'value': 1, 'relation': 'eq'}, 'max_score': None, 'hits': []}
+        return {'timed_out': False, '_shards': SHARDS, 'hits': hits}
+
+    def count(self, *, index: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        team = body['query']['bool']['must'][0]['term']['team']
+        self.counted.append(team)
+        return {'count': self.sizes[team], '_shards': SHARDS}
+
+
+def test_two_tables_over_one_index_with_two_base_filters_never_share_a_total():
+    """SPEC-C15.3: `red` holds 4 documents and `green` 2; one cache and one client serve both tables, which differ only
+    in the bound value of their base filter. It catches a cache key that leaves the base filter out, which answers the
+    second table with the first one's total."""
+    cache, client = TotalCache(ttl=60), Teams({'red': 4, 'green': 2})
+    tables = [
+        SearchTable('docs', COLUMNS, unique_key='id', base_filter={'term': {'team': team}}, total_cache=cache)
+        for team in ('red', 'green')
+    ]
+    totals = [each.fetch_sync(request(*NAMES, search={'value': 'red'}), client).recordsTotal for each in tables]  # type: ignore[arg-type]
+    assert totals == [4, 2]
+    assert client.counted == ['red', 'green']
+
+
 def test_clear_makes_the_next_request_count_again():
     """SPEC-C16.1: without `clear()` the cached total stays; after it the next request counts the cluster again."""
     client, cache = Client(total=3, count=40), TotalCache(ttl=3600)
