@@ -4,7 +4,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-11-24
 
 The first release: the code of 0.1.0rc4, with its version, and one documentation addition.
 
