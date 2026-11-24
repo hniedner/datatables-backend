@@ -3818,6 +3818,49 @@ def test_the_cached_total_is_counted_again_after_the_ttl(session: Session):
     assert cached.fetch_sync(params, session).recordsTotal == 6
 
 
+def _bounded_asker(session: Session, cache: TotalCache) -> Callable[[int], tuple[int, int]]:
+    """Asks the table whose base filter is `id <= bound` (a total of `bound`) over the shared cache, and answers its
+    `recordsTotal` and the statements the request ran: 3 on a miss (total, filtered count, page), 2 on a hit."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+
+    def ask(bound: int) -> tuple[int, int]:
+        before = len([s for s in statements if 'dtb_test_people' in s])
+        table_for_bound = SQLTable(people, COLUMNS, base_filter=people.c.id <= bound, total_cache=cache)
+        response = table_for_bound.fetch_sync(request(*ALL, search={'value': 'red'}), session)
+        return response.recordsTotal, len([s for s in statements if 'dtb_test_people' in s]) - before
+
+    return ask
+
+
+def test_a_full_cache_drops_the_oldest_total_and_a_read_does_not_make_one_newer(session: Session):
+    """SPEC-C14.4: with room for two, the third total drops the first; reading the second changes nothing; the fifth
+    drops the second and the sixth still finds the third. Breaks if the cache has no bound, a wrong bound, drops the
+    newest, or reorders on a read (the last request would count)."""
+    ask = _bounded_asker(session, TotalCache(ttl=60, max_entries=2))
+    answers = [ask(bound) for bound in (1, 2, 3, 2, 1, 3)]
+    assert answers == [(1, 3), (2, 3), (3, 3), (2, 2), (1, 3), (3, 2)]
+
+
+def test_a_total_counted_again_after_its_expiry_is_the_newest(session: Session):
+    """SPEC-C14.5: both totals expire; the first is counted again and so is newer than the second, which the third
+    then drops. Breaks if a total stored again keeps its old place (the third would drop the one just counted)."""
+    ask = _bounded_asker(session, TotalCache(ttl=0.3, max_entries=2))
+    answers = [ask(1), ask(2)]
+    time.sleep(0.35)
+    answers += [ask(bound) for bound in (1, 3, 1)]
+    assert answers == [(1, 3), (2, 3), (1, 3), (3, 3), (1, 2)]
+
+
+def test_a_cache_with_no_room_is_refused_when_built_and_the_default_is_10000():
+    """SPEC-C14.6: a bound below 1 would silently cache nothing; the message names the parameter. Without a bound
+    the cache holds 10,000 totals (PRD-C14 states the number)."""
+    for bound in (0, -1):
+        with pytest.raises(ValueError, match='max_entries'):
+            TotalCache(max_entries=bound)
+    assert TotalCache().max_entries == 10_000
+
+
 def test_one_table_and_one_cache_never_share_a_total_between_two_databases(tmp_path: Path):
     """SPEC-C15.2: two SQLite files holding 4 and 2 rows. The key holds the database URL on every dialect, so
     this proves it for all."""
