@@ -240,8 +240,8 @@ or an OpenSearch setting has an entry below.
   (`test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_small_one_where_the_database_folds`)
   and the third by `test_the_library_folds_no_accent_the_collation_does_not`, which CI's `tests` (SQLite),
   `postgresql`, `mysql`, `mariadb` and `sqlserver` jobs run. The tests declare the collation of the MySQL, MariaDB
-  and SQL Server column as the table says and keep the default of SQLite and PostgreSQL (the image's `en_US.utf8`); the `C` locale
-  is read in the helper `folds_letters_beyond_ascii` and is not run.
+  and SQL Server column as the table says and keep the default of SQLite and PostgreSQL (the image's `en_US.utf8`);
+  the `C` locale is read in the helper `folds_letters_beyond_ascii` and is not run.
 - **Requirement:** PRD-F9, PRD-F10.
 
 ### An exact match on a column with a type of its own, or on an untyped expression, is not folded

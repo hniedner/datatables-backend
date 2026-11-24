@@ -2356,8 +2356,8 @@ def wide(session: Session) -> SQLTable:
     """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float), in `exact` (a
     `Numeric(32, 2)`) and, as text, in `digits` (a string column declared a number). Its `count` holds the largest
     value the column takes: the column is declared MySQL's unsigned BIGINT, which only MySQL and MariaDB create
-    unsigned, so 2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type, declared a
-    number. Row 2 holds NULL."""
+    unsigned, so 2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type,
+    declared a number. Row 2 holds NULL."""
     dialect = session.get_bind().dialect.name
     numbers = Table(
         'dtb_test_tags',
