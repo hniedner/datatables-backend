@@ -66,11 +66,13 @@ or an OpenSearch setting has an entry below.
   [Types and matching](rules.md#types-and-matching).
 - **Example:** a `TIMESTAMP` stored as 23:30 UTC on the 15th is 01:30 on the 16th in a session at `+02:00`, so a
   search for the 15th can miss it there.
-- **How it is known:** documented, not run: MySQL's manual says it converts `TIMESTAMP` values to UTC for storage and
-  back to the current time zone for retrieval, and does not for `DATETIME`
-  (https://dev.mysql.com/doc/refman/8.4/en/datetime.html, opened 2026-11-23). That the library's day follows it is
-  INFERRED, as PRD-F21 says: CI's MySQL job runs the session and Python in UTC, so its test shows only that the column
-  works (`tests/test_sql.py`, `test_a_timezone_aware_column_compares_by_utc_day`).
+- **How it is known:** MySQL's manual says it converts `TIMESTAMP` values to UTC for storage and back to the current
+  time zone for retrieval, and does not for `DATETIME`
+  (https://dev.mysql.com/doc/refman/8.4/en/datetime.html, opened 2026-11-23). That the library's day follows the
+  session zone is MEASURED on MySQL and on MariaDB by `tests/test_sql.py`,
+  `test_a_mysql_timestamp_is_read_through_the_session_time_zone` (SPEC-F21.12): a value stored at 23:30 UTC on the 15th
+  is found by the 16th in a session at `+02:00` and by the 15th in a UTC one. CI's other MySQL tests run the session and
+  Python in UTC, so `test_a_timezone_aware_column_compares_by_utc_day` shows only that the column works.
 - **Requirement:** PRD-F21.
 
 ## MariaDB

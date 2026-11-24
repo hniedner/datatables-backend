@@ -1085,6 +1085,35 @@ async def test_a_timezone_aware_column_compares_by_utc_day_through_the_async_fet
     assert ids(response) == expected
 
 
+def test_a_mysql_timestamp_is_read_through_the_session_time_zone(session: Session):
+    """SPEC-F21.12 (PRD-F21): a TIMESTAMP is stored as UTC and read back in the session's `time_zone`, and the library
+    adds no conversion, so `=` finds it by the day of that zone. 23:30 UTC on the 15th, written in a UTC session, is
+    01:30 on the 16th in a session at +02:00, which the 16th finds and the 15th does not; back in UTC the 15th finds
+    it. The zone is set on this session's own connection and restored."""
+    dialect = session.get_bind().dialect.name
+    if dialect not in ('mysql', 'mariadb'):
+        pytest.skip('SPEC-F21.12 is about a MySQL or MariaDB TIMESTAMP, which no other engine has')
+    stamps = Table(
+        'dtb_test_stamps', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('at', mysql.TIMESTAMP)
+    )
+    stamps.create(session.connection())
+    original = session.execute(text('SELECT @@session.time_zone')).scalar_one()
+    try:
+        session.execute(text("SET time_zone = '+00:00'"))
+        session.execute(stamps.insert(), [{'id': 1, 'at': datetime(2026, 7, 15, 23, 30)}])
+        table = SQLTable(stamps, [Column('id'), Column('at')])
+
+        def found(day: str) -> list[Any]:
+            return ids(table.fetch_sync(request('id', 'at', **criterion('at', '=', day)), session))
+
+        session.execute(text("SET time_zone = '+02:00'"))
+        assert (found('2026-07-16'), found('2026-07-15')) == ([1], [])
+        session.execute(text("SET time_zone = '+00:00'"))
+        assert (found('2026-07-15'), found('2026-07-16')) == ([1], [])
+    finally:
+        session.execute(text('SET time_zone = :zone'), {'zone': original})
+
+
 def test_an_aware_value_written_with_an_offset_is_read_without_it_on_sqlite(session: Session):
     """SPEC-F21.8: SQLite stores the text it is given, so 01:00 at +02:00 on the 16th, which is 23:00 UTC on the 15th,
     reads as 01:00 UTC on the 16th (PRD-F21: the app must write UTC there). Row 2 is 00:00 UTC on the 16th."""

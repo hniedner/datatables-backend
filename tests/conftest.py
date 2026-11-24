@@ -108,7 +108,8 @@ def pytest_report_header() -> list[str]:
 
 
 metadata = MetaData()
-TEST_TABLES = frozenset({'dtb_test_people', 'dtb_test_tags'})  # the second is created by a test in test_sql.py
+#: the last two are created by tests in test_sql.py
+TEST_TABLES = frozenset({'dtb_test_people', 'dtb_test_tags', 'dtb_test_stamps'})
 
 people = Table(
     'dtb_test_people',

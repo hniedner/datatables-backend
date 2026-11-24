@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 56 of 2026-11-24 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 57 of 2026-11-24 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -54,7 +54,8 @@
   2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
   number as the table shows it is found, and adds a section-5 entry for the spellings (#71); revision 55 adds
   MariaDB's default collation to section 5's entry for trailing spaces (#58); revision 56 adds PRD-D22 (the owner's
-  first sentence of 2026-11-24) and removes PRD-F25's clause on a column that stores text (#46)). It replaces draft 1
+  first sentence of 2026-11-24) and removes PRD-F25's clause on a column that stores text (#46); revision 57 labels
+  the MySQL `TIMESTAMP` behaviour of PRD-F21 MEASURED, by SPEC-F21.12's test). It replaces draft 1
   (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
@@ -763,7 +764,8 @@ column is a SQL column whose type carries a time zone (e.g. `DateTime(timezone=T
 which OpenSearch stores as a UTC instant. On SQLite and in a MySQL `DATETIME`, which store no offset, the stored time is
 read as UTC, so the app must write UTC there: SQLAlchemy and PyMySQL drop an aware value's offset without converting it
 (SQLite MEASURED; PyMySQL INFERRED). A MySQL `TIMESTAMP` is read through the session `time_zone`, so it gives the UTC
-day only when the app sets that zone to `+00:00`. A non-empty categorical value or `multi_values` entry on a date column
+day only when the app sets that zone to `+00:00` (MEASURED by SPEC-F21.12's test on MySQL and MariaDB). A non-empty
+categorical value or `multi_values` entry on a date column
 is a day (`YYYY-MM-DD`) and matches as `=` does, on every backend; an unreadable one is `invalid_date`; an empty one,
 or one of only white space, means empty, as PRD-F26 defines it (PRD-F17, PRD-F20). A day is written `YYYY-MM-DD` in
 ASCII digits. A time of day may follow it after a space or a `T` (`HH:MM` or `HH:MM:SS`, the seconds with an optional
@@ -772,10 +774,10 @@ fraction): it must exist and is then ignored, since SearchBuilder sends
 browser). White space around the value is ignored. Any other spelling is `invalid_date`, among them a digit outside
 ASCII, `20240305`, a week date, a zone or offset after the time and any other text after the day.
 
-- **Reason:** A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is INFERRED from the MySQL
-  documentation, not measured here. One stated spelling is answered alike on every backend; an offset is refused rather
-  than ignored, because the instant it names can fall on another UTC day. The reading and the comparison with the
-  earlier behaviour are in docs/decisions/002-how-a-day-and-a-number-are-written.md.
+- **Reason:** A user filters by calendar day, not by instant. The MySQL `TIMESTAMP` behaviour is documented by MySQL and
+  MEASURED through the library by the test of SPEC-F21.12. One stated spelling is answered alike on every backend; an
+  offset is refused rather than ignored, because the instant it names can fall on another UTC day. The reading and the
+  comparison with the earlier behaviour are in docs/decisions/002-how-a-day-and-a-number-are-written.md.
 - **Priority:** must
 
 #### PRD-F22
@@ -1680,8 +1682,8 @@ where a database decides. Each difference is stated here; every other answer is 
   - **Between:** Server and DataTables' client
   - **Requirement:** PRD-F41
 - A timezone-aware column on SQLite or in a MySQL `DATETIME` stores no offset, so its stored time is read as UTC and the
-  app must write UTC; a MySQL `TIMESTAMP` gives the UTC day only under a `+00:00` session `time_zone` (INFERRED from the
-  MySQL documentation); PostgreSQL and SQL Server store the instant.
+  app must write UTC; a MySQL `TIMESTAMP` gives the UTC day only under a `+00:00` session `time_zone` (documented by
+  MySQL, MEASURED by SPEC-F21.12's test); PostgreSQL and SQL Server store the instant.
   - **Between:** SQLite and MySQL, and the other backends
   - **Requirement:** PRD-F21
 - The global search skips a boolean column; DataTables' client and SvelteDT's local source search its rendered text.
