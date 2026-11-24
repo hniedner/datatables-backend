@@ -247,8 +247,10 @@ def test_the_counts_before_a_refusal_are_the_ones_the_search_reports(
 
 
 def test_the_base_filter_limits_the_total_too(client: OpenSearch):
-    """SPEC-C1.1: a base filter limits the total."""
+    """SPEC-C1.1: a base filter limits the total. SPEC-F31.1: with no search the rows and both counts are its own."""
     long_reads = SearchTable(INDEX, COLUMNS, unique_key='id', base_filter={'range': {'pages': {'gte': 30}}})
+    everything = long_reads.fetch_sync(request(*NAMES), client)
+    assert (everything.recordsTotal, everything.recordsFiltered, found(everything)) == (2, 2, ['b2', 'e5'])
     response = long_reads.fetch_sync(request(*NAMES, search={'value': 'bread'}), client)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 1)
 
@@ -280,6 +282,8 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
         ('!apple', ['b2', 'c3', 'e5']),  # SPEC-F5.1: c3 and e5 have no author, which passes
         ('!x', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F35.2 and SPEC-F6.2: a word of one character adds nothing
         ('"', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F6.2: no word at all
+        ('12', []),  # SPEC-F32.1: a1 and d4 have 12 pages, but the number column takes no part in the search
+        ('2026', []),  # SPEC-F32.1: nor does the date column, which a1, b2 and e5 hold
     ],
 )
 def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
@@ -299,6 +303,7 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
     ],
 )
 def test_a_column_search(client: OpenSearch, column: int, value: str, expected: list[str]):
+    """SPEC-F22.4 (a month, and a year, on a date column), SPEC-F33.1 (a number is matched exactly)."""
     params = request(*NAMES)
     params.columns[column].search.value = value
     assert found(table.fetch_sync(params, client)) == expected
@@ -435,7 +440,15 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('id', '!ends', ['1'], ['b2', 'c3', 'd4', 'e5']),
         ('pages', '=', ['12'], ['a1', 'd4']),
         ('pages', '>', ['12'], ['b2', 'e5']),
+        ('pages', '<', ['30'], ['a1', 'd4']),
         ('pages', '<=', ['30'], ['a1', 'b2', 'd4']),
+        ('pages', '!between', ['12', '30'], ['c3', 'e5']),  # c3 has no pages, which passes (PRD-F37)
+        # SPEC-F25.10: a number with a fraction is that number, on an integer field
+        ('pages', '>', ['12.5'], ['b2', 'e5']),
+        ('pages', '<', ['12.5'], ['a1', 'd4']),
+        ('pages', '=', ['12.5'], []),
+        ('pages', '=', ['12.0'], ['a1', 'd4']),
+        ('pages', 'between', ['11.5', '12.5'], ['a1', 'd4']),
         ('pages', 'between', ['12', '30'], ['a1', 'b2', 'd4']),
         ('pages', 'null', [], ['c3']),
         ('created', '=', ['2026-07-15'], ['a1']),
@@ -444,6 +457,9 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
         ('created', '>', ['2026-07-15'], ['b2']),
         ('created', '>=', ['2026-07-15'], ['a1', 'b2']),
         ('created', 'between', ['2026-02-10', '2026-07-15'], ['a1', 'e5']),
+        # SPEC-F37.3: c3 has no date, which passes
+        ('created', '!=', ['2026-07-15'], ['b2', 'c3', 'd4', 'e5']),
+        ('created', '!between', ['2026-02-10', '2026-07-15'], ['b2', 'c3', 'd4']),
         ('created', 'contains', ['2026-07'], ['a1', 'b2']),
         ('author', 'null', [], ['c3']),
         ('author', '!null', [], ['a1', 'b2', 'd4', 'e5']),
@@ -452,7 +468,8 @@ def test_multi_values_match_exactly(client: OpenSearch, column: int, values: lis
 def test_searchbuilder_conditions(
     client: OpenSearch, column: str, condition: str, values: list[str], expected: list[str]
 ):
-    """SPEC-F9.4 for `ends` and `!starts` too: the value is in another case than stored."""
+    """SPEC-F9.4 for `ends` and `!starts` too: the value is in another case than stored. SPEC-F21.1: the six conditions
+    on a date, SPEC-F27.6: `<`, `between` and `!between` on a number, SPEC-F25.10, SPEC-F37.3."""
     assert found(table.fetch_sync(request(*NAMES, **criterion(column, condition, *values)), client)) == expected
 
 
@@ -972,3 +989,98 @@ def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
 ):
     """SPEC-F12.3: `apple` finds a1 and d4, the criterion a1, the group d4 and c3; the answer is the intersection."""
     assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected
+
+
+def test_a_number_column_search_is_exact_not_a_prefix_or_a_substring(client: OpenSearch):
+    """SPEC-F33.1: a document with 120 pages holds the text of 12, and is not found by `12`."""
+    with added_document(client, pages=120):
+        params = request(*NAMES)
+        params.columns[3].search.value = '12'
+        assert found(table.fetch_sync(params, client)) == ['a1', 'd4']
+
+
+@pytest.mark.parametrize(
+    'search',
+    [{'value': '^(12|60)$', 'regex': True}, {'multi_values': ['12', '60']}],
+    ids=['categorical', 'multi_values'],
+)
+def test_a_categorical_filter_on_a_number_column_matches_its_numbers(client: OpenSearch, search: dict[str, Any]):
+    """SPEC-F33.3: the documents whose pages are 12 or 60."""
+    assert found(table.fetch_sync(request(*NAMES, column_search={'pages': search}), client)) == ['a1', 'd4', 'e5']
+
+
+@pytest.mark.parametrize(
+    ('tree', 'expected'),
+    [
+        (  # SPEC-F28.1: an OR group is a union
+            {
+                'logic': 'OR',
+                'criteria': [
+                    {'condition': '=', 'origData': 'title', 'value': ['Date loaf']},
+                    {'condition': '=', 'origData': 'pages', 'value': ['12']},
+                ],
+            },
+            ['a1', 'd4', 'e5'],
+        ),
+        (  # SPEC-F28.2: `apple` is a1 and d4; the nested group keeps a1 (Ann) and c3 (no pages), so only a1
+            {
+                'logic': 'AND',
+                'criteria': [
+                    {'condition': 'contains', 'origData': 'title', 'value': ['apple']},
+                    {
+                        'logic': 'OR',
+                        'criteria': [
+                            {'condition': '=', 'origData': 'author', 'value': ['Ann']},
+                            {'condition': 'null', 'origData': 'pages', 'value': []},
+                        ],
+                    },
+                ],
+            },
+            ['a1'],  # dropping the nested group gives a1 and d4; OR throughout gives a1, c3 and d4
+        ),
+    ],
+)
+def test_searchbuilder_groups_join_their_criteria_by_their_logic(
+    client: OpenSearch, tree: dict[str, Any], expected: list[str]
+):
+    """SPEC-F28.1, SPEC-F28.2."""
+    assert found(table.fetch_sync(request(*NAMES, searchBuilder=tree), client)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('>', ['2026-08-02'], ['d4']),  # e5 is 04:00 UTC on the 2nd, d4 is 03:00 UTC on the 3rd
+        ('>=', ['2026-08-03'], ['d4']),
+        ('<', ['2026-08-03'], ['e5']),
+        ('<=', ['2026-08-02'], ['e5']),
+        ('between', ['2026-08-02', '2026-08-02'], ['e5']),  # both ends are whole days
+        ('!between', ['2026-08-02', '2026-08-02'], ['a1', 'b2', 'c3', 'd4']),  # no `seen` passes (PRD-F37)
+    ],
+)
+def test_a_range_on_a_date_time_field_compares_the_utc_day(
+    client: OpenSearch, condition: str, values: list[str], expected: list[str]
+):
+    """SPEC-F21.11: e5 was written on the 1st at -05:00 and d4 on the 2nd at -05:00, which are the 2nd and the 3rd in
+    UTC; read as written, the days would be the other way round."""
+    params = request('id', 'seen', **criterion('seen', condition, *values))
+    assert found(timed.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize(
+    ('column', 'fields'),
+    [('author', {'meta': {'author': ''}}), ('folded', {'folded': ''})],
+    ids=['text-and-keyword', 'keyword'],
+)
+def test_a_stored_empty_text_is_not_a_missing_field(client: OpenSearch, column: str, fields: dict[str, Any]):
+    """SPEC-F26.2: the document f6 stores `''`, which `null` does not find, and `!null` does. c3 has no author and is
+    the only missing one; every document has a `folded` value, so none of them is missing."""
+    searched = folded if column == 'folded' else table
+    names = ('id', column) if column == 'folded' else NAMES
+    with added_document(client, **fields):
+        missing = found(searched.fetch_sync(request(*names, **criterion(column, 'null')), client))
+        present = found(searched.fetch_sync(request(*names, **criterion(column, '!null')), client))
+    if column == 'author':
+        assert (missing, present) == (['c3'], ['a1', 'b2', 'd4', 'e5', 'f6'])
+    else:
+        assert (missing, present) == ([], ['a1', 'b2', 'c3', 'd4', 'e5', 'f6'])

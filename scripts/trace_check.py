@@ -102,6 +102,16 @@ ENFORCED = (
     'PRD-F42',
     'PRD-F43',
     'PRD-F44',
+    'PRD-F21',
+    'PRD-F22',
+    'PRD-F23',
+    'PRD-F26',
+    'PRD-F27',
+    'PRD-F28',
+    'PRD-F30',
+    'PRD-F31',
+    'PRD-F32',
+    'PRD-F33',
 )
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')

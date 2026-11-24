@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 50 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 51 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -47,7 +47,8 @@
   when any entry is refused); revision 49 adds PRD-E14, as the owner decided on 2026-11-23, and clauses to PRD-E8 (a
   hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached); revision
   50 adds a clause to PRD-F11 (a typed wildcard in a SearchBuilder `contains`, `starts` or `ends` value is text) and
-  one to PRD-F12 (the SearchBuilder tree combines with AND too)). It replaces draft 1 (R1 to R9); section 10 maps
+  one to PRD-F12 (the SearchBuilder tree combines with AND too); revision 51 adds a sentence to PRD-F25 (a number with
+  a fraction is compared as that number against an integer column)). It replaces draft 1 (R1 to R9); section 10 maps
   every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
@@ -787,16 +788,17 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 #### PRD-F25
 
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
-integer range. An unsigned MySQL integer column is bounded by its unsigned range. On SQL Server a number with more than
-38 digits before the decimal point is out of range on a `Numeric` column, whatever precision the column declares
-(MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a `Numeric` column, and a declared
-precision bounds nothing. On a SQL column that is not an integer, a whole number outside the signed 64-bit range is
-compared as the column compares: exactly on a `Numeric` column (see section 5 for SQLite), as its digits on a column
-that stores text, and as the nearest floating-point number on a `Float` column and on an expression without a type. A
-number is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written
-in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
-(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a
-digit separator (`1_000`, `1,000`) and a second sign.
+integer range. A number with a fraction is compared as that number against an integer column (`> 7.5` finds 8, `= 7.5`
+finds nothing), never cut to a whole one. An unsigned MySQL integer column is bounded by its unsigned range. On SQL
+Server a number with more than 38 digits before the decimal point is out of range on a `Numeric` column, whatever
+precision the column declares (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a
+`Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a whole number
+outside the signed 64-bit range is compared as the column compares: exactly on a `Numeric` column (see section 5 for
+SQLite), as its digits on a column that stores text, and as the nearest floating-point number on a `Float` column and on
+an expression without a type. A number is a value like any other (PRD-F14), so one of more than 255 characters is
+`value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
+`.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is `invalid_number`,
+among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in

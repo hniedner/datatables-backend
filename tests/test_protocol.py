@@ -116,7 +116,7 @@ def test_a_searchbuilder_tree_keeps_groups_and_criteria_apart():
             for wrong in ('up', 'ASC', '')
         ],
         ({'columns': 'name'}, 'columns'),
-        # SPEC-P6.4: a condition that is none of SearchBuilder's
+        # SPEC-P6.4, SPEC-F27.5: a condition that is none of SearchBuilder's
         *[
             ({'searchBuilder': {'criteria': [{'condition': wrong, 'origData': 'a'}]}}, 'searchBuilder')
             for wrong in ('like', 'without', 'regex')

@@ -164,8 +164,11 @@ def test_a_sync_connection_works_too(session: Session):
 
 
 def test_the_base_filter_limits_the_total_too(session: Session):
-    """SPEC-C1.1: a base filter limits the total. SPEC-C1.2: a search narrows the filtered count, not the total."""
+    """SPEC-C1.1: a base filter limits the total. SPEC-C1.2: a search narrows the filtered count, not the total.
+    SPEC-F31.1: with no search the rows are the base filter's, and both counts are its."""
     reds = SQLTable(people, COLUMNS, base_filter=people.c.team == 'red')
+    response = reds.fetch_sync(request(*ALL), session)
+    assert (response.recordsTotal, response.recordsFiltered, ids(response)) == (2, 2, [1, 3])
     response = reds.fetch_sync(request(*ALL, search={'value': 'ann'}), session)
     assert (response.recordsTotal, response.recordsFiltered) == (2, 2)
     response = reds.fetch_sync(request(*ALL, search={'value': 'anna'}), session)
@@ -437,12 +440,31 @@ def test_like_wildcards_in_a_search_are_literal(session: Session):
 
 
 def test_the_global_search_matches_a_date_by_its_day_text(session: Session):
+    """SPEC-F23.3: the text of a date column, and of a datetime column, is searched."""
     assert ids(table.fetch_sync(request(*ALL, search={'value': '2026-07-1'}), session)) == [1, 2, 5]
     assert ids(table.fetch_sync(request(*ALL, search={'value': '1980-07'}), session)) == [2]  # a Date column
 
 
 def test_the_global_search_matches_a_number_by_its_text(session: Session):
+    """SPEC-F23.1."""
     assert ids(table.fetch_sync(request(*ALL, search={'value': '45'}), session)) == [2]
+
+
+@pytest.mark.parametrize(
+    ('column', 'text', 'expected'),
+    [
+        ('age', '1', [1, 4]),  # SPEC-F23.1: a number column searched by its text, a substring: `31`
+        ('age', '45', [2]),
+        ('born', '1980-07', [2]),  # SPEC-F23.2: a date column's text is `YYYY-MM-DD`
+        ('born', '07-15', [2]),  # an infix of it
+        ('born', '03-01', [1]),
+    ],
+)
+def test_a_column_search_on_a_number_or_a_date_reads_its_text(
+    session: Session, column: str, text: str, expected: list[int]
+):
+    """SPEC-F23.1, SPEC-F23.2 (on SQL, a number and a date are text to a search)."""
+    assert ids(table.fetch_sync(request(*ALL, column_search={column: {'value': text}}), session)) == expected
 
 
 def test_a_column_search_narrows_by_that_column(session: Session):
@@ -864,6 +886,7 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         ('email', '!null', [], [1, 4, 5]),
         ('age', '=', ['31'], [1, 4]),
         ('age', '>', ['31'], [2, 5]),
+        ('age', '<', ['45'], [1, 4]),
         ('age', '<=', ['31.0'], [1, 4]),
         ('age', 'between', ['40', '60'], [2, 5]),
         ('age', '!between', ['40', '60'], [1, 3, 4]),  # row 3 has no age (PRD-F37)
@@ -871,6 +894,8 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
         ('born', '=', ['1980-07-15'], [2]),
         ('born', '<', ['1980-07-15'], [5]),
         ('born', '<=', ['1980-07-15'], [2, 5]),
+        ('born', '>', ['1980-07-15'], [1, 4]),
+        ('born', '>=', ['1980-07-15'], [1, 2, 4]),
         ('born', 'between', ['1980-01-01', '1994-03-01'], [1, 2]),
         ('born', 'contains', ['1980'], [2]),
         ('born', 'contains', ['2001-12'], [4]),
@@ -903,17 +928,35 @@ def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_value
 def test_searchbuilder_conditions(
     session: Session, column: str, condition: str, values: list[str], expected: list[int]
 ):
+    """SPEC-F21.1 (the six conditions on the date column `born`), SPEC-F21.4 (`seen` is a naive datetime, compared by
+    day), SPEC-F26.1 (`null` on `email` finds NULL and the empty text, `!null` the rest), SPEC-F27.6 (a strict `<`,
+    `between` and `!between` on a number, where row 3 has no age)."""
     assert ids(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session)) == expected
 
 
-@pytest.mark.parametrize(
-    ('condition', 'values', 'expected'),
-    [('=', ['2026-07-15'], [1]), ('>', ['2026-07-15'], [2]), ('<', ['2026-07-15'], [4, 5])],
-)
+#: `seen_tz` holds 23:59 UTC on the 15th (row 1), 00:00 UTC on the 16th (row 2), nothing (row 3), noon on 2025-01-01
+#: (row 4) and 20:00 on the 14th (row 5): the instants of rows 1 and 2 are a minute apart, their UTC days are not
+AWARE_CASES = [
+    ('=', ['2026-07-15'], [1]),
+    ('>', ['2026-07-15'], [2]),
+    ('<', ['2026-07-15'], [4, 5]),
+    ('>=', ['2026-07-16'], [2]),
+    ('>=', ['2026-07-15'], [1, 2]),
+    ('<=', ['2026-07-15'], [1, 4, 5]),
+    ('between', ['2026-07-15', '2026-07-15'], [1]),  # both ends are whole days
+    ('between', ['2026-07-14', '2026-07-15'], [1, 5]),
+    ('!between', ['2026-07-15', '2026-07-15'], [2, 3, 4, 5]),  # row 3 has no value, which passes (PRD-F37)
+    ('contains', ['2026-07-16'], [2]),  # a span of a UTC day, and of a UTC month
+    ('contains', ['2026-07'], [1, 2, 5]),
+]
+
+
+@pytest.mark.parametrize(('condition', 'values', 'expected'), AWARE_CASES)
 def test_a_timezone_aware_column_compares_by_utc_day(
     session: Session, condition: str, values: list[str], expected: list[int]
 ):
-    """The day bounds are UTC midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
+    """SPEC-F21.2, SPEC-F21.3, SPEC-F21.11, SPEC-F22.3: every condition compares the UTC day. The day bounds are UTC
+    midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
     UTC+14), which reads a naive bound as local to it, and bounds built from Python's local time through TZ
     (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite
     too. SQL Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there
@@ -930,14 +973,11 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     )
 
 
-@pytest.mark.parametrize(
-    ('condition', 'values', 'expected'),
-    [('=', ['2026-07-15'], [1]), ('>', ['2026-07-15'], [2]), ('<', ['2026-07-15'], [4, 5])],
-)
+@pytest.mark.parametrize(('condition', 'values', 'expected'), AWARE_CASES)
 async def test_a_timezone_aware_column_compares_by_utc_day_through_the_async_fetch(
     async_session: AsyncSession, condition: str, values: list[str], expected: list[int]
 ):
-    """The test above through the async driver. asyncpg ignores PGTZ, so its session was UTC beside the sync one in
+    """SPEC-F21.3, SPEC-F21.11 through the async driver. asyncpg ignores PGTZ, so its session was UTC beside the sync one in
     UTC+14, and the one case that tells a naive bound from a UTC one went unchecked on that leg: the zone is asserted
     here as it is there, and the conftest asks asyncpg for it."""
     if async_session.get_bind().dialect.name == 'postgresql':
@@ -946,6 +986,24 @@ async def test_a_timezone_aware_column_compares_by_utc_day_through_the_async_fet
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     response = await aware.fetch(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), async_session)
     assert ids(response) == expected
+
+
+def test_an_aware_value_written_with_an_offset_is_read_without_it_on_sqlite(session: Session):
+    """SPEC-F21.8: SQLite stores the text it is given, so 01:00 at +02:00 on the 16th, which is 23:00 UTC on the 15th,
+    reads as 01:00 UTC on the 16th (PRD-F21: the app must write UTC there). Row 2 is 00:00 UTC on the 16th."""
+    if session.get_bind().dialect.name != 'sqlite':
+        pytest.skip('SPEC-F21.8 is about SQLite, which stores the offset as text and reads it back as written')
+    session.execute(
+        text(
+            'INSERT INTO dtb_test_people (id, name, team, secret, seen_tz) '
+            "VALUES (6, 'Eve', 'red', 's6', '2026-07-16 01:00:00+02:00')"
+        )
+    )
+    aware = SQLTable(people, [Column('id'), Column('seen_tz')])
+    on_the_16th = request('id', 'seen_tz', **criterion('seen_tz', '=', '2026-07-16'))
+    on_the_15th = request('id', 'seen_tz', **criterion('seen_tz', '=', '2026-07-15'))
+    assert ids(aware.fetch_sync(on_the_16th, session)) == [2, 6]
+    assert ids(aware.fetch_sync(on_the_15th, session)) == [1]
 
 
 def test_the_global_search_finds_a_timezone_aware_column_by_its_utc_day(session: Session):
@@ -1577,7 +1635,7 @@ def test_a_number_or_date_mistake_is_reported_before_a_boolean_one(
     ],
 )
 def test_negated_date_conditions(session: Session, condition: str, values: list[str], expected: list[int]):
-    """Each is the days outside a span. Row 3 has no date, and passes them all (PRD-F37)."""
+    """SPEC-F37.3: each is the days outside a span. Row 3 has no date, and passes them all (PRD-F37)."""
     assert ids(table.fetch_sync(request(*ALL, **criterion('born', condition, *values)), session)) == expected
 
 
@@ -1619,7 +1677,8 @@ BLUE = {'condition': '=', 'origData': 'team', 'data': 'team', 'value': ['blue']}
     ],
 )
 def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict[str, Any]):
-    """SPEC-F30.1 to SPEC-F30.3 and SPEC-F30.5 (PRD-F30), as an empty group does (SPEC-F28.3). Alone it leaves every
+    """SPEC-F30.1, SPEC-F30.2 (`no column` and `empty column`), SPEC-F30.3 and SPEC-F30.5 (PRD-F30), as an empty group
+    does (SPEC-F28.3). Alone it leaves every
     row; beside `team = blue` it leaves that criterion's rows in an AND group and in an OR group: read as true it would
     give every row in the OR group, and read as false none in the AND group."""
     alone = {'logic': 'AND', 'criteria': [unfinished]}
@@ -1627,6 +1686,96 @@ def test_an_unfinished_criterion_adds_nothing(session: Session, unfinished: dict
     for logic in ('AND', 'OR'):
         tree = {'logic': logic, 'criteria': [BLUE, unfinished]}
         assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [2, 5], logic
+
+
+RANGES = ('<', '<=', '>', '>=')
+
+
+@pytest.mark.parametrize(
+    ('column', 'conditions', 'values'),
+    [
+        ('name', (*RANGES, 'between', '!between'), ['b', 'm']),  # SPEC-F27.1: no order on text
+        ('age', ('contains', '!contains', 'starts', '!starts', 'ends', '!ends'), ['3']),  # SPEC-F27.2
+        ('born', ('starts', 'ends', '!starts', '!ends'), ['19']),  # SPEC-F27.3, SPEC-F27.8
+    ],
+)
+def test_a_condition_the_type_does_not_take_is_refused(
+    session: Session, column: str, conditions: tuple[str, ...], values: list[str]
+):
+    """SPEC-F27.1, SPEC-F27.2, SPEC-F27.3, SPEC-F27.8: every condition outside the type's set is `invalid_filter`, and
+    the text is asserted once, in test_a_user_error_says_what_is_wrong_and_what_to_do. `between` reads two values."""
+    for condition in conditions:
+        body = criterion(column, condition, *(values if 'between' in condition else values[:1]))
+        refused(table.fetch_sync(request(*ALL, **body), session))
+    assert ids(table.fetch_sync(request(*ALL, **criterion('born', 'contains', '1980')), session)) == [2]  # SPEC-F27.3
+
+
+@pytest.mark.parametrize(
+    ('tree', 'expected'),
+    [
+        (  # SPEC-F28.1: an OR group is a union
+            {
+                'logic': 'OR',
+                'criteria': [
+                    {'condition': '=', 'origData': 'team', 'value': ['blue']},
+                    {'condition': '=', 'origData': 'age', 'value': ['31']},
+                ],
+            },
+            [1, 2, 4, 5],
+        ),
+        (  # SPEC-F28.2: blue is rows 2 and 5; the nested group keeps 45 (row 2) and no age (row 3), so only row 2
+            {
+                'logic': 'AND',
+                'criteria': [
+                    {'condition': '=', 'origData': 'team', 'value': ['blue']},
+                    {
+                        'logic': 'OR',
+                        'criteria': [
+                            {'condition': '=', 'origData': 'age', 'value': ['45']},
+                            {'condition': 'null', 'origData': 'age', 'value': []},
+                        ],
+                    },
+                ],
+            },
+            [2],  # dropping the nested group gives 2 and 5; OR throughout gives 2, 3 and 5
+        ),
+    ],
+)
+def test_searchbuilder_groups_join_their_criteria_by_their_logic(
+    session: Session, tree: dict[str, Any], expected: list[int]
+):
+    """SPEC-F28.1, SPEC-F28.2."""
+    assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'expected'),
+    [
+        ('>', ['30.5'], [1, 2, 4, 5]),  # the two 31s are above 30.5, as is everyone older
+        ('<', ['30.5'], []),
+        ('>', ['31.5'], [2, 5]),
+        ('<', ['31.5'], [1, 4]),
+        ('=', ['31.0'], [1, 4]),
+        ('=', ['31.5'], []),
+        ('between', ['30.5', '31.5'], [1, 4]),
+    ],
+)
+def test_a_number_with_a_fraction_is_compared_as_that_number_on_an_integer_column(
+    session: Session, condition: str, values: list[str], expected: list[int]
+):
+    """SPEC-F25.10: `age` is a `SmallInteger`; a fraction is no whole number, so `=` finds nothing and a range sits
+    between two whole numbers. Row 3 has no age."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion('age', condition, *values)), session)) == expected
+
+
+@pytest.mark.parametrize(
+    'search',
+    [{'value': '^(31|60)$', 'regex': True}, {'multi_values': ['31', '60']}],
+    ids=['categorical', 'multi_values'],
+)
+def test_a_categorical_filter_on_a_number_column_matches_its_numbers(session: Session, search: dict[str, Any]):
+    """SPEC-F33.3: the number column's values equal the numbers listed, as `=` does, not their text."""
+    assert ids(table.fetch_sync(request(*ALL, column_search={'age': search}), session)) == [1, 4, 5]
 
 
 def test_a_value_that_is_there_but_unreadable_is_refused_not_left_out(session: Session):
@@ -1731,8 +1880,8 @@ def test_the_extra_values_a_client_sends_beside_value_are_ignored(session: Sessi
 
 
 def test_the_declared_type_decides_not_the_clients(session: Session):
-    """SPEC-D7.1: a client that calls a number column a string still gets a numeric comparison, and cannot run
-    'contains'."""
+    """SPEC-D7.1, SPEC-F27.4: a client that calls a number column a string still gets a numeric comparison, and cannot
+    run 'contains'."""
     tree = {'criteria': [{'condition': '>', 'origData': 'age', 'type': 'string', 'value': ['9']}]}
     assert ids(table.fetch_sync(request(*ALL, searchBuilder=tree), session)) == [1, 2, 4, 5]
     tree = {'criteria': [{'condition': 'contains', 'origData': 'age', 'type': 'string', 'value': ['3']}]}
@@ -1768,6 +1917,10 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
         ('born', 'contains', ['2024-00'], 'invalid_date'),  # no month 00: it is not read as January
         ('born', 'contains', ['2024-03-00'], 'invalid_date'),  # nor a day 00 as the first
         ('born', 'contains', ['0000'], 'invalid_date'),  # nor the year 0000 as the year 1
+        # SPEC-F22.2: a month, a year and a day that are not written in full
+        ('born', 'contains', ['1980-7'], 'invalid_date'),
+        ('born', 'contains', ['80'], 'invalid_date'),
+        ('born', 'contains', ['1980-07-1'], 'invalid_date'),
         # SPEC-F21.10: a full day in full-width digits: `contains` reads a day as `=` does, in ASCII digits only
         ('born', 'contains', ['2024-03-05'.translate(FULL_WIDTH)], 'invalid_date'),
         ('age', 'contains', ['abc'], 'invalid_filter'),  # SPEC-E3.8: the value is never read
