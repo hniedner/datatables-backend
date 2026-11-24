@@ -127,12 +127,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   accents.
 - **SPEC-F10.2** [MySQL with `utf8mb4_0900_ai_ci`] Global search `apfel` → rows 4: the collation, not the library,
   folds the accent.
-- **SPEC-F11.1** [all] Global search `50%` → rows 3; given a row whose `name` is `50 plum`, it is not matched.
+- **SPEC-F11.1** [all] Global search `50%` → rows 3; given a row whose `name` is `50 plum`, it is not matched. On
+  OpenSearch the column is a keyword column; on analysed text `SPEC-F11.9` holds.
 - **SPEC-F11.2** [all] Column search on `note` with `x_y` → rows 3; a row whose `note` is `xay` is not matched.
 - **SPEC-F11.3** [SQL] Given rows whose `note` is `[a]`, `a`, `a\b` and `ab`: column search `[a]` → the `[a]` row;
   `a\b` → the `a\b` row.
 - **SPEC-F11.4** [OS] Given rows whose `note` is `a*b`, `axb`, `a?b`: column search `a*b` → the `a*b` row; `a?b` → the
-  `a?b` row.
+  `a?b` row. On OpenSearch the column is a keyword column; on analysed text `SPEC-F11.9` holds.
 - **SPEC-F11.5** [all] Global search `ple` → rows 1 (a word matches as a substring).
 - **SPEC-F11.6** [OS] On a text-only `name` column: column search `red` → rows 1, not row 2 (`reddish`).
 - **SPEC-F11.7** [OS] Given rows whose text is `a`, `b`, `a-b`, `b a` and `a b`, on a text column and on a
@@ -144,7 +145,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `abc`: `starts` `a[b` → the first row only.
 - **SPEC-F11.9** [OS] On a text+keyword column a word also matches the analysed text as a phrase of its tokens
   (PRD-F11), so what the analyser drops does not tell rows apart: given rows whose text is `-red` and `red`, global
-  search `-red` → both rows; given rows ` a ` and `a`, `" a "` → both; given rows `a b”` and `a b`, `"a b”` → both.
+  search `-red` → both rows; given rows ` a ` and `a`, `" a "` → both; given rows `a b”` and `a b`, `"a b”` → both;
+  given rows `50%` and `50 plum`, global search `50%` → both; given rows `a*b` and `a?b`, column search `a*b` → both.
 
 ## Combining and refusing
 

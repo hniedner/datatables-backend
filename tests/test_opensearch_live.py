@@ -273,6 +273,7 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
     [
         ('apple', ['a1', 'd4']),  # the title, analysed or whole; the body's analysed `apples` is another token
         ('APPL', ['a1', 'd4']),  # a substring of the whole title, in any case
+        ('ple', ['a1', 'd4']),  # SPEC-F11.5: a substring in the middle of the whole title (`Apple`, `apple`)
         ('green', ['b2', 'd4']),  # an analysed body word
         ('p?e', []),  # `?` is text: unescaped, the wildcard `*p?e*` would find "Apple pie"
         ('a*b', []),  # `*` is text too
@@ -295,6 +296,8 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
     ('column', 'value', 'expected'),
     [
         (2, 'granny apples', ['a1']),
+        (2, 'apples', ['a1', 'd4']),  # SPEC-F11.6: the body is analysed text only, and `apples` is one of its tokens
+        (2, 'apple', []),  # SPEC-F11.6: ... of which `apple` is not a part
         (2, '"green tea"', ['b2']),  # SPEC-F4.1: a phrase; d4's body holds `green` only
         (2, 'green tea', ['b2']),  # SPEC-F2.1: both words; as one text it found d4's `green` too
         (1, 'CRUMBLE', ['d4']),
@@ -304,7 +307,8 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
     ],
 )
 def test_a_column_search(client: OpenSearch, column: int, value: str, expected: list[str]):
-    """SPEC-F22.4 (a month, and a year, on a date column), SPEC-F33.1 (a number is matched exactly)."""
+    """SPEC-F11.6 (the text-only `body`), SPEC-F22.4 (a month, and a year, on a date column), SPEC-F33.1 (a number is
+    matched exactly)."""
     params = request(*NAMES)
     params.columns[column].search.value = value
     assert found(table.fetch_sync(params, client)) == expected
@@ -369,9 +373,15 @@ def in_title(text: str) -> dict[str, Any]:
     return {'column_search': {'title': {'value': text}}}
 
 
+def in_label(text: str) -> dict[str, Any]:
+    return {'column_search': {'label': {'value': text}}}
+
+
 @pytest.mark.parametrize(
     ('title', 'body', 'expected'),
     [
+        ('x_y', in_title('x_y'), True),  # SPEC-F11.2: `_` is text
+        ('xay', in_title('x_y'), False),
         ('red apple', everywhere('“red apple”'), True),  # SPEC-F4.2
         ('50 plum', in_title('50"'), True),  # SPEC-F4.4: it searches `50`
         ('plum', in_title('"plum'), True),  # SPEC-F4.4: unclosed, it searches `plum`
@@ -404,10 +414,10 @@ def in_title(text: str) -> dict[str, Any]:
 def test_the_smart_search_finds_a_document_by_the_rule_its_statement_gives(
     client: OpenSearch, title: str, body: dict[str, Any], expected: bool
 ):
-    """SPEC-F4.1, SPEC-F4.2, SPEC-F4.4, SPEC-F4.5, SPEC-F4.9, SPEC-F7.1, SPEC-F7.2, SPEC-F8.3, SPEC-F8.4, SPEC-F8.6
-    (named in the comments), on a text+keyword column: the document f6 holds the text as its title, and is found or is
-    not. Each case is asked on its own, so that a document that differs from the next in one character cannot answer
-    for it."""
+    """SPEC-F4.1, SPEC-F4.2, SPEC-F4.4, SPEC-F4.5, SPEC-F4.9, SPEC-F7.1, SPEC-F7.2, SPEC-F8.3, SPEC-F8.4, SPEC-F8.6,
+    SPEC-F11.2 (named in the comments), on a text+keyword column: the document f6 holds the text as its title, and is
+    found or is not. Each case is asked on its own, so that a document that differs from the next in one character
+    cannot answer for it."""
     with added_document(client, title=title, body='x'):
         assert ('f6' in found(table.fetch_sync(request(*NAMES, **body), client))) is expected
 
@@ -438,12 +448,21 @@ whole = SearchTable(
         ('a', everywhere('" a "'), False),
         ('-red', everywhere('-red'), True),  # SPEC-F8.2: `-red` is text
         ('red', everywhere('-red'), False),
+        ('50%', everywhere('50%'), True),  # SPEC-F11.1: `%` is text
+        ('50 plum', everywhere('50%'), False),
+        ('a*b', in_label('a*b'), True),  # SPEC-F11.4: `*` and `?` are text in a column search, each its own character
+        ('axb', in_label('a*b'), False),
+        ('a?b', in_label('a*b'), False),
+        ('a?b', in_label('a?b'), True),
+        ('axb', in_label('a?b'), False),
+        ('a*b', in_label('a?b'), False),
     ],
 )
-def test_the_quotes_padding_and_minus_of_a_search_tell_rows_apart_on_a_keyword_column(
+def test_what_an_analyser_drops_tells_rows_apart_on_a_keyword_column(
     client: OpenSearch, text: str, body: dict[str, Any], expected: bool
 ):
-    """SPEC-F4.3, SPEC-F4.6, SPEC-F4.7, SPEC-F4.8, SPEC-F8.2 on OpenSearch: the column is a keyword column."""
+    """SPEC-F4.3, SPEC-F4.6, SPEC-F4.7, SPEC-F4.8, SPEC-F8.2, SPEC-F11.1, SPEC-F11.4 on OpenSearch: the column is a
+    keyword column."""
     with added_document(client, label=text):
         assert ('f6' in found(whole.fetch_sync(request('id', 'label', **body), client))) is expected
 
@@ -454,6 +473,8 @@ def test_the_quotes_padding_and_minus_of_a_search_tell_rows_apart_on_a_keyword_c
         ('-red', 'red', everywhere('-red')),
         (' a ', 'a', everywhere('" a "')),
         ('a b”', 'a b', everywhere('"a b”')),
+        ('50%', '50 plum', everywhere('50%')),
+        ('a*b', 'a?b', in_title('a*b')),
     ],
 )
 def test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword(

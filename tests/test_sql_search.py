@@ -261,6 +261,34 @@ def test_the_like_wildcards_in_contains_are_text(session: Session, value: str, r
     assert found(session, rows, criterion('team', 'contains', value)) == [1]
 
 
+@pytest.mark.parametrize(
+    ('body', 'rows'),
+    [
+        (glob('50%'), ['Blue 50% plum', '50 plum']),  # SPEC-F11.1: `%` is text in a word of the global search
+        (column('x_y'), ['x_y', 'xay']),  # SPEC-F11.2: and `_` in a word of a column search
+        (column('50%'), ['50%', '50 plum']),
+        (glob('x_y'), ['x_y', 'xay']),
+    ],
+)
+def test_the_like_wildcards_in_a_word_of_a_search_are_text(session: Session, body: dict[str, Any], rows: list[str]):
+    """SPEC-F11.1, SPEC-F11.2: a word is escaped for `LIKE` too, on the path of the search words, which the
+    SearchBuilder test above does not take: `50%` would find `50 plum`, `x_y` would find `xay`."""
+    assert found(session, rows, body) == [1]
+
+
+def test_brackets_and_a_backslash_in_a_word_are_text(session: Session):
+    """SPEC-F11.3: `[a]` is the text and no character class (SQL Server reads one), and `a\\b` is the text and no
+    escape. On SQL Server only the first half can fail; the other databases hold both."""
+    rows = ['[a]', 'a', 'a\\b', 'ab']
+    assert found_by(session, rows, column('[a]'), column('a\\b')) == [[1], [3]]
+
+
+def test_a_word_matches_inside_a_longer_value(session: Session):
+    """SPEC-F11.5: `ple` is found in the middle of `apples`, at the start of `plex` and at the end of `maple`, and not
+    in `pie`: a match anchored at either end, or on the whole value, would miss one of the three."""
+    assert found(session, ['apples', 'plex', 'maple', 'pie'], glob('ple')) == [1, 2, 3]
+
+
 @pytest.mark.parametrize('text', ['red NOT apple', 'red not apple'])
 def test_not_is_a_word_and_negates_nothing(session: Session, text: str):
     """SPEC-F8.6: only the row holding `not` is found; as a negation `red NOT apple` would find row 2."""
