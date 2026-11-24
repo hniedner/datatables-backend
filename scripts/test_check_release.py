@@ -123,12 +123,24 @@ def test_an_unpublished_tag_counts_for_the_version_and_its_commits_are_listed_on
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """v0.2.0 was tagged, never published, and a fix followed: the next version is v0.2.1, and the notes cross-check
-    runs from the last published tag with the unpublished tags ignored, so both commits are one section."""
-    repo = make(tmp_path, 'v0.1.0', 'refactor!: drop x', 'TAG:v0.2.0', 'fix: y', 'TAG:v0.2.1', version='0.2.1')
-    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0')) == 0
+    runs from the last published tag with the unpublished tags ignored, so both commits are one section, and what
+    v0.1.0 already published is not in it."""
+    repo = make(
+        tmp_path,
+        'v0.0.9',
+        'fix: ancient',
+        'TAG:v0.1.0',
+        'refactor!: drop x',
+        'TAG:v0.2.0',
+        'fix: y',
+        'TAG:v0.2.1',
+        version='0.2.1',
+    )
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.0.9', '0.1.0')) == 0
     out = capsys.readouterr().out
     assert 'drop x' in out
     assert ' y' in out
+    assert 'ancient' not in out
     assert [line for line in out.splitlines() if line.startswith('## ')] == ['## unreleased']
 
 
