@@ -73,6 +73,9 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
 - **SPEC-C15.2** [SQL] One table and one `TotalCache`, fetched against two SQLite databases holding 4 and 2 rows,
   with a global search `red` → `recordsTotal` 4 and 2; the key holds the database URL on every dialect, so SQLite
   proves it for all (PRD-C15).
+- **SPEC-C15.3** [OS] Two tables over the same index whose base filters differ only in the bound value (`term team
+  red`, `term team green`), sharing one `TotalCache` and one recording client that counts 4 documents for `red` and 2
+  for `green`, each sent a global search `red` → `recordsTotal` 4 and 2, and two total counts sent, not one.
 - **SPEC-C15.4** [OS] Two tables over the indexes `items_a` (4 documents) and `items_b` (2 documents), sharing one
   `TotalCache` and one recording client, each sent a global search `red` → `recordsTotal` 4 and 2.
 - **SPEC-C15.5** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
