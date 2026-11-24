@@ -113,6 +113,50 @@ jobs:
           SKIP: private-words,private-words-message,private-words-refs,private-words-history
         run: uv run --frozen pre-commit run --all-files --show-diff-on-failure
 
+  # Every commit a pull request or a push to main brings, merge commits aside, has a conventional header (decision 009,
+  # section 4): the commit-msg hook `commit-header` runs on each message by its id. This job also refuses what that hook
+  # lets through for work in progress: `fixup!`, `squash!` and `amend!`, and on a commit that is not a merge a `Merge `
+  # or `#` header. The range is the pull request's base..head, or the push's before..after; an event with no base
+  # commit here (a new branch or tag, the release workflow's call on a tag, a manual run) checks the commits the head's
+  # first parent lacks, as the coverage step falls back to HEAD~1. A line printed starts with the commit's SHA, so the
+  # runner never reads a header as a workflow command.
+  commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - name: Every commit of the change has a conventional header
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "This event names no base commit in this clone (a new branch or tag, a release, a manual run): checking $HEAD_SHA~1..$HEAD_SHA."
+            BASE="$HEAD_SHA~1"
+          fi
+          shas=$(git rev-list --no-merges "$BASE..$HEAD_SHA")
+          message="$RUNNER_TEMP/message"
+          failed=0
+          checked=0
+          for sha in $shas; do
+            checked=$((checked + 1))
+            git log -1 --format=%B "$sha" > "$message"
+            header=$(head -n 1 "$message")
+            if [[ "$header" =~ ^(fixup!|squash!|amend!|Merge\ |#) ]]; then
+              printf '%s: not for main (squash or reword it): %s\n' "$sha" "$header"
+              failed=1
+            elif ! uv run --frozen pre-commit run commit-header --hook-stage commit-msg --commit-msg-filename "$message"; then
+              printf '%s: not a conventional header of at most 100 characters: %s\n' "$sha" "$header"
+              failed=1
+            fi
+          done
+          echo "$checked commit(s) checked, $BASE..$HEAD_SHA"
+          exit "$failed"
+
   # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
   # nothing; this job scans what a push publishes. The release binary is checked against its published SHA-256.
   # GITLEAKS_VERSION, GITLEAKS_SHA256 and the gitleaks rev in .pre-commit-config.yaml move together.
@@ -643,7 +687,7 @@ jobs:
   gate:
     if: always()
     needs:
-      [lint, types, tests, pre-commit, secrets, install-isolation, dist, dist-check, minimum-versions, postgresql,
+      [lint, types, tests, pre-commit, commits, secrets, install-isolation, dist, dist-check, minimum-versions, postgresql,
        postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver, opensearch]
     runs-on: ubuntu-latest
     outputs:
