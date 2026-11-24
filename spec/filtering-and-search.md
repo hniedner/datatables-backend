@@ -451,19 +451,24 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F45.2** [all] ColumnControl `contains` `red` on `colour` gives the rows of a column search `red`; on a number
   column, a date column and a text column alike, and on OS the query of that column search is sent.
 - **SPEC-F45.3** [all] On `colour`: `equal` `red` → rows 1, 4; `notEqual` `red` → 2, 3; `starts` `red` → 1, 2, 4; `ends`
-  `ish` → 2; `notContains` `red` → 3. On OS each sends the query of the SearchBuilder condition it names (`=`, `!=`,
-  `starts`, `ends`, `!contains`), on a text, a number and a date column.
+  `ish` → 2; `notContains` `red` → 3; `equal` of two spaces → no rows, since a value of white space is a value
+  (PRD-F30) and `notEqual` of it → every row. On OS each sends the query of the SearchBuilder condition it names (`=`,
+  `!=`, `starts`, `ends`, `!contains`) on a text column, and `equal` that of `=` on a number and a date column; the
+  other logics are refused there (`SPEC-F45.8`).
 - **SPEC-F45.4** [all] `empty` on `note` → rows 1, 2 and `notEmpty` → 3, 4 on SQL (`SPEC-F26.1`); on OS they send the
   queries of `null` and `!null`.
 - **SPEC-F45.5** [all] A list `red`, `blue` on `colour` → rows 1, 3, 4 (`SPEC-F20.1`); a list `""`, `x_y` on `note` → rows
   1, 2, 3 on SQL (`SPEC-F20.2`). On OS a list sends the query of the same `multi_values`, on text, number and date
   columns.
-- **SPEC-F45.6** [all] A column search `red` and a ColumnControl `starts` `reddish` on `colour` → row 2 (AND), and a
-  column search, a ColumnControl search and a ColumnControl list on one column are ANDed, in that order (PRD-E3); a
-  ColumnControl search and list on one column are not refused as a value beside a list (PRD-F39).
+- **SPEC-F45.6** [all] A column search `red` and a ColumnControl `starts` `reddish` on `colour` → row 2 (AND); a column
+  search, a ColumnControl search and a ColumnControl list on one column are three clauses, ANDed, and a ColumnControl
+  search and list on one column are not refused as a value beside a list (PRD-F39). When two of them are refused at the
+  same step, the answer is the first in that order: the plain search's message, then the ColumnControl search's, then
+  the list's (PRD-E3).
 - **SPEC-F45.7** [all] `empty` and `notEmpty` carrying the text `x`, and carrying 300 characters, answer as `empty` and
   `notEmpty` alone: no `value_too_long`, and on OS the clause is that of `null` and `!null`.
-- **SPEC-F45.8** [all] `starts`, `ends` and `notContains` on `price` → `invalid_filter`, and `equal` `abc` on `price`
+- **SPEC-F45.8** [all] `starts`, `ends` and `notContains` on `price`, and `starts` on `made` → `invalid_filter`, and
+  `equal` `abc` on `price`
   and a list `abc` → `invalid_number`. [OS] On the analysed `body`: `equal`, `notEqual`, `starts`, `ends` and a list of
   values → `invalid_filter` with nothing sent; `contains`, `notContains`, `empty`, `notEmpty` and a list of `""` alone
   are answered (`SPEC-D19.1`).
@@ -476,7 +481,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   answered.
 - **SPEC-F45.11** [SQL] A control character in a ColumnControl value (`contains`, `equal`, a list entry) →
   `invalid_character`, and a value over 255 code points → `value_too_long`, each before the `invalid_filter` of another
-  column's refused logic (PRD-E3).
+  column's refused logic, and also on a column with no name, whose own refusal is of a later step (PRD-E3).
 - **SPEC-F45.12** [SQL] A ColumnControl search or list on a column the server declares unsearchable, on one it does not
   declare and on one with no name → `invalid_filter` (PRD-F41), never dropped.
 - **SPEC-F45.13** [all] On `price`: `greater` `7` → rows 2, 3; `greaterOrEqual` `8` → 2, 3; `less` `8` → 1; `lessOrEqual`

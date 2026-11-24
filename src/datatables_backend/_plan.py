@@ -417,8 +417,6 @@ def plan(
     for key, part in _column_parts(params, mistakes):
         with mistakes.part():
             if isinstance(part, SearchCriterion):
-                if not key:  # a criterion with no column adds nothing (PRD-F30), which an active filter must not
-                    raise mistake('datatables_name_not_declared', FILTER_NOT_OFFERED)
                 built = _criterion(part, declared, describe, hooked)
             else:
                 listed = _within_the_lists(part, declared.get(key), listed)
@@ -594,6 +592,11 @@ def _is_search(search: Search) -> bool:
     return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
 
 
+#: The name a ColumnControl criterion carries for a column that has none. A criterion with no column adds nothing
+#: (PRD-F30), which an active filter must not; no declared column is called this, so ``_criterion`` refuses it as an
+#: undeclared name, after the checks of step 1 (PRD-E3).
+_NO_COLUMN = '\x00'
+
 #: What each of ColumnControl's logics asks, as the SearchBuilder condition that answers it (PRD-F45): the rules of a
 #: type are stated once, there. ``contains`` is the column search and is not here.
 _COLUMNCONTROL_CONDITIONS: Mapping[str, Condition] = {
@@ -630,8 +633,10 @@ def _column_parts(params: DTParams, mistakes: Mistakes) -> list[tuple[str, Searc
                 held.append((requested.key, contains))
         elif control.search.value or control.search.logic in ('empty', 'notEmpty'):
             condition = _COLUMNCONTROL_CONDITIONS[control.search.logic]
-            criterion = SearchCriterion(condition=condition, origData=requested.key, value=[control.search.value])
-            held.append((requested.key, criterion))
+            named = requested.key or _NO_COLUMN
+            held.append(
+                (requested.key, SearchCriterion(condition=condition, origData=named, value=[control.search.value]))
+            )
         if control.list:
             held.append((requested.key, Search(multi_values=control.list)))
     if len(held) <= MAX_COLUMN_SEARCHES:

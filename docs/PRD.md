@@ -894,9 +894,9 @@ backend.
 A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all; a categorical filter or
 `multi_values` list or ColumnControl list holds at most 256 values, and all lists of one request together at most 512; a
 request holds at most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`,
-except a tree deeper than the parser reads, which is malformed (PRD-P6). A ColumnControl search or list counts as one
-of the 64 column searches. The global search covers each declared column once, however often the request names it. All
-the conditions of a request together are bounded by PRD-C17.
+except a tree deeper than the parser reads, which is malformed (PRD-P6). An active ColumnControl search or a non-empty
+ColumnControl list counts as one of the 64 column searches. The global search covers each declared column once, however
+often the request names it. All the conditions of a request together are bounded by PRD-C17.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must

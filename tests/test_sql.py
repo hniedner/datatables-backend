@@ -4144,6 +4144,40 @@ def test_a_columncontrol_search_on_a_column_the_server_does_not_offer_is_refused
 
 
 @pytest.mark.parametrize(
+    ('value', 'code'), [('a\x07', 'invalid_character'), ('a' * 300, 'value_too_long')], ids=['control', 'long']
+)
+def test_a_columncontrol_value_on_a_nameless_column_is_checked_before_the_refusals_of_later_steps(
+    session: Session, value: str, code: str
+):
+    """SPEC-F45.12, SPEC-F45.11: the control character and the length are step 1 of PRD-E3, whichever column holds the
+    value; the refusal of a column with no name is step 4, so another column's number mistake (step 2) does not hide
+    them either."""
+    names = ('id', 'age', '')
+    nameless = {'': {'data': None, **columncontrol('', 'equal', value)['']}}
+    for flags in (nameless, {**nameless, **columncontrol('age', 'greater', 'abc')}):
+        response = table.fetch_sync(request(*names, flags=flags), session)
+        assert response.error_code == code
+
+
+def test_what_a_column_refuses_is_answered_in_the_order_plain_search_then_columncontrol_search(session: Session):
+    """SPEC-F45.6, PRD-E3: a plain search and a ColumnControl search of one column that are both refused at step 4 are
+    answered with the plain search's message."""
+    plain = {'value': '.*', 'regex': True}
+    flags = {'age': {'search': plain, **columncontrol('age', 'starts', '3')['age']}}
+    error = table.fetch_sync(request(*ALL, flags=flags), session).error
+    assert error is not None
+    assert 'regular expressions' in error
+    assert _refusal(flags=columncontrol('age', 'starts', '3'), session=session) == 'invalid_filter'
+
+
+def test_a_columncontrol_value_of_white_space_is_a_value_and_not_dropped(session: Session):
+    """SPEC-F45.3, PRD-F30: `equal` two spaces matches the rows that hold exactly that, here none, and the request is
+    not answered as if the filter were absent."""
+    assert _found(flags=columncontrol('team', 'equal', '  '), session=session) == []
+    assert _found(flags=columncontrol('team', 'notEqual', '  '), session=session) == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize(
     ('logic', 'value', 'expected'),
     [
         ('greater', '31', [2, 5]),

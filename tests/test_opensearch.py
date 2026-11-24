@@ -2704,14 +2704,25 @@ def test_a_columncontrol_list_sends_what_the_same_multi_values_send():
         assert _clauses(flags=columncontrol_list(column, values)) == expected
 
 
-def test_the_filters_of_one_column_are_sent_in_the_order_of_prd_e3():
-    """SPEC-F45.6: a plain search, then the ColumnControl search, then the ColumnControl list, each its own clause."""
+def test_the_filters_of_one_column_are_three_clauses_and_none_replaces_another():
+    """SPEC-F45.6: a plain search, a ColumnControl search and a ColumnControl list of one column are three clauses,
+    none replacing another (PRD-F39 refuses a value beside a list inside one search, not across them)."""
     plain = _clauses(column_search={'title': {'value': 'apple'}})
     control = _clauses(flags=columncontrol('title', 'ends', 'pie'))
     listed = _clauses(column_search={'title': {'multi_values': ['Apple pie']}})
     flags = {'title': {'columnControl': {**columncontrol('title', 'ends', 'pie')['title']['columnControl']}}}
     flags['title']['columnControl']['list'] = {'0': 'Apple pie'}
-    assert _clauses(column_search={'title': {'value': 'apple'}}, flags=flags) == [*plain, *control, *listed]
+    together = _clauses(column_search={'title': {'value': 'apple'}}, flags=flags)
+    assert sorted(together, key=repr) == sorted([*plain, *control, *listed], key=repr)
+
+
+def test_a_columncontrol_search_and_list_both_refused_are_answered_with_the_search_first():
+    """SPEC-F45.6, PRD-E3: on analysed text `equal` is refused as a condition and a list as a list of exact values, both
+    at step 4; the column's ColumnControl search is read before its ColumnControl list, so its message is the answer."""
+    column = columncontrol('body', 'equal', 'red fox')['body']['columnControl']
+    flags = {'body': {'columnControl': {**column, 'list': {'0': 'red fox'}}}}
+    text = refused(table.fetch_sync(request(*NAMES, flags=flags), Client()))
+    assert text.startswith('The condition "=" cannot be used on "body"')
 
 
 @pytest.mark.parametrize('text', ['x', 'x' * 300])

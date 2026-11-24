@@ -16,14 +16,18 @@ change here; the wire format and the error codes change only in a release whose 
 - ColumnControl's per-column filters are answered on both backends ([#163], [#164], [#165]; PRD-F45): its text, number
   and list controls, with every logic (`contains`, `notContains`, `equal`, `notEqual`, `starts`, `ends`, `empty`,
   `notEmpty`, and the number control's `greater`, `greaterOrEqual`, `less`, `lessOrEqual`). Each answers as the column
-  search or SearchBuilder condition it matches, so the type rules are those of that condition. ColumnControl needs
-  `ajax: { submitAs: 'json' }` (README).
+  search or SearchBuilder condition it matches, so the type rules are those of that condition. They count toward the
+  existing bounds (64 column searches, 256 values in a list and 512 in all, 960 conditions), and their mistakes come
+  back as a normal answer (HTTP 200) with the usual codes, `invalid_filter` and `invalid_number` among them, as a column
+  search's do. Unlike the browser, `less` and `lessOrEqual` leave out a row with no value (PRD section 5). They work
+  with DataTables' default POST and with `submitAs: 'json'`, and not with an `ajax.data` that returns a string, since
+  ColumnControl adds its filters after it has run (README).
 
 ### Changed
 
 - A request with an active ColumnControl search or list is no longer refused as a whole: until now any active one raised
   `MalformedRequest` ("Invalid columns parameter."), the 422 of the FastAPI adapter. What is still refused raises
-  `MalformedRequest` with a message that says what to change: ColumnControl's date control when it is active, a logic
+  `MalformedRequest` with a message that says what to change: an active search of ColumnControl's date control, a logic
   outside the set, a value with no logic, a list entry that is neither text nor a whole number, and a list that is no
   array and no object keyed by indexes.
 - A `TotalCache` that would hold more than 10,000 distinct totals now drops the oldest (a request for it counts again),
