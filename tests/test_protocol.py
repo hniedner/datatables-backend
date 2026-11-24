@@ -852,11 +852,27 @@ def test_a_columncontrol_list_is_read_by_sorting_its_keys_not_by_building_a_list
     assert alone.columns[2].columnControl.list == ['b']
 
 
-@pytest.mark.parametrize('key', ['x', '1.5', '', ' 1', '\u0661'])
-def test_a_columncontrol_list_key_that_is_not_a_whole_number_is_refused(key: str):
-    """SPEC-P5.9: the object's keys are the client's indexes, so any other key is no list the client sent."""
-    with pytest.raises(MalformedRequest, match=r'^Invalid columns parameter'):
+_LIST_KEY_REFUSAL = (
+    'Invalid columns parameter: a ColumnControl list is neither an array nor an object keyed by whole-number indexes. '
+    'Send an array, or an object keyed 0, 1, 2 and so on.'
+)
+
+
+@pytest.mark.parametrize('key', ['x', '1.5', '', ' 1', '\u0661', '-1', '01', '1' * 10])
+def test_a_columncontrol_list_key_that_is_not_an_index_is_refused(key: str):
+    """SPEC-P5.9: the object's keys are the client's indexes (`0`, or at most nine digits without a leading zero, as
+    everywhere in a request), so any other key is no list the client sent, a negative one included."""
+    with pytest.raises(MalformedRequest) as refused:
         parse_request(_with_columncontrol({'list': {'0': 'a', key: 'b'}}))
+    assert str(refused.value) == _LIST_KEY_REFUSAL
+
+
+@pytest.mark.parametrize('scalar', ['x', 5, True, None], ids=repr)
+def test_a_columncontrol_list_that_is_neither_an_array_nor_an_object_is_refused(scalar: Any):
+    """SPEC-P5.9: the client sends an object, and `[list]=x` in a form is text."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(_with_columncontrol({'list': scalar}))
+    assert str(refused.value) == _LIST_KEY_REFUSAL
 
 
 def test_a_columncontrol_form_list_with_a_gap_in_its_indexes_is_refused_quickly():

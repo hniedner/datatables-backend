@@ -80,11 +80,11 @@ hooks run on `preXhr` after `ajax.data`, find a string where they expect `d.colu
 and no `columnControl` key, on the first draw and on `contains ann` [RUN]. `ajax: {submitAs: 'json'}` is the way that
 works with ColumnControl.
 
-## What main does today
+## What 0.1.0 did
 
-The 82 captured requests held 79 distinct bodies. Each was read by `parse_request`, with `length` set to 10 (the
-capture ran with paging off, which sends `length=-1`; the library refuses that first, so it hid the ColumnControl part)
-[RUN]:
+The 82 captured requests held 79 distinct bodies. Each was read by `parse_request` of 0.1.0, with `length` set to 10
+(the capture ran with paging off, which sends `length=-1`; the library refuses that first, so it hid the ColumnControl
+part) [RUN]:
 
 | Shape | Form | JSON |
 |---|---|---|
@@ -95,10 +95,20 @@ capture ran with paging off, which sends `length=-1`; the library refuses that f
 | a list with a value | the same | the same |
 | the `ajax.data` string | `MalformedRequest: The table request holds no DataTables parameter: ...` | (no JSON body) |
 
-The refusal is `ColumnControlSearch._idle` and the `list` validator of `protocol.py` (lines 140-160), so the cause is
-named only as "columns". The `type` and `mask` fields are ignored: the idle date shape is read [RUN].
+The refusal was `ColumnControlSearch._idle` and the `list` validator of `protocol.py`, so the cause was named only as
+"columns". The `type` and `mask` fields were ignored: the idle date shape was read [RUN].
+
+## What parsing does now
+
+PRD-F45 reads the shapes above (#163), as JSON and as a form: a search is a value and a logic of the closed set (the
+control's eight logics, and the number control's four), a list is the index-keyed object or an array of text and whole
+numbers read as text. An idle search (an empty value with any logic but `empty` and `notEmpty`, or with none) and an
+empty list add nothing. Four shapes are refused with a message of their own, each saying what to change: a logic outside
+the set, a value with no logic, an active search with `type` `date`, and a list entry that is neither text nor a whole
+number; so is a list that is no array and no object keyed by indexes. The object's keys are sorted, never used as
+positions, so a key of nine digits costs nothing. What the answered shapes do to a query is in #164.
 
 ## What follows
 
-Which shapes the library answers, how a value maps to a filter, and the open questions on dates with a zone, NULL and
-a list option's type are in #106.
+How a value maps to a filter, and the open questions on dates with a zone, NULL and a list option's type, are in #106
+and its follow-ups.
