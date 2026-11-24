@@ -37,6 +37,7 @@ from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import Uuid
 from sqlalchemy import and_
+from sqlalchemy import case
 from sqlalchemy import cast
 from sqlalchemy import create_engine
 from sqlalchemy import event
@@ -987,6 +988,50 @@ def test_empty_on_an_expression_without_a_type_follows_its_declaration(
     untyped = select(tags.c.id, literal_column('wrapped').label('text')).subquery()
     declared = SQLTable(untyped, [Column('id'), Column('text'), Column('day', field='text', type='date')])
     assert ids(declared.fetch_sync(request('id', column, **criterion(column, 'null')), session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('expression', 'empty', 'present'),
+    [
+        pytest.param(lambda email: func.nullif(email, 'NULL'), [2, 3, 6], [1, 4, 5, 7], id='nullif'),
+        pytest.param(
+            lambda email: case((email.in_(['NULL', '-']), None), else_=email), [2, 3, 6, 7], [1, 4, 5], id='case'
+        ),
+    ],
+)
+def test_a_text_that_stands_for_a_missing_value_is_empty_when_the_source_turns_it_into_null(
+    session: Session, expression: Callable[[Any], Any], empty: list[int], present: list[int]
+):
+    """SPEC-F26.5: the recipe of docs/rules.md. A load wrote `NULL` (row 6) and `-` (row 7) for what is missing; the
+    column is declared over `NULLIF` or a `CASE` that turns the sentinel into NULL, so the cell, `null` and `!null`, an
+    empty list entry and the order all agree. A plain column keeps the sentinel a value: `null` does not find it. Breaks
+    if the library stopped reading an expression column's NULLs as empty, or treated a stored sentinel as empty by
+    default."""
+    session.execute(
+        people.insert(),
+        [
+            {'id': 6, 'name': 'Eve', 'team': 'red', 'secret': 's6', 'email_address': 'NULL'},
+            {'id': 7, 'name': 'Fay', 'team': 'red', 'secret': 's7', 'email_address': '-'},
+        ],
+    )
+    source = select(people.c.id, expression(people.c.email_address).label('email')).subquery()
+    cleaned = SQLTable(source, [Column('id'), Column('email')])
+    columns = ('id', 'email')
+
+    def found(**body: Any) -> list[Any]:
+        return sorted(ids(cleaned.fetch_sync(request(*columns, **body), session)))
+
+    assert found(**criterion('email', 'null')) == empty
+    assert found(**criterion('email', '!null')) == present
+    assert found(column_search={'email': {'multi_values': ['']}}) == empty
+    shown = {row['id']: row['email'] for row in cleaned.fetch_sync(request(*columns), session).data}
+    assert shown[6] is None  # the cell shows what the filter finds
+    assert (shown[7] is None) == (7 in empty)
+    ordered = ids(cleaned.fetch_sync(request(*columns, order=[{'column': 1, 'dir': 'asc'}]), session))
+    assert sorted(ordered[: len(empty)]) == empty  # the rows that are empty come first, as NULLs do
+    plain = SQLTable(people, [Column('id'), Column('email', field='email_address')])
+    kept = ids(plain.fetch_sync(request(*columns, **criterion('email', 'null')), session))
+    assert sorted(kept) == [2, 3]  # the sentinels are values on the plain column
 
 
 def test_empty_on_an_enum_is_the_empty_string_only_when_that_is_one_of_its_values(session: Session):

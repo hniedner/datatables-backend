@@ -315,6 +315,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F26.4** [SQL] `multi_values` `[""]` on a `Uuid` column, and on a column behind a `TypeDecorator` that
   refuses to convert `''`, → the rows holding NULL (and `''` where the stored type is text); the entry is never
   sent as a value.
+- **SPEC-F26.5** [SQL] On a source that turns the texts `NULL` (row 6) and `-` (row 7) of `email` into NULL, with
+  `NULLIF` or with a `CASE`: `null` and `!null`, a list holding `""`, the cell and the ascending order agree on which of
+  those rows are empty, which are the NULL rows and the rows holding `''`, plus the sentinel rows the expression
+  converts; on the plain column `null` finds neither sentinel.
 
 ## SearchBuilder
 

@@ -216,3 +216,20 @@ SQL takes the same `unique_key`, which replaces the primary key when declared. W
 key, and a subquery must select every primary-key column of each table it reads (in a join too, and in a `WHERE` or a
 scalar subquery); otherwise it raises `SchemaError`. A `UNION` is not checked: declare `unique_key` on a subquery over
 one.
+
+**A text that stands for a missing value.** A load that writes `NULL` or `-` for what is missing leaves a stored text,
+which is not empty (see "A stored empty string" above): `null` does not find it, `!null` does, and the cell shows it. The
+library has no option for it, since a row that `null` finds while its cell shows a text, and that orders among the
+values, would be both empty and not. Declare the column over an expression that turns the text into NULL, and the cell,
+`null` and `!null`, an empty list entry and the order all agree:
+
+```python
+source = select(items.c.id, func.nullif(items.c.note, 'NULL').label('note')).subquery()
+table = SQLTable(source, [Column('id'), Column('note')])
+# several texts: case((items.c.note.in_(['NULL', '-']), None), else_=items.c.note)
+```
+
+The cost is that a filter on the expression cannot use an index of the column (INFERRED from how a database plans a
+function of a column, not measured here). The recipe is run on SQLite by `SPEC-F26.5`'s test, which CI also runs on
+every SQL database. OpenSearch has no expression source: leave the field out when indexing, which means a reindex of
+existing data ([the OpenSearch notes](databases.md#a-text-that-stands-for-a-missing-value-stays-a-value-there-is-no-expression-source)).
