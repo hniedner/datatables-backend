@@ -530,15 +530,16 @@ not affected.
 
 #### PRD-D22
 
-On SQL, a declared type that can never match the column's SQL type raises `SchemaError` naming the column when the table
-is constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared
-`number`. A string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a
-`TypeDecorator` is judged by the type it stores. Every other declaration constructs as before, an integer or a boolean
-column declared `string` included, and so does a column whose SQL type is none of these (an expression without a type,
-a `Uuid`, a `JSON`). OpenSearch is not checked: the mapping is not read (PRD-D8).
+On SQL, a declared type that does not fit the column's SQL type raises `SchemaError` naming the column when the table is
+constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`.
+A string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator`
+is judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
+`string` included, and so does a column whose SQL type is none of these (an expression without a type, a `Uuid`, a
+`JSON`). OpenSearch is not checked: the mapping is not read (PRD-D8).
 
-- **Reason:** Such a column finds no row for any value (MEASURED on SQLite, #46), or fails on the server; a mistake in
-  the declaration is found at start-up, not by a user.
+- **Reason:** Such a column is answered differently on each database or fails on the server (MEASURED 2026-11-24: `=` 5
+  on text finds '5' on SQLite, '5', '05' and '5.0' on MySQL, and is an operator error on PostgreSQL); the mistake is
+  found at start-up, not by a user.
 - **Priority:** must
 
 ### 4.3 Filtering and search (F)
@@ -815,8 +816,7 @@ Server a number with more than 38 digits before the decimal point is out of rang
 precision the column declares (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a
 `Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a whole number
 outside the signed 64-bit range is compared as the column compares: exactly on a `Numeric` column (see section 5 for
-SQLite), as its digits on a column that stores text, and as the nearest floating-point number on a `Float` column and on
-an expression without a type. A number is a value like any other (PRD-F14), so one of more than 255 characters is
+SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a type. A number is a value like any other (PRD-F14), so one of more than 255 characters is
 `value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
 `.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is `invalid_number`,
 among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.

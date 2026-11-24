@@ -4,6 +4,20 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
+## [Unreleased]
+
+### Changed
+
+A tightening is a breaking change, and each is listed here with what to do.
+
+- `SQLTable` raises `SchemaError` when it is built for a column whose declared type does not fit its SQL type: a
+  string column (a string type, an `Enum`, or a `TypeDecorator` that stores one) declared `number`, `date` or
+  `boolean`, and a date or date-time column declared `number`. Such a column was answered differently on each
+  database (`=` 5 on text found '5' on SQLite, '5', '05' and '5.0' on MySQL) or the server refused the comparison
+  (PostgreSQL). The message names the column and both fixes: declare it `string` or `date`, or give the column or
+  its expression, by a cast, a type of the declared kind. Every other declaration, an integer or a
+  boolean column declared `string` included, is accepted as before ([#46]).
+
 ## [0.1.0rc3] - 2026-11-24
 
 Changes since 0.1.0rc2.
@@ -101,6 +115,7 @@ The first release, a release candidate: install it with `pip install --pre datat
 [0.1.0rc3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc3
 [0.1.0rc2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc2
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1
+[#46]: https://github.com/hniedner/datatables-backend/issues/46
 [#58]: https://github.com/hniedner/datatables-backend/issues/58
 [#71]: https://github.com/hniedner/datatables-backend/issues/71
 [#75]: https://github.com/hniedner/datatables-backend/issues/75

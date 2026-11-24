@@ -283,8 +283,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   a row whose `price` is 18446744073709551616 (2^64): `=` `18446744073709551616`, and that number as a
   `multi_values` entry, → that row; `=` `9223372036854775808` (2^63) → none; `=` with a whole number of 255
   digits → none (a whole number of 256 digits is `value_too_long`). With `price` an expression without a SQL type,
-  declared a number: `=` `18446744073709551616` → that row. With `price` a string column declared a number that
-  holds the text `18446744073709551616`: `=` `18446744073709551616` → that row (text is compared with the digits).
+  declared a number: `=` `18446744073709551616` → that row.
 - **SPEC-F25.5** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
   18446744073709551616: `=` `18446744073709551616` → that row; `<` with a whole number of 31 digits → that row (the
   declared precision bounds nothing). `=` `18446744073709551617` [PostgreSQL, MySQL, SQL Server] → none; [SQLite]
@@ -295,8 +294,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.7** [SQL] With `price` redeclared as a `Numeric(32, 2)`, given a row whose `price` is
   18446744073709551616: a `multi_values` list of `1` and `18446744073709551616` → that row, on SQLite too (which
   sends the nearest float).
-- **SPEC-F25.8** [SQLite] With `active`, a Boolean column, and with `born`, a Date column, each declared a number: a
-  `multi_values` list of `2` → answered, no row. (PostgreSQL and SQL Server refuse such a comparison themselves.)
+- **SPEC-F25.8** [SQLite] With `active`, a Boolean column declared a number: a `multi_values` list of `2` → answered,
+  no row. (PostgreSQL and SQL Server refuse such a comparison themselves.)
 - **SPEC-F25.9** [all] SearchBuilder `=` on `price` with `nan`, `NaN`, `inf`, `-inf` or `Infinity` → error_code
   `invalid_number`: Python's own number reader takes these texts, and no column holds such a number (PRD-F25).
 - **SPEC-F25.10** [all] On `price`, an integer column, given a row whose `price` is 8: `>` `7.5` finds it, `<` `7.5`
