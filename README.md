@@ -1,14 +1,14 @@
 # datatables-backend
 
 [![CI](https://github.com/hniedner/datatables-backend/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hniedner/datatables-backend/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/hniedner/datatables-backend/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/hniedner/datatables-backend/security/code-scanning)
+[![CodeQL](https://github.com/hniedner/datatables-backend/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/hniedner/datatables-backend/actions/workflows/github-code-scanning/codeql)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hniedner/datatables-backend/badge)](https://scorecard.dev/viewer/?uri=github.com/hniedner/datatables-backend)
 [![codecov](https://codecov.io/gh/hniedner/datatables-backend/graph/badge.svg)](https://codecov.io/gh/hniedner/datatables-backend)
 [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https://raw.githubusercontent.com/hniedner/datatables-backend/main/pyproject.toml)](https://github.com/hniedner/datatables-backend/blob/main/pyproject.toml)
 [![Licence: MIT](https://img.shields.io/github/license/hniedner/datatables-backend)](https://github.com/hniedner/datatables-backend/blob/main/LICENSE)
 
 Server-side processing for [DataTables](https://datatables.net): paging, sorting, the global and column searches,
-and [SearchBuilder](https://datatables.net/extensions/searchbuilder/) criteria. Data can come from:
+and [SearchBuilder](https://datatables.net/manual/extensions/searchbuilder/) criteria. Data can come from:
 
 - **SQL**: SQLAlchemy 2, async or sync.
 - **OpenSearch**: async or sync client.

@@ -1,7 +1,7 @@
 """The DataTables server-side protocol: the request a table sends, the answer it expects, and how to read the request.
 
-See https://datatables.net/manual/server-side and, for the SearchBuilder tree,
-https://datatables.net/extensions/searchbuilder/server-side.
+See https://datatables.net/manual/core/server-side and, for the SearchBuilder tree,
+https://datatables.net/manual/extensions/searchbuilder/serverside.
 """
 
 from __future__ import annotations
