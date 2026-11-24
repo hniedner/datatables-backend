@@ -43,7 +43,7 @@ is made (lines 1790-1805) [READ]. The run printed every row of the table below, 
 - Idle: an empty `value` with a logic that is not `empty` or `notEmpty`. The control's own test of "active" is the same
   (line 1617) [READ]. Every table with a control sends its idle search on every request, the first draw included [RUN].
 - `empty` and `notEmpty` send the text left in the input: `ann` typed, then `empty` chosen, goes out as value `ann` with
-  logic `empty` [RUN]. A user who chose `starts` and typed nothing sends value `` with logic `starts` [RUN].
+  logic `empty` [RUN]. A user who chose `starts` and typed nothing sends an empty value with logic `starts` [RUN].
 - The `type` and `mask` fields are not a choice of the user; they name the control, and `mask` is `''` [RUN].
 
 ## The list
@@ -57,8 +57,9 @@ is made (lines 1790-1805) [READ]. The run printed every row of the table below, 
   value}]}`; without it the control stays hidden (`ajaxOnly`, lines 2184 and 2254) [READ]. The run's answers carried it
   and the buttons appeared.
 - A column with a text control and a list sends `search` and `list` together [RUN].
-- Not run: the button of the empty value `''` (a first run did not find it by its label) and so a tick of `''`.
-  The capture was not repeated; whether `''` arrives as `{"0":""}` stays [READ] from the code, which does not coerce.
+- The option whose value is the empty text shows a button labelled "Empty". Ticked, it arrives as `{"0":""}` in JSON and
+  as `columns[0][columnControl][list][0]=` in a form, which is an empty value at index 0 [RUN]. (A first run looked for
+  the button by an empty label and missed it; the capture was run again, with the buttons picked by position.)
 
 ## Both encodings
 
