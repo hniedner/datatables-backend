@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 51 of 2026-11-23 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 52 of 2026-11-23 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -48,7 +48,8 @@
   hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached); revision
   50 adds a clause to PRD-F11 (a typed wildcard in a SearchBuilder `contains`, `starts` or `ends` value is text) and
   one to PRD-F12 (the SearchBuilder tree combines with AND too); revision 51 adds a sentence to PRD-F25 (a number with
-  a fraction is compared as that number against an integer column)). It replaces draft 1 (R1 to R9); section 10 maps
+  a fraction is compared as that number against an integer column); revision 52 lays out section 5 as a list, one
+  entry per difference, no word changed (#42)). It replaces draft 1 (R1 to R9); section 10 maps
   every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
@@ -1645,44 +1646,164 @@ SearchPanes and ColumnControl.
 The server cannot give every answer SvelteDT's local source or DataTables' client side gives, and the backends differ
 where a database decides. Each difference is stated here; every other answer is the same.
 
-| Difference | Between | Requirement |
-|---|---|---|
-| Text order is the database's collation, not an ICU collator's digit-group order with case, width and kana ties. | Server and SvelteDT's local source (its PRD-B21) | PRD-O6 |
-| An order entry on a nameless column, on one both sides mark unorderable, or on an undeclared name the request marks unorderable, is skipped; DataTables' client sorts by it (its rendered output, READ `dataTables.mjs` :7994; it ignores `orderable`, :4794-4836). | Server and DataTables' client | PRD-O1, PRD-P21 |
-| The global search skips a column the request marks searchable but the server did not declare or declares unsearchable; DataTables' client searches it. | Server and DataTables' client | PRD-F41 |
-| A timezone-aware column on SQLite or in a MySQL `DATETIME` stores no offset, so its stored time is read as UTC and the app must write UTC; a MySQL `TIMESTAMP` gives the UTC day only under a `+00:00` session `time_zone` (INFERRED from the MySQL documentation); PostgreSQL and SQL Server store the instant. | SQLite and MySQL, and the other backends | PRD-F21 |
-| The global search skips a boolean column; DataTables' client and SvelteDT's local source search its rendered text. | Server, and DataTables' client and SvelteDT's local source | PRD-F44 |
-| A nameless column takes no part in the global search; DataTables' client searches its rendered text (READ `dataTables.mjs` :7994). | Server and DataTables' client | PRD-P21 |
-| A column search on a column the request marks unsearchable but the server declares searchable is answered; DataTables' client gives such a column empty search text (READ `dataTables.mjs` :5987-5998, which its column searches read at :5803-5805 and :5879), so there it matches nothing. | Server and DataTables' client | PRD-F41 |
-| Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source. | Server, and DataTables' client and SvelteDT's local source | PRD-F10 |
-| Dotted and dotless i match only where the database's collation makes them match; SvelteDT treats them alike in every locale (its PRD-B21, difference 3). | Server and SvelteDT's local source | PRD-F10 |
-| On SQLite, case folds for ASCII letters only. | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F9 |
-| On OpenSearch 3.0 and 2.19, case folds for ASCII letters only in a substring search and in an exact match; from 3.1 on it folds letters outside ASCII too. So `äpf` and `=` `äpfel` find `ÄPFEL` from 3.1 on and not before. A whole word on an analysed column folds as its analyser does on every version: the word `äpfel` finds `ÄPFEL` everywhere. | OpenSearch before 3.1 and OpenSearch from 3.1 on; OpenSearch before 3.1 and PostgreSQL, MySQL, SQL Server | PRD-F9, PRD-Q14 |
-| On every OpenSearch version a value longer than 255 code points folds ASCII letters only in a substring search and in an exact match, and so does a value without a cased character outside ASCII: `k` does not find the Kelvin sign, `s` not the long s. A substring or an exact match with `i` does not find a dotted capital `İ`; the analysed word does. | OpenSearch from 3.1 on, by the value; for the long value also OpenSearch and PostgreSQL, MySQL, SQL Server | PRD-F9 |
-| On OpenSearch a substring search is a wildcard or regular-expression query, and so is an exact match whose value has a cased character outside ASCII and at most 255 code points, on a column that folds (not one declared `fold_case=False`, nor one with a search-value hook). A cluster with `search.allow_expensive_queries` off refuses both kinds of query, and one with `index.max_regex_length` set under a regular expression's length (up to 768 UTF-16 units; the default is 1,000) refuses that one; the request then fails as any server failure does. | OpenSearch clusters by their settings | PRD-F9 |
-| On an OpenSearch keyword field whose normalizer rewrites a character into ASCII punctuation (`asciifolding` does it to `⒜`, `⑴`, `⁇`), a value that holds a cased character outside ASCII and such a character can fail, miss its own row or match other rows. This holds on every version, 3.0 and 2.19 included. A `lowercase` normalizer is not affected. | OpenSearch fields by their normalizer | PRD-F9 |
-| On an OpenSearch keyword field whose normalizer trims, a search text with a cased character outside ASCII and a space at its start or end finds fewer rows than the same text without the space: the space is kept where the search is open (`contains`, a global or column search, `starts` with a space at the end, `ends` with one at the start). An exact match, and the anchored end of `starts` and `ends`, are trimmed as the field is. This holds on every version. | OpenSearch fields by their normalizer | PRD-F9 |
-| An exact match on a column declared with `fold_case=False`, or with a search-value hook, matches case as its database collation or its OpenSearch mapping decides, so the same request can match different rows on different databases. | Between backends | PRD-D21, PRD-F9 |
-| In SQL an exact match on a column with a type of its own (a `TypeDecorator`, `Uuid`) or on an expression without a type is not folded: it compares as that type compares. | Plain string columns and other SQL columns | PRD-F9 |
-| A categorical filter matches whole values, case-insensitively on a string column (PRD-F9); DataTables' client reads the same value as an unanchored regex, a substring, also case-insensitive by default (READ, DataTables 3.1.5 `dataTables.mjs`: `filterCreateSearch` defaults `caseInsensitive: true` at :5902 and sets the `i` flag at :5965). The server sides with SvelteDT, whose categorical filter is exact (its PRD-B7). | Server and DataTables' client | PRD-F16, PRD-F17 |
-| On OpenSearch a stored `""` is not missing, so not empty; on SQL it is empty. | SQL and OpenSearch | PRD-F26 |
-| A hooked column matches whole values by equality; SvelteDT's local source matches substrings. | Server and SvelteDT's local source | PRD-D12, PRD-D17 |
-| LF, CR, U+2028 and U+2029 count as spaces in search text; DataTables' client splits words on spaces only. The server follows SvelteDT (its PRD-B21, difference 4). | Server and DataTables' client | PRD-F7 |
-| On SQL, number and date columns take part in the global and column searches as text (categorical filters and `multi_values` lists excepted, which match as `=` on every backend); OpenSearch's global search skips them. | SQL and OpenSearch | PRD-F23, PRD-F32 |
-| An OpenSearch number column search, other than a categorical filter or `multi_values` list, is an exact match; on SQL it matches the number's text. | SQL and OpenSearch | PRD-F23, PRD-F33 |
-| An OpenSearch date column search, other than a categorical filter or `multi_values` list, takes one date term; on SQL it is a smart search of the date's text. | SQL and OpenSearch | PRD-F22, PRD-F23, PRD-F34 |
-| DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between` over a range holding 0; the server lets NULL satisfy every negative condition. | Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=` and `!between`) | PRD-F37 |
-| A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page. | SQL and OpenSearch | PRD-C12 |
-| A text-only OpenSearch string column cannot be ordered; every SQL string column can. | SQL and OpenSearch | PRD-O5 |
-| A text-only OpenSearch string column answers the analysed search, `contains`, `!contains`, `null`/`!null` and a list of only empty entries, and refuses the other conditions and lists; SQL answers every condition. | SQL and OpenSearch | PRD-D19 |
-| Search text of more than 16 words is refused with `too_many_words`; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-F14 |
-| A value over 255 code points is refused with `value_too_long` on every backend. | Every backend | PRD-F14 |
-| A request of more than 960 conditions (a word counts once per column searched, a list value and a range once each) is refused with `request_too_large` on every backend; SvelteDT's local source answers it. | Server and SvelteDT's local source | PRD-C17 |
-| On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither. | SQL and OpenSearch | PRD-F11 |
-| On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers such a number on an integer column with `invalid_number`. A `double` field takes every finite number. The measurements are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix. | SQL and OpenSearch | PRD-F25, PRD-E7 |
-| On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22). | SQLite and PostgreSQL, MySQL, SQL Server | PRD-F25 |
-| A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix. | Numbers with a point or an exponent, and whole numbers | PRD-F25 |
-| On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation. | SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite | PRD-F20, PRD-F26 |
+- Text order is the database's collation, not an ICU collator's digit-group order with case, width and kana ties.
+  - **Between:** Server and SvelteDT's local source (its PRD-B21)
+  - **Requirement:** PRD-O6
+- An order entry on a nameless column, on one both sides mark unorderable, or on an undeclared name the request marks
+  unorderable, is skipped; DataTables' client sorts by it (its rendered output, READ `dataTables.mjs` :7994; it ignores
+  `orderable`, :4794-4836).
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-O1, PRD-P21
+- The global search skips a column the request marks searchable but the server did not declare or declares unsearchable;
+  DataTables' client searches it.
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-F41
+- A timezone-aware column on SQLite or in a MySQL `DATETIME` stores no offset, so its stored time is read as UTC and the
+  app must write UTC; a MySQL `TIMESTAMP` gives the UTC day only under a `+00:00` session `time_zone` (INFERRED from the
+  MySQL documentation); PostgreSQL and SQL Server store the instant.
+  - **Between:** SQLite and MySQL, and the other backends
+  - **Requirement:** PRD-F21
+- The global search skips a boolean column; DataTables' client and SvelteDT's local source search its rendered text.
+  - **Between:** Server, and DataTables' client and SvelteDT's local source
+  - **Requirement:** PRD-F44
+- A nameless column takes no part in the global search; DataTables' client searches its rendered text (READ
+  `dataTables.mjs` :7994).
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-P21
+- A column search on a column the request marks unsearchable but the server declares searchable is answered; DataTables'
+  client gives such a column empty search text (READ `dataTables.mjs` :5987-5998, which its column searches read at
+  :5803-5805 and :5879), so there it matches nothing.
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-F41
+- Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source.
+  - **Between:** Server, and DataTables' client and SvelteDT's local source
+  - **Requirement:** PRD-F10
+- Dotted and dotless i match only where the database's collation makes them match; SvelteDT treats them alike in every
+  locale (its PRD-B21, difference 3).
+  - **Between:** Server and SvelteDT's local source
+  - **Requirement:** PRD-F10
+- On SQLite, case folds for ASCII letters only.
+  - **Between:** SQLite and PostgreSQL, MySQL, SQL Server
+  - **Requirement:** PRD-F9
+- On OpenSearch 3.0 and 2.19, case folds for ASCII letters only in a substring search and in an exact match; from 3.1 on
+  it folds letters outside ASCII too. So `äpf` and `=` `äpfel` find `ÄPFEL` from 3.1 on and not before. A whole word on
+  an analysed column folds as its analyser does on every version: the word `äpfel` finds `ÄPFEL` everywhere.
+  - **Between:** OpenSearch before 3.1 and OpenSearch from 3.1 on; OpenSearch before 3.1 and PostgreSQL, MySQL, SQL
+    Server
+  - **Requirement:** PRD-F9, PRD-Q14
+- On every OpenSearch version a value longer than 255 code points folds ASCII letters only in a substring search and in
+  an exact match, and so does a value without a cased character outside ASCII: `k` does not find the Kelvin sign, `s`
+  not the long s. A substring or an exact match with `i` does not find a dotted capital `İ`; the analysed word does.
+  - **Between:** OpenSearch from 3.1 on, by the value; for the long value also OpenSearch and PostgreSQL, MySQL, SQL
+    Server
+  - **Requirement:** PRD-F9
+- On OpenSearch a substring search is a wildcard or regular-expression query, and so is an exact match whose value has a
+  cased character outside ASCII and at most 255 code points, on a column that folds (not one declared `fold_case=False`,
+  nor one with a search-value hook). A cluster with `search.allow_expensive_queries` off refuses both kinds of query,
+  and one with `index.max_regex_length` set under a regular expression's length (up to 768 UTF-16 units; the default is
+  1,000) refuses that one; the request then fails as any server failure does.
+  - **Between:** OpenSearch clusters by their settings
+  - **Requirement:** PRD-F9
+- On an OpenSearch keyword field whose normalizer rewrites a character into ASCII punctuation (`asciifolding` does it to
+  `⒜`, `⑴`, `⁇`), a value that holds a cased character outside ASCII and such a character can fail, miss its own row or
+  match other rows. This holds on every version, 3.0 and 2.19 included. A `lowercase` normalizer is not affected.
+  - **Between:** OpenSearch fields by their normalizer
+  - **Requirement:** PRD-F9
+- On an OpenSearch keyword field whose normalizer trims, a search text with a cased character outside ASCII and a space
+  at its start or end finds fewer rows than the same text without the space: the space is kept where the search is open
+  (`contains`, a global or column search, `starts` with a space at the end, `ends` with one at the start). An exact
+  match, and the anchored end of `starts` and `ends`, are trimmed as the field is. This holds on every version.
+  - **Between:** OpenSearch fields by their normalizer
+  - **Requirement:** PRD-F9
+- An exact match on a column declared with `fold_case=False`, or with a search-value hook, matches case as its database
+  collation or its OpenSearch mapping decides, so the same request can match different rows on different databases.
+  - **Between:** Between backends
+  - **Requirement:** PRD-D21, PRD-F9
+- In SQL an exact match on a column with a type of its own (a `TypeDecorator`, `Uuid`) or on an expression without a
+  type is not folded: it compares as that type compares.
+  - **Between:** Plain string columns and other SQL columns
+  - **Requirement:** PRD-F9
+- A categorical filter matches whole values, case-insensitively on a string column (PRD-F9); DataTables' client reads
+  the same value as an unanchored regex, a substring, also case-insensitive by default (READ, DataTables 3.1.5
+  `dataTables.mjs`: `filterCreateSearch` defaults `caseInsensitive: true` at :5902 and sets the `i` flag at :5965). The
+  server sides with SvelteDT, whose categorical filter is exact (its PRD-B7).
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-F16, PRD-F17
+- On OpenSearch a stored `""` is not missing, so not empty; on SQL it is empty.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F26
+- A hooked column matches whole values by equality; SvelteDT's local source matches substrings.
+  - **Between:** Server and SvelteDT's local source
+  - **Requirement:** PRD-D12, PRD-D17
+- LF, CR, U+2028 and U+2029 count as spaces in search text; DataTables' client splits words on spaces only. The server
+  follows SvelteDT (its PRD-B21, difference 4).
+  - **Between:** Server and DataTables' client
+  - **Requirement:** PRD-F7
+- On SQL, number and date columns take part in the global and column searches as text (categorical filters and
+  `multi_values` lists excepted, which match as `=` on every backend); OpenSearch's global search skips them.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F23, PRD-F32
+- An OpenSearch number column search, other than a categorical filter or `multi_values` list, is an exact match; on SQL
+  it matches the number's text.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F23, PRD-F33
+- An OpenSearch date column search, other than a categorical filter or `multi_values` list, takes one date term; on SQL
+  it is a smart search of the date's text.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F22, PRD-F23, PRD-F34
+- DataTables' client-side SearchBuilder reads an empty number as 0 (`+''`), so there NULL fails `!= 0` and `!between`
+  over a range holding 0; the server lets NULL satisfy every negative condition.
+  - **Between:** Server and DataTables' client-side SearchBuilder (READ, SearchBuilder 2.1.1 `numConditions`, its `!=`
+    and `!between`)
+  - **Requirement:** PRD-F37
+- A page beyond `max_result_window` that is not near either end is refused on OpenSearch; SQL serves every page.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-C12
+- A text-only OpenSearch string column cannot be ordered; every SQL string column can.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-O5
+- A text-only OpenSearch string column answers the analysed search, `contains`, `!contains`, `null`/`!null` and a list
+  of only empty entries, and refuses the other conditions and lists; SQL answers every condition.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-D19
+- Search text of more than 16 words is refused with `too_many_words`; SvelteDT's local source answers it.
+  - **Between:** Server and SvelteDT's local source
+  - **Requirement:** PRD-F14
+- A value over 255 code points is refused with `value_too_long` on every backend.
+  - **Between:** Every backend
+  - **Requirement:** PRD-F14
+- A request of more than 960 conditions (a word counts once per column searched, a list value and a range once each) is
+  refused with `request_too_large` on every backend; SvelteDT's local source answers it.
+  - **Between:** Server and SvelteDT's local source
+  - **Requirement:** PRD-C17
+- On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed
+  column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds
+  `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F11
+- On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by
+  the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers
+  such a number on an integer column with `invalid_number`. A `double` field takes every finite number. The measurements
+  are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix.
+  - **Between:** SQL and OpenSearch
+  - **Requirement:** PRD-F25, PRD-E7
+- On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy
+  binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a
+  neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22).
+  - **Between:** SQLite and PostgreSQL, MySQL, SQL Server
+  - **Requirement:** PRD-F25
+- A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point
+  number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole
+  number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix.
+  - **Between:** Numbers with a point or an exponent, and whole numbers
+  - **Requirement:** PRD-F25
+- On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an
+  exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only
+  equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them
+  apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite
+  (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation.
+  - **Between:** SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite
+  - **Requirement:** PRD-F20, PRD-F26
 
 ## 6. Release criteria for 1.0
 
