@@ -24,7 +24,10 @@ import warnings
 import pytest
 from sqlalchemy import CHAR
 from sqlalchemy import BigInteger
+from sqlalchemy import Boolean
 from sqlalchemy import Column as SQLColumn
+from sqlalchemy import Date
+from sqlalchemy import DateTime
 from sqlalchemy import Enum
 from sqlalchemy import Float
 from sqlalchemy import Integer
@@ -649,6 +652,71 @@ class Guid(TypeDecorator[str]):
 def ref(row: int) -> str:
     """The UUID of a row of the `cased` table, as a client writes it."""
     return f'{row}f960000-0000-4000-8000-00000000000{row}'
+
+
+@pytest.mark.parametrize(
+    ('sql_type', 'declared', 'fits', 'named'),
+    [
+        (String(20), 'number', 'string', 'VARCHAR'),
+        (String(20), 'date', 'string', 'VARCHAR'),
+        (String(20), 'boolean', 'string', 'VARCHAR'),
+        (Date(), 'number', 'date', 'DATE'),
+        (DateTime(), 'number', 'date', 'DATETIME'),
+        (Wrapped(20), 'number', 'string', 'VARCHAR'),
+    ],
+)
+def test_a_declared_type_that_can_never_match_the_sql_type_fails_at_construction(
+    sql_type: TypeEngine[Any], declared: Any, fits: str, named: str
+):
+    """SPEC-D22.1: the column finds no row for any value, or the server refuses the comparison, so the declaration is
+    the integrator's mistake, found when the table is built. The message names the column and both types, and says
+    what to declare instead. A `TypeDecorator` is judged by the type it stores."""
+    source = Table(
+        'dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('amount', sql_type)
+    )
+    with pytest.raises(SchemaError) as raised:
+        SQLTable(source, [Column('id'), Column('amount', type=declared)])
+    message = str(raised.value)
+    assert f'"amount" is declared {declared}' in message
+    assert f'its SQL type is {named}' in message
+    assert f'declare it {fits}' in message
+
+
+def test_a_declared_type_that_can_match_or_is_not_judged_constructs_and_answers(session: Session):
+    """SPEC-D22.2: an integer or a boolean column declared `string`, a boolean declared `number`, an expression
+    without a type declared `number` and a `Uuid` declared `string` are the declarations a mismatch rule must leave
+    alone: some answer today, and the database decides the others."""
+    tags = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('n', Integer, nullable=True),
+        SQLColumn('flag', Boolean, nullable=True),
+        SQLColumn('uid', Uuid, nullable=True),
+    )
+    tags.create(session.connection())
+    session.execute(
+        tags.insert(),
+        [{'id': 1, 'n': 5, 'flag': True, 'uid': uuid.UUID(ref(1))}, {'id': 2, 'n': None, 'flag': None, 'uid': None}],
+    )
+    table = SQLTable(
+        tags,
+        [
+            Column('id'),
+            Column('n', type='string'),
+            Column('flag', type='string'),
+            Column('flag_number', field='flag', type='number'),
+            Column('uid', type='string'),
+        ],
+    )
+    for name in ('n', 'flag', 'flag_number', 'uid'):
+        found = table.fetch_sync(request('id', name, **criterion(name, 'null')), session)
+        assert ids(found) == [2], name
+    untyped = SQLTable(
+        select(tags.c.id, literal_column('n').label('untyped')).subquery(),
+        [Column('id'), Column('untyped', type='number')],
+    )
+    assert ids(untyped.fetch_sync(request('id', 'untyped', **criterion('untyped', '=', '5')), session)) == [1]
 
 
 @pytest.fixture
