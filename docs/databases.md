@@ -551,6 +551,22 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
   (`test_a_stored_empty_text_is_not_a_missing_field`), which CI's `opensearch` job runs on 3.10.0 and 2.19.7.
 - **Requirement:** PRD-F26.
 
+### A text that stands for a missing value stays a value: there is no expression source
+
+- **What you see:** a load that writes a text such as `NULL` or `-` for what is missing leaves a keyword value, and
+  `null` does not find it, `!null` does, and the cell shows the text. On SQL the source of a column can be an
+  expression that turns the text into NULL ([the recipe](rules.md#sql), "A text that stands for a missing
+  value").
+  OpenSearch has no expression source: a `SearchTable` reads the stored field as it is.
+- **What to do:** leave the field out when indexing. An ingest pipeline with a `remove` processor whose `if` tests for
+  the sentinel does it for new documents; documents already indexed hold the text until they are reindexed through the
+  same pipeline, which is a reindex of the existing data. The library changes no mapping and no document.
+- **Example:** a document whose `author` is `"NULL"` beside one with no `author`: `null` finds only the second, until
+  the first is indexed without the field.
+- **How it is known:** INFERRED from the rule of PRD-F26 and the pinned behaviour above (`null` is a missing field); the
+  pipeline was not run for this note. No search-time alternative is promised.
+- **Requirement:** PRD-F26.
+
 ### The global search skips number and date columns
 
 - **What you see:** on OpenSearch the global search leaves out a number or a date column, because a number or a date
