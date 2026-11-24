@@ -27,6 +27,8 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import ERROR_CODES
+from .conftest import columncontrol
+from .conftest import columncontrol_list
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
@@ -2649,3 +2651,96 @@ def test_a_criterion_with_no_column_adds_nothing(unfinished: dict[str, Any]):
     assert expected != []
     for logic in ('AND', 'OR'):
         assert clauses_of(searchBuilder={'logic': logic, 'criteria': [finished, unfinished]}) == expected, logic
+
+
+# -- ColumnControl's per-column search and list (PRD-F45) --------------------------------------------------------------
+
+
+def _clauses(**body: Any) -> list[dict[str, Any]]:
+    """What a request adds to the base filter, as the cluster is sent it."""
+    client = Client()
+    response = table.fetch_sync(request(*NAMES, **body), client)
+    assert response.error is None, response.error
+    return query(client)
+
+
+@pytest.mark.parametrize(
+    ('column', 'logic', 'value', 'equivalent'),
+    [
+        ('title', 'equal', 'Apple pie', criterion('title', '=', 'Apple pie')),
+        ('title', 'notEqual', 'Apple pie', criterion('title', '!=', 'Apple pie')),
+        ('title', 'starts', 'App', criterion('title', 'starts', 'App')),
+        ('title', 'ends', 'pie', criterion('title', 'ends', 'pie')),
+        ('title', 'notContains', 'pie', criterion('title', '!contains', 'pie')),
+        ('title', 'empty', '', criterion('title', 'null')),
+        ('title', 'notEmpty', '', criterion('title', '!null')),
+        ('pages', 'equal', '12', criterion('pages', '=', '12')),
+        ('pages', 'greater', '12', criterion('pages', '>', '12')),
+        ('pages', 'greaterOrEqual', '12', criterion('pages', '>=', '12')),
+        ('pages', 'less', '12', criterion('pages', '<', '12')),
+        ('pages', 'lessOrEqual', '12', criterion('pages', '<=', '12')),
+        ('created', 'equal', '2026-07-15', criterion('created', '=', '2026-07-15')),
+        ('title', 'contains', 'red fox', {'column_search': {'title': {'value': 'red fox'}}}),
+        ('pages', 'contains', '12', {'column_search': {'pages': {'value': '12'}}}),
+        ('created', 'contains', '2026-07', {'column_search': {'created': {'value': '2026-07'}}}),
+    ],
+)
+def test_columncontrol_sends_what_the_equivalent_condition_or_column_search_sends(
+    column: str, logic: str, value: str, equivalent: dict[str, Any]
+):
+    """SPEC-F45.2, SPEC-F45.3, SPEC-F45.4, SPEC-F45.13: each logic is answered with the query of the SearchBuilder
+    condition it names, and `contains` with that of a column search, on a column of text, of numbers and of days."""
+    expected = _clauses(**equivalent)
+    assert expected != []
+    assert _clauses(flags=columncontrol(column, logic, value)) == expected
+
+
+def test_a_columncontrol_list_sends_what_the_same_multi_values_send():
+    """SPEC-F45.5: the list is the exact values of `multi_values` (PRD-F20), on text, on numbers and on days, and the
+    empty entry means empty."""
+    for column, values in (('title', ['Apple pie', '']), ('pages', ['12', '30']), ('created', ['2026-07-15'])):
+        expected = _clauses(column_search={column: {'multi_values': values}})
+        assert expected != []
+        assert _clauses(flags=columncontrol_list(column, values)) == expected
+
+
+def test_the_filters_of_one_column_are_three_clauses_and_none_replaces_another():
+    """SPEC-F45.6: a plain search, a ColumnControl search and a ColumnControl list of one column are three clauses,
+    none replacing another (PRD-F39 refuses a value beside a list inside one search, not across them)."""
+    plain = _clauses(column_search={'title': {'value': 'apple'}})
+    control = _clauses(flags=columncontrol('title', 'ends', 'pie'))
+    listed = _clauses(column_search={'title': {'multi_values': ['Apple pie']}})
+    flags = {'title': {'columnControl': {**columncontrol('title', 'ends', 'pie')['title']['columnControl']}}}
+    flags['title']['columnControl']['list'] = {'0': 'Apple pie'}
+    together = _clauses(column_search={'title': {'value': 'apple'}}, flags=flags)
+    assert sorted(together, key=repr) == sorted([*plain, *control, *listed], key=repr)
+
+
+def test_a_columncontrol_search_and_list_both_refused_are_answered_with_the_search_first():
+    """SPEC-F45.6, PRD-E3: on analysed text `equal` is refused as a condition and a list as a list of exact values, both
+    at step 4; the column's ColumnControl search is read before its ColumnControl list, so its message is the answer."""
+    column = columncontrol('body', 'equal', 'red fox')['body']['columnControl']
+    flags = {'body': {'columnControl': {**column, 'list': {'0': 'red fox'}}}}
+    text = refused(table.fetch_sync(request(*NAMES, flags=flags), Client()))
+    assert text.startswith('The condition "=" cannot be used on "body"')
+
+
+@pytest.mark.parametrize('text', ['x', 'x' * 300])
+def test_the_text_left_in_the_input_of_an_empty_search_is_not_sent(text: str):
+    """SPEC-F45.7: `empty` and `notEmpty` carry no value: the clause is that of `null` and `!null`, whatever the
+    input still holds, and a long text is no `value_too_long`."""
+    assert _clauses(flags=columncontrol('title', 'empty', text)) == _clauses(**criterion('title', 'null'))
+    assert _clauses(flags=columncontrol('title', 'notEmpty', text)) == _clauses(**criterion('title', '!null'))
+
+
+@pytest.mark.parametrize('logic', ['equal', 'notEqual', 'starts', 'ends'])
+def test_columncontrol_logics_that_need_a_whole_string_are_refused_on_analysed_text(logic: str):
+    """SPEC-F45.8, SPEC-D19.1: `body` holds analysed text only; `contains`, `notContains`, `empty` and `notEmpty`
+    are answered there and the others refused, before anything is sent; so is a list of values, except an empty one."""
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, flags=columncontrol('body', logic, 'red fox')), client))
+    refused(table.fetch_sync(request(*NAMES, flags=columncontrol_list('body', ['red fox'])), client))
+    assert (client.searches, client.counts) == ([], [])
+    for answered in ('contains', 'notContains', 'empty', 'notEmpty'):
+        assert _clauses(flags=columncontrol('body', answered, 'red fox')) != []
+    assert _clauses(flags=columncontrol_list('body', [''])) == _clauses(column_search={'body': {'multi_values': ['']}})

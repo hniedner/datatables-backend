@@ -64,8 +64,9 @@ What exists (READ, researched 2026-11-19):
   which it does not create, and would not be portable across SQLite, PostgreSQL, SQL Server, MySQL and OpenSearch.
 - Creating database extensions or collations (e.g. `unaccent`, ICU collations). An app that wants them declares a
   column as an expression (PRD-D10).
-- DataTables' fixed and grouped searches, SearchPanes selections and ColumnControl filters. They are refused, not
-  answered (PRD-P5); SearchPanes and ColumnControl are candidates for later (PRD-L2).
+- DataTables' fixed and grouped searches and SearchPanes selections. They are refused, not answered (PRD-P5);
+  SearchPanes is a candidate for later (PRD-L2). ColumnControl's filters are answered (PRD-F45), except its date
+  control.
 - SearchBuilder's array conditions (on columns of array values). Only string, number, date and boolean conditions are
   answered (PRD-F27).
 
@@ -121,13 +122,12 @@ An unknown field under a request parameter is ignored, except as PRD-P5 says.
 
 A filter the library does not answer raises `MalformedRequest` (PRD-E6) unless it is empty or idle: a non-empty
 `search[fixed]`, `search[groups]`, `search[groupsFixed]` or `columns[i][search][fixed]`; a non-empty pane in
-`searchPanes` or `searchPanes_null` (SearchPanes sends an empty pane on every request); a non-empty
-`columns[i][columnControl][list]`; a `columns[i][columnControl][search]` with a value or the `empty` or `notEmpty`
-logic.
+`searchPanes` or `searchPanes_null` (SearchPanes sends an empty pane on every request); a
+`columns[i][columnControl]` shape PRD-F45 does not answer.
 
 - **Reason:** DataTables omits empty arrays (READ, its 3.1.5 serializer), and ColumnControl sends an idle search on
-  every request, counting it active only with a value or those logics (READ, ColumnControl 2.1.3); dropping an active
-  filter would answer fewer filters than asked, with no sign.
+  every request, counting it active only with a value or the `empty` and `notEmpty` logics (READ, ColumnControl
+  2.1.3); dropping an active filter would answer fewer filters than asked, with no sign.
 - **Priority:** must
 
 #### PRD-P6
@@ -892,9 +892,10 @@ backend.
 #### PRD-F38
 
 A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all; a categorical filter or
-`multi_values` list holds at most 256 values, and all lists of one request together at most 512; a request holds at
-most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`, except a tree
-deeper than the parser reads, which is malformed (PRD-P6). The global search covers each declared column once, however
+`multi_values` list or ColumnControl list holds at most 256 values, and all lists of one request together at most 512; a
+request holds at most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`,
+except a tree deeper than the parser reads, which is malformed (PRD-P6). An active ColumnControl search or a non-empty
+ColumnControl list counts as one of the 64 column searches. The global search covers each declared column once, however
 often the request names it. All the conditions of a request together are bounded by PRD-C17.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
@@ -960,6 +961,30 @@ alternative or `multi_values` entry, or one of only white space, means empty, as
 - **Reason:** "true" as search text means nothing a user reads in the cell; a column search names the value. Owner's
   decision of 2026-11-19.
 - **Priority:** must
+
+#### PRD-F45
+
+The library reads ColumnControl's per-column search (text, list, empty and not empty) and answers it like the equivalent
+column search or SearchBuilder condition, on every backend.
+
+A search is a value and a logic from a closed set: `contains`, `notContains`, `equal`, `notEqual`, `starts`, `ends`,
+`empty` and `notEmpty`, and for a number control `greater`, `greaterOrEqual`, `less` and `lessOrEqual` (read as `>`,
+`>=`, `<` and `<=`). `contains` is the column search of PRD-F2, as ColumnControl's own `contains` is; `notContains` is
+SearchBuilder's `!contains`. The `type` the client sends is read only to refuse the date control; its `mask` and any
+other field are ignored. A list is an object keyed by index, or a list, of text or whole numbers, each read as its text,
+and answers as `multi_values` does (PRD-F38 bounds it). A search whose value is empty and whose logic is neither `empty`
+nor `notEmpty` is idle, and so is an empty list: they add nothing. ColumnControl's date control is not answered: an
+active search with `type` `date` is refused. Five shapes raise `MalformedRequest` (PRD-P5, PRD-E6) with a message that
+names ColumnControl and what to change, and holds none of what the client sent (PRD-E4, PRD-E10): a logic outside the
+set; a value with no logic; an active date search; a list entry that is neither text nor a whole number; and a list that
+is neither an array nor an object keyed by whole-number indexes.
+
+- **Reason:** The owner's decisions of 2026-11-23 and 2026-11-24 (#106): a table that offers ColumnControl's filters
+  gets them answered, where PRD-P5 alone refused every active one with a 422 that named neither ColumnControl nor the
+  fix. The client's `contains` is the smart search a column search is, so the two agree. The date control waits: its
+  value can carry a zone, which PRD-F21 refuses, and the client compares instants where the library compares days. The
+  wire form is recorded in `docs/decisions/007-columncontrol-wire-form.md`.
+- **Priority:** should
 
 ### 4.4 Ordering (O)
 
@@ -1229,9 +1254,10 @@ client treats a code it does not know as a refusal of the request and shows `err
 The code follows the first mistake in this order: (1) a control character (PRD-F15) is `invalid_character`, a value over
 255 code points (PRD-F14) is `value_too_long`, search text of more than 16 words (PRD-F14) is `too_many_words`, and a
 structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first mistake is the one found first in the
-order the request is read, the global search, then the column searches in the request's order, then the SearchBuilder
-tree (its structure, then its criteria in document order), and within one filter a control character in any of its
-values, then any value's length, then the words; last in step 1, after all of those, a request of more than 960
+order the request is read, the global search, then the column searches in the request's order (within one column the
+plain search, then the ColumnControl search, then the ColumnControl list), then the SearchBuilder tree (its structure,
+then its criteria in document order), and within one filter a control character in any of its values, then any value's
+length, then the words; last in step 1, after all of those, a request of more than 960
 conditions (PRD-C17) is `request_too_large`, counted over the parts the plan holds, so a part left out for a mistake
 is not counted, and a request over the budget only through such a part is answered with that mistake, and with
 `request_too_large` once it is fixed; (2) a value whose format a date or number column cannot read is
@@ -1623,10 +1649,10 @@ An Elasticsearch backend behind the same contract.
 
 #### PRD-L2
 
-SearchPanes and ColumnControl.
+SearchPanes.
 
-- **Reason:** DataTables extensions with their own request parts; planned for a milestone after 1.0, when a frontend
-  needs them.
+- **Reason:** A DataTables extension with its own request parts; planned for a milestone after 1.0, when a frontend
+  needs it.
 - **Priority:** later
 
 ## 5. Stated differences
@@ -1663,6 +1689,14 @@ where a database decides. Each difference is stated here; every other answer is 
   :5803-5805 and :5879), so there it matches nothing.
   - **Between:** Server and DataTables' client
   - **Requirement:** PRD-F41
+- A ColumnControl number search with `less` or `lessOrEqual` leaves a row with no value out; ColumnControl's client
+  counts an empty cell as `-Infinity` and so keeps it (READ ColumnControl 2.1.3, its number comparison).
+  - **Between:** Server and ColumnControl's client
+  - **Requirement:** PRD-F45
+- ColumnControl's date control is not answered: an active search of `type` `date` is refused; the client would compare
+  instants, and its value can carry a zone (READ ColumnControl 2.1.3).
+  - **Between:** Server and ColumnControl's client
+  - **Requirement:** PRD-F45
 - Accent folding is the database's; DataTables' client folds accents by default, as does SvelteDT's local source.
   - **Between:** Server, and DataTables' client and SvelteDT's local source
   - **Requirement:** PRD-F10

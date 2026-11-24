@@ -445,3 +445,46 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F44.3** [all] Categorical `^(true|0)$` on `active` → rows 1, 2, 4; `multi_values` `["", "1"]` → rows 1, 3,
   4.
 - **SPEC-F44.4** [all] `multi_values` `[" ", "1"]` on `active` → rows 1, 3, 4 (white space is an empty entry).
+- **SPEC-F45.1** [core] A ColumnControl search is read with its value and its logic (`ann`, `contains`), and a list with
+  its entries as text in index order: the JSON `{"1":"b","0":""}` and the form `[list][1]=b&[list][0]=` both give `""`
+  then `b`, the empty entry being the client's "Empty" option.
+- **SPEC-F45.2** [all] ColumnControl `contains` `red` on `colour` gives the rows of a column search `red`; on a number
+  column, a date column and a text column alike, and on OS the query of that column search is sent.
+- **SPEC-F45.3** [all] On `colour`: `equal` `red` → rows 1, 4; `notEqual` `red` → 2, 3; `starts` `red` → 1, 2, 4; `ends`
+  `ish` → 2; `notContains` `red` → 3; `equal` of two spaces → no rows, since a value of white space is a value
+  (PRD-F30) and `notEqual` of it → every row. On OS each sends the query of the SearchBuilder condition it names (`=`,
+  `!=`, `starts`, `ends`, `!contains`) on a text column, and `equal` that of `=` on a number and a date column; the
+  other logics are refused there (`SPEC-F45.8`).
+- **SPEC-F45.4** [all] `empty` on `note` → rows 1, 2 and `notEmpty` → 3, 4 on SQL (`SPEC-F26.1`); on OS they send the
+  queries of `null` and `!null`.
+- **SPEC-F45.5** [all] A list `red`, `blue` on `colour` → rows 1, 3, 4 (`SPEC-F20.1`); a list `""`, `x_y` on `note` → rows
+  1, 2, 3 on SQL (`SPEC-F20.2`). On OS a list sends the query of the same `multi_values`, on text, number and date
+  columns.
+- **SPEC-F45.6** [all] A column search `red` and a ColumnControl `starts` `reddish` on `colour` → row 2 (AND); a column
+  search, a ColumnControl search and a ColumnControl list on one column are three clauses, ANDed, and a ColumnControl
+  search and list on one column are not refused as a value beside a list (PRD-F39). When two of them are refused at the
+  same step, the answer is the first in that order: the plain search's message, then the ColumnControl search's, then
+  the list's (PRD-E3).
+- **SPEC-F45.7** [all] `empty` and `notEmpty` carrying the text `x`, and carrying 300 characters, answer as `empty` and
+  `notEmpty` alone: no `value_too_long`, and on OS the clause is that of `null` and `!null`.
+- **SPEC-F45.8** [all] `starts`, `ends` and `notContains` on `price`, and `starts` on `made` → `invalid_filter`, and
+  `equal` `abc` on `price`
+  and a list `abc` → `invalid_number`. [OS] On the analysed `body`: `equal`, `notEqual`, `starts`, `ends` and a list of
+  values → `invalid_filter` with nothing sent; `contains`, `notContains`, `empty`, `notEmpty` and a list of `""` alone
+  are answered (`SPEC-D19.1`).
+- **SPEC-F45.9** [SQL] On the hooked `secret`: `contains` `Alpha` → row 1, `equal` and a list as well; `starts` →
+  `invalid_filter`; `empty` and `notEmpty` are answered (PRD-D17, PRD-D18).
+- **SPEC-F45.10** [SQL] A list of 256 is answered and one of 257 → `invalid_filter`, as are three lists of 256 (PRD-F38);
+  60 searches of 16 words are answered and a 61st word → `request_too_large` with nothing run (PRD-C17); a search and a
+  list of one column are two of the 64 column searches: 32 columns of both are answered, and a 33rd column's search
+  → `invalid_filter`; 70 columns each with ColumnControl's idle search and empty list count for nothing and are
+  answered.
+- **SPEC-F45.11** [SQL] A control character in a ColumnControl value (`contains`, `equal`, a list entry) →
+  `invalid_character`, and a value over 255 code points → `value_too_long`, each before the `invalid_filter` of another
+  column's refused logic, and also on a column with no name, whose own refusal is of a later step (PRD-E3).
+- **SPEC-F45.12** [SQL] A ColumnControl search or list on a column the server declares unsearchable, on one it does not
+  declare and on one with no name → `invalid_filter` (PRD-F41), never dropped.
+- **SPEC-F45.13** [all] On `price`: `greater` `7` → rows 2, 3; `greaterOrEqual` `8` → 2, 3; `less` `8` → 1; `lessOrEqual`
+  `8` → 1, 3. Row 4, with no price, is in none (section 5). On OS each sends the query of `>`, `>=`, `<` and `<=`.
+- **SPEC-F45.14** [SQL] `greater` `abc` on `price` → `invalid_number`; `greater` on a text column → `invalid_filter`.
+- **SPEC-F45.15** [SQL] `notEqual` `7` on `price` → rows 2, 3, 4: the row with no price passes (PRD-F37).

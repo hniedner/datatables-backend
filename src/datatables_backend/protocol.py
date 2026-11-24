@@ -14,6 +14,7 @@ import re
 from typing import Annotated
 from typing import Any
 from typing import Literal
+from typing import LiteralString
 from typing import cast
 
 from pydantic import AfterValidator
@@ -26,6 +27,7 @@ from pydantic import Tag
 from pydantic import TypeAdapter
 from pydantic import ValidationError
 from pydantic import model_validator
+from pydantic_core import PydanticCustomError
 
 log = logging.getLogger('datatables_backend')
 
@@ -137,27 +139,97 @@ def _empty(value: Any) -> Any:
     return cast(Any, value)
 
 
+#: The logics ColumnControl's controls send (decision 007), and ``''`` for none. ``greater`` to ``lessOrEqual`` are the
+#: number control's.
+_COLUMNCONTROL_LOGICS = frozenset([
+    '', 'contains', 'notContains', 'equal', 'notEqual', 'starts', 'ends', 'empty', 'notEmpty',
+    'greater', 'greaterOrEqual', 'less', 'lessOrEqual',
+])  # fmt: skip
+
+#: What a refusal of ColumnControl's part says, by the error that raised it. Keyed by the kind of error, not by the
+#: field it is under: ``logic`` is also SearchBuilder's group field, and ``search`` holds two of these (PRD-F45,
+#: PRD-E4).
+_COLUMNCONTROL_REFUSALS = {
+    'columncontrol_logic': (
+        'a ColumnControl search sent a logic the server does not answer. Offer only contains, notContains, equal, '
+        'notEqual, starts, ends, empty and notEmpty (a number control also greater, greaterOrEqual, less and '
+        'lessOrEqual), or remove the control from the table.'
+    ),
+    'columncontrol_no_logic': (
+        "a ColumnControl search sent a value without a logic. Send the control's logic with its value."
+    ),
+    'columncontrol_date': (
+        "ColumnControl's date search is not answered. Remove the date control from this column, or give the column a "
+        'text search control.'
+    ),
+    'columncontrol_entry': (
+        'a ColumnControl list holds a value that is neither text nor a whole number. Give each option a text or '
+        'whole-number value.'
+    ),
+    'columncontrol_list': (
+        'a ColumnControl list is neither an array nor an object keyed by whole-number indexes. Send an array, or an '
+        'object keyed 0, 1, 2 and so on.'
+    ),
+}
+
+
+def _refusal(kind: LiteralString) -> PydanticCustomError:
+    return PydanticCustomError(kind, 'refused')
+
+
+def _closed_logic(logic: str) -> str:
+    if logic not in _COLUMNCONTROL_LOGICS:
+        raise _refusal('columncontrol_logic')
+    return logic
+
+
 class ColumnControlSearch(_Model):
-    """ColumnControl's column search, which the library does not answer: refused when active, as ColumnControl
-    itself counts it (a value, or the ``empty``/``notEmpty`` logic that needs none). It sends an idle one on every
-    request."""
+    """ColumnControl's column search: a value and a logic from a closed set. It sends an idle one on every request, an
+    empty value with a logic other than ``empty`` and ``notEmpty``, which adds nothing, as ColumnControl itself counts
+    it. An active one with no logic, or with the date control's ``type``, is refused. ``type`` is read only to refuse
+    the date control; ``mask`` and any other field the client sends is ignored."""
 
     value: str = ''
-    logic: str = ''
+    logic: Annotated[str, AfterValidator(_closed_logic)] = ''
+    type: str = ''
 
     @model_validator(mode='after')
-    def _idle(self) -> ColumnControlSearch:
-        if self.value or self.logic in ('empty', 'notEmpty'):
-            raise ValueError('a ColumnControl search is not supported')
+    def _answerable(self) -> ColumnControlSearch:
+        active = bool(self.value) or self.logic in ('empty', 'notEmpty')
+        if self.value and not self.logic:
+            raise _refusal('columncontrol_no_logic')
+        if active and self.type == 'date':
+            raise _refusal('columncontrol_date')
         return self
 
 
+def _entries(value: Any) -> Any:
+    """A ColumnControl list as the client sends it, an object keyed by index (``{"0": "a"}``), or as an array: the
+    entries as text, in index order. The object is sorted by its keys and never built by index, so a key of nine digits
+    costs no more than one digit; a gap is closed up. An entry is text or a whole number, which reads as its text, since
+    the client does not coerce an option's value."""
+    if isinstance(value, Mapping):
+        fields = cast(Mapping[Any, Any], value)
+        if not all(isinstance(key, str) and _index(key) for key in fields):
+            raise _refusal('columncontrol_list')
+        entries = [fields[key] for key in sorted(fields, key=int)]
+    elif isinstance(value, list):
+        entries = cast(list[Any], value)
+    else:
+        raise _refusal('columncontrol_list')
+    if any(isinstance(entry, bool) or not isinstance(entry, (str, int)) for entry in entries):
+        raise _refusal('columncontrol_entry')
+    return [str(entry) for entry in entries]
+
+
+_Entries = Annotated[list[str], BeforeValidator(_entries)]
+
+
 class ColumnControl(_Model):
-    """ColumnControl's per-column filters: refused unless idle, so a client is told instead of getting fewer filters
-    than it asked for."""
+    """ColumnControl's per-column filters (PRD-F45): its search, and its list of ticked options, ``[]`` when none is."""
 
     search: ColumnControlSearch = ColumnControlSearch()
-    list: Annotated[Any, AfterValidator(_empty)] = []
+    list: _Entries = []
 
 
 class DTColumn(_Model):
@@ -349,9 +421,12 @@ def parse_request(
     Filters the library does not answer are refused unless empty or idle, so a client is told instead of getting fewer
     filters than it asked for: DataTables' fixed and grouped searches (``search[fixed]``, ``search[groups]``,
     ``search[groupsFixed]``, ``columns[i][search][fixed]``), SearchPanes' selections (a pane in ``searchPanes`` or
-    ``searchPanes_null`` that is not empty; SearchPanes sends an empty one per pane) and ColumnControl's
-    (``columns[i][columnControl][list]``, and a ``columns[i][columnControl][search]`` with a value or the
-    ``empty``/``notEmpty`` logic).
+    ``searchPanes_null`` that is not empty; SearchPanes sends an empty one per pane).
+
+    ColumnControl's per-column part is read (PRD-F45): ``columns[i][columnControl][search]`` as a value and a logic, and
+    ``columns[i][columnControl][list]`` as text entries, as JSON or as a form; its idle search and empty list add
+    nothing. A logic outside the closed set, a value with no logic, an active search of the date control, and a list
+    entry that is neither text nor a whole number are refused, each with a message that says what to change.
 
     Raises:
         MalformedRequest: the request holds no DataTables parameter (an empty one, or DataTables 1.9's form), or
@@ -401,6 +476,8 @@ _FIELDS = {
 def _what_to_send(error: Mapping[str, Any]) -> str | None:
     """What a request parameter or one of its fields must be, for the first error of a validation, or None where
     nothing is said beyond the parameter. The field is named only if it is one of the protocol's (``_FIELDS``)."""
+    if error['type'] in _COLUMNCONTROL_REFUSALS:
+        return _COLUMNCONTROL_REFUSALS[error['type']]
     where = tuple(error['loc'])
     if len(where) == 1 and where[0] in _RANGES:
         if error['type'] in ('greater_than_equal', 'less_than_equal'):

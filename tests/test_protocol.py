@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 import pytest
@@ -634,16 +635,11 @@ def test_an_index_with_a_leading_zero_is_refused(pairs: list[tuple[str, str]]):
     [
         ('searchPanes[team][0]', 'red'),
         ('searchPanes_null[team][0]', 'true'),
-        ('columns[2][columnControl][search][value]', 'red'),
-        ('columns[2][columnControl][search][logic]', 'empty'),
-        ('columns[2][columnControl][search][logic]', 'notEmpty'),
-        ('columns[2][columnControl][list][0]', 'red'),
     ],
 )
-def test_a_searchpanes_or_columncontrol_filter_is_refused(extra: tuple[str, str]):
-    """SPEC-P5.2, SPEC-P5.3: SearchPanes and ColumnControl filters are not answered; dropping them would answer fewer
-    filters than asked."""
-    with pytest.raises(MalformedRequest, match=r'^Invalid (searchPanes|searchPanes_null|columns) parameter\.$'):
+def test_a_searchpanes_filter_is_refused(extra: tuple[str, str]):
+    """SPEC-P5.2: SearchPanes filters are not answered; dropping them would answer fewer filters than asked."""
+    with pytest.raises(MalformedRequest, match=r'^Invalid (searchPanes|searchPanes_null) parameter\.$'):
         parse_request([*BRACKETED, extra])
 
 
@@ -731,12 +727,201 @@ def test_a_field_and_a_value_under_one_append_are_refused_in_either_order(key: s
         parse_request(pairs if field_first else pairs[::-1])
 
 
-@pytest.mark.parametrize('key', ['columns[2][columnControl][list][0]', 'columns[2][columnControl][list]'])
-def test_a_columncontrol_list_refusal_names_only_the_parameter(key: str):
-    """SPEC-P5.3: a ColumnControl list is a filter, which is refused."""
+def _with_columncontrol(columncontrol: dict[str, Any]) -> dict[str, Any]:
+    """A request whose third column holds ColumnControl's part, as the client's JSON body (`submitAs: 'json'`) has it;
+    `as_pairs` writes the same as the form DataTables posts by default."""
+    columns: list[dict[str, Any]] = [{'data': 'id'}, {'data': 'name'}, {'data': 'team', 'columnControl': columncontrol}]
+    return {'draw': 4, 'start': 0, 'length': 10, 'columns': columns}
+
+
+_CLIENT_SEARCH = {'value': '', 'logic': 'contains', 'type': 'text'}
+#: What ColumnControl sends for a search or a list that is active (decision 007)
+ACTIVE_COLUMNCONTROL = {
+    'contains': {'search': {**_CLIENT_SEARCH, 'value': 'ann'}},
+    'empty': {'search': {**_CLIENT_SEARCH, 'logic': 'empty'}},
+    'notEmpty': {'search': {**_CLIENT_SEARCH, 'logic': 'notEmpty'}},
+    'greater': {'search': {'value': '5', 'logic': 'greater', 'type': 'num'}},
+    'list': {'list': {'0': 'a', '1': 'b'}},
+}
+
+
+@pytest.mark.parametrize('shape', ACTIVE_COLUMNCONTROL)
+def test_an_active_columncontrol_filter_is_read_alike_as_json_and_as_a_form(shape: str):
+    """SPEC-P5.4: the filter is kept, not dropped (the request differs from one without it), and the JSON body and the
+    default form give equal requests."""
+    body = _with_columncontrol(ACTIVE_COLUMNCONTROL[shape])
+    from_json, from_form = parse_request(body), parse_request(as_pairs(body))
+    assert from_json == from_form
+    assert from_json != parse_request(_with_columncontrol({}))
+
+
+def test_a_columncontrol_list_may_be_an_array_as_well_as_an_index_keyed_object():
+    """SPEC-P5.4: the index-keyed object is what the client sends; an array is the same list."""
+    assert parse_request(_with_columncontrol({'list': ['a', 'b']})) == parse_request(
+        _with_columncontrol({'list': {'0': 'a', '1': 'b'}})
+    )
+
+
+def test_a_columncontrol_search_and_list_are_read_with_their_value_logic_and_entries():
+    """SPEC-F45.1: the search keeps its value and logic; the list its entries, in index order, text as text and the
+    empty text of the client's "Empty" option included."""
+    body = _with_columncontrol({'search': ACTIVE_COLUMNCONTROL['contains']['search'], 'list': {'1': 'b', '0': ''}})
+    for encoded in (body, as_pairs(body)):
+        control = parse_request(encoded).columns[2].columnControl
+        assert (control.search.value, control.search.logic) == ('ann', 'contains')
+        assert control.list == ['', 'b']
+
+
+@pytest.mark.parametrize(
+    'idle',
+    [
+        {'search': {'value': '', 'logic': 'starts', 'type': 'text'}},
+        {'search': {'value': '', 'logic': 'greater', 'type': 'num'}},
+        {'search': {'value': '', 'logic': 'equal', 'type': 'date', 'mask': ''}},
+        {'search': {'value': '', 'logic': '', 'type': 'text'}},
+        {'list': {}},
+    ],
+    ids=['starts', 'greater', 'date', 'no-logic', 'list'],
+)
+def test_an_idle_columncontrol_filter_adds_nothing_as_json_and_as_a_form(idle: dict[str, Any]):
+    """SPEC-P5.3: an empty value with a logic that needs none to be empty (`starts`, `greater`) or with no logic, the
+    date control's idle shape and an empty list are what the client sends on every request; they filter nothing."""
+    body = _with_columncontrol(idle)
+    without = {'columns': {'__all__': {'columnControl'}}}
+    for encoded in (body, as_pairs(body)):
+        assert parse_request(encoded).model_dump(exclude=without) == parse_request(_with_columncontrol({})).model_dump(
+            exclude=without
+        )
+
+
+_LOGIC_REFUSAL = (
+    'Invalid columns parameter: a ColumnControl search sent a logic the server does not answer. Offer only contains, '
+    'notContains, equal, notEqual, starts, ends, empty and notEmpty (a number control also greater, greaterOrEqual, '
+    'less and lessOrEqual), or remove the control from the table.'
+)
+_DATE_REFUSAL = (
+    "Invalid columns parameter: ColumnControl's date search is not answered. Remove the date control from this column, "
+    'or give the column a text search control.'
+)
+_LIST_REFUSAL = (
+    'Invalid columns parameter: a ColumnControl list holds a value that is neither text nor a whole number. Give each '
+    'option a text or whole-number value.'
+)
+
+
+@pytest.mark.parametrize('value', ['', 'SENTINEL-VALUE'])
+@pytest.mark.parametrize('logic', ['like', 'SENTINEL-LOGIC', 'Contains'])
+def test_a_columncontrol_logic_outside_the_set_is_refused_with_the_fix_and_none_of_the_text_sent(
+    logic: str, value: str
+):
+    """SPEC-P5.5: the message names ColumnControl, says what to change, and is the same whatever was sent; so nothing
+    sent is in it (PRD-E4)."""
+    body = _with_columncontrol({'search': {'value': value, 'logic': logic, 'type': 'text'}})
+    for encoded in (body, as_pairs(body)):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert str(refused.value) == _LOGIC_REFUSAL
+        assert refused.value.parameter == 'columns'
+
+
+_NO_LOGIC_REFUSAL = (
+    "Invalid columns parameter: a ColumnControl search sent a value without a logic. Send the control's logic with its "
+    'value.'
+)
+
+
+@pytest.mark.parametrize('search', [{'value': 'SENTINEL-VALUE', 'logic': '', 'type': 'text'}, {'value': 'SENTINEL'}])
+def test_a_columncontrol_value_with_no_logic_is_refused_not_dropped(search: dict[str, Any]):
+    """SPEC-P5.8: the client always sends a logic (decision 007), so a value without one is no search the library can
+    answer; read as idle it would drop a filter with no sign."""
+    body = _with_columncontrol({'search': search})
+    for encoded in (body, as_pairs(body)):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert str(refused.value) == _NO_LOGIC_REFUSAL
+        assert refused.value.parameter == 'columns'
+
+
+def test_a_columncontrol_list_is_read_by_sorting_its_keys_not_by_building_a_list_as_long_as_the_largest():
+    """SPEC-P5.9: a gap in the keys is closed up, and a key of nine digits costs no more than a key of one."""
+    started = time.perf_counter()
+    parsed = parse_request(_with_columncontrol({'list': {'999999999': 'b', '0': 'a'}}))
+    alone = parse_request(_with_columncontrol({'list': {'999999999': 'b'}}))
+    assert time.perf_counter() - started < 1.0
+    assert parsed.columns[2].columnControl.list == ['a', 'b']
+    assert alone.columns[2].columnControl.list == ['b']
+
+
+def test_a_columncontrol_list_is_ordered_by_the_number_of_its_keys_not_by_their_text():
+    """SPEC-P5.9: the keys 0, 2 and 10 read in that order; sorted as text, `10` would come before `2`."""
+    listed = parse_request(_with_columncontrol({'list': {'10': 'c', '2': 'b', '0': 'a'}}))
+    assert listed.columns[2].columnControl.list == ['a', 'b', 'c']
+
+
+_LIST_KEY_REFUSAL = (
+    'Invalid columns parameter: a ColumnControl list is neither an array nor an object keyed by whole-number indexes. '
+    'Send an array, or an object keyed 0, 1, 2 and so on.'
+)
+
+
+@pytest.mark.parametrize('key', ['x', '1.5', '', ' 1', '\u0661', '-1', '01', '1' * 10])
+def test_a_columncontrol_list_key_that_is_not_an_index_is_refused(key: str):
+    """SPEC-P5.9: the object's keys are the client's indexes (`0`, or at most nine digits without a leading zero, as
+    everywhere in a request), so any other key is no list the client sent, a negative one included."""
     with pytest.raises(MalformedRequest) as refused:
-        parse_request([*BRACKETED, (key, 'red')])
-    assert str(refused.value) == 'Invalid columns parameter.'
+        parse_request(_with_columncontrol({'list': {'0': 'a', key: 'b'}}))
+    assert str(refused.value) == _LIST_KEY_REFUSAL
+
+
+@pytest.mark.parametrize('scalar', ['x', 5, True, None], ids=repr)
+def test_a_columncontrol_list_that_is_neither_an_array_nor_an_object_is_refused(scalar: Any):
+    """SPEC-P5.9: the client sends an object, and `[list]=x` in a form is text."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(_with_columncontrol({'list': scalar}))
+    assert str(refused.value) == _LIST_KEY_REFUSAL
+
+
+@pytest.mark.parametrize('entry', [True, None, 1.5, {}], ids=repr)
+def test_a_columncontrol_list_entry_that_is_not_text_or_a_whole_number_is_refused(entry: Any):
+    """SPEC-P5.6: a JSON boolean, null, fraction or object is no option value the library can match."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request(_with_columncontrol({'list': {'0': entry}}))
+    assert str(refused.value) == _LIST_REFUSAL
+
+
+def test_a_columncontrol_list_entry_that_is_a_whole_number_reads_as_its_text():
+    """SPEC-P5.6: the client does not coerce option values, so the number 1 arrives as `1` in JSON and as the text `1`
+    in a form, and both are the text `'1'`."""
+    body = _with_columncontrol({'list': {'0': 1}})
+    for encoded in (body, as_pairs(body)):
+        assert parse_request(encoded).columns[2].columnControl.list == ['1']
+
+
+@pytest.mark.parametrize(
+    'search',
+    [
+        {'value': '2024-03-05', 'logic': 'greater', 'type': 'date', 'mask': ''},
+        {'value': '', 'logic': 'empty', 'type': 'date', 'mask': ''},
+        {'value': 'ann', 'logic': 'notEmpty', 'type': 'date', 'mask': ''},
+    ],
+    ids=['value', 'empty', 'notEmpty'],
+)
+def test_an_active_columncontrol_date_search_is_refused_naming_the_date_control(search: dict[str, Any]):
+    """SPEC-P5.7: the date control is not answered (its value can carry a zone, and the client compares instants where
+    the library compares days); the idle date shape still parses (SPEC-P5.3)."""
+    body = _with_columncontrol({'search': search})
+    for encoded in (body, as_pairs(body)):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert str(refused.value) == _DATE_REFUSAL
+
+
+def test_a_searchbuilder_group_logic_refusal_keeps_its_own_message():
+    """SPEC-P6.6: `logic` is also ColumnControl's field, so a refusal text keyed on the field name alone would change
+    this one."""
+    with pytest.raises(MalformedRequest) as refused:
+        parse_request({'searchBuilder': {'logic': 'XOR', 'criteria': []}})
+    assert str(refused.value) == 'Invalid searchBuilder parameter.'
 
 
 def test_an_answer_holds_only_what_datatables_reads():

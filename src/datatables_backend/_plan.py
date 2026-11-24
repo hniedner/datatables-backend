@@ -414,14 +414,17 @@ def plan(
 
     column_searches: list[Filter | Group] = []
     listed = 0
-    for requested in _searched(params, mistakes):
-        search = requested.search
+    for key, part in _column_parts(params, mistakes):
         with mistakes.part():
-            listed = _within_the_lists(search, declared.get(requested.key), listed)
-            _no_control_character([search.value, *(search.multi_values or [])], declared.get(requested.key))
-            _within_the_bounds_of(search, declared.get(requested.key), describe)  # before step 4 can hide them
-            column = _filterable(lookup(requested.key, FILTER_NOT_OFFERED))
-            if (built := _column_search(search, column, describe(column), hooked)) is not None:
+            if isinstance(part, SearchCriterion):
+                built = _criterion(part, declared, describe, hooked)
+            else:
+                listed = _within_the_lists(part, declared.get(key), listed)
+                _no_control_character([part.value, *(part.multi_values or [])], declared.get(key))
+                _within_the_bounds_of(part, declared.get(key), describe)  # before step 4 can hide them
+                column = _filterable(lookup(key, FILTER_NOT_OFFERED))
+                built = _column_search(part, column, describe(column), hooked)
+            if built is not None:
                 column_searches.append(built)
 
     def node(item: SearchGroup | SearchCriterion) -> Filter | Group | None:
@@ -589,10 +592,53 @@ def _is_search(search: Search) -> bool:
     return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
 
 
-def _searched(params: DTParams, mistakes: Mistakes) -> list[DTColumn]:
-    """The request's columns that hold a search, none if there are more than PRD-F38 allows: the request is refused
-    as a whole, and nothing of it is read."""
-    held = [requested for requested in params.columns if _is_search(requested.search)]
+#: The name a ColumnControl criterion carries for a column that has none. A criterion with no column adds nothing
+#: (PRD-F30), which an active filter must not; no declared column is called this, so ``_criterion`` refuses it as an
+#: undeclared name, after the checks of step 1 (PRD-E3).
+_NO_COLUMN = '\x00'
+
+#: What each of ColumnControl's logics asks, as the SearchBuilder condition that answers it (PRD-F45): the rules of a
+#: type are stated once, there. ``contains`` is the column search and is not here.
+_COLUMNCONTROL_CONDITIONS: Mapping[str, Condition] = {
+    'notContains': '!contains',
+    'equal': '=',
+    'notEqual': '!=',
+    'starts': 'starts',
+    'ends': 'ends',
+    'empty': 'null',
+    'notEmpty': '!null',
+    'greater': '>',
+    'greaterOrEqual': '>=',
+    'less': '<',
+    'lessOrEqual': '<=',
+}
+
+
+def _column_parts(params: DTParams, mistakes: Mistakes) -> list[tuple[str, Search | SearchCriterion]]:
+    """The filters the request's columns hold, each with the request's name for its column, in the order PRD-E3 reads
+    them: for each column its search, then its ColumnControl search, then its ColumnControl list. A ColumnControl
+    ``contains`` is a column search and its list the ``multi_values`` of one; every other logic is the SearchBuilder
+    criterion it names, with the control's text as its value. ``null`` and ``!null`` ignore what they carry (PRD-F36),
+    so the text left in the input of ``empty`` and ``notEmpty`` is neither read nor measured. An idle one holds
+    nothing. None if there are more than PRD-F38 allows: the request is refused as a whole, and nothing of it is
+    read."""
+    held: list[tuple[str, Search | SearchCriterion]] = []
+    for requested in params.columns:
+        if _is_search(requested.search):
+            held.append((requested.key, requested.search))
+        control = requested.columnControl
+        if control.search.logic in ('', 'contains'):
+            contains = Search(value=control.search.value)
+            if _is_search(contains):
+                held.append((requested.key, contains))
+        elif control.search.value or control.search.logic in ('empty', 'notEmpty'):
+            condition = _COLUMNCONTROL_CONDITIONS[control.search.logic]
+            named = requested.key or _NO_COLUMN
+            held.append(
+                (requested.key, SearchCriterion(condition=condition, origData=named, value=[control.search.value]))
+            )
+        if control.list:
+            held.append((requested.key, Search(multi_values=control.list)))
     if len(held) <= MAX_COLUMN_SEARCHES:
         return held
     with mistakes.part():
