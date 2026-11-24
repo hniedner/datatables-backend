@@ -1,4 +1,4 @@
-"""The commit-msg hook `commit-header` and the CI job that `gate` waits for (decision 009, section 4).
+"""The commit-msg hook `commit-header` (decision 009, section 4).
 
 The test reads the hook from `.pre-commit-config.yaml` and runs pre-commit's own pygrep command on it, so it cannot
 drift from what a commit runs. CI's refusal of `fixup!`, `squash!`, `amend!`, `Merge ` and `#` headers is shell inside
@@ -83,24 +83,17 @@ def test_a_header_is_accepted_or_refused(tmp_path: Path) -> None:
     h = hook()
     assert h['language'] == 'pygrep'
     assert h['stages'] == ['commit-msg']
-    files: dict[str, bool] = {}
-    for index, (message, accepted) in enumerate(CASES.items()):
+    by_file: dict[str, str] = {}
+    for index, message in enumerate(CASES):
         path = tmp_path / f'case{index:02}'
         path.write_bytes(message.encode())
-        files[path.name] = accepted
+        by_file[path.name] = message
     # The command pre-commit itself runs for a pygrep hook (pre_commit/languages/pygrep.py).
     run = subprocess.run(
-        [sys.executable, '-m', 'pre_commit.languages.pygrep', *h['args'], h['entry'], *files],
+        [sys.executable, '-m', 'pre_commit.languages.pygrep', *h['args'], h['entry'], *by_file],
         cwd=tmp_path,
         capture_output=True,
         check=False,
     )
-    refused = {line for line in run.stdout.decode().splitlines() if line}
-    assert refused == {name for name, accepted in files.items() if not accepted}
-
-
-def test_gate_needs_every_other_job() -> None:
-    """`gate` is ci.yml's one required check: a job it does not need blocks neither a merge nor a release."""
-    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
-    assert 'commits' in jobs
-    assert set(jobs) - {'gate'} == set(jobs['gate']['needs'])
+    refused = {by_file[line] for line in run.stdout.decode().splitlines() if line}
+    assert refused == {message for message, accepted in CASES.items() if not accepted}

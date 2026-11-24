@@ -118,8 +118,10 @@ jobs:
   # lets through for work in progress: `fixup!`, `squash!` and `amend!`, and on a commit that is not a merge a `Merge `
   # or `#` header. The range is the pull request's base..head, or the push's before..after; an event with no base
   # commit here (a new branch or tag, the release workflow's call on a tag, a manual run) checks the commits the head's
-  # first parent lacks, as the coverage step falls back to HEAD~1. A line printed starts with the commit's SHA, so the
-  # runner never reads a header as a workflow command.
+  # first parent lacks, as the coverage step falls back to HEAD~1. A header is printed after the commit's SHA with its
+  # control characters (a carriage return included) replaced by `?`, so the runner cannot read it as a workflow
+  # command. The hook sees only the first line, so a blank first line is refused and the comment skipping of the
+  # hook stays a local convenience (an editor's comment lines never reach a stored message).
   commits:
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +137,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            echo "This event names no base commit in this clone (a new branch or tag, a release, a manual run): checking $HEAD_SHA~1..$HEAD_SHA."
+            echo "This event names no base commit in this clone (a new branch or tag, a release, a manual run):"
+            echo "checking $HEAD_SHA~1..$HEAD_SHA."
             BASE="$HEAD_SHA~1"
           fi
           shas=$(git rev-list --no-merges "$BASE..$HEAD_SHA")
@@ -144,13 +147,16 @@ jobs:
           checked=0
           for sha in $shas; do
             checked=$((checked + 1))
-            git log -1 --format=%B "$sha" > "$message"
-            header=$(head -n 1 "$message")
+            body=$(git log -1 --format=%B "$sha")
+            header=${body%%$'\n'*}
+            shown=${header//[[:cntrl:]]/?}
+            printf '%s\n' "$header" > "$message"
             if [[ "$header" =~ ^(fixup!|squash!|amend!|Merge\ |#) ]]; then
-              printf '%s: not for main (squash or reword it): %s\n' "$sha" "$header"
+              printf '%s: not for main (squash or reword it): %s\n' "$sha" "$shown"
               failed=1
-            elif ! uv run --frozen pre-commit run commit-header --hook-stage commit-msg --commit-msg-filename "$message"; then
-              printf '%s: not a conventional header of at most 100 characters: %s\n' "$sha" "$header"
+            elif ! uv run --frozen pre-commit run commit-header --hook-stage commit-msg \
+              --commit-msg-filename "$message"; then
+              printf '%s: not a conventional header of at most 100 characters: %s\n' "$sha" "$shown"
               failed=1
             fi
           done
@@ -687,8 +693,8 @@ jobs:
   gate:
     if: always()
     needs:
-      [lint, types, tests, pre-commit, commits, secrets, install-isolation, dist, dist-check, minimum-versions, postgresql,
-       postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver, opensearch]
+      [lint, types, tests, pre-commit, commits, secrets, install-isolation, dist, dist-check, minimum-versions,
+       postgresql, postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver, opensearch]
     runs-on: ubuntu-latest
     outputs:
       passed: ${{ steps.passed.outputs.passed }}

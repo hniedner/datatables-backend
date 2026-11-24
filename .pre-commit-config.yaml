@@ -86,6 +86,8 @@ repos:
       # at most 100 characters; git's own `Merge ` headers pass. Leading blank and `#` lines are skipped: git hands the
       # hook the message before it strips them. `fixup!`, `squash!` and `amend!` pass here; ci.yml's `commits` refuses
       # them. pygrep prints only the message file's name, never the message.
+      # Local-only known limits, left to review: a 100-character header ending in CRLF or a space, a first line of
+      # spaces only, and a non-ASCII scope.
       - id: commit-header
         name: commit header (conventional, at most 100 characters)
         language: pygrep
