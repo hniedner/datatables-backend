@@ -304,11 +304,12 @@ def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
         (3, '12', ['a1', 'd4']),  # a number column matches exactly
         (4, '2026-07', ['a1', 'b2']),  # a date column takes a month
         (4, '2026', ['a1', 'b2', 'e5']),
+        (4, '2026-07-15 10:00:00', ['a1']),  # a day with a time after it is that day, one date term, not two words
     ],
 )
 def test_a_column_search(client: OpenSearch, column: int, value: str, expected: list[str]):
     """SPEC-F11.6 (the text-only `body`), SPEC-F22.4 (a month, and a year, on a date column), SPEC-F33.1 (a number is
-    matched exactly)."""
+    matched exactly), SPEC-F34.1 (a day with a time after it)."""
     params = request(*NAMES)
     params.columns[column].search.value = value
     assert found(table.fetch_sync(params, client)) == expected
@@ -1169,9 +1170,8 @@ def test_a_list_of_values_on_a_hooked_column_finds_the_documents_of_each_hooked_
     assert found(hooked.fetch_sync(params, client)) == ['p1', 'p2']
 
 
-# What the recording test of the same bound (test_opensearch.py) cannot show: that the cluster answers a value of 255
-# code points. Its list holds the number `1` * 255, which no `integer` field takes (the strict xfail above, #47), so
-# here the numbers are zeros and a one.
+# What a recording client cannot show: that the cluster answers a value of 255 code points. The number `1` * 255 is
+# one no `integer` field takes (the strict xfail above, #47), so here the numbers are zeros and a one.
 LONG_ANSWERED = [
     ('search', everywhere('a' * 255)),
     ('title search', in_title('a' * 255)),
