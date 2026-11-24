@@ -4,6 +4,13 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
+## [Unreleased]
+
+### Added
+
+- `docs/rules.md` states the 422 answer of the FastAPI dependency for a malformed request, with each shape the tests
+  pin ([#152]).
+
 ## [0.1.0rc4] - 2026-11-24
 
 Changes since 0.1.0rc3.
@@ -135,3 +142,4 @@ The first release, a release candidate: install it with `pip install --pre datat
 [#58]: https://github.com/hniedner/datatables-backend/issues/58
 [#71]: https://github.com/hniedner/datatables-backend/issues/71
 [#75]: https://github.com/hniedner/datatables-backend/issues/75
+[#152]: https://github.com/hniedner/datatables-backend/issues/152

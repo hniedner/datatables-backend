@@ -117,8 +117,39 @@ before it names the condition.
 
 - **A request the library cannot read is the integration's mistake, not the user's.** `parse_request` raises
   `MalformedRequest`, whose message names the request parameter and never a key or value, and whose `draw` is the
-  request's own when that could be read. The FastAPI dependency answers it with 422 and
-  `{"detail": {"message": ..., "draw": ...}}`.
+  request's own when that could be read. The FastAPI dependency answers it with HTTP 422 in FastAPI's own shape: the
+  `detail` is an object with a `message` and, when `draw` could be read, the request's `draw` (PRD-A10). A request
+  with a `draw` of 5 and a `length` of `abc`:
+
+  ```json
+  {"detail": {"message": "Invalid length parameter: send a whole number, as DataTables does.", "draw": 5}}
+  ```
+
+  When `draw` itself is the malformed part there is no `draw` key at all, neither null nor a guess:
+
+  ```json
+  {"detail": {"message": "Invalid draw parameter: send a whole number, as DataTables does."}}
+  ```
+
+  A body that is neither a JSON object nor a form holding a DataTables parameter gets a message that does not depend
+  on the request:
+
+  ```json
+  {"detail": {"message": "The table request holds no DataTables parameter: send them as a JSON object or as a form."}}
+  ```
+
+  So does a body that is not UTF-8 or holds too many form fields:
+
+  ```json
+  {"detail": {"message": "The table request is malformed: send it as a JSON object or as a form."}}
+  ```
+
+  A message names a parameter, never a value, so it is safe to show or log. This is the only 422 the dependency
+  answers: a user's mistake in a filter, a date or a number is HTTP 200 with `error` and `error_code` (see
+  [Errors](#errors), PRD-A11), and an app that wants a 4xx for it maps the response in its own route. An app that maps
+  the 422 can match the status and `detail.draw`; the PRD fixes those, and does not fix the wording of `message`.
+  Like any other wire format, the shape changes only in a release whose notes say so (the versioning policy in the
+  status note of the [README](../README.md) and the [CHANGELOG](../CHANGELOG.md)).
 - **Requests are bounded.** Page lengths are capped (1000 by default; "All" is refused), `start` goes up to
   2^53-1 and `draw` from 0 to 2^31-1, and LIKE and wildcard characters in search values are escaped. A request
   holds at most 256 values in one list and 512 in all its lists, at most 64 column searches, and a SearchBuilder tree
