@@ -466,8 +466,7 @@ TABLES = {'all': (table, ALL), 'mixed': (mixed, ('id', 'name', 'secret')), 'hook
         ('mixed', glob(words(17)), '16'),  # PRD-D12: otherwise the whole request is refused
         ('hooked', glob(words(17)), None),  # ... and the cap is lifted when every searchable column is hooked
         ('hooked', glob('a' * 256), '255'),
-        ('hooked', column(words(17), 'secret'), None),  # PRD-D17: no word cap on a hooked column's own search
-        ('hooked', column(words(20), 'secret'), None),  # SPEC-D17.2: twenty words
+        ('hooked', column(words(20), 'secret'), None),  # SPEC-D17.2: no word cap on a hooked column's own search
         ('hooked', column('a' * 256, 'secret'), '255'),
         # SPEC-D12.8: `Alpha` and 251 spaces around it, so 5 characters after trimming: the raw text is measured
         ('hooked', glob(' ' * 125 + 'Alpha' + ' ' * 126), '255'),
