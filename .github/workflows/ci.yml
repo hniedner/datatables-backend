@@ -520,7 +520,8 @@ jobs:
               raise SystemExit('SQL Server did not answer')
           connection.execute('CREATE DATABASE dtb')
           EOF
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      # MEASUREMENT BRANCH (#71), not for merge: this job runs only the measurement
+      - run: uv run --frozen pytest tests/test_measure_71.py
 
   # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL), once on
   # each server line the library is tested on. Docker runs the digest and ignores the tag beside it, so the two move
