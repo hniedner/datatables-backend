@@ -3,60 +3,8 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 57 of 2026-11-24 (revision 21 was revision 20 with
-  the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
-  since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
-  code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
-  folds and for OpenSearch's ASCII-only fold, with lines in section 5; revision 24 changes PRD-F9 for OpenSearch, which
-  folds letters outside ASCII from 3.1 on, and adds PRD-Q14 for the supported OpenSearch servers, with lines in section
-  5; revision 25 is revision 24 in a new layout, one section per requirement, no requirement changed; revision 26,
-  approved by the owner on 2026-11-21, states how a day and a number are written, in PRD-F21, PRD-F22 and PRD-F25;
-  revision 27, approved by the owner on 2026-11-22, changes the wording of PRD-O8, PRD-E13, PRD-P8 and PRD-P9 and the
-  reason of PRD-O2; revision 28, approved by the owner on 2026-11-22, changes PRD-F6, PRD-F17, PRD-F21, PRD-F25,
-  PRD-F26, PRD-F33 and PRD-F44 and the reason of PRD-O8, with lines in section 5 and the milestones in section 6;
-  revision 29, approved by the owner on 2026-11-22 after the review of the same change, changes PRD-F20, PRD-F25,
-  PRD-D19, PRD-E3 and PRD-E4, the reasons of PRD-F25 and PRD-F26, lines in section 5 and the sentence on milestones in
-  section 6; revision 30, approved by the owner on 2026-11-22, changes who may change a requirement, in the last
-  sentences of this block; revision 31, approved by the owner on 2026-11-22, changes the first sentence of PRD-C15 (no
-  app-supplied key); revision 32, approved by the owner on 2026-11-22, changes the first sentences of PRD-F38 and
-  PRD-C17; revision 33 adds a clause to PRD-F11 (a word on analysed text matches as a phrase of its tokens), with its
-  line in section 5; revision 34 gives the bounds of PRD-F14 their own codes, `value_too_long` and `too_many_words`, as
-  the owner decided on 2026-11-22, in PRD-F14, PRD-E2, PRD-E3 and PRD-A11, extends the 255-code-point bound to every
-  value the client sends, and drops PRD-F25's rule of 308 digits, which that bound makes unreachable, with lines in
-  section 5; revision 35 gives PRD-C17 its budget of 960 conditions, the owner's sentence of 2026-11-22 and the new code
-  `request_too_large`, in PRD-C17, PRD-E2, PRD-E3 and PRD-A11, with a pointer in PRD-F38 and a line in section 5;
-  revision 36 adds a clause to PRD-D1 (a table declares a column, and no two share a name); revision 37 adds a clause to
-  PRD-D12 (text whose every token adds nothing under PRD-F6 adds nothing there either, and text with a word, a negated
-  one included, is compared whole); revision 38 changes PRD-F30 (an unfinished SearchBuilder criterion adds nothing
-  instead of being refused) and a clause of PRD-P6, with a line in section 5; PRD-F36's reason follows; revision 39 adds
-  clauses to PRD-D11 (the key is `unique_key`, a declared column or a tuple of them, which replaces the primary key when
-  declared; an OpenSearch key is sortable; a SQL subquery selects every primary-key column of each table it reads) and
-  to its reason; revision 40 adds a clause to PRD-C11 (the filtered count is a `_count` of the search's own query, so a
-  lower-bound total never stands); revision 41 adds a clause to PRD-D11 (`_id` cannot be the key, since OpenSearch
-  deprecates sorting on it; a declared `Column('_id')` shows the document id and is neither searchable nor orderable);
-  revision 42 adds clauses to PRD-C10 (the reversed page's `from` and `size`, and each flipped entry naming the `mode`
-  of its original direction) and to PRD-O3 (descending is the exact reverse for a field of one value); revision 43 adds
-  the extras `[sqlalchemy-async]` and `[opensearch-async]` to PRD-Q2, as the owner decided on 2026-11-23; revision 44
-  changes the first sentence of PRD-D19, as the owner decided on 2026-11-23 (`contains` and `!contains` are answered on
-  a text-only OpenSearch column), and its reason and section 5 row; revision 45 adds clauses to PRD-P8 (what an integer
-  is) and PRD-P14 (a JSON boolean reads as one; any other value is malformed); revision 46 removes from PRD-P21 the
-  clause refusing a SearchBuilder criterion with an empty `origData`, which contradicted PRD-F30 since revision 38,
-  and adds to PRD-D6's exceptions that a criterion with no column adds nothing; revision 47 adds a clause to PRD-D1 (a
-  request may name any subset of the declared columns, or none) and one to PRD-D2 (a SQL column whose field the source
-  lacks raises `SchemaError` at construction); revision 48 adds a clause to PRD-O1 (an order list is refused whole
-  when any entry is refused); revision 49 adds PRD-E14, as the owner decided on 2026-11-23, and clauses to PRD-E8 (a
-  hook's exception propagates) and PRD-E9 (a timed-out answer is partial; a partial total is never cached); revision
-  50 adds a clause to PRD-F11 (a typed wildcard in a SearchBuilder `contains`, `starts` or `ends` value is text) and
-  one to PRD-F12 (the SearchBuilder tree combines with AND too); revision 51 adds a sentence to PRD-F25 (a number with
-  a fraction is compared as that number against an integer column); revision 52 lays out section 5 as a list, one
-  entry per difference, no word changed (#42); revision 53 adds to section 5's entry for PRD-F11 that what the
-  analyser drops does not tell rows apart (#131); revision 54 rewords PRD-F23's first sentence (the owner's decision of
-  2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
-  number as the table shows it is found, and adds a section-5 entry for the spellings (#71); revision 55 adds
-  MariaDB's default collation to section 5's entry for trailing spaces (#58); revision 56 adds PRD-D22 (the owner's
-  first sentence of 2026-11-24) and removes PRD-F25's clause on a column that stores text (#46); revision 57 labels
-  the MySQL `TIMESTAMP` behaviour of PRD-F21 MEASURED, by SPEC-F21.12's test). It replaces draft 1
-  (R1 to R9); section 10 maps every draft-1 item to its place here.
+- **Status:** draft 2, approved by the owner on 2026-11-19; what each revision changed is in `git log docs/PRD.md` and
+  the PR that made it. It replaces draft 1 (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to

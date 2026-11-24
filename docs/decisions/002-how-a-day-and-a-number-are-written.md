@@ -1,6 +1,6 @@
 # 002: How a day and a number are written
 
-This is the record behind the spellings PRD-F21, PRD-F22 and PRD-F25 state (PRD revision 26): what was decided, what
+This is the record behind the spellings PRD-F21, PRD-F22 and PRD-F25 state (the PRD as of 2026-11-21, commit 41958c1): what was decided, what
 was read for it, and what the library accepted before. The requirements are in `docs/PRD.md`. Nothing here is a
 requirement.
 
