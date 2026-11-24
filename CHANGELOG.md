@@ -1,8 +1,7 @@
 # Changelog
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com),
-and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
-change here; the wire format and the error codes change only in a release whose notes say so.
+and the versioning policy is in the README.
 
 ## [Unreleased]
 

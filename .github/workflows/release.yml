@@ -46,6 +46,16 @@ jobs:
         run: uv run --no-project --python 3.14 python scripts/check_dist.py tag "$TAG"
       - name: The commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      # The version in the source is git-cliff's for this commit and has a dated CHANGELOG section (scripts/
+      # check_release.py, decision 009). It runs in a rehearsal too, with no `if:`, but there only while a release is
+      # pending (no tag v<version> yet): with the tag on an earlier commit it prints git-cliff's next version. It also
+      # prints the commits since the last published release, which compare with the CHANGELOG section, to the step
+      # summary: nothing is checked in that list.
+      - name: The version is git-cliff's for this commit, with a dated CHANGELOG section
+        run: |
+          curl -fsS --retry 3 -o "$RUNNER_TEMP/pypi.json" https://pypi.org/pypi/datatables-backend/json
+          uv run --frozen --only-group release --python 3.14 python scripts/check_release.py release \
+            "$RUNNER_TEMP/pypi.json" | tee -a "$GITHUB_STEP_SUMMARY"
       # What `draft-release` will put in the release, for the version in the source: a missing or empty CHANGELOG entry
       # fails the rehearsal, before a tag is pushed. It prints the notes and writes no file.
       - name: The CHANGELOG has notes for the version in the source (a rehearsal)

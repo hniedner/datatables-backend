@@ -148,8 +148,8 @@ before it names the condition.
   answers: a user's mistake in a filter, a date or a number is HTTP 200 with `error` and `error_code` (see
   [Errors](#errors), PRD-A11), and an app that wants a 4xx for it maps the response in its own route. An app that maps
   the 422 can match the status and `detail.draw`; the PRD fixes those, and does not fix the wording of `message`.
-  Like any other wire format, the shape changes only in a release whose notes say so (the versioning policy in the
-  status note of the [README](../README.md) and the [CHANGELOG](../CHANGELOG.md)).
+  Like any other wire format, the shape changes only in a minor release whose notes say so (the versioning policy in
+  the status note of the [README](../README.md)).
 - **A client that disconnects while the body is read is nobody's mistake.** A user who leaves the page, or a proxy that
   times out, is answered HTTP 400 by the FastAPI dependency, where FastAPI answers a body it cannot parse with 400 too,
   and it is no 422:
