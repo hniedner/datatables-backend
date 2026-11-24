@@ -1488,12 +1488,21 @@ An optional FastAPI dependency parses the request from a non-empty body when the
 string; the two are never merged. A body that decodes to a JSON object is read as JSON whatever its Content-Type; any
 other body is read as a form.
 
+A client that disconnects while the body is read is answered HTTP 400 with a text that names no value, and no exception
+leaves the dependency; it is no 422, since a disconnect is neither the integrator's nor the user's mistake (PRD-E6).
+
 - **Reason:** DataTables appends its cache-buster `_` to the query string of every request, POST included (READ,
   DataTables 3.1.5 `dataTables.mjs`: `queryParams` adds `_` for any method when `cache === false` at :826, and its
   server-side request sets `cache: false` at :5550), so a non-empty query string does not mean the request is there;
   merging would mix two sources. DataTables 3.1.5's `submitAs: 'json'` keeps the form Content-Type unless one is set
   (READ: its `ajax()` sets JSON only when `!options.contentType`, and its defaults carry form-urlencoded), so choosing
-  the parser by Content-Type would read the JSON as a form.
+  the parser by Content-Type would read the JSON as a form. A user who leaves the page, or a proxy that times out,
+  disconnects mid-request (MEASURED on #151, Starlette 0.40.0 and 1.10.0, with a raw ASGI receive and a real uvicorn
+  0.54.0): left alone, Starlette's `ClientDisconnect` leaves the dependency, the error middleware tries a 500 into the
+  dead connection and re-raises, and the server logs an unhandled-exception traceback for each one. FastAPI's own body
+  parsing wraps any exception in `HTTPException(400, "There was an error parsing the body")` for a route with a body
+  parameter, so such a route answers 400 with no traceback (READ, `fastapi/routing.py` of FastAPI 0.133.0 and 0.165.0,
+  not run); the dependency answers 400 too.
 - **Priority:** must
 
 #### PRD-A10

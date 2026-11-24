@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
+from starlette.requests import ClientDisconnect  # Starlette is FastAPI's own dependency; FastAPI does not re-export it
 
 from .protocol import DTParams
 from .protocol import MalformedRequest
@@ -23,6 +24,7 @@ from .protocol import parse_request
 __all__ = ['DataTablesParams', 'parse_datatables_request']
 
 _MALFORMED = 'The table request is malformed: send it as a JSON object or as a form.'
+_DISCONNECTED = 'The request body could not be read: the client disconnected; send the request again.'
 #: The most fields Starlette reads from a form, which a form read here without its parser is held to as well
 _FORM_FIELD_LIMIT = 1000
 #: The media types whose body Starlette's own form parser reads
@@ -36,6 +38,10 @@ async def parse_datatables_request(request: Request) -> DTParams:
 
     A request the library cannot read answers 422 with ``{"detail": {"message": ..., "draw": ...}}``: the message
     names a parameter, never a value, and ``draw`` is the request's own, left out when it could not be read.
+
+    A client that disconnects while the body is read answers 400 with a text that names no value, as FastAPI's own body
+    parsing does, and nothing is logged: it is neither the integrator's mistake nor the user's, so it is no 422, and no
+    exception leaves for the server to report as an unhandled error.
     """
     try:
         body = await request.body()
@@ -46,6 +52,8 @@ async def parse_datatables_request(request: Request) -> DTParams:
             if data is None:
                 data = await _form(request, body)
         return parse_request(data)
+    except ClientDisconnect:  # an ordinary event (a page left, a proxy timed out), nobody is there to read an error
+        raise HTTPException(status_code=400, detail=_DISCONNECTED) from None
     except MalformedRequest as exc:
         detail: dict[str, Any] = {'message': str(exc)}
         if exc.draw is not None:
