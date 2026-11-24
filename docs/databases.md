@@ -2,16 +2,35 @@
 
 The library does not change how a database compares values. Where a rule of one engine changes what a user
 sees, it is written down here, by engine, and so are the library's own limits on an engine, each marked as
-such: what the adopter sees, an example, how it is known, and the requirement of `docs/PRD.md` it touches. "MEASURED" names the date, the version and the
-CI run or the decisions file that holds the numbers; "documented, not run" means the engine's documentation says
-so and no run of this project checked it.
+such. An entry says what the adopter sees, gives an example, says how it is known, and names the requirement of
+`docs/PRD.md` it touches. Where the library states the full rule, it stays in [rules.md](rules.md) or in the PRD,
+and the entry gives one line and a link. How an entry is known is one of:
 
-PRD section 5 lists the same differences from the requirements' side. An engine without an entry below has none
-recorded yet.
+- **MEASURED:** a run of this project. It names the date, the version and the CI run or the decisions file that
+  holds the numbers, or the test that pins it and the CI job that runs that test.
+- **documented, not run:** the vendor's documentation says so (its URL is given) and no run of this project checked it.
+- **READ:** read in this project's code (file and line), not run on a server.
+- **unknown:** nobody has measured it or found a source for it; it is listed so that nobody assumes.
+
+PRD section 5 lists the same differences from the requirements' side. Each of its differences that names an engine
+or an OpenSearch setting has an entry below.
 
 ## PostgreSQL
 
-No entry yet.
+### An index in the default order does not serve a sort on a column that can hold NULL
+
+- **What you see:** the library orders NULL first ascending on every backend. PostgreSQL puts it last ascending, so
+  for a column that can hold NULL the library writes `NULLS FIRST` (`NULLS LAST` descending), and a B-tree index in
+  the default order cannot serve that sort: declare the index `NULLS FIRST`. A column declared `nullable=False`
+  keeps its plain index. The rule is in [Columns and ordering](rules.md#columns-and-ordering).
+- **Example:** `ORDER BY age NULLS FIRST` on a large table is sorted, not read from `CREATE INDEX ON people (age)`;
+  `CREATE INDEX ON people (age NULLS FIRST)` can serve it, and the descending order too.
+- **How it is known:** the clause the library writes is pinned by `tests/test_sql.py`
+  (`test_null_placement_is_written_only_where_the_database_needs_it`), which CI's `postgresql` and
+  `postgresql-psycopg2-asyncpg` jobs run. The index is documented, not run: PostgreSQL's manual says a B-tree index is
+  stored ascending with nulls last by default, and that one stored ascending with nulls first serves `ASC NULLS FIRST`
+  and `DESC NULLS LAST` (https://www.postgresql.org/docs/current/indexes-ordering.html, opened 2026-11-23).
+- **Requirement:** PRD-O2.
 
 ## MySQL
 
@@ -27,6 +46,21 @@ No entry yet.
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`). A PAD SPACE collation: documented,
   not run.
 - **Requirement:** PRD-F20, PRD-F26.
+
+### A `DATETIME` keeps no offset, and a `TIMESTAMP` gives the UTC day only in a UTC session
+
+- **What you see:** a time-zone-aware column on MySQL is read as UTC when it is a `DATETIME`, which stores no offset, so
+  the application must write UTC. A `TIMESTAMP` is stored as UTC and read back in the session's `time_zone`, so it gives
+  the UTC day only when that is `+00:00`. PostgreSQL and SQL Server store the instant. The rule is in
+  [Types and matching](rules.md#types-and-matching).
+- **Example:** a `TIMESTAMP` stored as 23:30 UTC on the 15th is 01:30 on the 16th in a session at `+02:00`, so a
+  search for the 15th can miss it there.
+- **How it is known:** documented, not run: MySQL's manual says it converts `TIMESTAMP` values to UTC for storage and
+  back to the current time zone for retrieval, and does not for `DATETIME`
+  (https://dev.mysql.com/doc/refman/8.4/en/datetime.html, opened 2026-11-23). That the library's day follows it is
+  INFERRED, as PRD-F21 says: CI's MySQL job runs the session and Python in UTC, so its test shows only that the column
+  works (`tests/test_sql.py`, `test_a_timezone_aware_column_compares_by_utc_day`).
+- **Requirement:** PRD-F21.
 
 ## SQL Server
 
@@ -63,14 +97,54 @@ No entry yet.
   send a longer number (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F25.
 
+### A database at a lower compatibility level is not tested
+
+- **What you see:** CI runs SQL Server 2022 on a database at the level a new database gets from the server; the
+  workflow sets none, and a database at a lower level is not run. The SQL the library writes only for SQL Server is
+  two functions, `SWITCHOFFSET(..., '+00:00')` to give a time-zone-aware column's UTC time and
+  `CONVERT(VARCHAR(10), ..., 23)` for its day text. Neither is tied to a level that Microsoft's pages name. The SQL
+  that SQLAlchemy's SQL Server dialect writes (the page's offset and limit, for one) is SQLAlchemy's, and its needs
+  are not checked here: unknown.
+- **Example:** a database set to `COMPATIBILITY_LEVEL = 120` is the case no run of this project covers.
+- **How it is known:** READ in `src/datatables_backend/sqlalchemy.py:633` and `:655`, and `.github/workflows/ci.yml`
+  (job `sqlserver`, no level set). Documented, not run: the pages for
+  [SWITCHOFFSET](https://learn.microsoft.com/en-us/sql/t-sql/functions/switchoffset-transact-sql) and
+  [CAST and CONVERT](https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql) (both opened
+  2026-11-23) name no compatibility level for these functions or for style 23. The second names levels only for the
+  default style of `time` and `datetime2` (110).
+- **Requirement:** PRD-F21, PRD-F42.
+
 ## SQLite
+
+### A search folds ASCII letters only
+
+- **What you see:** a search, and an exact match, ignore case for the letters A to Z only; `ä` does not find `Ä` on
+  SQLite, where PostgreSQL (in a UTF-8 locale), MySQL and SQL Server find it. The rule is in
+  [Types and matching](rules.md#types-and-matching), and the other engines are in the table of
+  [What a database folds beyond ASCII](#what-a-database-folds-beyond-ascii-letters-and-accents).
+- **Example:** a column holding `Äpfel`: the global search `äpfel` finds no row on SQLite, and `ÄPFEL` finds it.
+- **How it is known:** the global search is pinned by `tests/test_sql.py`
+  (`test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_small_one_where_the_database_folds`),
+  which CI's `tests` job runs on SQLite. An exact match is READ (`sqlalchemy.py:304` and `:551-553`: `lower(column) =
+  lower(value)`), and SQLite's manual says `lower()` converts ASCII characters only
+  (https://www.sqlite.org/lang_corefunc.html, opened 2026-11-23): documented, not run for the exact match.
+- **Requirement:** PRD-F9.
+
+### A time-zone-aware column keeps no offset
+
+- **What you see:** SQLite stores the text it is given, so a value written with an offset is read back without it, as
+  UTC. The application must write UTC. The rule is in [Types and matching](rules.md#types-and-matching).
+- **Example:** `2026-07-16 01:00:00+02:00` (23:00 UTC on the 15th) is read as 01:00 UTC on the 16th: `=` `2026-07-16`
+  finds it and `=` `2026-07-15` does not.
+- **How it is known:** pinned by `tests/test_sql.py`
+  (`test_an_aware_value_written_with_an_offset_is_read_without_it_on_sqlite`), which CI's `tests` job runs.
+- **Requirement:** PRD-F21.
 
 ### A `Numeric` column is not compared exactly
 
 - **What you see:** a whole number outside the signed 64-bit range can match a neighbouring value on a `Numeric`
-  column. SQLite
-  stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number. PostgreSQL, MySQL and
-  SQL Server compare the number exactly.
+  column. SQLite stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number.
+  PostgreSQL, MySQL and SQL Server compare the number exactly.
 - **Example:** a `Numeric(30, 0)` column holding 18446744073709551616 (2^64): `=` 18446744073709551617 finds that
   row on SQLite and no row on the other three.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
@@ -91,6 +165,45 @@ No entry yet.
 - **Requirement:** PRD-C17.
 
 ## Every SQL database
+
+### What a database folds beyond ASCII letters and accents
+
+- **What you see:** the library asks the database to ignore case and adds no folding or collation of its own, so what
+  `äpfel` and `apfel` find in a column holding `Äpfel` is the engine's. The same letter in its own other case
+  (`ÄPFEL`) is found everywhere. The rule is in [Types and matching](rules.md#types-and-matching).
+
+  | Engine | `äpfel` finds `Äpfel` | `apfel` finds `Äpfel` |
+  |---|---|---|
+  | SQLite | no: ASCII letters only | no |
+  | PostgreSQL | yes in a UTF-8 locale; in a `C` or `POSIX` locale: READ, not run | no |
+  | MySQL 8.4 | yes | yes under `utf8mb4_0900_ai_ci` |
+  | SQL Server 2022 | yes | no under `Latin1_General_CI_AS` |
+  | MariaDB, any other collation | unknown | unknown |
+
+  Whether the dotted and the dotless i match is unknown on every engine: no test reads it.
+- **Example:** a MySQL column under `utf8mb4_0900_ai_ci` holding `Äpfel` is found by the global search `apfel`; the
+  same column on PostgreSQL, SQLite or SQL Server is not.
+- **How it is known:** the second column is pinned by `tests/test_sql.py`
+  (`test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_small_one_where_the_database_folds`)
+  and the third by `test_the_library_folds_no_accent_the_collation_does_not`, which CI's `tests` (SQLite),
+  `postgresql`, `mysql` and `sqlserver` jobs run. The tests declare the collation of the MySQL and the SQL Server
+  column as the table says and keep the default of SQLite and PostgreSQL (the image's `en_US.utf8`); the `C` locale
+  is read in the helper `folds_letters_beyond_ascii` and is not run.
+- **Requirement:** PRD-F9, PRD-F10.
+
+### An exact match on a column with a type of its own, or on an untyped expression, is not folded
+
+- **What you see:** the library folds an exact match only on a column whose SQL type is a string type or an `Enum`. A
+  `TypeDecorator`, `Uuid` and an expression declared without a type are compared as sent, as the database compares
+  them. The rule, and how to give an expression a string type, are in
+  [Types and matching](rules.md#types-and-matching).
+- **Example:** `upper(kind)` over a column with a case-sensitive collation, declared without a type: `=` `rEd` finds no
+  row holding `RED`; given `String`, it finds them.
+- **How it is known:** pinned by `tests/test_sql.py`
+  (`test_an_exact_match_on_an_expression_ignores_case_once_it_has_a_string_type` and
+  `test_a_column_with_a_type_of_its_own_is_compared_as_its_type_compares`), which every SQL job of CI runs. The
+  tests declare a case-sensitive collation on each engine.
+- **Requirement:** PRD-F9.
 
 ### A number written with a point or an exponent is compared as a floating-point number
 
@@ -131,7 +244,11 @@ the count statement with its bound values, and it sees nothing else.
   it had none, with every other document that lacks one, and the tie-breaker no longer tells them apart.
 - **What to do:** declare the key `IndexColumn(..., text='keyword')` (a `keyword` field has no such limit by default),
   or use a number.
-- **How it is known:** from the OpenSearch documentation of dynamic mapping; not run on a server here.
+- **How it is known:** documented, not run. OpenSearch's page on `ignore_above` says a string longer than the limit is
+  not indexed and so is not in the index or doc values, and stays in `_source`
+  (https://docs.opensearch.org/latest/mappings/mapping-parameters/ignore-above/, opened 2026-11-23). That dynamic
+  mapping sets the limit to 256 on the `.keyword` subfield is from the OpenSearch documentation of dynamic mapping,
+  whose page was not opened for this entry.
 - **Requirement:** PRD-D11.
 
 ### Sorting on the document `_id` is deprecated
@@ -146,8 +263,9 @@ the count statement with its bound values, and it sees nothing else.
 - **What to do:** copy the id into a `keyword` field of the documents at ingest (OpenSearch's own advice) and name that
   column as the key. A declared `Column('_id')` still shows the id (it reads `hit['_id']`, which needs no field data)
   but is neither searchable nor orderable.
-- **How it is known:** measured on OpenSearch 3.10.0 and 2.19.7 on a CI index of 5 documents: the default setting,
-  the accepted sort and its exact reverse, the 300 bytes of field data, and the deprecation line in the server's log.
+- **How it is known:** MEASURED on OpenSearch 3.10.0 and 2.19.7 on a CI index of 5 documents, recorded with #96
+  (commit 557168a, 2026-11-23; no CI run id was kept): the default setting, the accepted sort and its exact reverse,
+  the 300 bytes of field data, and the deprecation line in the server's log.
 - **Requirement:** PRD-D11.
 
 ### A field of several values sorts by another value in each direction
@@ -159,9 +277,10 @@ the count statement with its bound values, and it sees nothing else.
 - **Example:** in the live index of the tests, `label` holds several values in two documents. By their least values the
   ascending order is c3, d4, a1, e5, b2; by their greatest values the descending order is d4, a1, b2, e5, c3, not
   b2, e5, a1, d4, c3.
-- **How it is known:** derived from the test data and the documented default `mode`, not observed: without the `mode`,
-  `label` ascending at `start` 2, `length` 2 would show b2, a1 instead of a1, e5. The live test of SPEC-C10.3 compares
-  reversed pages with ordinary ones for keyword, `text+keyword`, integer, date and boolean sort fields on both servers.
+- **How it is known:** READ, not observed: derived from the test data and the documented default `mode`. Without the
+  `mode`, `label` ascending at `start` 2, `length` 2 would show b2, a1 instead of a1, e5. The live test of SPEC-C10.3
+  compares reversed pages with ordinary ones for keyword, `text+keyword`, integer, date and boolean sort fields on
+  both servers (CI's `opensearch` job).
 - **Requirement:** PRD-C10, PRD-O3.
 
 ### A shared `TotalCache` cannot tell two clusters or two users apart
@@ -200,8 +319,8 @@ A column is a string column unless it is declared, because the library does not 
 - **What you see:** a column over a `boolean` field, declared as a string or as `IndexColumn(..., text='keyword')`,
   matches nothing on `=` (a string column queries a `.keyword` subfield the field lacks) or, for a keyword column,
   fails the request with the client's `RequestError` for a term other than `true` or `false`.
-- **What to do:** declare the column `Column('active', type='boolean')`. `1` and `0` are then read as `true` and `false`,
-  and any other word is refused with `invalid_filter` (PRD-F43).
+- **What to do:** declare the column `Column('active', type='boolean')`. `1` and `0` are then read as `true` and
+  `false`, and any other word is refused with `invalid_filter` (PRD-F43).
 - **How it is known:** pinned by `tests/test_opensearch_live.py`, which CI's `opensearch` job runs on a live cluster.
 - **Requirement:** PRD-D8, PRD-F43.
 
@@ -212,7 +331,10 @@ A word on analysed text is a `match_phrase`, which needs the token positions the
 - **What you see:** a `text` field mapped with `index_options` below `positions` (`docs` or `freqs`) makes the server
   refuse the search, which reaches the application as the client's `RequestError`.
 - **Example:** a column over a `text` field with `"index_options": "freqs"`, searched for any word.
-- **How it is known:** from the server's documentation of `index_options`; not run, and not a default mapping.
+- **How it is known:** documented, not run, and not a default mapping: OpenSearch's page on `index_options` says
+  `positions` is required for phrase queries, that `freqs` does not support them, and that a `text` field is indexed
+  with `positions` by default (https://docs.opensearch.org/latest/mappings/mapping-parameters/index-options/, opened
+  2026-11-23).
 - **Requirement:** PRD-F11.
 
 ### A character that a normalizer folds to `*`, `?` or `\` can be searched as a wildcard
@@ -249,50 +371,195 @@ of the library.
   (`docs/decisions/005-the-largest-request-the-bounds-allow.md`); the field limit: documented, not run.
 - **Requirement:** PRD-C17.
 
-### Servers
+### OpenSearch 3.0 and 2.19 fold ASCII letters only, and 2.19 is slow on long exact matches
 
-**Servers.** The library is built for OpenSearch 3.1 and later. CI runs the live tests on 3.10.0 and on 2.19.7, and
-they pass on both. OpenSearch before 2.19 is not tested. 3.0 and 2.19 differ in two ways:
+The library is built for OpenSearch 3.1 and later. CI runs the live tests on 3.10.0 and on 2.19.7, and they pass on
+both. OpenSearch before 2.19 is not tested. The suite also passed once on each of 3.0.0 to 3.9.0.
 
-- **3.0 and 2.19 fold ASCII letters only** in a substring search and an exact match (see "Text matches in any
-  case" in [What the server decides](rules.md)).
-- **2.19 is slow on case-insensitive exact matches of long values.** A list of 256 values of 255 ASCII letters took
-  2.5 and 3.8 s in two runs on 2.19.7, and 0.16 and 0.20 s on 3.10.0; one such value, 14 ms and 1 ms. The answers
-  are the same on both. A column declared `fold_case=False` sends its exact matches plain, 2 ms for the same list,
-  and gives up the fold for them: they then match case as the field's mapping decides.
+- **What you see:** on 3.0 and 2.19 a substring search and an exact match fold ASCII letters only, so `äpf` and `=`
+  `äpfel` find `ÄPFEL` from 3.1 on and not before; the whole word `äpfel` on an analysed field finds it on every
+  version. 2.19 is also slow on case-insensitive exact matches of long values, with the same answers. A column
+  declared `fold_case=False` sends its exact matches plain and gives up the fold for them. The rule is in
+  [Types and matching](rules.md#types-and-matching).
+- **Example:** a list of 256 values of 255 ASCII letters took 2.5 and 3.8 s in two runs on 2.19.7, and 0.16 and
+  0.20 s on 3.10.0; one such value, 14 ms and 1 ms. The same list declared `fold_case=False` took 2 ms.
+- **How it is known:** MEASURED 2026-11-21 in CI on the twelve servers 2.19.7, 3.0.0 and 3.1.0 to 3.10.0 (the suite
+  passed once on 3.0.0 to 3.9.0, run 44952673787), and by the live tests on 3.10.0 and 2.19.7 on every CI run
+  (`docs/decisions/001-opensearch-case-folding-beyond-ascii.md`).
+- **Requirement:** PRD-F9, PRD-Q14.
 
-### What the fold of letters outside ASCII costs
+### The fold of letters outside ASCII costs a regular-expression query
 
-**What the fold of letters outside ASCII costs.** A value with such a letter is a regular-expression query. On
-3.10.0 a list of 256 such values of 255 letters took 0.37 s, where the same list as term queries, which do not fold
-those letters, took 0.06 s; a global search of 16 such words took 166 ms, against 111 ms as wildcards. On 2.19.7 the
-list took 2.8 s as regular expressions and 2.7 s as terms. (All figures: 512 MB of heap, about 2,000 documents on
-one shard, the least of 5 runs: the cost of the query, not of a large index.)
+- **What you see:** a value with a cased letter outside ASCII is sent as a regular-expression query, which costs more
+  than the term query that does not fold such letters.
+- **Example:** on 3.10.0 a list of 256 such values of 255 letters took 0.37 s, against 0.06 s as term queries; a
+  global search of 16 such words took 166 ms, against 111 ms as wildcards. On 2.19.7 the list took 2.8 s as regular
+  expressions and 2.7 s as terms. (All figures: 512 MB of heap, about 2,000 documents on one shard, the least of 5
+  runs: the cost of the query, not of a large index.)
+- **How it is known:** MEASURED 2026-11-21 in CI
+  (`docs/decisions/001-opensearch-case-folding-beyond-ascii.md`).
+- **Requirement:** PRD-F9.
 
-### On every version
+### A substring search needs a cluster that allows expensive queries
 
-**On every version**, a substring search is a wildcard or regular-expression query, and so is an exact match whose
-value has a cased character outside ASCII (on a column that folds, up to 255 code points): the cluster must allow
-them (`search.allow_expensive_queries`, on by default), and `index.max_regex_length` (1,000 by default, counted in
-UTF-16 units) must not be set under a regular expression's length, which is up to 768. A cluster that refuses the
-query raises, as any server failure does. These limits hold on every version, 3.0 and 2.19 included:
+- **What you see:** a substring search is a wildcard or regular-expression query, and so is an exact match whose
+  value has a cased character outside ASCII (on a column that folds, up to 255 code points). The cluster must allow
+  them (`search.allow_expensive_queries`, on by default), and `index.max_regex_length` (1,000 by default, counted in
+  UTF-16 units) must not be set under a regular expression's length, which is up to 768. A cluster that refuses the
+  query raises, as any server failure does. This holds on every version, 3.0 and 2.19 included.
+- **Example:** with `search.allow_expensive_queries` off, the cluster refuses a `contains` search and an exact match
+  whose value has a cased character outside ASCII.
+- **How it is known:** MEASURED 2026-11-21 in CI: the setting off refuses both kinds on 2.19.7 and 3.10.0, and
+  `index.max_regex_length` counts UTF-16 units (run 44944336174); a pattern of 768 units is answered on all twelve
+  servers (run 44952673787). `docs/decisions/001-opensearch-case-folding-beyond-ascii.md`.
+- **Requirement:** PRD-F9.
 
-- A value without a cased character outside ASCII folds ASCII letters only: `k` does not find the Kelvin sign, `s`
-  not the long s. A substring or an exact match with `i` does not find a dotted capital `İ`.
-- A value longer than 255 code points folds ASCII letters only.
-- **A normalizer that rewrites a character into punctuation.** On a keyword field with such a normalizer
-  (`asciifolding` does it to `⒜`, `⑴`, `⁇`), a value that holds a cased character outside ASCII and such a
-  character can fail, miss its own row or match other rows. A `lowercase` normalizer is not affected.
-  The entry "A character that a normalizer folds to `*`, `?` or `\` can be searched as a wildcard" below says
-    which characters folded to `*`, `?` or `\` a search
-  still reads as a wildcard.
-- **A normalizer that trims.** On a keyword field with a `trim` normalizer, a search text with a cased character
-  outside ASCII and a space at its start or end finds fewer rows than the same text without the space: the space is
-  kept where the search is open (`contains`, a global or column search, `starts` with a space at the end, `ends`
-  with one at the start). `Müller ` with the space finds only values that hold `Müller ` followed by more text. An
-  exact match, and the anchored end of `starts` and `ends`, are trimmed as the field is.
+### Some values fold ASCII letters only on every version
+
+- **What you see:** a value without a cased character outside ASCII folds ASCII letters only: `k` does not find the
+  Kelvin sign, `s` not the long s, and a substring or an exact match with `i` does not find a dotted capital `İ`
+  (the analysed word does). A value longer than 255 code points folds ASCII letters only too. This holds on every
+  version, 3.0 and 2.19 included. The rule is in [Types and matching](rules.md#types-and-matching).
+- **Example:** a column holding the Kelvin sign: the search `k` finds no row.
+- **How it is known:** the Kelvin sign, the long s and `İ`: MEASURED 2026-11-21 in CI on 2.19.7, 3.0.0 and 3.10.0
+  (run 44944069007). A value over 255 code points: READ, it is sent as the `term` or `wildcard` that does not fold
+  beyond ASCII (decision 001, "A value longer than 255 code points").
+  `docs/decisions/001-opensearch-case-folding-beyond-ascii.md`.
+- **Requirement:** PRD-F9.
+
+### A normalizer that rewrites a character into punctuation can fail a search
+
+- **What you see:** on a keyword field with such a normalizer (`asciifolding` does it to `⒜`, `⑴`, `⁇`), a value that
+  holds a cased character outside ASCII and such a character can fail, miss its own row or match other rows. A
+  `lowercase` normalizer is not affected. The entry "A character that a normalizer folds to `*`, `?` or `\` can be
+  searched as a wildcard", above, says which characters folded to `*`, `?` or `\` a search still reads as a wildcard.
+- **Example:** on an `asciifolding` field, `=` with `Ä⒜b` fails, and `=` with `Ä⑴b` and with `Ä⁇b` miss their own
+  row and find others.
+- **How it is known:** MEASURED 2026-11-21 on OpenSearch 2.19.7 and 3.10.0 (runs 44952007115 and 44952673787,
+  `docs/decisions/001-opensearch-case-folding-beyond-ascii.md`).
+- **Requirement:** PRD-F9.
+
+### A normalizer that trims keeps a space at the end of an open search
+
+- **What you see:** on a keyword field with a `trim` normalizer, a search text with a cased character outside ASCII
+  and a space at its start or end finds fewer rows than the same text without the space: the space is kept where the
+  search is open (`contains`, a global or column search, `starts` with a space at the end, `ends` with one at the
+  start). An exact match, and the anchored end of `starts` and `ends`, are trimmed as the field is.
+- **Example:** `Müller ` with the space finds only values that hold `Müller ` followed by more text; in the
+  measurement `contains` with `ä ` found one row where the plain query found five.
+- **How it is known:** MEASURED 2026-11-21 on OpenSearch 2.19.7 and 3.10.0 (runs 44952007115 and 44952673787,
+  `docs/decisions/001-opensearch-case-folding-beyond-ascii.md`).
+- **Requirement:** PRD-F9.
+
+### A stored empty string is not an empty value
+
+- **What you see:** "empty" is a missing field on OpenSearch, so `null` does not find a stored `""` and `!null` does;
+  on SQL a column that stores text is empty when it holds NULL or `''`. The rule is in
+  [the OpenSearch notes](rules.md#opensearch) ("A stored empty string").
+- **Example:** a document whose `author` is `""` beside one with no `author`: `null` finds only the second.
+- **How it is known:** MEASURED, pinned by `tests/test_opensearch_live.py`
+  (`test_a_stored_empty_text_is_not_a_missing_field`), which CI's `opensearch` job runs on 3.10.0 and 2.19.7.
+- **Requirement:** PRD-F26.
+
+### The global search skips number and date columns
+
+- **What you see:** on OpenSearch the global search leaves out a number or a date column, because a number or a date
+  cannot be matched as text without a script. On SQL they take part, as text. The rule is in
+  [Types and matching](rules.md#types-and-matching).
+- **Example:** a number column holding 17: the global search `7` finds the row on SQL and no row on OpenSearch.
+- **How it is known:** SQL: pinned by `tests/test_sql.py` (`test_the_global_search_matches_a_number_by_its_text`),
+  which every SQL job of CI runs. OpenSearch: pinned by `tests/test_opensearch.py`
+  (`test_the_global_search_fits_each_string_mapping_and_skips_numbers_and_dates`), which checks the query the library
+  sends through a recording client; no live test runs it.
+- **Requirement:** PRD-F23, PRD-F32.
+
+### A column search on a number or a date column takes one term
+
+- **What you see:** an OpenSearch column search on a number column takes one number and matches it exactly, and one on
+  a date column takes one date term (`YYYY`, `YYYY-MM` or a day); several words, `!` or quotes are refused with
+  `invalid_number` or `invalid_date` (PRD-F33, PRD-F34 hold the rule). On SQL the same search is a smart search of
+  the number's or the date's text.
+- **Example:** `12` on a number column finds the rows holding 12 on OpenSearch, and also 120 and 312 on SQL; `12 13`
+  is `invalid_number` on OpenSearch. `2026-07` finds July 2026 on both, and `!2026-07` is `invalid_date` on OpenSearch.
+- **How it is known:** OpenSearch: MEASURED, pinned by `tests/test_opensearch_live.py` (`test_a_column_search`, a number
+  matched exactly, a month and a year on a date column), which CI's `opensearch` job runs, and the refusals by
+  `tests/test_opensearch.py` (`test_a_column_search_a_number_or_date_column_cannot_read_has_its_code`) through a
+  recording client. SQL: the text of a number is pinned by `test_a_column_search_on_a_number_or_a_date_reads_its_text`
+  in `tests/test_sql.py`.
+- **Requirement:** PRD-F22, PRD-F23, PRD-F33, PRD-F34.
+
+### A page in the middle of a large result is refused
+
+- **What you see:** OpenSearch reads at most `max_result_window` rows from the start of a search, 10,000 by default,
+  so a page in the middle of a larger result is refused with `page_out_of_range` and the real counts, where SQL
+  serves every page. The rule is in [the OpenSearch notes](rules.md#opensearch) ("Paging past the window").
+- **Example:** 50,000 matching documents, `start` 20,000: `page_out_of_range`, with `recordsTotal` and
+  `recordsFiltered`; the last page of the same result is answered.
+- **How it is known:** the library's refusal and the reversed last page are pinned by `tests/test_opensearch_live.py`
+  (`test_the_counts_before_a_refusal_are_the_ones_the_search_reports`,
+  `test_a_page_read_by_the_reversed_sort_is_the_page_the_ordinary_way_gives`), which CI's `opensearch` job runs with a
+  small window given to the table, so the cluster's own limit is never reached. The default of 10,000 is documented,
+  not run: "Default is 10000", and the setting limits `from` + `size`
+  (https://docs.opensearch.org/latest/install-and-configure/configuring-opensearch/index-settings/, opened
+  2026-11-23). A table window above the index's own setting is not run.
+- **Requirement:** PRD-C12.
+
+### A text-only column cannot be ordered, and answers some conditions only
+
+- **What you see:** a column over an analysed `text` field with no `keyword` subfield (declared `text='text'`) has no
+  whole string, so it cannot be ordered and it refuses `=`, `starts`, `ends` and the other conditions that need one,
+  where SQL orders and answers every condition. The rule is in [the OpenSearch notes](rules.md#opensearch)
+  ("A column of analysed text only").
+- **Example:** `=` `red fox` on a column declared `text='text'` is `invalid_filter`; `contains` `red fox` is
+  answered.
+- **How it is known:** pinned by `tests/test_opensearch.py` through a recording client
+  (`test_an_order_on_analysed_text_is_refused_or_skipped_as_the_request_marks_it`,
+  `test_analysed_text_declared_orderable_is_a_schema_error`,
+  `test_a_condition_that_needs_a_whole_string_is_refused_on_analysed_text`,
+  `test_analysed_text_still_answers_words_contains_null_and_an_empty_list`); not run against a server here.
+- **Requirement:** PRD-O5, PRD-D19.
+
+### A word on analysed text is a phrase of its tokens
+
+- **What you see:** on an analysed column, text or `text+keyword`, a word the analyser splits also matches as a phrase
+  of its tokens, and `!` excludes it; on a text-only column a word is an analysed match, so `red` does not find
+  `reddish`. SQL matches substrings only. What the analyser drops, such as quote marks, a leading `-` and padding,
+  does not tell rows apart either: `-red` also finds `red`. The rule is in
+  [the OpenSearch notes](rules.md#opensearch) ("Analysed text").
+- **Example:** `a-b` finds `a b` and `!a-b` leaves it out; `a` alone is not found by `a-b`.
+- **How it is known:** MEASURED, pinned by `tests/test_opensearch_live.py`
+  (`test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens` and
+  `test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword`), which CI's `opensearch` job runs on
+  3.10.0 and 2.19.7.
+- **Requirement:** PRD-F11.
 
 ## Every backend
+
+### An exact match on a column that is not folded follows the collation or the mapping
+
+- **What you see:** a column declared `fold_case=False`, or one with a `search_value` hook, is matched exactly as
+  sent. The result follows the column's collation or the field's mapping, so the same request can match different
+  rows on different databases. The rule is in [Types and matching](rules.md#types-and-matching) ("An exact match can
+  be sent plain").
+- **Example:** a column holding `Red`, `red` and `RED`, declared `fold_case=False`: `=` `red` finds one row under a
+  case-sensitive collation (PostgreSQL's default) and all three under a case-insensitive one (MySQL's default
+  `utf8mb4_0900_ai_ci`).
+- **How it is known:** pinned under a case-sensitive collation by `tests/test_sql.py`
+  (`test_an_exact_match_on_a_column_declared_without_the_fold_is_compared_as_sent`), which every SQL job of CI runs;
+  the tests declare that collation on each engine, so they do not show the difference between engines. That
+  `utf8mb4_0900_ai_ci` is case-insensitive is documented, not run: MySQL's manual says `_ci` in a collation name is
+  case-insensitive and names `utf8mb4_0900_ai_ci` "explicitly case-insensitive and accent-insensitive"
+  (https://dev.mysql.com/doc/refman/8.4/en/charset-collation-names.html, opened 2026-11-23).
+- **Requirement:** PRD-D21, PRD-F9.
+
+### Only the drivers that CI runs are tested
+
+- **What you see:** the drivers and versions CI runs are listed under [Tested with](../README.md#tested-with); a
+  driver or a MariaDB server not listed there is not run by this project.
+- **Example:** MariaDB and `mysqlclient` are not run.
+- **How it is known:** READ in `.github/workflows/ci.yml` (jobs `tests`, `postgresql`, `postgresql-psycopg2-asyncpg`,
+  `mysql`, `sqlserver`, `opensearch`).
+- **Requirement:** PRD-Q2 (the database's own driver is the adopter's to install).
 
 ### A global search costs one condition per word and column, and the budget does not count what the adopter adds
 

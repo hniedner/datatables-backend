@@ -54,8 +54,9 @@ library itself has a limit on one engine, [databases.md](databases.md) says so, 
   string column is folded" below. **Two exceptions, for letters outside ASCII:** SQLite folds ASCII letters only, and
   so does OpenSearch before 3.1 for a substring and for an exact match (`äpf` and `=` `äpfel` find `ÄPFEL` from
   OpenSearch 3.1 on, not on 3.0 or 2.19; the whole word `äpfel` finds it on every version, on an analysed field).
-  Some values fold ASCII letters only on every OpenSearch version: see "On every version" in
-  [the OpenSearch notes](databases.md#on-every-version). The library asks for no change to a schema or mapping to do more.
+  Some values fold ASCII letters only on every OpenSearch version: see
+  [the OpenSearch notes](databases.md#some-values-fold-ascii-letters-only-on-every-version). The library asks for no
+  change to a schema or mapping to do more.
 - **An exact match can be sent plain.** It folds case by default, which a plain index on the column cannot serve:
   declare an indexed column with `fold_case=False`, and its exact matches are sent plain and follow the column's
   collation or the field's mapping. A column with a `search_value` hook is compared that way too.
