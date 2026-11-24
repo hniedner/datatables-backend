@@ -1,13 +1,15 @@
 """SvelteDT's connection helper's request examples read as the spec states them (#48, partial).
 
-Source: SvelteDT spec/connection.md, CONN-02, CONN-05, CONN-06, CONN-09, CONN-10 and CONN-12, at commit 1c61e47; re-pin
-deliberately. The rows are copied here as literals, since CI has no SvelteDT checkout. This is not release criterion 4:
+Source: SvelteDT spec/connection.md, CONN-02, CONN-04, CONN-05, CONN-06, CONN-07, CONN-09, CONN-10 and CONN-12, at
+commit 980e65e (text unchanged since a6917bb; 1c61e47 is identical); re-pin deliberately. CONN-04's server side is the
+bracketed pairs of the first test (`true`, `false` and decimal text read as the JSON form's booleans and numbers).
+The rows are copied here as literals, since CI has no SvelteDT checkout. This is not release criterion 4:
 those are recordings of real backends (SvelteDT's PRD-W11), which do not exist yet. It pins what its spec already says
 the helper sends, so a disagreement shows before the recordings do.
 
 The spec's map M is three columns, `{ data: 'name', name: 'n' }`, `{ data: 'code', name: 'c' }` and
 `{ data: 'status', name: 's' }`: the server matches a column by its `name` when it has one, so a table for this helper
-declares `n`, `c` and `s`. The other statements of that spec (CONN-03, 04, 07, 08, 13 to 16) are read by tests that
+declares `n`, `c` and `s`. The other statements of that spec (CONN-03, 08, 13 to 16) are read by tests that
 already exist; the PR text lists them.
 """
 
@@ -161,3 +163,24 @@ def test_a_pipe_in_a_selected_value_is_one_value_only_when_it_is_escaped(
 ):
     """CONN-10's `['a|b']` row: the helper sends `^(a\\|b)$` (backslash, then pipe) with `regex` true."""
     assert answer(session, column=2, value=value, regex=True) == expected
+
+
+@pytest.mark.parametrize(
+    ('start', 'length', 'expected'),
+    [
+        ('0', '10', ['k2', 'k1', 'k5', 'k4', 'k3']),  # CONN-07's first row
+        ('20', '25', []),  # its second row: past the 5 rows, an empty page
+        ('30', '10', []),  # its third row, after `pager.onpage(30)`
+        ('1', '2', ['k1', 'k5']),  # the offset skips one row and the limit keeps two
+        ('3', '10', ['k4', 'k3']),  # the offset skips three and the limit is not reached
+    ],
+)
+def test_start_is_the_offset_and_length_the_limit(session: Session, start: str, length: str, expected: list[str]):
+    """CONN-07: `start` and `length` as the decimal text of the form are the offset and the limit of the page of Q0 (name
+    ascending: Alpha, Beta, Gamma, a.b, axb), and read as the JSON form's numbers do; `recordsFiltered` stays 5."""
+    pairs = [(key, start if key == 'start' else length if key == 'length' else value) for key, value in Q0_BRACKETED]
+    params = parse_request(pairs)
+    assert params == parse_request({**Q0_JSON, 'start': int(start), 'length': int(length)})
+    response = table.fetch_sync(params, session)
+    assert [row['c'] for row in response.data] == expected
+    assert response.recordsFiltered == 5
