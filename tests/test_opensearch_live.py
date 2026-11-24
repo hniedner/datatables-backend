@@ -148,11 +148,21 @@ hooked = SearchTable(
     unique_key='id',
 )
 
+# A third index of one document, so that no count of the two above changes: a hooked value of two lines (`enc:a`, a line
+# feed, `b`), the table `hooked_lines` below
+LINES_INDEX = 'dtb-test-docs-lines'  # owned by this module too: deleted and recreated on every run
+LINES_DOCUMENT = {'id': 'l1', 'secret': 'enc:a\nb'}
+hooked_lines = SearchTable(
+    LINES_INDEX,
+    [IndexColumn('id', text='keyword'), Column('secret', search_value=lambda text: f'enc:{text}')],
+    unique_key='id',
+)
+
 
 @pytest.fixture(scope='module')
 def client() -> Iterator[OpenSearch]:
     client = OpenSearch(hosts=[URL])
-    for index in (INDEX, PHRASE_INDEX):
+    for index in (INDEX, PHRASE_INDEX, LINES_INDEX):
         if client.indices.exists(index=index):  # left by an interrupted run
             client.indices.delete(index=index)
     client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': SETTINGS})
@@ -165,9 +175,12 @@ def client() -> Iterator[OpenSearch]:
             id=key,
             body={'id': key, 'only_text': text, 'both': text, **({'secret': SECRETS[key]} if key in SECRETS else {})},
         )
-    client.indices.refresh(index=[INDEX, PHRASE_INDEX])
+    lines_mapping = {'properties': {'id': {'type': 'keyword'}, 'secret': KEYWORD_TEXT}}
+    client.indices.create(index=LINES_INDEX, body={'mappings': lines_mapping, 'settings': SETTINGS})
+    client.index(index=LINES_INDEX, id=LINES_DOCUMENT['id'], body=LINES_DOCUMENT)
+    client.indices.refresh(index=[INDEX, PHRASE_INDEX, LINES_INDEX])
     yield client
-    client.indices.delete(index=[INDEX, PHRASE_INDEX])
+    client.indices.delete(index=[INDEX, PHRASE_INDEX, LINES_INDEX])
     client.close()
 
 
@@ -1168,6 +1181,32 @@ def test_a_list_of_values_on_a_hooked_column_finds_the_documents_of_each_hooked_
     (`enc:alpha`), which the hooked column's case-sensitive equality leaves out (PRD-D21)."""
     params = request('id', 'secret', column_search={'secret': search})
     assert found(hooked.fetch_sync(params, client)) == ['p1', 'p2']
+
+
+@pytest.mark.parametrize('where', ['column_search', 'search'])
+@pytest.mark.parametrize(('text', 'expected'), [('a\nb', ['l1']), ('a b', [])])
+def test_a_line_feed_in_a_hooked_value_is_matched_as_it_is_stored(
+    client: OpenSearch, where: str, text: str, expected: list[str]
+):
+    """SPEC-D17.3 (column search), SPEC-D12.7 (global search): the keyword field holds `enc:a`, a line feed and `b`
+    whole, and the `term` for `a`, a line feed and `b` finds it, while `a b` (a space for the line feed) finds nothing.
+    A recording client shows the term's text but not that the server keeps a control character through the client's
+    JSON and matches it exactly."""
+    if where == 'column_search':
+        params = request('id', 'secret', column_search={'secret': {'value': text}})
+    else:
+        params = request('id', 'secret', search={'value': text})
+    assert found(hooked_lines.fetch_sync(params, client)) == expected
+
+
+@pytest.mark.parametrize(('condition', 'expected'), [('=', ['p1']), ('!=', ['p2', 'p3', 'p4', 'p5'])])
+def test_a_searchbuilder_equality_on_a_hooked_column_keeps_a_document_without_the_field_in_the_negation(
+    client: OpenSearch, condition: str, expected: list[str]
+):
+    """SPEC-D18.1: `=` `Alpha` finds p1 (`enc:Alpha`) only; `!=` finds the other four, p5 among them, which has no
+    `secret` field at all: a `must_not` keeps a document without the field (PRD-F37), which only the server can show."""
+    params = request('id', 'secret', **criterion('secret', condition, 'Alpha'))
+    assert found(hooked.fetch_sync(params, client)) == expected
 
 
 # What a recording client cannot show: that the cluster answers a value of 255 code points. The number `1` * 255 is
