@@ -1388,6 +1388,23 @@ def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
     assert ids(table.fetch_sync(request(*ALL, **body), session)) == expected
 
 
+def test_two_column_searches_combine_with_and(session: Session):
+    """SPEC-F12.1: `red` on `team` alone finds rows 1 and 3, `example` on `email` rows 1, 4 and 5; both → row 1."""
+    team = {'team': {'value': 'red'}}
+    email = {'email': {'value': 'example'}}
+    answers = [ids(table.fetch_sync(request(*ALL, column_search=search), session)) for search in (team, email)]
+    assert answers == [[1, 3], [1, 4, 5]]
+    assert ids(table.fetch_sync(request(*ALL, column_search={**team, **email}), session)) == [1]
+
+
+@pytest.mark.parametrize(('search', 'expected'), [('example', [5]), ('cy', [])])
+def test_a_column_search_and_the_global_search_combine_with_and(session: Session, search: str, expected: list[int]):
+    """SPEC-F12.2: `blue` on `team` alone finds rows 2 and 5. The global search finds rows 1, 4 and 5 for `example`
+    and row 4 for `cy`, so the answer is the intersection, and not the union."""
+    body = {'column_search': {'team': {'value': 'blue'}}, 'search': {'value': search}}
+    assert ids(table.fetch_sync(request(*ALL, **body), session)) == expected
+
+
 def test_a_column_the_request_marks_unsearchable_is_left_out_of_the_global_search_only(session: Session):
     """SPEC-F41.3: the library declares `name` searchable, so only the global search listens to the request's flag;
     row 3 is the only one holding `anna` in any column."""
@@ -3213,6 +3230,10 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     (criterion('name', 'contains', 'a' * 256), 'value_too_long'),
     (criterion('name', 'starts', 'a' * 256), 'value_too_long'),
     (criterion('age', '=', '1' * 256), 'value_too_long'),
+    # SPEC-F14.4: the length comes before the number is read, so no `invalid_number` and no conversion: Python refuses
+    # an int of more than 4,300 digits, and a long run of zeros costs a parse
+    (criterion('age', '=', '1' * 4301), 'value_too_long'),
+    (criterion('age', '=', '0' * 5000), 'value_too_long'),
     (criterion('age', 'between', '1', '2' * 256), 'value_too_long'),
     (criterion('born', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
     (criterion('born', 'contains', '2024' + ' ' * 252), 'value_too_long'),
@@ -3244,8 +3265,8 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
 def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
     session: Session, body: dict[str, Any], code: str
 ):
-    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.5, SPEC-E3.2): the same refusal for every kind of value and part of the
-    request, with a text that holds none of what was sent."""
+    """PRD-F14, PRD-E3 (SPEC-F14.1, SPEC-F14.2, SPEC-F14.3, SPEC-F14.4, SPEC-F14.5, SPEC-E3.2): the same refusal for
+    every kind of value and part of the request, with a text that holds none of what was sent."""
     names = (*ALL, 'extra') if 'extra' in str(body) else ALL
     message = refused(table.fetch_sync(request(*names, **body), session), code)
     assert not any(sent in message for sent in ('aaa', 'bbb', 'xxx', 'abc', '111', *SEVENTEEN.split()))
@@ -3254,16 +3275,32 @@ def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(
 @pytest.mark.parametrize(
     'body',
     [
+        {'column_search': {'name': {'value': 'a' * 255}}},
         {'column_search': {'name': {'multi_values': ['a', 'b' * 255]}}},
         {'column_search': {'name': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('name', '=', 'a' * 255),
         criterion('name', 'contains', 'a' * 255),
+        criterion('name', 'starts', 'a' * 255),
         criterion('age', '=', '0' * 255),  # 255 digits, a number the column holds
+        criterion('age', 'between', '1', '0' * 252 + '100'),  # the second value is 255 characters, and 100
+        criterion('born', '=', '2024-01-01' + ' ' * 245),
         criterion('age', 'null', '1' * 300),  # a value the condition does not read is not measured
     ],
 )
 def test_a_value_within_the_bounds_is_answered(session: Session, body: dict[str, Any]):
-    """PRD-F14: the bound is at 255 code points, not below."""
+    """SPEC-F14.4: the bound is at 255 code points, not below."""
     assert table.fetch_sync(request(*ALL, **body), session).error is None
+
+
+@pytest.mark.parametrize(('padding', 'code'), [(251, None), (252, 'value_too_long')])
+def test_a_boolean_value_is_measured_at_255_code_points(session: Session, padding: int, code: str | None):
+    """SPEC-F14.4: `true` and its padding are 255 characters and are read as `true`; one more is too long. The boolean
+    column is declared here, which the bounds table above does not do."""
+    response = flagged.fetch_sync(request(*FLAGGED, **criterion('active', '=', 'true' + ' ' * padding)), session)
+    if code is None:
+        assert ids(response) == [1, 4]
+    else:
+        refused(response, code)
 
 
 def test_a_surplus_value_is_not_measured_and_stays_the_mistake_it_is(session: Session):

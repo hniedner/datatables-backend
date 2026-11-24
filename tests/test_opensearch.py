@@ -284,8 +284,10 @@ def test_a_page_beyond_the_result_window_asks_for_the_count_and_never_for_a_page
 def test_a_user_error_found_while_the_body_is_built_says_what_is_wrong_and_what_to_do(
     searched: SearchTable, names: tuple[str, ...], body: dict[str, Any], code: str, text: str
 ):
-    """SPEC-E4.23, SPEC-E4.25, SPEC-E4.6, SPEC-E4.15, SPEC-E4.24: the texts of the mistakes only the OpenSearch build finds. Those the plan
-    finds are asserted once, in tests/test_sql.py."""
+    """SPEC-E4.23, SPEC-E4.25, SPEC-E4.6, SPEC-E4.15, SPEC-E4.24: the texts of the mistakes only the OpenSearch build
+    finds, and one the plan finds with this backend's description of the columns (`no-text-column`: a number and a
+    date take no part in the search here). The plan's mistakes on every backend are asserted once, in
+    tests/test_sql.py."""
     assert refused(searched.fetch_sync(request(*names, **body), Client()), code) == text
 
 
@@ -1616,6 +1618,159 @@ def test_searchbuilder_on_a_hooked_column_refuses_a_part_of_the_value_before_any
     assert client.searches == []
 
 
+SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
+HOOKED_NAMES = ('id', 'secret')
+TWENTY_WORDS = ' '.join('abcdefghijklmnopqrst')
+
+
+def hooked_table(*, other_columns: bool = False, hook: Any = stored) -> SearchTable:
+    """`secret` hooked, beside a searchable `id` (a mixed table) or an `id` left out of every search."""
+    return SearchTable(
+        'docs',
+        [IndexColumn('id', text='keyword', searchable=other_columns), Column('secret', search_value=hook)],
+        unique_key='id',
+    )
+
+
+@pytest.mark.parametrize(
+    ('mixed', 'body', 'code'),
+    [
+        (True, {'search': {'value': SEVENTEEN}}, 'too_many_words'),  # SPEC-D12.6: the cap holds beside another column
+        (False, {'search': {'value': 'a' * 256}}, 'value_too_long'),  # SPEC-D12.5
+        (False, {'search': {'value': ' ' * 125 + 'Alpha' + ' ' * 126}}, 'value_too_long'),  # SPEC-D12.8: the raw text
+        (False, {'column_search': {'secret': {'value': 'a' * 256}}}, 'value_too_long'),  # SPEC-D17.2
+    ],
+)
+def test_search_text_over_the_bounds_on_a_hooked_column_is_refused_before_anything_is_sent(
+    mixed: bool, body: dict[str, Any], code: str
+):
+    """SPEC-D12.5, SPEC-D12.6, SPEC-D12.8, SPEC-D17.2: the word cap is lifted only where every searchable column is
+    hooked, and the length is measured on the text as sent, spaces and all (5 characters once trimmed)."""
+    client = Client()
+    message = refused(hooked_table(other_columns=mixed).fetch_sync(request(*HOOKED_NAMES, **body), client), code)
+    assert client.searches == []
+    assert not any(sent in message for sent in ('aaa', 'Alpha', 'q0'))
+
+
+@pytest.mark.parametrize('where', ['search', 'column_search'])
+def test_twenty_words_on_a_hooked_column_are_one_value_and_are_answered(where: str):
+    """SPEC-D12.5, SPEC-D17.2: no word cap, the whole text is the one term the hook makes of it."""
+    body: dict[str, Any] = (
+        {'search': {'value': TWENTY_WORDS}}
+        if where == 'search'
+        else {'column_search': {'secret': {'value': TWENTY_WORDS}}}
+    )
+    client = Client()
+    assert hooked_table().fetch_sync(request(*HOOKED_NAMES, **body), client).error is None
+    assert clauses(client) == [{'term': {'secret.keyword': stored(TWENTY_WORDS)}}]
+
+
+@pytest.mark.parametrize('text', ['""', '!x', '!"', '"', '!', '   '])
+def test_text_with_no_word_adds_nothing_to_a_hooked_column_and_the_hook_is_not_called(text: str):
+    """SPEC-D12.9: nothing is asked of the hooked column, and the hook would turn `!x` into a value no row holds."""
+    seen, recorded = recording_hook()
+    client = Client()
+    hooked_table(hook=recorded).fetch_sync(request(*HOOKED_NAMES, search={'value': text}), client)
+    assert client.searches[-1]['query'] == {'match_all': {}}
+    assert seen == []
+
+
+@pytest.mark.parametrize('search', [{'multi_values': ['Alpha', 'Beta']}, {'value': '^(Alpha|Beta)$', 'regex': True}])
+def test_a_list_of_values_on_a_hooked_column_is_one_terms_of_the_hooked_values(search: dict[str, Any]):
+    """SPEC-D15.1: the hook is called once for each value, in order, and the list is sent as the hook made it."""
+    seen, recorded = recording_hook()
+    client = Client()
+    hooked_table(hook=recorded).fetch_sync(request(*HOOKED_NAMES, column_search={'secret': search}), client)
+    assert clauses(client) == [{'terms': {'secret.keyword': [stored('Alpha'), stored('Beta')]}}]
+    assert seen == ['Alpha', 'Beta']
+
+
+def test_an_empty_entry_on_a_hooked_column_is_a_missing_field_and_the_hook_is_not_called():
+    """SPEC-D16.1: "empty" is about what is stored, so no value goes to the hook. On OpenSearch an empty string is no
+    missing field, and the live test of PRD-F26 shows the rows."""
+    seen, recorded = recording_hook()
+    client = Client()
+    hooked_table(hook=recorded).fetch_sync(
+        request(*HOOKED_NAMES, column_search={'secret': {'multi_values': ['']}}), client
+    )
+    assert clauses(client) == [{'bool': {'must_not': [{'exists': {'field': 'secret'}}]}}]
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    ('condition', 'values', 'clause'),
+    [
+        ('=', ['Alpha'], {'term': {'secret.keyword': stored('Alpha')}}),
+        ('!=', ['Alpha'], {'bool': {'must_not': [{'term': {'secret.keyword': stored('Alpha')}}]}}),
+        ('null', [], {'bool': {'must_not': [{'exists': {'field': 'secret'}}]}}),
+        ('!null', [], {'exists': {'field': 'secret'}}),
+    ],
+)
+def test_searchbuilder_on_a_hooked_column_sends_the_hooked_value_or_the_existence_test(
+    condition: str, values: list[str], clause: dict[str, Any]
+):
+    """SPEC-D18.1: `=` and `!=` give the hook the value (a missing field passes `!=`, as `must_not` keeps it); `null`
+    and `!null` test the field, an empty string being a stored value. Rows 5 and 6 of the statement differ only in what
+    the cluster does with that field, which the live test of PRD-F26 shows."""
+    seen, recorded = recording_hook()
+    client = Client()
+    hooked_table(hook=recorded).fetch_sync(request(*HOOKED_NAMES, **criterion('secret', condition, *values)), client)
+    assert clauses(client) == [clause]
+    assert seen == values
+
+
+def test_two_column_searches_are_both_in_the_one_must():
+    """SPEC-F12.1: each column's clause stays in the `must` that ANDs them, so neither replaces the other."""
+    title, body = {'title': {'value': 'apple'}}, {'body': {'value': 'green'}}
+    both = clauses_of(column_search={**title, **body})
+    assert both == [*clauses_of(column_search=title), *clauses_of(column_search=body)]
+    assert len(both) == 2
+
+
+def test_a_column_search_and_the_global_search_are_both_in_the_one_must():
+    """SPEC-F12.2: the global search is one more clause beside the column search, an AND."""
+    column, search = {'title': {'value': 'apple'}}, {'value': 'green'}
+    both = clauses_of(column_search=column, search=search)
+    assert both == [*clauses_of(search=search), *clauses_of(column_search=column)]
+    assert len(both) == 2
+
+
+UNSEARCHABLE = SearchTable(
+    'docs',
+    [IndexColumn('id', text='keyword', searchable=False), IndexColumn('title', searchable=False)],
+    unique_key='id',
+)
+
+
+def test_a_search_with_a_word_on_a_table_with_no_searchable_column_is_refused_and_nothing_is_sent():
+    """SPEC-F13.1: every column is declared unsearchable, so `red` has nothing to match."""
+    client = Client()
+    refused(UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': 'red'}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
+def test_a_search_with_a_word_on_a_table_of_numbers_dates_and_booleans_is_refused_and_nothing_is_sent():
+    """SPEC-F13.2: only a string takes part in the global search on OpenSearch, so these three kinds leave `red` with
+    nothing to match."""
+    typed = SearchTable(
+        'docs',
+        [Column('pages', type='number'), Column('created', type='date'), Column('active', type='boolean')],
+        unique_key='pages',
+    )
+    client = Client()
+    refused(typed.fetch_sync(request('pages', 'created', 'active', search={'value': 'red'}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
+def test_an_empty_search_on_a_table_with_no_searchable_column_is_the_plain_request():
+    """SPEC-F13.3: nothing is asked, so nothing is refused and the body is the one of a request with no search."""
+    client = Client()
+    assert UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': ''}), client).error is None
+    plain = Client()
+    UNSEARCHABLE.fetch_sync(request('id', 'title'), plain)
+    assert client.searches == plain.searches
+
+
 def tally(query: Mapping[str, Any]) -> tuple[int, int, int]:
     """The leaf queries, the clauses of every `bool` (a leaf or another `bool` each) and the most clauses one `bool`
     holds, in a query: the three ways a server may count against `indices.query.bool.max_clause_count`."""
@@ -1669,7 +1824,6 @@ def test_a_request_one_condition_over_the_budget_is_refused_before_any_search():
 
 # -- the bounds of every value (PRD-F14), answered with their own codes (PRD-E2, PRD-E3) ---
 
-SEVENTEEN = ' '.join(f'q{number}' for number in range(17))  # distinct, so an echo of any word shows
 OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     ({'search': {'value': 'a' * 256}}, 'value_too_long'),
     ({'search': {'value': SEVENTEEN}}, 'too_many_words'),
@@ -1682,7 +1836,13 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
     ({'column_search': {'id': {'multi_values': ['a', 'b' * 256]}}}, 'value_too_long'),
     ({'column_search': {'id': {'value': f'^(a|{"b" * 256})$', 'regex': True}}}, 'value_too_long'),
     (criterion('title', 'contains', 'a' * 256), 'value_too_long'),
+    (criterion('title', '=', 'a' * 256), 'value_too_long'),
+    (criterion('title', 'starts', 'a' * 256), 'value_too_long'),
     (criterion('pages', '=', '1' * 256), 'value_too_long'),
+    # SPEC-F14.4: the length comes before the number is read, so no `invalid_number` and no conversion: Python refuses
+    # an int of more than 4,300 digits, and a long run of zeros costs a parse
+    (criterion('pages', '=', '1' * 4301), 'value_too_long'),
+    (criterion('pages', '=', '0' * 5000), 'value_too_long'),
     (criterion('pages', 'between', '1', '2' * 256), 'value_too_long'),
     (criterion('created', '=', '2024-01-01' + ' ' * 250), 'value_too_long'),
     # PRD-E3: step 1 comes before every step it hides, in the same part of the request as in another
@@ -1700,8 +1860,8 @@ OVER_THE_BOUNDS: list[tuple[dict[str, Any], str]] = [
 
 @pytest.mark.parametrize(('body', 'code'), OVER_THE_BOUNDS)
 def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(body: dict[str, Any], code: str):
-    """PRD-F14, PRD-E3 (SPEC-F14.1 to SPEC-F14.3, SPEC-E3.2): the same refusal for every kind of value and part of the
-    request, answered before the server is asked, with a text that holds none of what was sent."""
+    """PRD-F14, PRD-E3 (SPEC-F14.1, SPEC-F14.2, SPEC-F14.3, SPEC-F14.4, SPEC-E3.2): the same refusal for every kind of
+    value and part of the request, answered before the server is asked, with a text that holds none of what was sent."""
     client = Client()
     names = (*NAMES, 'extra') if 'extra' in str(body) else NAMES
     message = refused(table.fetch_sync(request(*names, **body), client), code)
@@ -1714,16 +1874,38 @@ def test_a_value_over_the_bounds_is_refused_with_its_code_and_echoes_nothing(bod
     [
         {'search': {'value': 'a' * 255}},
         {'search': {'value': ' '.join(SEVENTEEN.split()[:16])}},
+        {'column_search': {'title': {'value': 'a' * 255}}},
+        {'column_search': {'title': {'value': ' '.join(SEVENTEEN.split()[:16])}}},  # SPEC-F14.2: 16 words in a column
         {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}},
         {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}},
+        criterion('title', '=', 'a' * 255),
         criterion('title', 'contains', 'a' * 255),
+        criterion('title', 'starts', 'a' * 255),
         criterion('pages', '=', '1' * 255),
+        criterion('pages', 'between', '1', '0' * 252 + '100'),  # the second value is 255 characters
+        criterion('created', '=', '2024-01-01' + ' ' * 245),
         criterion('pages', 'null', '1' * 300),  # a value the condition does not read is not measured
     ],
 )
 def test_a_value_within_the_bounds_is_answered(body: dict[str, Any]):
-    """PRD-F14: the bound is at 255 code points and 16 words, not below."""
+    """SPEC-F14.2, SPEC-F14.4: the bound is at 255 code points and 16 words, not below. The number of 255 digits is
+    out of an `integer` field's range, which only a cluster refuses (the live list of the same bound uses a number
+    inside it)."""
     assert table.fetch_sync(request(*NAMES, **body), Client()).error is None
+
+
+@pytest.mark.parametrize(('padding', 'code'), [(251, None), (252, 'value_too_long')])
+def test_a_boolean_value_is_measured_at_255_code_points(padding: int, code: str | None):
+    """SPEC-F14.4: `true` and its padding are 255 characters and are read as `true`; one more is too long. The bounds
+    table above has no boolean column."""
+    client = Client()
+    response = flags.fetch_sync(request(*FLAG_NAMES, **criterion('active', '=', 'true' + ' ' * padding)), client)
+    if code is None:
+        assert response.error is None
+        assert clauses(client) == [{'term': {'active': True}}]
+    else:
+        refused(response, code)
+        assert client.searches == []
 
 
 def sent(search_table: SearchTable, params: DTParams) -> Mapping[str, Any]:
