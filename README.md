@@ -120,6 +120,10 @@ A user's mistake comes back as HTTP 200 with `error` and `error_code` in the ans
 shows an `error` in a browser `alert()` unless `DataTable.ext.errMode` says otherwise, and `errMode: 'none'` would also
 silence its own configuration warnings, so the example logs them. `#users-error` is an element of yours.
 
+ColumnControl's text, number and list filters are answered, and its date control is refused with a message that says
+so. It needs `ajax: { submitAs: 'json' }`, not an `ajax.data` that returns a string: ColumnControl adds its filters
+after `ajax.data` has run, and its filters would never leave the browser.
+
 Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
 ## Tested with

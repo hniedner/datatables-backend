@@ -77,6 +77,8 @@ from .conftest import LARGEST_WORDS
 from .conftest import ROWS
 from .conftest import async_engine
 from .conftest import checked_database
+from .conftest import columncontrol
+from .conftest import columncontrol_list
 from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
@@ -3944,3 +3946,227 @@ def test_building_and_using_a_table_and_a_cache_registers_no_listener(session: S
     assert _listeners(*targets) == before
     built.fetch_sync(request(*ALL, search={'value': 'red'}), session)
     assert _listeners(*targets) == before
+
+
+# -- ColumnControl's per-column search and list (PRD-F45) --------------------------------------------------------------
+
+
+def _found(*, flags: dict[str, dict[str, Any]], session: Session, using: SQLTable = table, **body: Any) -> list[Any]:
+    return sorted(ids(using.fetch_sync(request(*ALL, flags=flags, **body), session)))
+
+
+def _refusal(*, flags: dict[str, dict[str, Any]], session: Session, using: SQLTable = table, **body: Any) -> str:
+    response = using.fetch_sync(request(*ALL, flags=flags, **body), session)
+    assert response.error_code is not None
+    return response.error_code
+
+
+def test_columncontrol_contains_gives_the_rows_of_a_column_search(session: Session):
+    """SPEC-F45.2: the control's own `contains` is the column search it sits beside (PRD-F2): the same words, the same
+    rows, on a column of text, of numbers and of days."""
+    for column, words in (('name', 'an'), ('team', 'RED'), ('age', '31'), ('born', '2001')):
+        plain = sorted(ids(table.fetch_sync(request(*ALL, column_search={column: {'value': words}}), session)))
+        assert plain
+        assert _found(flags=columncontrol(column, 'contains', words), session=session) == plain
+
+
+@pytest.mark.parametrize(
+    ('column', 'logic', 'value', 'expected'),
+    [
+        ('team', 'equal', 'RED', [1, 3]),
+        ('team', 'notEqual', 'red', [2, 4, 5]),
+        ('team', 'starts', 'bl', [2, 5]),
+        ('team', 'ends', 'en', [4]),
+        ('team', 'notContains', 'lu', [1, 3, 4]),
+        ('email', 'empty', '', [2, 3]),
+        ('email', 'notEmpty', '', [1, 4, 5]),
+    ],
+)
+def test_columncontrol_logics_answer_as_the_searchbuilder_condition_they_name(
+    session: Session, column: str, logic: str, value: str, expected: list[int]
+):
+    """SPEC-F45.3, SPEC-F45.4: `equal`, `notEqual`, `starts`, `ends`, `notContains` and `empty` give the rows of `=`,
+    `!=`, `starts`, `ends`, `!contains` and `null`, and `notEmpty` those of `!null`: a NULL and the empty text are both
+    empty on SQL (PRD-F26)."""
+    conditions = {'equal': '=', 'notEqual': '!=', 'notContains': '!contains', 'empty': 'null', 'notEmpty': '!null'}
+    flags = columncontrol(column, logic, value)
+    assert _found(flags=flags, session=session) == expected
+    as_criterion = criterion(column, conditions.get(logic, logic), *([value] if value else []))
+    assert _found(flags={}, session=session, **as_criterion) == expected
+
+
+def test_a_columncontrol_list_answers_as_a_list_of_exact_values(session: Session):
+    """SPEC-F45.5: a list of values is the exact values of `multi_values` (PRD-F20), the empty entry meaning empty."""
+    assert _found(flags=columncontrol_list('team', ['RED', 'green']), session=session) == [1, 3, 4]
+    assert _found(flags=columncontrol_list('email', ['', 'ann@example.org']), session=session) == [1, 2, 3]
+
+
+def test_a_plain_search_a_columncontrol_search_and_a_list_on_one_column_all_apply(session: Session):
+    """SPEC-F45.6: three filters of one column are ANDed; PRD-F39 refuses a value beside a list in one search, not
+    across them."""
+    flags = {'name': {'search': {'value': 'an', 'regex': False}, **columncontrol('name', 'starts', 'anna')['name']}}
+    assert _found(flags=flags, session=session) == [3]
+    search = columncontrol('team', 'notEqual', 'blue')['team']['columnControl']['search']
+    both = {'team': {'columnControl': {'search': search, 'list': {'0': 'red', '1': 'blue'}}}}
+    assert _found(flags=both, session=session) == [1, 3]
+
+
+@pytest.mark.parametrize('text', ['x', 'x' * 300])
+def test_the_text_left_in_the_input_of_an_empty_search_is_neither_read_nor_measured(session: Session, text: str):
+    """SPEC-F45.7: `empty` and `notEmpty` take no value, so the text ColumnControl leaves in its input is no
+    `value_too_long` and no search."""
+    assert _found(flags=columncontrol('email', 'empty', text), session=session) == [2, 3]
+    assert _found(flags=columncontrol('email', 'notEmpty', text), session=session) == [1, 4, 5]
+
+
+@pytest.mark.parametrize(
+    ('column', 'logic', 'value'),
+    [('age', 'starts', '3'), ('age', 'ends', '1'), ('age', 'notContains', '3'), ('born', 'starts', '2001')],
+)
+def test_a_columncontrol_logic_the_columns_type_does_not_take_is_refused(
+    session: Session, column: str, logic: str, value: str
+):
+    """SPEC-F45.8: the condition a logic names is refused on a number or a date as SearchBuilder refuses it (PRD-F27)."""
+    assert _refusal(flags=columncontrol(column, logic, value), session=session) == 'invalid_filter'
+
+
+def test_a_columncontrol_number_that_is_no_number_is_invalid_number(session: Session):
+    """SPEC-F45.8: the number rules of a condition come with it (PRD-F25): `equal` `abc` on a number column."""
+    assert _refusal(flags=columncontrol('age', 'equal', 'abc'), session=session) == 'invalid_number'
+    assert _refusal(flags=columncontrol_list('age', ['abc']), session=session) == 'invalid_number'
+
+
+def test_columncontrol_on_a_hooked_column_is_equality_or_refused(session: Session):
+    """SPEC-F45.9: `contains` is the whole text through the hook (PRD-D17), `equal` is the hooked value, `starts` is
+    refused (PRD-D18), and `empty` is answered."""
+    hooked = SQLTable(people, [Column('id'), Column('secret', search_value=lambda text: f's{text}')])
+    columns = ('id', 'secret')
+
+    def found(flags: dict[str, dict[str, Any]]) -> list[Any]:
+        return sorted(ids(hooked.fetch_sync(request(*columns, flags=flags), session)))
+
+    assert found(columncontrol('secret', 'contains', '1')) == [1]
+    assert found(columncontrol('secret', 'equal', '2')) == [2]
+    assert found(columncontrol_list('secret', ['3', '4'])) == [3, 4]
+    assert found(columncontrol('secret', 'empty')) == []
+    assert found(columncontrol('secret', 'notEmpty')) == [1, 2, 3, 4, 5]
+    refused = hooked.fetch_sync(request(*columns, flags=columncontrol('secret', 'starts', '1')), session)
+    assert refused.error_code == 'invalid_filter'
+
+
+def test_a_columncontrol_list_holds_at_most_256_values_and_512_in_all(session: Session):
+    """SPEC-F45.10: a list of 256 is answered and one of 257 refused; three lists of 256 are over the request's 512."""
+    names = [f'v{number}' for number in range(255)]
+    assert _found(flags=columncontrol_list('team', ['red', *names]), session=session) == [1, 3]
+    assert _refusal(flags=columncontrol_list('team', ['red', *names, 'v255']), session=session) == 'invalid_filter'
+    three = {column: columncontrol_list(column, ['red', *names])[column] for column in ('team', 'name', 'email')}
+    assert _refusal(flags=three, session=session) == 'invalid_filter'
+
+
+def _wide_control_request(words_on: int, *, extra_word: bool) -> tuple[SQLTable, DTParams]:
+    """``words_on`` columns that read `email_address`, each with a ColumnControl `contains` of 16 words (16
+    conditions), and one more with a word, which is the 961st condition when ``words_on`` is 60."""
+    names = [f'e{number}' for number in range(words_on + extra_word)]
+    wide = SQLTable(people, [Column(name, field='email_address') for name in names])
+    flags: dict[str, dict[str, Any]] = {}
+    for number, name in enumerate(names):
+        flags |= columncontrol(name, 'contains', LARGEST_WORDS if number < words_on else 'ann')
+    return wide, request(*names, flags=flags)
+
+
+def test_columncontrol_searches_count_toward_the_budget_of_conditions(session: Session):
+    """SPEC-F45.10: 60 searches of 16 words are exactly the budget and answered; one more word is `request_too_large`,
+    with nothing run."""
+    wide, params = _wide_control_request(60, extra_word=False)
+    assert wide.fetch_sync(params, session).error is None
+    sent: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: sent.append(args[2]))
+    wide, params = _wide_control_request(60, extra_word=True)
+    assert wide.fetch_sync(params, session).error_code == 'request_too_large'
+    assert sent == []
+
+
+def test_columncontrol_filters_count_toward_the_64_column_searches(session: Session):
+    """SPEC-F45.10: a search and a list of one column are two of the 64 (PRD-F38): 32 columns of both are answered, and
+    a 33rd column's search makes 65."""
+    names = [f'e{number}' for number in range(33)]
+    wide = SQLTable(people, [Column(name, field='email_address') for name in names])
+    flags: dict[str, dict[str, Any]] = {}
+    for name in names[:32]:
+        flags[name] = {
+            'columnControl': {**columncontrol(name, 'equal', 'x')[name]['columnControl'], 'list': {'0': 'y'}}
+        }
+    assert wide.fetch_sync(request(*names, flags=flags), session).error is None
+    flags |= columncontrol(names[32], 'equal', 'x')
+    assert wide.fetch_sync(request(*names, flags=flags), session).error_code == 'invalid_filter'
+
+
+def test_the_idle_columncontrol_parts_of_a_wide_table_count_for_nothing(session: Session):
+    """SPEC-F45.10: ColumnControl sends an idle search and an empty list for every column on every request, so 70 of
+    them are no 70 column searches (PRD-F38) and the request is answered."""
+    names = [f'e{number}' for number in range(70)]
+    wide = SQLTable(people, [Column(name, field='email_address') for name in names])
+    flags = {
+        name: {'columnControl': {**columncontrol(name, 'contains')[name]['columnControl'], 'list': {}}}
+        for name in names
+    }
+    assert wide.fetch_sync(request(*names, flags=flags), session).error is None
+
+
+def test_a_columncontrol_value_is_checked_for_a_control_character_and_for_its_length_first(session: Session):
+    """SPEC-F45.11: a control character is `invalid_character` and a value over 255 code points `value_too_long`, each
+    before the `invalid_filter` of another column's refused logic (PRD-E3 step 1 against step 4)."""
+    refused_logic = columncontrol('age', 'starts', '3')
+    for flags, code in (
+        (columncontrol('name', 'contains', 'a\x07'), 'invalid_character'),
+        (columncontrol('name', 'equal', 'a\x07'), 'invalid_character'),
+        (columncontrol_list('team', ['red\x07']), 'invalid_character'),
+        (columncontrol('name', 'equal', 'a' * 256), 'value_too_long'),
+        (columncontrol('name', 'contains', 'a' * 256), 'value_too_long'),
+    ):
+        assert _refusal(flags={**refused_logic, **flags}, session=session) == code
+
+
+@pytest.mark.parametrize('logic', ['equal', 'empty'])
+def test_a_columncontrol_search_on_a_column_the_server_does_not_offer_is_refused(session: Session, logic: str):
+    """SPEC-F45.12: a column the server declares unsearchable, one it does not declare and one with no name are refused
+    as a column search on them is (PRD-F41), and never dropped."""
+    closed = SQLTable(people, [Column('id'), Column('team', searchable=False)])
+    names = ('id', 'team', 'nope', '')
+    part = columncontrol('any', logic, 'x')['any']  # the column's ColumnControl part, whichever column holds it
+    for name in ('team', 'nope', ''):
+        flags: dict[str, dict[str, Any]] = {'': {'data': None}}  # the column with no name renders only
+        flags[name] = {**flags.get(name, {}), **part}
+        response = closed.fetch_sync(request(*names, flags=flags), session)
+        assert response.error_code == 'invalid_filter', name
+    listed = closed.fetch_sync(request(*names, flags=columncontrol_list('team', ['red'])), session)
+    assert listed.error_code == 'invalid_filter'
+
+
+@pytest.mark.parametrize(
+    ('logic', 'value', 'expected'),
+    [
+        ('greater', '31', [2, 5]),
+        ('greaterOrEqual', '45', [2, 5]),
+        ('less', '45', [1, 4]),
+        ('lessOrEqual', '45', [1, 2, 4]),
+    ],
+)
+def test_columncontrol_number_logics_answer_as_a_comparison_and_leave_null_out(
+    session: Session, logic: str, value: str, expected: list[int]
+):
+    """SPEC-F45.13: `greater`, `greaterOrEqual`, `less` and `lessOrEqual` compare, as `>`, `>=`, `<` and `<=`; the row
+    with no age is in none of them (the stated difference, section 5)."""
+    assert _found(flags=columncontrol('age', logic, value), session=session) == expected
+
+
+def test_columncontrol_number_logics_follow_the_number_rules_and_the_type(session: Session):
+    """SPEC-F45.14: a text that is no number is `invalid_number`; the four are refused on text as their conditions are
+    (PRD-F27)."""
+    assert _refusal(flags=columncontrol('age', 'greater', 'abc'), session=session) == 'invalid_number'
+    assert _refusal(flags=columncontrol('team', 'greater', 'a'), session=session) == 'invalid_filter'
+
+
+def test_columncontrol_not_equal_lets_a_null_through(session: Session):
+    """SPEC-F45.15: `notEqual` is `!=`, which keeps the row with no value (PRD-F37), on a number as on text."""
+    assert _found(flags=columncontrol('age', 'notEqual', '31'), session=session) == [2, 3, 5]

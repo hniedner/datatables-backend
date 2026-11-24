@@ -270,6 +270,17 @@ def criterion(column: str, condition: str, *values: str) -> dict[str, Any]:
     }
 
 
+def columncontrol(column: str, logic: str, value: str = '', **extra: Any) -> dict[str, dict[str, Any]]:
+    """The ``flags`` of `request` that give ``column`` ColumnControl's search, as the client sends it (decision 007)."""
+    search = {'value': value, 'logic': logic, 'type': 'text', **extra}
+    return {column: {'columnControl': {'search': search}}}
+
+
+def columncontrol_list(column: str, values: list[str]) -> dict[str, dict[str, Any]]:
+    """The ``flags`` that give ``column`` ColumnControl's list: an object keyed by index, as the client sends it."""
+    return {column: {'columnControl': {'list': {str(index): value for index, value in enumerate(values)}}}}
+
+
 def leaf(column: str) -> dict[str, Any]:
     return {'condition': '=', 'origData': column, 'value': ['Ann']}
 
