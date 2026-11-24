@@ -127,6 +127,24 @@ silence its own configuration warnings, so the example logs them. `#users-error`
 ColumnControl's text, number and list filters are answered, and an active search of its date control is refused with a
 message that says so. They work with DataTables' default POST and with `submitAs: 'json'`, and not with an `ajax.data`
 that returns a string: ColumnControl adds its filters after `ajax.data` has run, so they would never leave the browser.
+Under server-side processing a list shows the options you give it as static `options` on the control:
+
+```js
+columns: [
+  {
+    data: 'status',
+    columnControl: [[{
+      extend: 'searchList',
+      options: [{ label: 'Open', value: 'open' }, { label: 'Closed', value: 'closed' }],
+    }]],
+  },
+],
+```
+
+A value is text or a whole number. A list with static `options` shows them and ignores options in the answer
+([decision 007][decision-007]); an app whose options come from the data adds
+`columnControl: {<column>: [{label, value}]}` to the answer itself (see [#183][issue-183]), and an answer with
+`columnControl: {}` hides a list that has none.
 
 Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
@@ -174,6 +192,8 @@ The library does not change how a database compares values. Each rule below is s
 [changelog]: https://github.com/hniedner/datatables-backend/blob/main/CHANGELOG.md
 [db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
 [issue-47]: https://github.com/hniedner/datatables-backend/issues/47
+[decision-007]: https://github.com/hniedner/datatables-backend/blob/main/docs/decisions/007-columncontrol-wire-form.md#the-lists-options-under-server-side-processing-167
+[issue-183]: https://github.com/hniedner/datatables-backend/issues/183
 [usage]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md
 [rules]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md
 [databases]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md

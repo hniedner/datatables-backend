@@ -19,7 +19,13 @@ run. Where the two disagreed, the entry says so.
   `input`, set the logic `<select>` and dispatched `input` (the control listens to `input`, not `change`), and clicked
   the list's buttons. Each shape ran on a fresh table, as a default form POST and as `ajax.submitAs: 'json'`. The only
   stubbed browser globals were `ResizeObserver` and `IntersectionObserver`; jsdom has no layout.
-- Not run, so READ only: the dates of moment and luxon, `excludeLogic`, the options of a control, and a real browser.
+- The options of a list (#167) were run later, on 2026-11-24, with the harness under "The list's options under
+  server-side processing": node v26.13.1, jsdom 31.0.1, datatables.net 3.1.5 and 3.1.6 and datatables.net-columncontrol
+  2.1.3. The three tarballs came from `npm pack --ignore-scripts` and their integrity equals
+  `npm view <package>@<version> dist.integrity`; jsdom came from `npm install jsdom@31.0.1 --ignore-scripts` into an empty scratch directory (no
+  lifecycle script ran). The first harness run failed before any case: DataTables asks for the page's base URL, so the
+  document needs `url: 'http://localhost/'`, which the listing has [RUN].
+- Not run, so READ only: the dates of moment and luxon, `excludeLogic`, and a real browser.
 - Line numbers below are `js/dataTables.columnControl.js` of 2.1.3.
 
 ## Which control a column gets
@@ -53,9 +59,10 @@ is made (lines 1790-1805) [READ]. The run printed every row of the table below, 
   to a form [RUN].
 - A value is not turned into text: an option whose value is the number 1 arrives as `{"0":1}` in JSON and as `=1` in a
   form [RUN].
-- Under server-side processing the control shows only when the answer carries `columnControl: {<column name>: [{label,
-  value}]}`; without it the control stays hidden (`ajaxOnly`, lines 2184 and 2254) [READ]. The run's answers carried it
-  and the buttons appeared.
+- Under server-side processing the options of a list come from a static `options` on the control or from the answer's
+  `columnControl`; the run of #167 (below) shows when the buttons appear. An earlier reading here, that without the
+  answer's `columnControl` the control stays hidden, was wrong for a list with static `options` and for a list with no
+  options at all [RUN].
 - A column with a text control and a list sends `search` and `list` together [RUN].
 - The option whose value is the empty text shows a button labelled "Empty". Ticked, it arrives as `{"0":""}` in JSON and
   as `columns[0][columnControl][list][0]=` in a form, which is an empty value at index 0 [RUN]. (A first run looked for
@@ -109,7 +116,158 @@ logic, an active search with `type` `date`, a list entry that is neither text no
 neither an array nor an object keyed by whole-number indexes. The object's keys are sorted, never used as positions, so
 a key of nine digits costs nothing. What the answered shapes do to a query is in #164.
 
+## The list's options under server-side processing (#167)
+
+The question: after the first answer, does a list (`searchList`) show its buttons when the server answers `{draw,
+recordsTotal, recordsFiltered, data}` with no `columnControl` key? Each answer below is read from the DOM of the run
+(the dropdown button, the list and its buttons, after a real click on the dropdown), after the first answer and again
+after a second draw. Every request carried `columnControl: {list: {}}`, so the control was live [RUN].
+
+| Case | `options` | `ajaxOnly` | `hidable` | Answer's `columnControl` | Dropdown button | List | Buttons after the 1st answer | After the 2nd | 3.1.6 the same |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | static | default | default | none | shown | shown | Open, Closed | Open, Closed | yes |
+| 2 | static | false | default | none | shown | shown | Open, Closed | Open, Closed | yes |
+| 3 | static | default | false | none | shown | shown | Open, Closed | Open, Closed | yes |
+| 4 (the control) | none | default | default | `{status: [Server A, Server B]}` | shown | shown | Server A, Server B | Server A, Server B | yes |
+| C1 | none | default | default | `{}` | hidden | hidden | none | none | yes |
+| C2 | none | default | default | none | shown | shown | none, and a "No options" note | the same | yes |
+| C3 | static | default | default | `{status: [Server A, Server B]}` | shown | shown | Open, Closed | Open, Closed | yes |
+
+- A list with static `options` shows them after every answer, whether or not the answer has a `columnControl` key, and
+  `ajaxOnly: false` and `hidable: false` change nothing for it (cases 1-3) [RUN]. The answer's options are ignored when
+  `options` is static (C3) [RUN].
+- Options from the answer reach the buttons when the answer's `columnControl` holds an entry for the column (case 4)
+  [RUN]; the harness sees buttons, and it sees hiding (C1), so the three static cases are not a blind spot.
+- The list hides itself (and its dropdown button) when the answer has a `columnControl` key with no entry for the
+  column, as `{}` (C1) [RUN]. With no `columnControl` key and no static options it stays visible and empty, with a "No
+  options" note (C2) [RUN].
+- Why, from the source [READ, `js/dataTables.columnControl.js` of 2.1.3]: when `config.options` is set the control calls
+  `setOptions` once at init, and the `dt.ready` and `xhr` listeners that reload options from the answer are never
+  registered (lines 2313-2328). `ajaxOnly` and `hidable` are read only in the reload (lines 2213-2222): a
+  `columnControl` in the answer with no entry for the column, `ajaxOnly` and `hidable` hide the list; with no answer key
+  under server-side processing the reload sets an empty list (lines 2226 and 2245).
+- DataTables' documentation says `columnControl` must be in the Ajax data object, even as an empty object, for `hidable`
+  (https://datatables.net/reference/content/searchList, fetched 2026-11-24) [FETCHED]. The answer's options are matched
+  by column `name`, then `data`, then position (lines 2184-2203) [READ].
+- The library's response model drops keys it does not declare (`extra='ignore'`, `protocol.py:117`), so an application
+  that wants the answer's `columnControl` adds the key to the dumped answer itself [READ].
+
+The harness, as run (`node run167.cjs <jsdom package dir> <datatables.net package dir>
+<datatables.net-columncontrol package dir>`, from outside every package directory). Its output is one JSON line per case
+and the run is void if jsdom printed anything on stderr, if case 4 showed no buttons, if C1 was not hidden, or if a
+request lacked `list: {}`; none of these happened:
+
+```js
+'use strict';
+// usage: node run167.cjs <jsdomPkgDir> <dataTablesPkgDir> <columnControlPkgDir>
+const fs = require('node:fs');
+const path = require('node:path');
+const [jsdomDir, dtDir, ccDir] = process.argv.slice(2);
+const { JSDOM } = require(jsdomDir);
+const ver = d => JSON.parse(fs.readFileSync(path.join(d, 'package.json'), 'utf8')).version;
+const DT_SRC = fs.readFileSync(path.join(dtDir, 'js/dataTables.js'), 'utf8');
+const CC_SRC = fs.readFileSync(path.join(ccDir, 'js/dataTables.columnControl.js'), 'utf8');
+
+const ROWS = [{ status: 'open' }, { status: 'closed' }];
+const OPTS = [{ label: 'Open', value: 'open' }, { label: 'Closed', value: 'closed' }];
+const SERVER = { status: [{ label: 'Server A', value: 'a' }, { label: 'Server B', value: 'b' }] };
+const CASES = [
+  { id: '1 static', list: { extend: 'searchList', options: OPTS }, answer: null },
+  { id: '2 static+ajaxOnly:false', list: { extend: 'searchList', options: OPTS, ajaxOnly: false }, answer: null },
+  { id: '3 static+hidable:false', list: { extend: 'searchList', options: OPTS, hidable: false }, answer: null },
+  { id: '4 server key', list: { extend: 'searchList' }, answer: SERVER },
+  { id: 'C1 key, no entry', list: { extend: 'searchList' }, answer: {} },
+  { id: 'C2 no options anywhere', list: { extend: 'searchList' }, answer: null },
+  { id: 'C3 static+server key', list: { extend: 'searchList', options: OPTS }, answer: SERVER },
+];
+
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+function hidden(el) {
+  const win = el.ownerDocument.defaultView;
+  for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
+    if (win.getComputedStyle(e).display === 'none') return true;
+  }
+  return false;
+}
+
+function snap(win) {
+  const doc = win.document;
+  const dd = doc.querySelector('thead div.dt-column-header span.dtcc > button.dtcc-button_dropdown');
+  if (!dd) return { dropdownButton: 'absent', verdict: 'NO BUTTONS' };
+  const dropdownButton = hidden(dd) ? 'hidden' : 'shown';
+  dd.click();
+  const pop = doc.querySelector('div.dtcc-dropdown');
+  const list = pop && pop.querySelector('div.dtcc-list');
+  const btns = list ? [...list.querySelectorAll('div.dtcc-list-buttons > button.dtcc-button')] : [];
+  const empty = list && list.querySelector('div.dtcc-list-empty');
+  const out = {
+    dropdownButton,
+    opened: !!pop,
+    list: !list ? 'absent' : hidden(list) ? 'hidden' : 'shown',
+    labels: btns.map(b => b.querySelector('span.dtcc-button-text').textContent),
+    visibleButtons: btns.filter(b => !hidden(b)).length,
+    noOptionsNote: !!empty && !hidden(empty),
+  };
+  doc.body.click();
+  out.closedAfter = !doc.querySelector('div.dtcc-dropdown');
+  out.verdict = dropdownButton === 'shown' && out.list === 'shown' && out.visibleButtons > 0 ? 'BUTTONS SHOWN' : 'NO BUTTONS';
+  return out;
+}
+
+async function runCase(c) {
+  const dom = new JSDOM('<!doctype html><html><body><table id="t"><thead><tr><th>Status</th></tr></thead>'
+    + '<tbody></tbody></table></body></html>', { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
+  const win = dom.window;
+  const requests = [];
+  class FakeXHR {
+    constructor() { this.readyState = 0; this.status = 0; this.statusText = ''; this.responseText = ''; this.headers = {}; }
+    open(method, url) { this.method = method; this.url = url; this.readyState = 1; }
+    setRequestHeader(k, v) { this.headers[k] = v; }
+    abort() {}
+    send(body) {
+      const d = JSON.parse(body);
+      requests.push(d);
+      const answer = { draw: d.draw, recordsTotal: ROWS.length, recordsFiltered: ROWS.length, data: ROWS };
+      if (c.answer !== null) answer.columnControl = c.answer;
+      setTimeout(() => {
+        this.readyState = 4; this.status = 200; this.statusText = 'OK';
+        this.responseText = JSON.stringify(answer);
+        this.onreadystatechange();
+      }, 0);
+    }
+  }
+  win.XMLHttpRequest = FakeXHR;
+  win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  win.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
+  win.eval(DT_SRC);
+  win.eval(CC_SRC);
+  // Build the config inside the window realm: DataTables' plainObject() compares prototypes.
+  const cfg = win.eval('(' + JSON.stringify({
+    serverSide: true,
+    ajax: { url: '/data', type: 'POST', submitAs: 'json' },
+    columns: [{ data: 'status', name: 'status', title: 'Status', columnControl: [[c.list]] }],
+  }) + ')');
+  const init = new Promise(r => { cfg.initComplete = () => r(); });
+  const dt = new win.DataTable('#t', cfg);
+  await init; await tick(); await tick();
+  const first = snap(win);
+  const drawn = new Promise(r => dt.one('draw', () => r()));
+  dt.draw(); await drawn; await tick(); await tick();
+  const second = snap(win);
+  const sent = requests.map(d => d.columns[0].columnControl);
+  win.close();
+  return { id: c.id, requests: requests.length, first, second, sent };
+}
+
+setTimeout(() => { console.error('TIMEOUT'); process.exit(2); }, 20000).unref();
+(async () => {
+  console.log(JSON.stringify({ node: process.version, jsdom: ver(jsdomDir), datatables: ver(dtDir), columncontrol: ver(ccDir) }));
+  for (const c of CASES) console.log(JSON.stringify(await runCase(c)));
+})().catch(e => { console.error(e); process.exit(1); });
+```
+
 ## What follows
 
 How a value maps to a filter, and the open questions on dates with a zone, NULL and a list option's type, are in #106
-and its follow-ups.
+and its follow-ups. What the library says about the list's options is in #167.
