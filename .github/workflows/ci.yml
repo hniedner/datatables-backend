@@ -460,6 +460,8 @@ jobs:
       DTB_SQL_URL: mysql+pymysql://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_ASYNC_URL: mysql+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_DIALECT: mysql
+      # Python's local zone far from UTC: a bound built from local time (`.astimezone()`) would pass on the UTC runner.
+      TZ: America/Adak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -489,6 +491,8 @@ jobs:
       DTB_SQL_URL: mysql+mysqldb://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_ASYNC_URL: mysql+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_DIALECT: mysql
+      # Python's local zone far from UTC, as on the mysql leg.
+      TZ: America/Adak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -520,6 +524,8 @@ jobs:
       DTB_SQL_URL: mariadb+pymysql://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_ASYNC_URL: mariadb+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
       DTB_SQL_DIALECT: mariadb
+      # Python's local zone far from UTC, as on the mysql leg.
+      TZ: America/Adak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -547,6 +553,8 @@ jobs:
       DTB_SQL_URL: mssql+pyodbc://sa:Dtb-test-only-1@localhost:1433/dtb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
       DTB_SQL_ASYNC_URL: mssql+aioodbc://sa:Dtb-test-only-1@localhost:1433/dtb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
       DTB_SQL_DIALECT: mssql
+      # Python's local zone far from UTC, as on the mysql leg.
+      TZ: America/Adak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
