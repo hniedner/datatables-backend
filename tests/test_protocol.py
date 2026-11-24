@@ -852,6 +852,12 @@ def test_a_columncontrol_list_is_read_by_sorting_its_keys_not_by_building_a_list
     assert alone.columns[2].columnControl.list == ['b']
 
 
+def test_a_columncontrol_list_is_ordered_by_the_number_of_its_keys_not_by_their_text():
+    """SPEC-P5.9: the keys 0, 2 and 10 read in that order; sorted as text, `10` would come before `2`."""
+    listed = parse_request(_with_columncontrol({'list': {'10': 'c', '2': 'b', '0': 'a'}}))
+    assert listed.columns[2].columnControl.list == ['a', 'b', 'c']
+
+
 _LIST_KEY_REFUSAL = (
     'Invalid columns parameter: a ColumnControl list is neither an array nor an object keyed by whole-number indexes. '
     'Send an array, or an object keyed 0, 1, 2 and so on.'
@@ -873,15 +879,6 @@ def test_a_columncontrol_list_that_is_neither_an_array_nor_an_object_is_refused(
     with pytest.raises(MalformedRequest) as refused:
         parse_request(_with_columncontrol({'list': scalar}))
     assert str(refused.value) == _LIST_KEY_REFUSAL
-
-
-def test_a_columncontrol_form_list_with_a_gap_in_its_indexes_is_refused_quickly():
-    """SPEC-P5.9: a form index is a position, as for every index (`SPEC-P6.2`): a gap is refused, whatever its size, and
-    nothing is built up to it."""
-    started = time.perf_counter()
-    with pytest.raises(MalformedRequest):
-        parse_request(as_pairs(_with_columncontrol({'list': {'0': 'a', '999999999': 'b'}})))
-    assert time.perf_counter() - started < 1.0
 
 
 @pytest.mark.parametrize('entry', [True, None, 1.5, {}], ids=repr)

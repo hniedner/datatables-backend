@@ -102,11 +102,12 @@ The refusal was `ColumnControlSearch._idle` and the `list` validator of `protoco
 
 PRD-F45 reads the shapes above (#163), as JSON and as a form: a search is a value and a logic of the closed set (the
 control's eight logics, and the number control's four), a list is the index-keyed object or an array of text and whole
-numbers read as text. An idle search (an empty value with any logic but `empty` and `notEmpty`, or with none) and an
-empty list add nothing. Four shapes are refused with a message of their own, each saying what to change: a logic outside
-the set, a value with no logic, an active search with `type` `date`, and a list entry that is neither text nor a whole
-number; so is a list that is no array and no object keyed by indexes. The object's keys are sorted, never used as
-positions, so a key of nine digits costs nothing. What the answered shapes do to a query is in #164.
+numbers read as text. `type` is read only to refuse the date control; `mask` and any other field are ignored. An idle
+search (an empty value with any logic but `empty` and `notEmpty`, or with none) and an empty list add nothing. Five
+shapes are refused, each with a message of its own that says what to change: a logic outside the set, a value with no
+logic, an active search with `type` `date`, a list entry that is neither text nor a whole number, and a list that is
+neither an array nor an object keyed by whole-number indexes. The object's keys are sorted, never used as positions, so
+a key of nine digits costs nothing. What the answered shapes do to a query is in #164.
 
 ## What follows
 

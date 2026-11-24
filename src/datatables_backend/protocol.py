@@ -186,8 +186,8 @@ def _closed_logic(logic: str) -> str:
 class ColumnControlSearch(_Model):
     """ColumnControl's column search: a value and a logic from a closed set. It sends an idle one on every request, an
     empty value with a logic other than ``empty`` and ``notEmpty``, which adds nothing, as ColumnControl itself counts
-    it. An active one with no logic, or with the date control's ``type``, is refused. ``type`` and ``mask`` are read and
-    not used, except ``type`` ``date``."""
+    it. An active one with no logic, or with the date control's ``type``, is refused. ``type`` is read only to refuse
+    the date control; ``mask`` and any other field the client sends is ignored."""
 
     value: str = ''
     logic: Annotated[str, AfterValidator(_closed_logic)] = ''

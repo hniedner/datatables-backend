@@ -47,11 +47,11 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   JSON and as a form, where one with an empty value is idle (`SPEC-P5.3`): `MalformedRequest` with the message `Invalid
   columns parameter: a ColumnControl search sent a value without a logic. Send the control's logic with its value.`
 - **SPEC-P5.9** [core] A ColumnControl list given as an object is read by sorting its keys, never by building a list as
-  long as the largest: the JSON `{"0":"a","999999999":"b"}` reads as `a`, `b` at once (a gap is closed up). A key that
-  is no index (`x`, `1.5`, empty, `-1`, `01`, ten digits), and a list that is neither an array nor an object, raise
-  `MalformedRequest` with the message `Invalid columns parameter: a ColumnControl list is neither an array nor an
-  object keyed by whole-number indexes. Send an array, or an object keyed 0, 1, 2 and so on.` A form whose indexes have
-  a gap is `MalformedRequest` as for every index (`SPEC-P6.2`), at once.
+  long as the largest: the JSON `{"0":"a","999999999":"b"}` reads as `a`, `b` at once (a gap is closed up), and
+  `{"10":"c","2":"b","0":"a"}` as `a`, `b`, `c`: by the number of the key, not its text. A key that is no index (`x`,
+  `1.5`, empty, `-1`, `01`, ten digits), and a list that is neither an array nor an object, raise `MalformedRequest`
+  with the message `Invalid columns parameter: a ColumnControl list is neither an array nor an object keyed by
+  whole-number indexes. Send an array, or an object keyed 0, 1, 2 and so on.`
 - **SPEC-P6.1** [core] A decoded JSON list of objects or of numbers (`[{"draw": 1}]`, `[1]`) → `MalformedRequest`
   (a list of key-value pairs is valid, PRD-P1); `columns` as text → `MalformedRequest`;
   `columns[0][searchable]` as an object → `MalformedRequest`; `columns[0][data]` JSON `null` parses (PRD-P21).

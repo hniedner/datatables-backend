@@ -893,10 +893,10 @@ backend.
 
 A SearchBuilder tree nests at most 8 groups deep and holds at most 64 criteria in all; a categorical filter or
 `multi_values` list or ColumnControl list holds at most 256 values, and all lists of one request together at most 512; a
-request holds at most 64 column searches with a value, each ColumnControl search or list counting as one; beyond any
-bound the request is refused with `invalid_filter`, except a tree
-deeper than the parser reads, which is malformed (PRD-P6). The global search covers each declared column once, however
-often the request names it. All the conditions of a request together are bounded by PRD-C17.
+request holds at most 64 column searches with a value; beyond any bound the request is refused with `invalid_filter`,
+except a tree deeper than the parser reads, which is malformed (PRD-P6). A ColumnControl search or list counts as one
+of the 64 column searches. The global search covers each declared column once, however often the request names it. All
+the conditions of a request together are bounded by PRD-C17.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must
@@ -970,13 +970,14 @@ column search or SearchBuilder condition, on every backend.
 A search is a value and a logic from a closed set: `contains`, `notContains`, `equal`, `notEqual`, `starts`, `ends`,
 `empty` and `notEmpty`, and for a number control `greater`, `greaterOrEqual`, `less` and `lessOrEqual` (read as `>`,
 `>=`, `<` and `<=`). `contains` is the column search of PRD-F2, as ColumnControl's own `contains` is; `notContains` is
-SearchBuilder's `!contains`. The `type` and `mask` the client sends are read and not used. A list is an object keyed by
-index, or a list, of text or whole numbers, each read as its text, and answers as `multi_values` does (PRD-F38 bounds
-it). A search whose value is empty and whose logic is neither `empty` nor `notEmpty` is idle, and so is an empty list:
-they add nothing. ColumnControl's date control is not answered: an active search with `type` `date` is refused. A logic
-outside the set, a list entry that is neither text nor a whole number and an active date search each raise
-`MalformedRequest` (PRD-P5, PRD-E6) with a message that names ColumnControl and what to change, and holds none of what
-the client sent (PRD-E4, PRD-E10).
+SearchBuilder's `!contains`. The `type` the client sends is read only to refuse the date control; its `mask` and any
+other field are ignored. A list is an object keyed by index, or a list, of text or whole numbers, each read as its text,
+and answers as `multi_values` does (PRD-F38 bounds it). A search whose value is empty and whose logic is neither `empty`
+nor `notEmpty` is idle, and so is an empty list: they add nothing. ColumnControl's date control is not answered: an
+active search with `type` `date` is refused. Five shapes raise `MalformedRequest` (PRD-P5, PRD-E6) with a message that
+names ColumnControl and what to change, and holds none of what the client sent (PRD-E4, PRD-E10): a logic outside the
+set; a value with no logic; an active date search; a list entry that is neither text nor a whole number; and a list that
+is neither an array nor an object keyed by whole-number indexes.
 
 - **Reason:** The owner's decisions of 2026-11-23 and 2026-11-24 (#106): a table that offers ColumnControl's filters
   gets them answered, where PRD-P5 alone refused every active one with a 422 that named neither ColumnControl nor the
