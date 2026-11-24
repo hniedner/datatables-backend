@@ -1485,7 +1485,7 @@ def accented(session: Session) -> SQLTable:
 
 def folds_letters_beyond_ascii(session: Session) -> bool:
     """Whether the database folds `Ä` to `ä` on its own: SQLite folds ASCII only, PostgreSQL does in a UTF-8 locale
-    (the official image's `en_US.utf8`) and not in the `C` locale, MySQL's and SQL Server's collations do."""
+    (the official image's `en_US.utf8`) and not in the `C` locale, MySQL's, MariaDB's and SQL Server's collations do."""
     dialect = session.get_bind().dialect.name
     if dialect == 'sqlite':
         return False

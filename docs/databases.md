@@ -73,6 +73,33 @@ or an OpenSearch setting has an entry below.
   works (`tests/test_sql.py`, `test_a_timezone_aware_column_compares_by_utc_day`).
 - **Requirement:** PRD-F21.
 
+## MariaDB
+
+### The default collation ignores trailing spaces and accents
+
+- **What you see:** MariaDB 12.3's default collation, `utf8mb4_uca1400_ai_ci`, is PAD SPACE and accent-insensitive,
+  unlike MySQL 8.4's default (`utf8mb4_0900_ai_ci`, NO PAD). So `=`, a categorical filter and a `multi_values` list
+  treat `'a '` and `'a'` as the same value, a value of spaces only matches the empty string, and `apfel` finds `Äpfel`
+  ([What a database folds beyond ASCII letters and accents](#what-a-database-folds-beyond-ascii-letters-and-accents)).
+  A column under a `_nopad_` collation (`utf8mb4_uca1400_nopad_ai_ci`) compares as MySQL's default does: documented,
+  not run.
+- **Example:** `multi_values: [" "]` on a column holding `''` finds that row.
+- **How it is known:** MEASURED 2026-11-24 on MariaDB 12.3.3 (image digest pinned in CI's `mariadb` job): the server's
+  `@@collation_server` is `utf8mb4_uca1400_ai_ci`, and `information_schema.COLLATIONS` lists `uca1400_ai_ci` as
+  `PAD SPACE` and `uca1400_nopad_ai_ci` as `NO PAD`. Pinned by `tests/test_sql.py`
+  (`test_white_space_is_a_value_on_a_string_column`, `test_the_library_folds_no_accent_the_collation_does_not`).
+- **Requirement:** PRD-F20, PRD-F26.
+
+### The dialect name is the URL's
+
+- **What you see:** SQLAlchemy names the dialect `mariadb` only for a `mariadb+` URL (`mariadb+pymysql://`,
+  `mariadb+aiomysql://`); a `mysql+` URL against a MariaDB server keeps the name `mysql`. The library's MariaDB
+  branches (its NULL ordering and its day text) follow the name, so name the server in the URL.
+- **Example:** `mysql+pymysql://` against MariaDB takes the MySQL branches.
+- **How it is known:** the `mariadb+` URLs MEASURED 2026-11-24 (the dialect name read in a local run against 12.3.3,
+  CI's `mariadb` job); a `mysql+` URL against a MariaDB server: READ in SQLAlchemy's `_mariadb_shim`, not run.
+- **Requirement:** PRD-Q2.
+
 ## SQL Server
 
 ### An exact match ignores trailing spaces
@@ -203,7 +230,8 @@ or an OpenSearch setting has an entry below.
   | PostgreSQL | yes in a UTF-8 locale; in a `C` or `POSIX` locale: READ, not run | no |
   | MySQL 8.4 | yes | yes under `utf8mb4_0900_ai_ci` |
   | SQL Server 2022 | yes | no under `Latin1_General_CI_AS` |
-  | MariaDB, any other collation | unknown | unknown |
+  | MariaDB 12.3 | yes | yes under `utf8mb4_uca1400_ai_ci` |
+  | any other collation of MySQL, MariaDB or SQL Server | unknown | unknown |
 
   Whether the dotted and the dotless i match is unknown on every engine: no test reads it.
 - **Example:** a MySQL column under `utf8mb4_0900_ai_ci` holding `Äpfel` is found by the global search `apfel`; the
@@ -211,8 +239,8 @@ or an OpenSearch setting has an entry below.
 - **How it is known:** the second column is pinned by `tests/test_sql.py`
   (`test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_small_one_where_the_database_folds`)
   and the third by `test_the_library_folds_no_accent_the_collation_does_not`, which CI's `tests` (SQLite),
-  `postgresql`, `mysql` and `sqlserver` jobs run. The tests declare the collation of the MySQL and the SQL Server
-  column as the table says and keep the default of SQLite and PostgreSQL (the image's `en_US.utf8`); the `C` locale
+  `postgresql`, `mysql`, `mariadb` and `sqlserver` jobs run. The tests declare the collation of the MySQL, MariaDB
+  and SQL Server column as the table says and keep the default of SQLite and PostgreSQL (the image's `en_US.utf8`); the `C` locale
   is read in the helper `folds_letters_beyond_ascii` and is not run.
 - **Requirement:** PRD-F9, PRD-F10.
 
@@ -597,9 +625,12 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 
 - **What you see:** the drivers and versions CI runs are listed under [Tested with](../README.md#tested-with); a
   driver or a MariaDB server not listed there is not run by this project.
-- **Example:** MariaDB and `mysqlclient` are not run.
+- **Example:** the `mariadb` connector (`mariadb+mariadbconnector://`) is not run: SQLAlchemy has no async form of it,
+  and the sync one needs MariaDB's C connector. MariaDB is run through pymysql and aiomysql, with the
+  `mariadb+pymysql` and `mariadb+aiomysql` URLs, which make SQLAlchemy's dialect name `mariadb`; the `mysql+` URLs
+  against a MariaDB server name it `mysql` and are not run. `mysqlclient` is run sync only, against MySQL 8.4.
 - **How it is known:** READ in `.github/workflows/ci.yml` (jobs `tests`, `postgresql`, `postgresql-psycopg2-asyncpg`,
-  `mysql`, `sqlserver`, `opensearch`).
+  `mysql`, `mysql-mysqlclient`, `mariadb`, `sqlserver`, `opensearch`).
 - **Requirement:** PRD-Q2 (the database's own driver is the adopter's to install).
 
 ### A global search costs one condition per word and column, and the budget does not count what the adopter adds
