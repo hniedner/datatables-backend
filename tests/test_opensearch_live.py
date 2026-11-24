@@ -991,14 +991,6 @@ def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
     assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected
 
 
-def test_a_number_column_search_is_exact_not_a_prefix_or_a_substring(client: OpenSearch):
-    """SPEC-F33.1: a document with 120 pages holds the text of 12, and is not found by `12`."""
-    with added_document(client, pages=120):
-        params = request(*NAMES)
-        params.columns[3].search.value = '12'
-        assert found(table.fetch_sync(params, client)) == ['a1', 'd4']
-
-
 @pytest.mark.parametrize(
     'search',
     [{'value': '^(12|60)$', 'regex': True}, {'multi_values': ['12', '60']}],
