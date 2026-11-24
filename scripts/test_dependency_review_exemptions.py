@@ -17,8 +17,8 @@ import yaml
 ROOT = Path(__file__).parent.parent
 CHECKED = {'aiohappyeyeballs': '2.7.1', 'protobuf': '7.36.2'}  # licence checked by hand, 2026-11-19
 #: LGPL (psycopg, psycopg-binary: 3.0-only; psycopg2-binary: 2.0-or-later AND 3.0-or-later); the `containers` group's
-#: PostgreSQL drivers
-TEST_ONLY = {'psycopg', 'psycopg-binary', 'psycopg2-binary'}
+#: PostgreSQL drivers; GPL-2.0-or-later (mysqlclient), the `mysqlclient` group's MySQL driver
+TEST_ONLY = {'psycopg', 'psycopg-binary', 'psycopg2-binary', 'mysqlclient'}
 
 
 def locked() -> list[dict[str, Any]]:
