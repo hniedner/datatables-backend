@@ -101,13 +101,23 @@ async def users_table(params: DataTablesParams, session: SessionDep) -> dict[str
 On the page, DataTables' default POST (a form) is read as it comes, so the client needs no `data` or `contentType`:
 
 ```js
-new DataTable('#users', {
+DataTable.ext.errMode = (settings, techNote, message) => console.warn(message); // no alert(); the page shows the error
+
+const table = new DataTable('#users', {
   serverSide: true,
   processing: true,
   ajax: { url: '/users/table', type: 'POST' },
   columns: [{ data: 'id' }, { data: 'email' }, { data: 'joined' }],
 });
+
+table.on('xhr', (e, settings, json) => {
+  document.querySelector('#users-error').textContent = json.error ?? ''; // json.error_code is the stable code
+});
 ```
+
+A user's mistake comes back as HTTP 200 with `error` and `error_code` in the answer. DataTables (checked in 3.1.5)
+shows an `error` in a browser `alert()` unless `DataTable.ext.errMode` says otherwise, and `errMode: 'none'` would also
+silence its own configuration warnings, so the example logs them. `#users-error` is an element of yours.
 
 Options (`TotalCache`, `RowHooks`, page limits, a table per request for a per-user filter): [docs/usage.md][usage].
 
