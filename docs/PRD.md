@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 53 of 2026-11-24 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 54 of 2026-11-24 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -49,7 +49,8 @@
   50 adds a clause to PRD-F11 (a typed wildcard in a SearchBuilder `contains`, `starts` or `ends` value is text) and
   one to PRD-F12 (the SearchBuilder tree combines with AND too); revision 51 adds a sentence to PRD-F25 (a number with
   a fraction is compared as that number against an integer column); revision 52 lays out section 5 as a list, one
-  entry per difference, no word changed (#42); revision 53 rewords PRD-F23's first sentence (the owner's decision of
+  entry per difference, no word changed (#42); revision 53 adds to section 5's entry for PRD-F11 that what the
+  analyser drops does not tell rows apart (#131); revision 54 rewords PRD-F23's first sentence (the owner's decision of
   2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
   number as the table shows it is found, and adds a section-5 entry for the spellings (#71)). It replaces draft 1
   (R1 to R9); section 10 maps every draft-1 item to its place here.
@@ -1787,7 +1788,9 @@ where a database decides. Each difference is stated here; every other answer is 
   - **Requirement:** PRD-C17
 - On a text-only OpenSearch string column a word is an analysed match (`red` does not find `reddish`). On any analysed
   column (text-only or text+keyword) a word the analyser splits also matches as a phrase of its tokens: `foo-bar` finds
-  `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. SQL matches substrings only, so it does neither.
+  `foo bar` and `!foo-bar` excludes it, and `foo` alone is not found. What the analyser drops, such as punctuation and
+  padding, does not tell rows apart there either: `-red` also finds `red`, `50%` finds `50 plum`, and `" a "` finds `a`.
+  SQL matches substrings only, so it does neither.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F11
 - On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by

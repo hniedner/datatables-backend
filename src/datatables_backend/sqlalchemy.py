@@ -685,8 +685,9 @@ def _number_text_default(element: _number_text, compiler: SQLCompiler, **kw: Any
 
 
 # Not measured: coverage is taken on the SQLite leg and this runs only on SQL Server, where
-# test_a_number_as_the_table_shows_it_finds_its_row runs it. The culture is named: FORMAT writes the decimal mark of
-# the session's language without one, and refuses 'invariant' (measured, docs/decisions/006)
+# test_a_number_as_the_table_shows_it_finds_its_row runs it. FORMAT without a culture follows the session's language
+# (Microsoft's documentation, not run here); with 'de-DE' it writes a comma, and it refuses 'invariant' (measured,
+# docs/decisions/006)
 @compiles(_number_text, 'mssql')
 def _number_text_mssql(element: _number_text, compiler: SQLCompiler, **kw: Any) -> str:  # pragma: no cover
     return f"FORMAT({compiler.process(element.clauses, **kw)}, 'R', 'en-US')"

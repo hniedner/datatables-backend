@@ -79,8 +79,10 @@ same in exponent form (`1.2500000000000000e+001`), and a cast through `DECIMAL(3
 
 The culture: the session's language was `us_english`. `FORMAT(x, 'R')` and `FORMAT(x, 'R', 'en-US')` gave the same
 text. `'de-DE'` and `'fr-FR'` write the decimal comma (`12,5`, `-3,25`, `123456789,12345679`). Whether another
-session language changes what `FORMAT(x, 'R')` writes without the argument was not run, so the culture is named and
-cannot change it. `'invariant'` is refused (error 42000). So `'en-US'` is named.
+session language changes what `FORMAT(x, 'R')` writes without the argument was not run. Microsoft's FORMAT page
+(opened 2026-11-24) says "If the culture argument isn't provided, the language of the current session is used"
+(documented, not run). So the culture is named, and the session's language cannot change the text. `'invariant'` is
+refused (error 42000), which is measured.
 
 The cost: 200,000 rows of a `Float(53)` column, `COUNT(*)` with `LIKE '%7%'`, the least of 3 runs. `CAST(v AS
 VARCHAR(max))`: 0.212 s, 85,012 rows. `FORMAT(v, 'R', 'en-US')`: 0.857 s, 104,188 rows. About four times on a scan,

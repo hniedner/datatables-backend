@@ -563,13 +563,14 @@ both. OpenSearch before 2.19 is not tested. The suite also passed once on each o
 
 - **What you see:** on an analysed column, text or `text+keyword`, a word the analyser splits also matches as a phrase
   of its tokens, and `!` excludes it; on a text-only column a word is an analysed match, so `red` does not find
-  `reddish`. SQL matches substrings only. What the analyser drops, such as quote marks, a leading `-` and padding,
-  does not tell rows apart either: `-red` also finds `red`. The rule is in
-  [the OpenSearch notes](rules.md#opensearch) ("Analysed text").
+  `reddish`. SQL matches substrings only. What the analyser drops, such as quote marks, `%`, `*`, `?`, a leading `-`
+  and padding, does not tell rows apart either: `-red` also finds `red`, and `50%` finds `50 plum`. A keyword column
+  tells them apart. The rule is in [the OpenSearch notes](rules.md#opensearch) ("Analysed text").
 - **Example:** `a-b` finds `a b` and `!a-b` leaves it out; `a` alone is not found by `a-b`.
 - **How it is known:** MEASURED, pinned by `tests/test_opensearch_live.py`
-  (`test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens` and
-  `test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword`), which CI's `opensearch` job runs on
+  (`test_a_word_the_analyser_splits_is_a_phrase_of_its_tokens`,
+  `test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword` and, for the keyword column that does tell
+  them apart, `test_what_an_analyser_drops_tells_rows_apart_on_a_keyword_column`), which CI's `opensearch` job runs on
   3.10.0 and 2.19.7.
 - **Requirement:** PRD-F11.
 
