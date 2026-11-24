@@ -753,6 +753,19 @@ def test_a_number_outside_the_range_of_its_field_is_the_users_mistake(client: Op
     assert table.fetch_sync(params, client).error_code == 'invalid_number'
 
 
+def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
+    """PRD-D8 today's result: a column is a string column unless declared, and the global search puts a string column's
+    text on its field. `created` is a `date` field, so the server refuses the text with a 400 that reaches the
+    application as the client's `RequestError` (docs/databases.md, "A date or number field takes part in the global
+    search unless it is declared"). The declared case is `test_the_global_search` (`table` declares `created` as
+    `type='date'`): `apple` answers a1 and d4."""
+    undeclared = SearchTable(
+        INDEX, [IndexColumn('id', text='keyword'), IndexColumn('title'), Column('created')], unique_key='id'
+    )
+    with pytest.raises(RequestError):
+        undeclared.fetch_sync(request('id', 'title', 'created', search={'value': 'apple'}), client)
+
+
 # The tests below declare string columns on a boolean mapping. An OpenSearch column is string unless declared boolean
 # (PRD-D8), so PRD-F43 does not change their outcomes: the fix is to declare the column boolean, as docs/databases.md
 # says. The cases with the column declared boolean follow them.

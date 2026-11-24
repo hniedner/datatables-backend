@@ -15,7 +15,7 @@ and [SearchBuilder](https://datatables.net/manual/extensions/searchbuilder/) cri
 
 The library is read-only and framework-agnostic.
 
-> Status: release candidate (0.1.0rc3). Until 1.0, a minor release (0.x) may break the Python API; each such change is
+> Status: release candidate (0.1.0rc4). Until 1.0, a minor release (0.x) may break the Python API; each such change is
 > listed in [CHANGELOG.md][changelog]. The wire format and the error codes change only in a release whose notes say so.
 > See [docs/PRD.md][prd] for the scope and design.
 
@@ -75,7 +75,7 @@ reports = SearchTable(
         IndexColumn('body', text='text'),  # analysed only: no sorting
         Column('pages', type='number'),
         Column('created', type='date'),
-        Column('published', type='boolean'),  # a column is a string unless declared: the mapping is not read
+        Column('published', type='boolean'),  # a string unless declared: declare every date, number, boolean
     ],
     unique_key='id',  # required: an index has no primary key to break ties with
 )
