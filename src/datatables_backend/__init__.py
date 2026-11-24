@@ -5,7 +5,7 @@ The core needs only Pydantic. The backends are imported from their own modules, 
 imported; ``[opensearch]`` installs one) and ``datatables_backend.fastapi`` (``[fastapi]``).
 """
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 from .cache import TotalCache
 from .columns import Column

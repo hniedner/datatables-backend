@@ -6,6 +6,12 @@ change here; the wire format and the error codes change only in a release whose 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+This release answers ColumnControl's per-column filters, adds `scope=`, a per-request filter such as a user's rows,
+bounds the total cache, and answers HTTP 400 when a client disconnects while the request body is read. An application
+on 0.1.0 can upgrade without changing code.
+
 ### Added
 
 - `TotalCache(max_entries=...)`: a bound on the totals kept, 10,000 by default, the one stored longest ago dropped first
@@ -180,7 +186,8 @@ The first release, a release candidate: install it with `pip install --pre datat
 
 What it does: see [0.1.0].
 
-[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.1
 [0.1.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0
 [0.1.0rc4]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc4
 [0.1.0rc3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc3
