@@ -75,7 +75,7 @@ reports = SearchTable(
         IndexColumn('body', text='text'),  # analysed only: no sorting
         Column('pages', type='number'),
         Column('created', type='date'),
-        Column('published', type='boolean'),  # a column is a string unless declared: the mapping is not read
+        Column('published', type='boolean'),  # a string unless declared: declare every date, number, boolean
     ],
     unique_key='id',  # required: an index has no primary key to break ties with
 )
