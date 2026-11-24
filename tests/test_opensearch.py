@@ -31,6 +31,7 @@ from .conftest import criterion
 from .conftest import exact_values
 from .conftest import flat
 from .conftest import labelled
+from .conftest import logged_text
 from .conftest import nested
 from .conftest import request
 
@@ -354,7 +355,7 @@ def test_a_refusal_with_counts_logs_one_line_and_an_empty_page_none(caplog: pyte
     assert [(record.levelname, record.msg) for record in caplog.records] == [
         ('WARNING', 'datatables_page_out_of_range')
     ]
-    logged = repr([vars(record) for record in caplog.records])
+    logged = logged_text(caplog)
     assert not any(text in logged for text in ('4242', '1717', 'MARKER'))
     caplog.clear()
     with caplog.at_level(logging.DEBUG):

@@ -18,6 +18,7 @@ from datatables_backend import parse_request
 from datatables_backend.protocol import InvalidFilter
 
 from .conftest import BRACKETED
+from .conftest import logged_text
 from .conftest import reshaped
 
 
@@ -474,8 +475,7 @@ def test_the_log_line_of_a_refused_length_holds_none_of_its_digits(caplog: pytes
     with caplog.at_level(logging.DEBUG), pytest.raises(MalformedRequest):
         parse_request({'draw': 2, 'length': 123456})
     assert warnings(caplog) == ['datatables_length_refused']
-    logged = repr([vars(record) for record in caplog.records])
-    assert '123456' not in logged
+    assert '123456' not in logged_text(caplog)
 
 
 def test_a_structural_error_and_a_user_error_are_not_one_kind():
