@@ -262,6 +262,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F23.1** [SQL] Global search `17` → rows 2; column search `7` on `price` → rows 1, 2.
 - **SPEC-F23.2** [SQL] Column search `2024-12` on `made` → rows 2; `03-05` → rows 1 (date text is `YYYY-MM-DD`).
 - **SPEC-F23.3** [SQL] Global search `2023` → rows 4 (the `made` and `at` text).
+- **SPEC-F23.4** [SQL] Given a double-precision column and a `Numeric(10, 2)` column, each holding 17, 12.5, 1234567
+  and -3.25: a column search `7` → the rows of 17 and 1234567; `12.5` → the row of 12.5; `1234567` → the row of
+  1234567; `-3.25` → the row of -3.25. A search for a number as the table shows it finds its row.
 - **SPEC-F24.1** [all] SearchBuilder on `made` with the maximum date as a bound → error_code `invalid_date`, not a
   database error, in each of: `=`, `!=`, `<`, `<=`, `>`, `>=` with `9999-12-31`; `between` and `!between` with
   `9999-12-31` as the first or the second bound; `contains` and `!contains` with `9999-12-31`, `9999-12` or `9999`.
