@@ -470,6 +470,66 @@ jobs:
       - run: uv sync --locked --group containers
       - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
 
+  # The same tests on MySQL 8.4 through mysqlclient, the C driver that most MySQL installations still use. Sync only:
+  # mysqlclient has no async form, so the async half stays aiomysql. It builds from source, so it is a group of its own.
+  mysql-mysqlclient:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        env:
+          MYSQL_ROOT_PASSWORD: dtb-test-only
+          MYSQL_DATABASE: dtb
+        ports: ['3306:3306']
+        # TCP, not the socket: the server that initialises the data directory listens on the socket only
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uroot -pdtb-test-only -e 'SELECT 1' dtb" --health-interval 2s
+          --health-timeout 5s --health-retries 90
+    env:
+      DTB_SQL_URL: mysql+mysqldb://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_ASYNC_URL: mysql+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_DIALECT: mysql
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config
+      - run: uv sync --locked --group containers --group mysqlclient
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+
+  # MariaDB 12.3, the current long-term support line (https://mariadb.org/about/#maintenance-policy), through the
+  # same drivers as MySQL. The `mariadb+` URLs make SQLAlchemy name the dialect `mariadb`, which the library's
+  # MariaDB branches and the tests key on. The `mariadb` connector is not run: SQLAlchemy has no async form of it.
+  mariadb:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:12.3@sha256:4aaf88b3106382c8c18e49f0cec60267be618fc22f858c4503afb2a2555afed3
+        env:
+          MARIADB_ROOT_PASSWORD: dtb-test-only
+          MARIADB_DATABASE: dtb
+        ports: ['3306:3306']
+        # The image's own script, over TCP once InnoDB is up: the initialising server listens on the socket only
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 2s
+          --health-timeout 5s --health-retries 90
+    env:
+      DTB_SQL_URL: mariadb+pymysql://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_ASYNC_URL: mariadb+aiomysql://root:dtb-test-only@127.0.0.1:3306/dtb
+      DTB_SQL_DIALECT: mariadb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - run: uv sync --locked --group containers
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+
   sqlserver:
     runs-on: ubuntu-latest
     services:
@@ -576,7 +636,7 @@ jobs:
     if: always()
     needs:
       [lint, types, tests, pre-commit, secrets, install-isolation, dist, dist-check, minimum-versions, postgresql,
-       postgresql-psycopg2-asyncpg, mysql, sqlserver, opensearch]
+       postgresql-psycopg2-asyncpg, mysql, mysql-mysqlclient, mariadb, sqlserver, opensearch]
     runs-on: ubuntu-latest
     outputs:
       passed: ${{ steps.passed.outputs.passed }}
