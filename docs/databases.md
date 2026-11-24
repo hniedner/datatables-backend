@@ -32,6 +32,17 @@ or an OpenSearch setting has an entry below.
   and `DESC NULLS LAST` (https://www.postgresql.org/docs/current/indexes-ordering.html, opened 2026-11-23).
 - **Requirement:** PRD-O2.
 
+### A `real` column writes 1234567 with an exponent in its search text
+
+- **What you see:** a single-precision column (`real`, SQLAlchemy's `Float(24)`) writes 1234567 as `1.234567e+06`
+  in its search text, so the table shows 1234567 and a search for `1234567` finds nothing. A double precision
+  column writes it as `1234567`. Declare the column double precision (`Float(53)`, `DOUBLE_PRECISION`).
+- **Example:** a `real` column holding 1234567: the column search `1234567` finds no row, and `1.234567` finds it.
+- **How it is known:** MEASURED 2026-11-23 on PostgreSQL 18.7
+  (`docs/decisions/006-number-search-text.md`). The library does not pin it: its test holds a double precision and
+  a decimal column only.
+- **Requirement:** PRD-F23.
+
 ## MySQL
 
 ### An exact match ignores trailing spaces under a PAD SPACE collation
@@ -97,22 +108,36 @@ or an OpenSearch setting has an entry below.
   send a longer number (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
 - **Requirement:** PRD-F25.
 
+### A float's search text is written by `FORMAT`, which costs about four times a cast
+
+- **What you see:** SQL Server's `CAST` writes a float with six digits (`1.23457e+006` for 1234567), which a search
+  for the number the table shows would miss. The library searches a float column (`Float`, `REAL`, `DOUBLE`) by
+  `FORMAT(x, 'R', 'en-US')` instead, which writes the shortest text that reads back as the same number. On a full
+  scan that costs about four times a cast. A decimal and an integer column keep their `CAST`.
+- **Example:** 200,000 rows of a `Float(53)` column, `LIKE '%7%'`: 0.21 s by `CAST`, 0.86 s by
+  `FORMAT(..., 'R', 'en-US')`.
+- **How it is known:** MEASURED 2026-11-24 on SQL Server 2022 (16.0.4325.4), CI runs 45305352267 (the texts) and
+  45306324153 (the cost, the least of 3 runs; the culture) (`docs/decisions/006-number-search-text.md`).
+- **Requirement:** PRD-F23.
+
 ### A database at a lower compatibility level is not tested
 
-- **What you see:** CI runs SQL Server 2022 on a database at the level a new database gets from the server; the
-  workflow sets none, and a database at a lower level is not run. The SQL the library writes only for SQL Server is
-  two functions, `SWITCHOFFSET(..., '+00:00')` to give a time-zone-aware column's UTC time and
-  `CONVERT(VARCHAR(10), ..., 23)` for its day text. Neither is tied to a level that Microsoft's pages name. The SQL
-  that SQLAlchemy's SQL Server dialect writes (the page's offset and limit, for one) is SQLAlchemy's, and its needs
-  are not checked here: unknown.
+- **What you see:** CI runs SQL Server 2022 on a database at compatibility level 160, the level a new database gets
+  from the server (the workflow sets none), and a database at a lower level is not run. The SQL the library writes
+  only for SQL Server is three functions: `SWITCHOFFSET(..., '+00:00')` to give a time-zone-aware column's UTC time,
+  `CONVERT(VARCHAR(10), ..., 23)` for its day text and `FORMAT(..., 'R', 'en-US')` for a float's search text. None
+  is tied to a level that Microsoft's pages name (`FORMAT`'s page was not opened). The SQL that SQLAlchemy's SQL
+  Server dialect writes (the page's offset and limit, for one) is SQLAlchemy's, and its needs are not checked here:
+  unknown.
 - **Example:** a database set to `COMPATIBILITY_LEVEL = 120` is the case no run of this project covers.
-- **How it is known:** READ in `src/datatables_backend/sqlalchemy.py:633` and `:655`, and `.github/workflows/ci.yml`
-  (job `sqlserver`, no level set). Documented, not run: the pages for
-  [SWITCHOFFSET](https://learn.microsoft.com/en-us/sql/t-sql/functions/switchoffset-transact-sql) and
+- **How it is known:** the level is MEASURED 2026-11-24 on SQL Server 2022 (16.0.4325.4), CI run 45305352267
+  (`docs/decisions/006-number-search-text.md`). The functions are READ in `src/datatables_backend/sqlalchemy.py:637`,
+  `:659` and `:692`, and the job in `.github/workflows/ci.yml` (job `sqlserver`, no level set). Documented, not run:
+  the pages for [SWITCHOFFSET](https://learn.microsoft.com/en-us/sql/t-sql/functions/switchoffset-transact-sql) and
   [CAST and CONVERT](https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql) (both opened
-  2026-11-23) name no compatibility level for these functions or for style 23. The second names levels only for the
+  2026-11-23) name no compatibility level for `SWITCHOFFSET` or for style 23. The second names levels only for the
   default style of `time` and `datetime2` (110).
-- **Requirement:** PRD-F21, PRD-F42.
+- **Requirement:** PRD-F21, PRD-F42, PRD-F23.
 
 ## SQLite
 
@@ -204,6 +229,21 @@ or an OpenSearch setting has an entry below.
   `test_a_column_with_a_type_of_its_own_is_compared_as_its_type_compares`), which every SQL job of CI runs. The
   tests declare a case-sensitive collation on each engine.
 - **Requirement:** PRD-F9.
+
+### A number's search text is the database's own spelling of it
+
+- **What you see:** the table shows a float in its shortest form, and a search for that finds the row on a double
+  precision and a decimal column on every engine. The other spellings are each engine's own: `17.0` for a whole
+  float on SQLite only, an exponent as `1.0e+20`, `1e+20`, `1e20` or `1E+20`, `0.0000001` for 1e-7 on MySQL, and a
+  decimal's trailing zeros (`12.50`), which SQLite drops. A search for `17.0` finds the float 17.0 on SQLite and a
+  decimal 17.00 elsewhere. A single precision `real` is not covered on PostgreSQL (see its entry). The rule is in
+  [Types and matching](rules.md#types-and-matching).
+- **Example:** a `Numeric(10, 2)` column holding 12.50: the search `12.50` finds it on PostgreSQL, MySQL and SQL
+  Server and not on SQLite, which writes `12.5`; the search `12.5` finds it on all four.
+- **How it is known:** MEASURED 2026-11-23 on SQLite 3.53.1, PostgreSQL 18.7 and MySQL 8.4.13, and 2026-11-24 on
+  SQL Server 2022 (`docs/decisions/006-number-search-text.md`); the double and the decimal case are pinned by
+  `tests/test_sql.py` (`test_a_number_as_the_table_shows_it_finds_its_row`), which every SQL job of CI runs.
+- **Requirement:** PRD-F23.
 
 ### A number written with a point or an exponent is compared as a floating-point number
 
