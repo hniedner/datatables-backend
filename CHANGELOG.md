@@ -10,6 +10,9 @@ change here; the wire format and the error codes change only in a release whose 
 
 - `TotalCache(max_entries=...)`: a bound on the totals kept, 10,000 by default, the one stored longest ago dropped first
   ([#50]). A `max_entries` below 1 raises `ValueError`.
+- `scope=` on `fetch` and `fetch_sync` of `SQLTable` and `SearchTable`: a filter for one request, such as a user's rows,
+  ANDed with `base_filter` and kept apart in the total cache, so one table and one cache serve every user ([#79]). Not
+  breaking.
 
 ### Changed
 
@@ -168,4 +171,5 @@ What it does: see [0.1.0].
 [#58]: https://github.com/hniedner/datatables-backend/issues/58
 [#71]: https://github.com/hniedner/datatables-backend/issues/71
 [#75]: https://github.com/hniedner/datatables-backend/issues/75
+[#79]: https://github.com/hniedner/datatables-backend/issues/79
 [#152]: https://github.com/hniedner/datatables-backend/issues/152

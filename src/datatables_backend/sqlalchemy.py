@@ -120,7 +120,8 @@ class SQLTable:
             tie-breaker of every order, in place of the primary key. Without it, a source must have a primary key,
             and a subquery must select every primary-key column of each table it reads (in a join too, and in a
             ``WHERE`` or a scalar subquery); otherwise the table raises ``SchemaError``. A ``UNION`` is not checked.
-        base_filter: The rows the table shows at all; it applies to ``recordsTotal`` too.
+        base_filter: The rows the table shows at all; it applies to ``recordsTotal`` too. For a filter that differs
+            per request, such as a user's rows, pass ``scope`` to ``fetch`` instead.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
         total_cache: Caches ``recordsTotal`` (one ``COUNT(*)`` per TTL instead of per draw).
     """
@@ -164,14 +165,22 @@ class SQLTable:
         else:
             self._tie_breakers = list(source.primary_key)
 
-    async def fetch(self, params: DTParams, source: _AsyncSource) -> DTResponse:
+    async def fetch(
+        self, params: DTParams, source: _AsyncSource, *, scope: ColumnElement[bool] | None = None
+    ) -> DTResponse:
         """Answer one request on an ``AsyncSession`` or ``AsyncConnection``.
+
+        ``scope`` limits the rows for this request only, together with the table's ``base_filter``, to ``recordsTotal``,
+        ``recordsFiltered`` and the page alike (PRD-F31). It is a condition on the source's columns, such as
+        ``users.c.owner_id == user.id``, built by the server from the authenticated user and never from the request:
+        a scope taken from the request would let a client choose another user's rows. Column hooks do not apply to it.
+        Requests with equal scopes may share a cached total; those with different ones never do (PRD-C15).
 
         A mistake the user can fix is answered with its ``error_code`` (see ``DTResponse``) and logged once, before
         any statement runs; any other failure raises.
         """
         try:
-            statements = self._statements(params, _dialect(source))
+            statements = self._statements(params, _dialect(source), scope)
         except InvalidFilter as found:
             return refused(params, found)
         total = await self._total(source, statements)
@@ -179,10 +188,12 @@ class SQLTable:
         result = await source.execute(statements.page)
         return self._response(params, total, filtered, result.mappings().all())
 
-    def fetch_sync(self, params: DTParams, source: _SyncSource) -> DTResponse:
-        """``fetch`` for a ``Session`` or ``Connection``."""
+    def fetch_sync(
+        self, params: DTParams, source: _SyncSource, *, scope: ColumnElement[bool] | None = None
+    ) -> DTResponse:
+        """``fetch`` for a ``Session`` or ``Connection``, with the same ``scope``."""
         try:
-            statements = self._statements(params, _dialect(source))
+            statements = self._statements(params, _dialect(source), scope)
         except InvalidFilter as found:
             return refused(params, found)
         total = self._total_sync(source, statements)
@@ -192,7 +203,7 @@ class SQLTable:
 
     # -- building ---------------------------------------------------------------------------------------------------
 
-    def _statements(self, params: DTParams, dialect: Dialect) -> _Statements:
+    def _statements(self, params: DTParams, dialect: Dialect, scope: ColumnElement[bool] | None) -> _Statements:
         """Every statement of the request, built before any runs: a bad filter never leaves a half-run query.
 
         Raises:
@@ -202,14 +213,13 @@ class SQLTable:
         mistakes = Mistakes()
         request = plan(params, self.columns, self._describe, mistakes)
         total = select(func.count()).select_from(self.source)
-        if self.base_filter is not None:
-            total = total.where(self.base_filter)
+        limits = [limit for limit in (self.base_filter, scope) if limit is not None]
+        total = total.where(*limits)
 
         filtered_rows = select(*(self._sql(column).label(column.name) for column in self.columns)).select_from(
             self.source
         )
-        if self.base_filter is not None:
-            filtered_rows = filtered_rows.where(self.base_filter)
+        filtered_rows = filtered_rows.where(*limits)
         filtered_rows = filtered_rows.where(*self._conditions(request, dialect, mistakes))
         mistakes.raise_first()
         filtered = select(func.count()).select_from(filtered_rows.subquery())
@@ -353,7 +363,8 @@ class SQLTable:
 
     def _total_key(self, source: _AsyncSource | _SyncSource, total: Select[Any]) -> str:
         """The database (its URL without the password) and the count as this database runs it, with every bound
-        value of the source and the base filter: two scopes that differ only in a value never share a total."""
+        value of the source, the base filter and the request's scope: two scopes that differ only in a value never
+        share a total."""
         bind = _bind(source)
         compiled = total.compile(dialect=bind.dialect)
         values = sorted(compiled.params.items(), key=lambda item: item[0])

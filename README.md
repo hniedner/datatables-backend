@@ -59,6 +59,9 @@ async with AsyncSession(engine) as session:
 return response.to_dict()
 ```
 
+A filter that differs per user goes to `fetch(params, session, scope=...)`, not to the table (`SearchTable.fetch` takes
+the same keyword).
+
 ## OpenSearch
 
 ```python
@@ -117,7 +120,7 @@ A user's mistake comes back as HTTP 200 with `error` and `error_code` in the ans
 shows an `error` in a browser `alert()` unless `DataTable.ext.errMode` says otherwise, and `errMode: 'none'` would also
 silence its own configuration warnings, so the example logs them. `#users-error` is an element of yours.
 
-Options (`TotalCache`, `RowHooks`, page limits, a table per request for a per-user filter): [docs/usage.md][usage].
+Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
 ## Tested with
 
