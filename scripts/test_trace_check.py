@@ -490,8 +490,9 @@ def test_the_enforced_requirements_of_the_script_are_the_default(tmp_path: Path)
     module = importlib.util.module_from_spec(loaded)
     loaded.loader.exec_module(module)
     ids = [entry[4:] if entry.startswith('PRD-') else f'{entry}1' for entry in module.ENFORCED]
-    held = [rid for rid in ('F1', 'F2') if rid in ids]  # the requirements COMPLETE already holds, in its order
-    fresh = [rid for rid in ids if rid not in held]
+    # The requirements COMPLETE already holds, in its order: enforced by their id or by the letter F
+    held = [rid for rid in ('F1', 'F2') if rid in ids or rid[0] in module.ENFORCED]
+    fresh = [rid for rid in ids if rid not in ('F1', 'F2')]
     prd = PRD + ''.join(f'\n#### PRD-{rid}' + VALID for rid in fresh)
     specs = COMPLETE + ''.join(f'- **SPEC-{rid}.1** Stated, see PRD-F1.\n' for rid in fresh)
     result = run(tmp_path, {'F.md': specs}, prd=prd, enforce=None)
