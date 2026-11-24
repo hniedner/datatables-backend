@@ -264,11 +264,12 @@ the same. Both options below are complete.
 | | **Owner starts** (the smaller scope) | **Every merge starts** (the model) |
 |---|---|---|
 | How | Changes go under `[Unreleased]` as today. One release PR renames it to `## [X] - <date>` and sets `__version__`, as #169 did for 0.1.0 (READ). After it merges the owner pushes `v<X>`; `release.yml` runs as today. | After CI passes on `main`, `tag.yml` computes the version, creates the tag and dispatches `release.yml` on it (sections 2, 5). |
-| Version | the release PR writes it; CI on that PR fails unless it equals `git-cliff --bumped-version` for the PR's merge commit (`main` is strict, so the PR is up to date, INFERRED); `check-tag` also refuses a tag whose version differs from `git-cliff --ignore-tags "^<tag>$" --bumped-version` (RUN: on a commit tagged `v0.2.0` whose commits give a patch, that command printed `v0.1.1`) | computed by git-cliff |
+| Version | the release PR writes it; CI on that PR fails unless it equals `git-cliff --bumped-version` for the PR's merge commit (`main` is strict, so the PR is up to date, INFERRED); `check-tag` also refuses a tag whose version differs from `git-cliff --ignore-tags "^<tag>$" --bumped-version` (RUN: on a commit tagged `v0.2.0` whose commits give a patch, that command printed `v0.1.1`); only the new tag is ignored there, never an unpublished older one (see "A version that was tagged but not published" below) | computed by git-cliff |
 | Notes | the `## [X]` section, as the owner's rule of 2026-11-23 says | the PR that causes the release writes `## [X]` (section 8, option P) |
-| A rejected or abandoned approval | the owner pushed the tag knowingly; it stays (the ruleset blocks deletion), as with 0.1.0rc1 (READ, `CHANGELOG.md:177`) | the tag stays, the draft release stays, the version is skipped, and the tag becomes git-cliff's last release, so its commits never appear in a later generated list (INFERRED: `--unreleased` "Processes the commits that do not belong to a tag", FETCHED, usage/args). Once the tag exists the owner's choice is approve or burn. |
+| A rejected, abandoned or expired approval | the owner pushed the tag knowingly; it stays (the ruleset blocks deletion), as with 0.1.0rc1 (READ, `CHANGELOG.md:177`); the version is skipped | the tag stays, the draft release stays, the version is skipped. Once the tag exists the owner's choice is approve or burn. |
+| Afterwards | under both: the owner deletes the draft release, if one exists; the tag stays, and "A version that was tagged but not published" below brings its commits into the next release | same |
 | Pending approvals | one per release the owner starts | one per releasable merge; at this project's merge rate (RUN, `git log --merges --first-parent v0.1.0..0daf2f4`: 8 pull requests merged into `main` since `v0.1.0`, all on 2026-11-24) one would be pending almost always |
-| A job waiting for approval | waits "up to 30 days on environment approvals" (FETCHED, docs.github.com/en/actions/reference/limits) | same |
+| A job waiting for approval | waits "up to 30 days on environment approvals" (FETCHED, docs.github.com/en/actions/reference/limits); past that it fails, leaving the tag and the draft release (INFERRED), cleaned up as in the row above | same; and while that draft stands, `tag.yml` creates nothing, so its log and job summary name the blocking draft release and the `release.yml` run waiting on it |
 | New in #76 | part (ii) of section 8 (the convention, the hook, the `commits` job, `cliff.toml` and its test) plus the two version checks | part (ii) plus `tag.yml`, `workflow_run`, the dispatch, hatch-vcs (4 build packages, `importlib.metadata`, uv `cache-keys`, the `check_dist.py` rewrite) and the changelog rule |
 | Not needed | none of sections 2, 3, 5; none of hatch-vcs's open questions | |
 | Same as SvelteDT | no | yes |
@@ -287,6 +288,36 @@ itself; after a rejection the owner deletes the draft release), no automatic `rc
 "^v[0-9]+\\.[0-9]+\\.[0-9]+$"` in `cliff.toml`, which is needed under either trigger while rc tags exist: with
 `v0.1.1rc1` as the latest tag git-cliff exits 1 with "Semver error: `unexpected character 'v' while parsing major
 version number`", and with the pattern it ignores the rc tag (RUN).
+
+**A version that was tagged but not published** (both triggers, since a hand-pushed tag can be rejected too). git-cliff
+treats every final `v*` tag as a release, so the rejected tag's commits would fall out of the next release's notes.
+`ignore_tags`: "While `skip_tags` drop commits from the changelog, `ignore_tags` include ignored commits into the next
+tag" (FETCHED, git-cliff.org/docs/configuration/git). RUN on a scratch repository with the recommended `cliff.toml`:
+annotated `v0.1.0`, then `refactor!: drop an old name` tagged `v0.2.0` (rejected), then `fix: a wrong bound`:
+
+| Command (`git-cliff --config cliff.toml ...`) | Output after the `INFO ... Using configuration from: .../cliff.toml` line |
+|---|---|
+| `--bumped-version` | `v0.2.1` |
+| `--ignore-tags "^v0.2.0$" --bumped-version` | `v0.2.0` |
+| `--unreleased` | `## unreleased`, `- a wrong bound` |
+| `--ignore-tags "^v0.2.0$" --unreleased` | `## unreleased`, `- a wrong bound` (the rejected tag's commit is **not** included) |
+| `--ignore-tags "^v0.2.0$" v0.1.0..HEAD` | `## unreleased`, `- drop an old name (breaking)`, `- a wrong bound` |
+| `--ignore-tags "^v0.2.0$" --bump --tag v0.2.1 v0.1.0..HEAD` | `WARN git_cliff > There is nothing to bump`, `## v0.2.1`, `- drop an old name (breaking)`, `- a wrong bound` |
+
+Two results differ from what was expected. With `--ignore-tags`, `--bumped-version` computes from `v0.1.0` again and
+gives `v0.2.0`, a tag that already exists and cannot be reused; and `--unreleased` still stops at the rejected tag.
+So the two uses split: the **version** is computed without `--ignore-tags` (`v0.2.1`, still a minor step from the last
+published 0.1.0, since the rejected tag carried the break), and the **notes** use `--ignore-tags` with the range from
+the last published tag (`v0.1.0..HEAD`), which lists both commits. The rehearsal uses the same notes command. Under
+the owner-started trigger the notes are CHANGELOG.md's section, so the rejected version's `## [X]` prose is merged into
+the next release PR's section; the generated list is only a cross-check there.
+
+The list of unpublished tags is the final `v*` tags minus the versions PyPI lists. `https://pypi.org/pypi/datatables-backend/json`
+answers a plain read: its `releases` are `0.1.0`, `0.1.0rc2`, `0.1.0rc3`, `0.1.0rc4`, and `info.version` is `0.1.0`
+(FETCHED); 0.1.0rc1, the rejected one, is absent, as the CHANGELOG says. **Limit:** a hand-kept list is a step someone
+forgets. The release job builds it from that URL each time, or `check-tag` refuses a tag whose notes range would start
+at an unpublished tag. Cost: one read of PyPI in the release run and the rehearsal (INFERRED: a few lines of `gh`/`jq`
+style shell, no new tool).
 
 ## 8. Proposal and size of #76
 
@@ -357,6 +388,23 @@ characters (section 4). It changes every commit from now on: a typed, short head
 git-cliff can only compute or check a version from typed commits, under either trigger; it is SvelteDT's rule; and it
 needs no change to the merge settings.
 
+**(5) Who can approve a publish.** Facts: the `pypi` environment has a branch policy and one required reviewer,
+`hniedner`, with `prevent_self_review` false (RUN, `gh api repos/hniedner/datatables-backend/environments/pypi`). The
+`gh` login on this machine is the account `hniedner`, with the token scopes `gist`, `read:org`, `repo`, `workflow`
+(RUN, `gh auth status`; no token printed). "Required reviewers with read access to the repository contents and
+deployments can use this endpoint", `POST /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments` with `state:
+approved`, and classic tokens "need the repo scope" (FETCHED, docs.github.com/en/rest/actions/workflow-runs, "Review
+pending deployments for a workflow run"). So an agent session using the owner's `gh` login could approve a PyPI
+publish as the owner (INFERRED; the endpoint was not called).
+
+| Measure | Cost |
+|---|---|
+| (a) A deny rule in the owner's Claude Code settings for that API call, for example a Bash deny pattern matching `gh api` calls on `pending_deployments`; the shape is a suggestion to check against the settings documentation, not a verified rule, and it is the owner's to add (no session edits permissions) | One settings entry. It is only as strong as the harness: a command that reaches the endpoint another way is not caught, and it is not a GitHub control. |
+| (b) Optionally, `check-tag` refuses a version that has no `## [X] - <date>` section in CHANGELOG.md on `main`, i.e. no merged release PR (it runs before `publish` through `needs`; `publish` itself runs no repository code, READ, `release.yml:105`) | A few lines in `check-tag`. It stops a publish nobody prepared; it does not stop an approval of a prepared one. |
+| A GitHub-side control: a second required reviewer, or `prevent_self_review` | On a one-owner repository either would lock the owner out of his own releases (INFERRED). |
+
+Recommendation: (a), and (b) since it is cheap; revisit the GitHub-side control when a second maintainer joins.
+
 **Done as recommended unless you object:**
 
 - Tool: git-cliff from a uv `release` group (section 1), with the catch-all skip, `protect_breaking_commits`, the
@@ -364,6 +412,9 @@ needs no change to the merge settings.
 - The check: a `pygrep` commit-msg hook after the private-word hook, and a `commits` job in CI needed by `gate` that
   also refuses `fixup!` commits (section 4).
 - Tag ruleset unchanged (section 6).
+- A tag that was not published: the version is computed past it, the notes include its commits through
+  `--ignore-tags` over the range from the last published tag, and the list of such tags is built from PyPI in each run
+  (section 7).
 - Only if the automatic trigger is kept: dispatch option A with `GITHUB_TOKEN` (section 2); hatch-vcs (section 3);
   `workflow_run` in `tag.yml` (section 5); one release in flight (section 7); changelog option P and the split
   (ii), (i), (iii) (section 8).
@@ -371,6 +422,8 @@ needs no change to the merge settings.
 ## Not established (to verify before relying on it)
 
 - Whether the GitHub Actions App (`GITHUB_TOKEN`) can be a ruleset bypass actor.
+- The exact form of a Claude Code deny rule that catches the `pending_deployments` call (item 5 (a)).
+- That a job past the 30-day approval limit fails and leaves the draft release as described (section 7).
 - Whether a workflow called with `workflow_call` that holds a job asking for more permissions than the caller grants
   fails or runs.
 - hatch-vcs (automatic trigger only): the version a shallow checkout of a non-tag commit gets.
