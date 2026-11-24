@@ -1150,9 +1150,15 @@ point-in-time is held.
 
 #### PRD-C14
 
-`recordsTotal` can be cached by a caller-supplied TTL cache.
+`recordsTotal` can be cached by a caller-supplied TTL cache that holds at most a set number of totals, the oldest
+dropped first.
 
-- **Reason:** An unfiltered count of a large table is costly.
+The bound defaults to 10,000 totals, about 2.6 MB. A deployment with more distinct scopes active within one TTL raises
+it, or most of its requests count. A bound below 1 is refused when the cache is built.
+
+- **Reason:** An unfiltered count of a large table is costly; the bound keeps a scope per user or tenant from growing
+  the cache without limit. The oldest total is also the one nearest its expiry, and a read changes nothing, so the rule
+  is one sentence (`docs/decisions/008-total-cache-eviction.md`).
 - **Priority:** must
 
 #### PRD-C15
@@ -1166,7 +1172,8 @@ or the index (its name).
 
 #### PRD-C16
 
-A cached total ends by its TTL or by an explicit call; the library registers no global hooks on engines or pools.
+A cached total ends by its TTL, by an explicit call, or by being the oldest when the cache is full; the library
+registers no global hooks on engines or pools.
 
 - **Reason:** Global hooks would surprise an app.
 - **Priority:** must

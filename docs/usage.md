@@ -24,8 +24,12 @@ users = SQLTable(users_table, columns, total_cache=cache)
   database), OpenSearch's document-level security, or a second cluster with the same index name.
   [databases.md](databases.md#a-shared-totalcache-cannot-tell-two-scopes-apart-that-the-session-sets) has the case.
 - A bound value enters the key by its `repr`, which must not change between requests.
+- The cache holds at most `max_entries` totals (10,000 by default, about 2.6 MB; PRD-C14). When it is full, the total
+  stored longest ago is dropped, and a read changes nothing. With more distinct totals inside one `ttl` than that, most
+  requests count again, so set `max_entries` to at least the number of tables, tenants or users that each have their own
+  total.
 
-Source: the docstring of `TotalCache`.
+Source: the docstring of `TotalCache`; decision [008](decisions/008-total-cache-eviction.md).
 
 ## Row hooks
 
@@ -126,7 +130,8 @@ user.id}}, total_cache=cache)`, and the cache key holds it.
   with no engine in the process (2,000 builds). A table of more columns, or a source reflected on each request, was not
   measured.
 - A shared cache stays right because the filter is in its key (the docstring of `TotalCache`). Pass only values whose
-  `repr` is the same on each request: a value whose `repr` holds an address never finds its total again.
+  `repr` is the same on each request: a value whose `repr` holds an address never finds its total again, and one entry
+  is stored for each request until `max_entries` (the cache stays bounded).
 
 ## The page's request: a form or JSON
 

@@ -67,6 +67,17 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   answers 4; after the test waits 0.35 seconds, past the TTL, the next request counts again and answers 5.
 - **SPEC-C14.3** [OS] Recording: with a `TotalCache`, an unfiltered request (whose search count is the total, PRD-C8)
   fills the cache: a global search right after it runs no total count, and answers that `recordsTotal`.
+- **SPEC-C14.4** [SQL] Given 5 rows with `id` 1 to 5: three tables over the same source whose base filters are
+  `id <= 1`, `id <= 2` and `id <= 3` (F1, F2, F3), sharing one `TotalCache` of TTL 60 seconds and `max_entries` 2, each
+  sent a global search `red`. The requests F1, F2, F3, F2, F1, F3 answer `recordsTotal` 1, 2, 3, 2, 1, 3 and run 3, 3,
+  3, 2, 3, 2 statements (a miss runs the total, the filtered count and the page, a hit the last two): the third drops
+  F1, the oldest; the fourth reads F2 and does not make it newer; the fifth drops F2; the sixth finds F3 (PRD-C16).
+  OpenSearch only calls `get` and `put` of the same class, so one backend proves the rule.
+- **SPEC-C14.5** [SQL] As `SPEC-C14.4` with a TTL of 0.3 seconds: F1, F2, then the test waits 0.35 seconds, then F1,
+  F3, F1 answer `recordsTotal` 1, 2, 1, 3, 1 and run 3, 3, 3, 3, 2 statements: a total counted again after its expiry
+  is the newest, so F3 drops F2 and the last F1 finds its fresh total.
+- **SPEC-C14.6** [all] `TotalCache(max_entries=0)` and `TotalCache(max_entries=-1)` raise `ValueError`, whose message
+  names `max_entries`; `TotalCache().max_entries` is 10,000.
 - **SPEC-C15.1** [SQL] Given a `team` column holding `red` in rows 1 and 3 and `green` in row 4, of 5 rows: two
   tables over the same source whose base filters differ only in the bound value (`team = 'red'`, `team = 'green'`)
   and share one cache, each sent a global search `e` → `recordsTotal` 2 and 1.

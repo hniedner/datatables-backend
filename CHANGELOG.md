@@ -4,6 +4,18 @@ All notable changes to this project are listed here. The format follows [Keep a 
 and the versioning policy is in the README: until 1.0, a minor release (0.x) may break the Python API and lists each such
 change here; the wire format and the error codes change only in a release whose notes say so.
 
+## [Unreleased]
+
+### Added
+
+- `TotalCache(max_entries=...)`: a bound on the totals kept, 10,000 by default, the one stored longest ago dropped first
+  ([#50]). A `max_entries` below 1 raises `ValueError`.
+
+### Changed
+
+- A `TotalCache` that would hold more than 10,000 distinct totals now drops the oldest (a request for it counts again),
+  where it grew without limit before. Pass a larger `max_entries` to keep more.
+
 ## [0.1.0] - 2026-11-24
 
 The first release: the code of 0.1.0rc4, with its version, and one documentation addition.
@@ -143,12 +155,14 @@ The first release, a release candidate: install it with `pip install --pre datat
 - Not answered: DataTables' fixed and grouped searches, SearchPanes and ColumnControl filters. A request that carries one
   is refused (a malformed request, 422 in the FastAPI dependency) rather than answered with fewer filters.
 
+[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0
 [0.1.0rc4]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc4
 [0.1.0rc3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc3
 [0.1.0rc2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc2
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1
 [#46]: https://github.com/hniedner/datatables-backend/issues/46
+[#50]: https://github.com/hniedner/datatables-backend/issues/50
 [#58]: https://github.com/hniedner/datatables-backend/issues/58
 [#71]: https://github.com/hniedner/datatables-backend/issues/71
 [#75]: https://github.com/hniedner/datatables-backend/issues/75
