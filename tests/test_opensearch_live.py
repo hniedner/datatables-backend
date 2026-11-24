@@ -1105,6 +1105,66 @@ def test_a_column_search_and_the_searchbuilder_tree_combine_with_and(
     assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected
 
 
+def test_two_column_searches_keep_the_documents_both_find(client: OpenSearch):
+    """SPEC-F12.1: `apple` in the title is a1 and d4, `green` in the body is b2 and d4; both → d4."""
+    title, body = {'title': {'value': 'apple'}}, {'body': {'value': 'green'}}
+    answers = [found(table.fetch_sync(request(*NAMES, column_search=search), client)) for search in (title, body)]
+    assert answers == [['a1', 'd4'], ['b2', 'd4']]
+    assert found(table.fetch_sync(request(*NAMES, column_search={**title, **body}), client)) == ['d4']
+
+
+@pytest.mark.parametrize(('search', 'expected'), [('green', ['d4']), ('bread', [])])
+def test_a_column_search_and_the_global_search_keep_the_documents_both_find(
+    client: OpenSearch, search: str, expected: list[str]
+):
+    """SPEC-F12.2: `apple` in the title is a1 and d4. The global search finds b2 and d4 for `green` and b2 for
+    `bread`, so the answer is the intersection, never the union."""
+    body = {'column_search': {'title': {'value': 'apple'}}, 'search': {'value': search}}
+    assert found(table.fetch_sync(request(*NAMES, **body), client)) == expected
+
+
+@pytest.mark.parametrize(
+    'search', [{'multi_values': ['Alpha', 'Alphabet']}, {'value': '^(Alpha|Alphabet)$', 'regex': True}]
+)
+def test_a_list_of_values_on_a_hooked_column_finds_the_documents_of_each_hooked_value(
+    client: OpenSearch, search: dict[str, Any]
+):
+    """SPEC-D15.1: p1 holds `enc:Alpha` and p2 `enc:Alphabet`, which `terms` finds whole; not p3 (`enc: Alpha `) nor p4
+    (`enc:alpha`), which the hooked column's case-sensitive equality leaves out (PRD-D21)."""
+    params = request('id', 'secret', column_search={'secret': search})
+    assert found(hooked.fetch_sync(params, client)) == ['p1', 'p2']
+
+
+# What the recording test of the same bound (test_opensearch.py) cannot show: that the cluster answers a value of 255
+# code points. Its list holds the number `1` * 255, which no `integer` field takes (the strict xfail above, #47), so
+# here the numbers are zeros and a one.
+LONG_ANSWERED = [
+    ('search', everywhere('a' * 255)),
+    ('title search', in_title('a' * 255)),
+    ('title, 16 words', in_title(' '.join(f'q{number}' for number in range(16)))),
+    ('multi_values', {'column_search': {'id': {'multi_values': ['a', 'b' * 255]}}}),
+    ('categorical', {'column_search': {'id': {'value': f'^(a|{"b" * 255})$', 'regex': True}}}),
+    ('=', criterion('title', '=', 'a' * 255)),
+    ('contains', criterion('title', 'contains', 'a' * 255)),
+    ('starts', criterion('title', 'starts', 'a' * 255)),
+    ('number', criterion('pages', '=', '0' * 254 + '1')),
+    ('between', criterion('pages', 'between', '1', '0' * 254 + '1')),
+    ('date', criterion('created', '=', '2024-01-01' + ' ' * 245)),
+]
+
+
+@pytest.mark.parametrize('body', [body for _, body in LONG_ANSWERED], ids=[name for name, _ in LONG_ANSWERED])
+def test_a_value_of_255_code_points_is_answered_by_the_cluster(client: OpenSearch, body: dict[str, Any]):
+    """SPEC-F14.4, SPEC-F14.2 (16 words in a column): the longest value is sent and no document matches it."""
+    assert ids(table.fetch_sync(request(*NAMES, **body), client)) == []
+
+
+def test_a_boolean_of_255_code_points_is_answered_by_the_cluster(client: OpenSearch):
+    """SPEC-F14.4: `true` and 251 spaces are read as `true`: a1 and d4."""
+    params = request(*FLAG_NAMES, **criterion('active', '=', 'true' + ' ' * 251))
+    assert found(flags.fetch_sync(params, client)) == ['a1', 'd4']
+
+
 @pytest.mark.parametrize(
     'search',
     [{'value': '^(12|60)$', 'regex': True}, {'multi_values': ['12', '60']}],

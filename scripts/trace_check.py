@@ -67,22 +67,9 @@ ENFORCED = (
     'O',
     'A',
     'C',
-    # PRD-D12 and PRD-D14 to PRD-D20 are the hooked-column statements, enforced with #64
-    'PRD-D1',
-    'PRD-D2',
-    'PRD-D3',
-    'PRD-D4',
-    'PRD-D5',
-    'PRD-D6',
-    'PRD-D7',
-    'PRD-D8',
-    'PRD-D9',
-    'PRD-D10',
-    'PRD-D11',
-    'PRD-D13',
-    'PRD-D21',
+    'D',
     'E',
-    # The filters that are not search, by id: the F letter is shared with the smart search and the hooked columns
+    # The F requirements, by id: the letter is not enforced whole until PRD-F11 is (#131)
     'PRD-F9',
     'PRD-F10',
     'PRD-F16',
@@ -112,7 +99,13 @@ ENFORCED = (
     'PRD-F31',
     'PRD-F32',
     'PRD-F33',
-    # The smart search of #64; PRD-F11 to PRD-F15 and PRD-F35 follow with #128
+    # The smart search: PRD-F1 to PRD-F8 (#64), PRD-F12 to PRD-F15 and PRD-F35 (#128); PRD-F11 follows with #131, and
+    # then these entries become the letter 'F'
+    'PRD-F12',
+    'PRD-F13',
+    'PRD-F14',
+    'PRD-F15',
+    'PRD-F35',
     'PRD-F1',
     'PRD-F2',
     'PRD-F3',
