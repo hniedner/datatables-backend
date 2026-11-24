@@ -24,8 +24,9 @@ CLIFF = Path(SCRIPTS) / 'git-cliff'
 NON_RELEASING = ['docs', 'test', 'ci', 'build', 'refactor', 'chore', 'style']
 
 
-def build_repo(path: Path, tag: str, *messages: str) -> Path:
-    """A repository with `chore: start`, an annotated `tag` on it, then a commit (for `TAG:x`, a tag) per message."""
+def build_repo(path: Path, tag: str, *messages: str, files: dict[str, str] | None = None) -> Path:
+    """A repository with `chore: start` (holding `files`), an annotated `tag` on it, then a commit (for `TAG:x`, a tag)
+    per message."""
     env = {
         'PATH': os.environ['PATH'],
         'HOME': str(path),
@@ -50,6 +51,10 @@ def build_repo(path: Path, tag: str, *messages: str) -> Path:
         )
 
     git('init', '-b', 'main', second=0)
+    for name, text in (files or {}).items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text)
+    git('add', '-A', second=0)
     git('commit', '--allow-empty', '-m', 'chore: start', second=1)
     git('tag', '-a', tag, '-m', tag, second=2)
     for second, message in enumerate(messages, start=3):

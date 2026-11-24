@@ -347,6 +347,9 @@ owner's explicit OK to publish.
 `docs/PRD.md` and `spec/` (a requirement for the release path and the convention, its first sentence the owner's,
 READ, `CLAUDE.md:91-92`), `README.md` (the policy sentence of section 1), `CHANGELOG.md` header, `CLAUDE.md`.
 
+The rehearsal runs the release check only while a release is pending (no tag `v<version>` yet); otherwise it prints
+git-cliff's next version.
+
 **If the automatic trigger is kept**, the changelog has three options:
 
 | Option | How | Cost |
