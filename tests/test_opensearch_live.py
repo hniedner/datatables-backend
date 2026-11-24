@@ -284,6 +284,7 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
         ('"', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F6.2: no word at all
         ('12', []),  # SPEC-F32.1: a1 and d4 have 12 pages, but the number column takes no part in the search
         ('2026', []),  # SPEC-F32.1: nor does the date column, which a1, b2 and e5 hold
+        ('apple 12', []),  # SPEC-F1.3: a1's title holds `apple` and its pages 12, but the number column takes no part
     ],
 )
 def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
@@ -471,12 +472,6 @@ def test_a_negation_leaves_every_other_document_and_a_missing_field_passes(clien
     plain = found(table.fetch_sync(request(*NAMES, column_search={'author': {'value': '!pipe'}}), client))
     quoted = found(table.fetch_sync(request(*NAMES, column_search={'author': {'value': '!pipe ""'}}), client))
     assert plain == quoted == ['a1', 'b2', 'c3', 'd4', 'e5']
-
-
-def test_a_number_in_a_global_search_matches_nothing_beside_a_word_of_the_title(client: OpenSearch):
-    """SPEC-F1.3: f6 holds `red` as its title and 7 as its pages, which no search reads (SPEC-F32.1)."""
-    with added_document(client, title='red', pages=7):
-        assert found(table.fetch_sync(request(*NAMES, **everywhere('red 7')), client)) == []
 
 
 @pytest.mark.parametrize(

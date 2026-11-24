@@ -146,8 +146,8 @@ page keeps the ordinary page's rows all the same.
 
 **Analysed text.** On an analysed column a word is a phrase of its tokens, the nearest to SQL's substring: `foo-bar`
 finds `foo bar` but not `foo` alone. Quote marks, a leading `-` and padding that the analyser drops do not tell rows
-apart there: `-red` also finds `red`; a keyword column tells them apart. Analysed text holds no spaces, so a search for a space finds nothing on an
-analysed-only column.
+apart there: `-red` also finds `red`; a keyword column tells them apart. Analysed text holds no spaces, so a search
+for a space finds nothing on an analysed-only column.
 
 **A column of analysed text only.** An OpenSearch column declared `text='text'` answers the word search (a word is an
 analysed match: `red` does not find `reddish`), `contains` and `!contains` (the phrase of the words), `null` and
