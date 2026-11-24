@@ -10,10 +10,12 @@ __version__ = '0.1.0rc3'
 from .cache import TotalCache
 from .columns import Column
 from .columns import ColumnType
+from .protocol import MAX_PAGE_LENGTH
 from .protocol import DTColumn
 from .protocol import DTOrder
 from .protocol import DTParams
 from .protocol import DTResponse
+from .protocol import ErrorCode
 from .protocol import MalformedRequest
 from .protocol import PartialResultError
 from .protocol import SchemaError
@@ -24,12 +26,14 @@ from .protocol import parse_request
 from .rows import RowHooks
 
 __all__ = [
+    'MAX_PAGE_LENGTH',
     'Column',
     'ColumnType',
     'DTColumn',
     'DTOrder',
     'DTParams',
     'DTResponse',
+    'ErrorCode',
     'MalformedRequest',
     'PartialResultError',
     'RowHooks',

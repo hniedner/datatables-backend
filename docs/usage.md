@@ -67,6 +67,20 @@ request as `datatables_backend/fastapi.py` does and calls `parse_request(data, m
 Source: `parse_request`'s signature and docstring; `datatables_backend/fastapi.py`; PRD-P13 for the cap and PRD-E6 for
 the refusal.
 
+## Names for code around the table
+
+Three names serve code that sits beside a table, not inside `fetch`:
+
+- `datatables_backend.MAX_PAGE_LENGTH` is the default `max_length` of `parse_request` (1000), for a route of your own
+  that bounds a page by the same number.
+- `datatables_backend.ErrorCode` is the type of `DTResponse.error_code` (the library's codes; `DTResponse.query_failed`
+  adds `'query_failed'`). A later release may add a code, so handling keeps a default branch.
+- `datatables_backend.opensearch.partial_answer(answer, *, index=...)` says whether a `search` or `count` answer you
+  ran yourself is not known to cover every shard: it returns True for an unverifiable answer as well as a partial
+  one, and logs at ERROR when it does. `fetch` already applies it to its own answers.
+
+Source: the docstrings of `partial_answer`, `parse_request` and `DTResponse`.
+
 ## The result window of OpenSearch
 
 OpenSearch reads at most `index.max_result_window` rows from the start of a search (10,000 by default). Give the table

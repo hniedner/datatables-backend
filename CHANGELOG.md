@@ -6,6 +6,12 @@ change here; the wire format and the error codes change only in a release whose 
 
 ## [Unreleased]
 
+### Added
+
+- `datatables_backend.ErrorCode` and `datatables_backend.MAX_PAGE_LENGTH`, and
+  `datatables_backend.opensearch.partial_answer(answer, *, index)`, for code that works beside a table (see
+  `docs/usage.md`).
+
 ### Changed
 
 A tightening is a breaking change, and each is listed here with what to do.
