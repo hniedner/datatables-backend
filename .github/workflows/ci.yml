@@ -179,9 +179,9 @@ jobs:
           enable-cache: false
       - name: A new version is git-cliff's, with a dated CHANGELOG section
         if: github.event_name == 'pull_request'
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: uv run --frozen --only-group release --python 3.14 python scripts/check_release.py pr "$BASE"
+        # The merge ref's first parent is the base this merge was built on; the event's base.sha can be stale.
+        run: |
+          uv run --frozen --only-group release --python 3.14 python scripts/check_release.py pr "$(git rev-parse HEAD^1)"
 
   # gitleaks over every commit on every branch and tag. The pre-commit hook scans only what is staged, which in CI is
   # nothing; this job scans what a push publishes. The release binary is checked against its published SHA-256.

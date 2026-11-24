@@ -63,15 +63,18 @@ def release_commit(repo: Path, version: str, text: str | None = None) -> None:
         subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
 
 
-def pypi(tmp_path: Path, *versions: str) -> str:
+def pypi(tmp_path: Path, *versions: str, document: dict[str, object] | None = None) -> str:
     path = tmp_path / 'pypi.json'
-    path.write_text(json.dumps({'releases': {v: [] for v in versions}}))
+    path.write_text(json.dumps(document if document is not None else {'releases': {v: [] for v in versions}}))
     return str(path)
 
 
 def run(repo: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
     monkeypatch.chdir(repo)
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    for name in [n for n in os.environ if n in ('GIT_DIR', 'GIT_WORK_TREE') or n.startswith('GIT_CLIFF_')]:
+        monkeypatch.delenv(name)
     return check_release.main(list(args))
 
 
@@ -169,9 +172,10 @@ def test_a_version_outside_the_release_forms_fails(
         '# Changelog\n',
         '# Changelog\n\n## [0.1.1]\n\n- x\n',
         '# Changelog\n\n## [0.1.1] - soon\n\n- x\n',
+        '# Changelog\n\n## [0.1.1] - 2026-19-45\n\n- x\n',
         '# Changelog\n\n## [0.1.1] - 2026-01-02\n',
     ],
-    ids=['missing', 'undated', 'date not a date', 'empty'],
+    ids=['missing', 'undated', 'date not a date', 'no such date', 'empty'],
 )
 def test_the_changelog_section_must_exist_be_dated_and_hold_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
@@ -230,3 +234,85 @@ def test_a_release_pull_request_cannot_reuse_a_tagged_version(
     release_commit(repo, version)
     assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
     assert 'already exists' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('version', ['0.1.0rc1', '0.1.0a1', '0.1.0b1'])
+@pytest.mark.parametrize('mode', ['release', 'pr'])
+def test_a_pre_release_of_a_final_version_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str, version: str
+) -> None:
+    """With nothing to release since v0.1.0 git-cliff answers v0.1.0, which is the release part of 0.1.0rc1: it must
+    not pass, or 0.1.0rc1 is published after 0.1.0."""
+    if mode == 'release':
+        repo = make(tmp_path, 'v0.1.0', 'docs: x', version=version)
+        assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0')) == 1
+    else:
+        repo = make(tmp_path, 'v0.1.0', 'docs: x', version='0.0.9')
+        release_commit(repo, version)
+        assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
+    assert 'nothing to release' in capsys.readouterr().err
+
+
+def test_a_pre_release_of_an_older_final_version_fails_on_the_history_of_a_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shape of this repository: v0.1.0, free prose, v0.1.1. git-cliff answers v0.1.0 (the last tag that releases
+    anything), so 0.1.0rc5 would pass by its release part."""
+    repo = make(tmp_path, 'v0.1.0', 'PRD: a', 'TAG:v0.1.1', version='0.1.0rc5')
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0', '0.1.1')) == 1
+
+
+def test_a_version_already_on_pypi_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PyPI never takes a version twice, and the JSON the workflow fetches says which exist."""
+    repo = make(tmp_path, 'v0.1.0', 'fix: x')
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0', '0.1.1')) == 1
+    assert 'already on PyPI' in capsys.readouterr().err
+
+
+def test_a_rehearsal_with_nothing_to_release_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On main after v0.1.1 with only free prose since, git-cliff's answer is v0.1.0, the last releasing tag: printing
+    it as the next version would tell the owner to release a version that exists."""
+    repo = make(tmp_path, 'v0.1.0', 'PRD: a', 'TAG:v0.1.1', 'docs: b')
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0', '0.1.1')) == 0
+    out = capsys.readouterr().out
+    assert 'nothing releases yet' in out
+    assert 'next version' not in out
+
+
+def test_the_notes_list_is_informational_even_without_a_releases_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PyPI's JSON only feeds the informational list (and the already-published refusal): a document without
+    `releases` must not stop a correct release."""
+    repo = make(tmp_path, 'v0.1.0', 'fix: x')
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, document={})) == 0
+
+
+def test_control_characters_of_a_commit_subject_are_not_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The list goes to the step summary: control characters in a subject (ESC, CR) must not reach the log."""
+    repo = make(tmp_path, 'v0.1.0', 'fix: a\x1bb')
+    assert run(repo, monkeypatch, 'release', pypi(tmp_path, '0.1.0')) == 0
+    out = capsys.readouterr().out
+    assert '\x1b' not in out
+    assert 'a?b' in out
+
+
+@pytest.mark.parametrize('where', ['head', 'base'])
+def test_a_pull_request_with_an_unreadable_version_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    """A missing `__version__ = '...'` line must not read as "the version did not change"."""
+    if where == 'head':
+        repo = make(tmp_path, 'v0.1.0', 'fix: x', init='x = 1\n')
+        assert run(repo, monkeypatch, 'pr', 'HEAD') == 1
+    else:
+        repo = make(tmp_path, 'v0.1.0', 'fix: x', init='x = 1\n')
+        release_commit(repo, '0.1.1')
+        assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
+    assert 'cannot read __version__' in capsys.readouterr().err

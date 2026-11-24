@@ -3,12 +3,12 @@
 Run from the top of a checkout with full history and tags, by the environment that holds git-cliff
 (``uv run --frozen --only-group release python scripts/check_release.py ...``). Standard library, git and git-cliff.
 
-``release PYPI_JSON`` is the tag run and the rehearsal. PYPI_JSON is https://pypi.org/pypi/datatables-backend/json.
-If the tag ``v<__version__>`` exists on an earlier commit than HEAD, no release is pending (main after a release): it
-prints git-cliff's next version and checks nothing. Otherwise (the tag points at HEAD, or does not exist yet) it runs
-the checks below, then prints the commits since the last published release, for the person approving the deployment to
-compare with the CHANGELOG section. That print compares nothing and never fails on its content: the CHANGELOG is
-written by hand and a break on a skipped type renders under its own type.
+``release PYPI_JSON`` is the tag run and the rehearsal. PYPI_JSON is https://pypi.org/pypi/datatables-backend/json. If
+the tag ``v<__version__>`` exists on a commit other than HEAD, no release is pending (main after a release): it prints
+git-cliff's next version (or that nothing releases yet) and checks nothing. Otherwise (the tag points at HEAD, or does
+not exist yet) it runs the checks below, then prints the commits since the last published release, for the person
+approving the deployment to compare with the CHANGELOG section. That print compares nothing and never fails on its
+content: the CHANGELOG is written by hand and a break on a skipped type renders under its own type.
 
 ``pr BASE`` is the pull request check: if ``__version__`` is the one at BASE it is not a release pull request and
 nothing is checked; otherwise the checks below run.
@@ -17,14 +17,17 @@ The checks, each finding a line on stderr that names the condition and the fix, 
 
 - the version is X.Y.Z, or X.Y.Z with a, b or rc and a number;
 - the tag ``v<version>`` does not exist on another commit (a version once tagged is burnt);
-- CHANGELOG.md has one non-empty section ``## [<version>] - YYYY-MM-DD``;
+- (release mode) the version is not already on PyPI;
+- CHANGELOG.md has one non-empty section ``## [<version>] - YYYY-MM-DD``, a real date;
 - cliff.toml exists (without it git-cliff silently applies its default rules);
 - ``git-cliff --bumped-version`` is ``v`` and the release part of the version. The tag ``v<version>`` is ignored when it
   points at HEAD, since git-cliff would otherwise count that tag as released. "Nothing to bump" is not an error for
-  git-cliff: it prints the last releasing tag and exits 0, which is never the version of a release.
+  git-cliff: it prints the last releasing tag and exits 0, so an answer that is an existing tag is never the version of
+  a release, not even of a pre-release of that tag's version.
 """
 
 import argparse
+import datetime
 import json
 from pathlib import Path
 import re
@@ -47,7 +50,7 @@ def git(*args: str) -> str:
 
 def cliff(*args: str) -> str:
     run = subprocess.run([str(CLIFF), '--config', 'cliff.toml', *args], check=True, capture_output=True, text=True)
-    return run.stdout.strip()
+    return re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '?', run.stdout).strip()  # no control character reaches the log
 
 
 def tagged_elsewhere(tag: str) -> bool:
@@ -71,20 +74,22 @@ def findings(version: str) -> list[str]:
     found += changelog_findings(version)
     if not Path('cliff.toml').is_file():
         return [*found, 'cliff.toml is missing: git-cliff would apply its default rules, which release docs: commits']
-    at_head = tag in git('tag', '--points-at', 'HEAD').split()
-    ignore = ['--ignore-tags', f'^{re.escape(tag)}$'] if at_head else []
+    existing = set(git('tag', '--list').split())
+    ignore: list[str] = []
+    if tag in git('tag', '--points-at', 'HEAD').split():
+        ignore = ['--ignore-tags', f'^{re.escape(tag)}$']
+        existing.discard(tag)
     computed = cliff(*ignore, '--bumped-version')
-    if computed != f'v{release[1]}':
-        if computed in git('tag', '--list').split():
-            found.append(
-                f'nothing to release: no feat, fix or breaking commit since the last release ({computed}); '
-                'release nothing, or merge the change that releases first'
-            )
-        else:
-            found.append(
-                f'git-cliff computes {computed} for this commit, not v{release[1]}: '
-                f'set the version and the CHANGELOG heading to {computed.removeprefix("v")}'
-            )
+    if computed in existing:  # git-cliff's answer when nothing releases, whatever the version says
+        found.append(
+            f'nothing to release: no feat, fix or breaking commit since the last release ({computed}); '
+            'release nothing, or merge the change that releases first'
+        )
+    elif computed != f'v{release[1]}':
+        found.append(
+            f'git-cliff computes {computed} for this commit, not v{release[1]}: '
+            f'set the version and the CHANGELOG heading to {computed.removeprefix("v")}'
+        )
     return found
 
 
@@ -94,9 +99,18 @@ def changelog_findings(version: str) -> list[str]:
         changelog_notes.notes(text, version)
     except changelog_notes.NotesError as error:
         return [f'{error}: write the notes of the release under "## [{version}] - YYYY-MM-DD"']
-    if not re.search(rf'^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$', text, re.MULTILINE):
+    heading = re.search(rf'^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$', text, re.MULTILINE)
+    if not (heading and is_date(heading[1])):
         return [f'CHANGELOG.md: the heading of {version} has no date: write "## [{version}] - YYYY-MM-DD"']
     return []
+
+
+def is_date(text: str) -> bool:
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
 
 
 def commits_since_published(published: set[str]) -> str:
@@ -120,10 +134,17 @@ def report(found: list[str]) -> int:
 def release_run(version: str, published: set[str]) -> int:
     tag = f'v{version}'
     if tagged_elsewhere(tag):
-        print(f'{tag} exists on an earlier commit: no release is pending, nothing is checked.')
-        print(f"git-cliff's next version for the commits since: {cliff('--bumped-version')}")
+        print(f'{tag} exists on another commit: no release is pending, nothing is checked.')
+        answer = cliff('--bumped-version')
+        if answer in git('tag', '--list').split():
+            print(f'No feat, fix or breaking commit since the last release ({answer}): nothing releases yet.')
+        else:
+            print(f"git-cliff's next version for the commits since: {answer}")
         return 0
-    if found := findings(version):
+    found = findings(version)
+    if version in published:
+        found.append(f'{version} is already on PyPI: a version is never published twice')
+    if found:
         return report(found)
     print(f"{tag} is git-cliff's version for this commit, with a dated CHANGELOG section.")
     print('The commits since the last published release, to compare with that section (nothing is checked):')
@@ -139,8 +160,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     version = version_in(INIT.read_text(encoding='utf-8'))
     if args.mode == 'release':
-        return release_run(version, set(json.loads(args.pypi.read_text(encoding='utf-8'))['releases']))
-    if version_in(git('show', f'{args.base}:{INIT.as_posix()}')) == version:
+        return release_run(version, set(json.loads(args.pypi.read_text(encoding='utf-8')).get('releases', {})))
+    base_version = version_in(git('show', f'{args.base}:{INIT.as_posix()}'))
+    for name, found in ((INIT, version), (f'{args.base}:{INIT}', base_version)):
+        if not found:
+            return report([f"cannot read __version__ in {name}: write `__version__ = 'X.Y.Z'`"])
+    if base_version == version:
         print(f"{version} is also the base's version: not a release pull request, nothing to check.")
         return 0
     return report(findings(version))
