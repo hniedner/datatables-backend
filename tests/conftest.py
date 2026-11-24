@@ -188,6 +188,34 @@ async def async_session(database: tuple[str, str]) -> AsyncIterator[AsyncSession
     await engine.dispose()
 
 
+#: What a log record holds about the moment and the place of the call: its own digits, which a test that looks for a
+#: number of its own in a log line must not trip over
+VOLATILE_RECORD_ATTRIBUTES = frozenset(
+    {
+        'created',
+        'msecs',
+        'relativeCreated',
+        'thread',
+        'threadName',
+        'process',
+        'processName',
+        'taskName',
+        'lineno',
+    }
+)
+
+
+def logged_text(caplog: pytest.LogCaptureFixture) -> str:
+    """Every log record of the test as text, without the attributes that hold the record's own time, ids and line
+    number. A digit needle (``'4242'``) can match those by chance; the message, the arguments and any ``extra`` stay."""
+    return repr(
+        [
+            {key: value for key, value in vars(record).items() if key not in VOLATILE_RECORD_ATTRIBUTES}
+            for record in caplog.records
+        ]
+    )
+
+
 def request(
     *names: str,
     column_search: dict[str, dict[str, Any]] | None = None,
