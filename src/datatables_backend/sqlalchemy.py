@@ -150,6 +150,7 @@ class SQLTable:
         if missing:
             raise SchemaError(f'{source} has no column {", ".join(missing)}')
         check_declaration(self.columns, self._describe)  # after the missing columns: a type is read from the source
+        _check_declared_types(self.columns, source)
         if unique_key is not None:  # a declared key wins over the source's primary key
             self._tie_breakers = [self._sql(column) for column in declared_key(self.columns, unique_key)]
         elif _key_is_not_unique(source):
@@ -420,6 +421,37 @@ def _key_is_not_unique(source: FromClause) -> bool:
     )
 
 
+def _stored_type(column: ColumnElement[Any]) -> Any:
+    """The type the column stores, seen through every ``TypeDecorator`` around it."""
+    stored = column.type
+    while isinstance(stored, TypeDecorator):
+        stored = stored.impl_instance
+    return stored
+
+
+def _check_declared_types(columns: Sequence[Column], source: FromClause) -> None:
+    """A declared type that does not fit the column's SQL type is the integrator's mistake (PRD-D22): a string
+    column declared a number, a date or a boolean, and a date column declared a number. Every other declaration,
+    and a column whose type is none of these, is left to the database."""
+    for column in columns:
+        declared = column.type
+        stored = _stored_type(source.columns[column.source])
+        if declared is None:
+            continue
+        if isinstance(stored, String):
+            fits, mismatch = 'string', declared != 'string'
+        elif isinstance(stored, Date | DateTime):
+            fits, mismatch = 'date', declared == 'number'
+        else:
+            continue
+        if mismatch:
+            raise SchemaError(
+                f'The column "{column.name}" is declared {declared} but its SQL type is {stored}, which the databases '
+                f'compare differently or refuse: declare it {fits} to compare it as it is stored, or give the column '
+                f'(or its expression, by a cast) a {declared} type.'
+            )
+
+
 def _sql_type(column: ColumnElement[Any]) -> Any:
     """The column's SQL type, seen through a ``TypeDecorator`` to the type it stores."""
     return getattr(column.type, 'impl_instance', column.type)
@@ -444,9 +476,9 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
     is a fair question, and they answer it.
 
     A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
-    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to a column that stores text as
-    its digits, since text is compared with text; to any other column (a ``Float``, an expression without a type)
-    as the nearest float, which holds every whole number a request may carry (at most 255 digits, below 1.8e308).
+    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to any other column (a ``Float``, an
+    expression without a type) as the nearest float, which holds every whole number a request may carry (at most 255
+    digits, below 1.8e308).
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
@@ -479,8 +511,6 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
         return value
     if exact:
         return Decimal(value)
-    if isinstance(sql_type, String):
-        return str(value)
     return float(value)
 
 

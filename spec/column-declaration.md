@@ -108,3 +108,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `case_insensitive`, and `multi_values` `["red", "blue"]` one `terms` query.
 - **SPEC-D21.3** [all] With `colour` declared `fold_case=False`: SearchBuilder `contains` `RED` → rows 1, 2, 4 (a
   search still ignores case, PRD-F9).
+- **SPEC-D22.1** [SQL] Each of these raises `SchemaError` at construction, naming the column: a `String` column
+  declared `number`, `date` or `boolean`; a `Date` and a `DateTime` column declared `number`; a `TypeDecorator`
+  storing a `String` declared `number`.
+- **SPEC-D22.2** [SQL] Each of these constructs and answers as before: an `Integer` and a `Boolean` column declared
+  `string`, a `Boolean` declared `number`, an expression without a type declared `number`, a `Uuid` declared
+  `string`.

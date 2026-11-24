@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 55 of 2026-11-24 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 56 of 2026-11-24 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -53,8 +53,9 @@
   analyser drops does not tell rows apart (#131); revision 54 rewords PRD-F23's first sentence (the owner's decision of
   2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
   number as the table shows it is found, and adds a section-5 entry for the spellings (#71); revision 55 adds
-  MariaDB's default collation to section 5's entry for trailing spaces (#58)). It replaces draft 1 (R1 to R9);
-  section 10 maps every draft-1 item to its place here.
+  MariaDB's default collation to section 5's entry for trailing spaces (#58); revision 56 adds PRD-D22 (the owner's
+  first sentence of 2026-11-24) and removes PRD-F25's clause on a column that stores text (#46)). It replaces draft 1
+  (R1 to R9); section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -527,6 +528,20 @@ not affected.
   their database schema to keep an exact filter fast. Owner's decision of 2026-11-21.
 - **Priority:** must
 
+#### PRD-D22
+
+On SQL, a declared type that does not fit the column's SQL type raises `SchemaError` naming the column when the table is
+constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`.
+A string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator`
+is judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
+`string` included, and so does a column whose SQL type is none of these (an expression without a type, a `Uuid`, a
+`JSON`). OpenSearch is not checked: the mapping is not read (PRD-D8).
+
+- **Reason:** Such a column is answered differently on each database or fails on the server (MEASURED 2026-11-24: `=` 5
+  on text finds '5' on SQLite, '5', '05' and '5.0' on MySQL, and is an operator error on PostgreSQL); the mistake is
+  found at start-up, not by a user.
+- **Priority:** must
+
 ### 4.3 Filtering and search (F)
 
 #### PRD-F1
@@ -801,11 +816,11 @@ Server a number with more than 38 digits before the decimal point is out of rang
 precision the column declares (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a
 `Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a whole number
 outside the signed 64-bit range is compared as the column compares: exactly on a `Numeric` column (see section 5 for
-SQLite), as its digits on a column that stores text, and as the nearest floating-point number on a `Float` column and on
-an expression without a type. A number is a value like any other (PRD-F14), so one of more than 255 characters is
-`value_too_long`. A number is written in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`,
-`.5`, `5.`) and an optional exponent (`1e3`); white space around it is ignored. Any other spelling is `invalid_number`,
-among them a digit outside ASCII, a digit separator (`1_000`, `1,000`) and a second sign.
+SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a type. A number
+is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in
+ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
+(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII,
+a digit separator (`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in

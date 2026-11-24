@@ -31,7 +31,10 @@ engine.
 - **The declared type decides how a filter is built.** A column is a `string`, a `number`, a `date` or a `boolean`;
   SQL reads the type from the column unless it is declared (a MySQL `TINYINT(1)` read by reflection is a number, so
   declare it `boolean`). The client's SearchBuilder `type` is ignored. A boolean column takes `true` or `false` in
-  any case, or `1` or `0`, is matched exactly, and takes no part in the global search.
+  any case, or `1` or `0`, is matched exactly, and takes no part in the global search. On SQL, a declared type that
+  does not fit the column's SQL type raises `SchemaError` when the table is built: a string column (or a
+  `TypeDecorator` that stores one) declared `number`, `date` or `boolean`, and a date or date-time column declared
+  `number`. Any other declaration is accepted, an integer or a boolean column declared `string` included.
 - **A date is matched by day, and a timezone-aware column by its UTC day.** `=`, `<`, `between` and the other
   conditions refer to whole days, on a date and a date-time column alike. For a column that carries a time zone
   (`DateTime(timezone=True)`, SQL Server's `DATETIMEOFFSET`, any OpenSearch date field) the day is the UTC day, in
