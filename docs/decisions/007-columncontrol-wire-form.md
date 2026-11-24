@@ -151,6 +151,9 @@ after a second draw. Every request carried `columnControl: {list: {}}`, so the c
   by column `name`, then `data`, then position (lines 2184-2203) [READ].
 - The library's response model drops keys it does not declare (`extra='ignore'`, `protocol.py:117`), so an application
   that wants the answer's `columnControl` adds the key to the dumped answer itself [READ].
+- The recipe is in `docs/usage.md` (ColumnControl list options from the data): a route that returns `to_dict()` plus the
+  key answered it, a route that returned the `DTResponse` model did not (FastAPI test client, 2026-11-24) [RUN]. #183 is
+  closed as not planned. It reopens when an adopter asks, or when this recipe proves unusable.
 
 The harness, as run (`node run167.cjs <jsdom package dir> <datatables.net package dir>
 <datatables.net-columncontrol package dir>`, from outside every package directory). Its output is one JSON line per case

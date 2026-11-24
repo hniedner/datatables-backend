@@ -143,8 +143,8 @@ columns: [
 
 A value is text or a whole number. A list with static `options` shows them and ignores options in the answer
 ([decision 007][decision-007]); an app whose options come from the data adds
-`columnControl: {<column>: [{label, value}]}` to the answer itself (see [#183][issue-183]), and an answer with
-`columnControl: {}` hides a list that has none.
+`columnControl: {<column>: [{label, value}]}` to the answer itself ([the recipe][usage-columncontrol]), and an answer
+with `columnControl: {}` hides a list that has none.
 
 Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
@@ -193,7 +193,7 @@ The library does not change how a database compares values. Each rule below is s
 [db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
 [issue-47]: https://github.com/hniedner/datatables-backend/issues/47
 [decision-007]: https://github.com/hniedner/datatables-backend/blob/main/docs/decisions/007-columncontrol-wire-form.md#the-lists-options-under-server-side-processing-167
-[issue-183]: https://github.com/hniedner/datatables-backend/issues/183
+[usage-columncontrol]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md#columncontrol-list-options-from-the-data
 [usage]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md
 [rules]: https://github.com/hniedner/datatables-backend/blob/main/docs/rules.md
 [databases]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md

@@ -160,6 +160,28 @@ A JSON body has no such limit, and nothing here limits the size of a body: 4.5 M
 
 Source: `parse_datatables_request` in `datatables_backend/fastapi.py`; SPEC-A9.1 to A9.8; `tests/test_readme.py`.
 
+## ColumnControl list options from the data
+
+A ColumnControl list (`searchList`) shows the options you give it as static `options` on the control, as the README
+shows. An app whose options come from the data adds `columnControl: {<column>: [{label, value}]}` to the answer
+itself, keyed by the column's `name` or `data`, and gives the control no `options`. The library does not send it, and
+`DTResponse` drops a key it does not declare, so add the key to the dumped answer (`to_dict()`), as the route below
+does; a route that returns the `DTResponse` model itself cannot carry it.
+
+```python
+@app.post('/tickets/table')
+async def tickets_table(params: DataTablesParams, session: SessionDep) -> dict[str, Any]:
+    answer = (await tickets.fetch(params, session)).to_dict()
+    options = [{'label': 'Open', 'value': 'open'}, {'label': 'Closed', 'value': 'closed'}]  # or read from the data
+    return {**answer, 'columnControl': {'status': options}}  # 'status' is a declared column's name
+```
+
+Use `{'label': ..., 'value': ...}` with text or whole-number values (PRD-F45 reads a list's values as text). The list
+is hidden by an answer that has a `columnControl` key with no entry for its column, and a list with static `options`
+ignores the answer's. What the client does with each answer was run in decision 007 (the section on the list's
+options); the route shapes were run through the FastAPI test client: the `to_dict()` route above answered the key, the
+route that returned the `DTResponse` model did not.
+
 ## For client authors: several values in one column
 
 DataTables' own multi-select sends a column's selection as a regular expression, and the library reads it as a list of
