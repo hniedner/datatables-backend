@@ -449,17 +449,20 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   its entries as text in index order: the JSON `{"1":"b","0":""}` and the form `[list][1]=b&[list][0]=` both give `""`
   then `b`, the empty entry being the client's "Empty" option.
 - **SPEC-F45.2** [all] ColumnControl `contains` `red` on `colour` gives the rows of a column search `red`; on a number
-  column, a date column and a text column alike, and on OS the query of that column search is sent.
+  column, a date column and a text column alike. On OS it sends the body of that column search, whose rows the live
+  module pins (`test_a_column_search`).
 - **SPEC-F45.3** [all] On `colour`: `equal` `red` → rows 1, 4; `notEqual` `red` → 2, 3; `starts` `red` → 1, 2, 4; `ends`
   `ish` → 2; `notContains` `red` → 3; `equal` of two spaces → no rows, since a value of white space is a value
-  (PRD-F30) and `notEqual` of it → every row. On OS each sends the query of the SearchBuilder condition it names (`=`,
-  `!=`, `starts`, `ends`, `!contains`) on a text column, and `equal` that of `=` on a number and a date column; the
-  other logics are refused there (`SPEC-F45.8`).
-- **SPEC-F45.4** [all] `empty` on `note` → rows 1, 2 and `notEmpty` → 3, 4 on SQL (`SPEC-F26.1`); on OS they send the
-  queries of `null` and `!null`.
+  (PRD-F30) and `notEqual` of it → every row. On OS each sends the body of the SearchBuilder condition it names (`=`,
+  `!=`, `starts`, `ends`, `!contains`) on a text column, and `equal` that of `=` on a number and a date column, whose
+  rows the live module pins (`test_searchbuilder_conditions`); the other logics are refused there (`SPEC-F45.8`).
+- **SPEC-F45.4** [all] `empty` on `note` → rows 1, 2 and `notEmpty` → 3, 4 on SQL (`SPEC-F26.1`). On OS they send the
+  bodies of `null` and `!null`, whose rows the live module pins (`test_searchbuilder_conditions`, on `author`;
+  `test_a_stored_empty_text_is_not_a_missing_field`, `SPEC-F26.2`).
 - **SPEC-F45.5** [all] A list `red`, `blue` on `colour` → rows 1, 3, 4 (`SPEC-F20.1`); a list `""`, `x_y` on `note` → rows
-  1, 2, 3 on SQL (`SPEC-F20.2`). On OS a list sends the query of the same `multi_values`, on text, number and date
-  columns.
+  1, 2, 3 on SQL (`SPEC-F20.2`). On OS a list sends the body of the same `multi_values`, on text, number and date
+  columns, whose rows the live module pins (`test_multi_values_match_exactly`, and
+  `test_an_empty_alternative_or_entry_matches_the_documents_without_the_field` for the empty entry).
 - **SPEC-F45.6** [all] A column search `red` and a ColumnControl `starts` `reddish` on `colour` → row 2 (AND); a column
   search, a ColumnControl search and a ColumnControl list on one column are three clauses, ANDed, and a ColumnControl
   search and list on one column are not refused as a value beside a list (PRD-F39). When two of them are refused at the
@@ -485,6 +488,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F45.12** [SQL] A ColumnControl search or list on a column the server declares unsearchable, on one it does not
   declare and on one with no name → `invalid_filter` (PRD-F41), never dropped.
 - **SPEC-F45.13** [all] On `price`: `greater` `7` → rows 2, 3; `greaterOrEqual` `8` → 2, 3; `less` `8` → 1; `lessOrEqual`
-  `8` → 1, 3. Row 4, with no price, is in none (section 5). On OS each sends the query of `>`, `>=`, `<` and `<=`.
+  `8` → 1, 3. Row 4, with no price, is in none (section 5). On OS each sends the body of `>`, `>=`, `<` and `<=`,
+  whose rows the live module pins, the missing value left out (`test_searchbuilder_conditions` on `pages`).
 - **SPEC-F45.14** [SQL] `greater` `abc` on `price` → `invalid_number`; `greater` on a text column → `invalid_filter`.
 - **SPEC-F45.15** [SQL] `notEqual` `7` on `price` → rows 2, 3, 4: the row with no price passes (PRD-F37).

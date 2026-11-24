@@ -2741,6 +2741,24 @@ def test_columncontrol_logics_that_need_a_whole_string_are_refused_on_analysed_t
     refused(table.fetch_sync(request(*NAMES, flags=columncontrol('body', logic, 'red fox')), client))
     refused(table.fetch_sync(request(*NAMES, flags=columncontrol_list('body', ['red fox'])), client))
     assert (client.searches, client.counts) == ([], [])
-    for answered in ('contains', 'notContains', 'empty', 'notEmpty'):
-        assert _clauses(flags=columncontrol('body', answered, 'red fox')) != []
+
+
+@pytest.mark.parametrize(
+    ('logic', 'equivalent'),
+    [
+        ('contains', {'column_search': {'body': {'value': 'red fox'}}}),
+        ('notContains', criterion('body', '!contains', 'red fox')),
+        ('empty', criterion('body', 'null')),
+        ('notEmpty', criterion('body', '!null')),
+    ],
+)
+def test_columncontrol_logics_answered_on_analysed_text_send_the_equivalent_body(
+    logic: str, equivalent: dict[str, Any]
+):
+    """SPEC-F45.8, SPEC-D19.2: on `body`, analysed text only, `contains`, `notContains`, `empty` and `notEmpty` send what
+    the column search or SearchBuilder condition they name sends, whose rows the live module pins (`!contains` on
+    `body` in test_searchbuilder_conditions); a list holding only `""` sends that of the same `multi_values`."""
+    expected = _clauses(**equivalent)
+    assert expected != []
+    assert _clauses(flags=columncontrol('body', logic, 'red fox')) == expected
     assert _clauses(flags=columncontrol_list('body', [''])) == _clauses(column_search={'body': {'multi_values': ['']}})
