@@ -1053,17 +1053,18 @@ def test_a_timezone_aware_column_compares_by_utc_day(
     session: Session, condition: str, values: list[str], expected: list[int]
 ):
     """SPEC-F21.2, SPEC-F21.3, SPEC-F21.11, SPEC-F22.3: every condition compares the UTC day. The day bounds are UTC
-    midnights. The PostgreSQL job catches naive bounds through its session zone (PGTZ,
-    UTC+14), which reads a naive bound as local to it, and bounds built from Python's local time through TZ
-    (America/Adak, UTC-10/-9). A developer machine whose local zone is not UTC catches local-time bounds on SQLite
-    too. SQL Server and MySQL cannot tell a naive bound from a UTC one, and their CI jobs run Python in UTC, so there
-    the test only shows the column works."""
-    if session.get_bind().dialect.name == 'postgresql':
-        zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
-        assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
+    midnights. Every container job runs Python in a zone far from UTC (TZ, America/Adak, UTC-10/-9), which catches a
+    bound built from local time; the guard fails a job that forgot it. The PostgreSQL jobs also catch naive bounds
+    through their session zone (PGTZ, UTC+14), which reads a naive bound as local to it. SQL Server and MySQL cannot
+    tell a naive bound from a UTC one, so there the test shows the column works and that no bound is local. A
+    developer machine whose local zone is not UTC catches local-time bounds on SQLite too."""
+    if os.environ.get('DTB_SQL_URL'):  # a container job; SQLite and local runs are not held to a zone
         assert datetime.now().astimezone().utcoffset(), (
             'Set TZ to a zone far from UTC, or local-time bounds go unchecked.'
         )
+    if session.get_bind().dialect.name == 'postgresql':
+        zone = session.execute(select(func.current_setting('TimeZone'))).scalar()
+        assert zone not in ('UTC', 'Etc/UTC'), 'Set PGTZ to a zone far from UTC, or this test checks nothing.'
     aware = SQLTable(people, [Column('id'), Column('seen_tz')])
     assert ids(aware.fetch_sync(request('id', 'seen_tz', **criterion('seen_tz', condition, *values)), session)) == (
         expected
