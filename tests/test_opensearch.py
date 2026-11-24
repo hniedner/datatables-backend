@@ -634,6 +634,17 @@ def test_each_word_of_the_global_search_must_be_found_in_some_searched_column():
     ]
 
 
+@pytest.mark.parametrize('text', ['red NOT apple', 'red not apple'])
+def test_not_in_the_global_search_is_a_word_like_any_other(text: str):
+    """SPEC-F8.6: three words, each a clause that must be found in some column, and no `must_not` (the live test shows
+    the rows). Read as a negation, `NOT apple` would be a `must_not` of `apple` and no clause for `NOT`."""
+    client = Client()
+    table.fetch_sync(request(*NAMES, search={'value': text}), client)
+    assert query(client) == [
+        {'bool': {'must': [{'bool': {'should': _in_column(word), 'minimum_should_match': 1}} for word in text.split()]}}
+    ]
+
+
 def test_a_negated_word_of_the_global_search_is_excluded_from_every_searched_column():
     """SPEC-F5.1, SPEC-F5.2: a `must_not` keeps a document without the field, so a missing value passes."""
     client = Client()

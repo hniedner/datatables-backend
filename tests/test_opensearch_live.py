@@ -284,6 +284,7 @@ def test_a_page_is_a_slice_of_the_order(client: OpenSearch):
         ('"', ['a1', 'b2', 'c3', 'd4', 'e5']),  # SPEC-F6.2: no word at all
         ('12', []),  # SPEC-F32.1: a1 and d4 have 12 pages, but the number column takes no part in the search
         ('2026', []),  # SPEC-F32.1: nor does the date column, which a1, b2 and e5 hold
+        ('apple 12', []),  # SPEC-F1.3: a1's title holds `apple` and its pages 12, but the number column takes no part
     ],
 )
 def test_the_global_search(client: OpenSearch, text: str, expected: list[str]):
@@ -358,6 +359,119 @@ def test_searchbuilder_contains_of_one_space(client: OpenSearch, column: str, ex
     """SPEC-F11.7 on a blank value sent as typed (#68): the phrase has no token, the wildcard `* *` is a space."""
     response = phrases.fetch_sync(request(*PHRASE_NAMES, **criterion(column, 'contains', ' ')), client)
     assert found(response) == expected
+
+
+def everywhere(text: str) -> dict[str, Any]:
+    return {'search': {'value': text}}
+
+
+def in_title(text: str) -> dict[str, Any]:
+    return {'column_search': {'title': {'value': text}}}
+
+
+@pytest.mark.parametrize(
+    ('title', 'body', 'expected'),
+    [
+        ('red apple', everywhere('“red apple”'), True),  # SPEC-F4.2
+        ('50 plum', in_title('50"'), True),  # SPEC-F4.4: it searches `50`
+        ('plum', in_title('"plum'), True),  # SPEC-F4.4: unclosed, it searches `plum`
+        ('5" pipe', everywhere('!5"'), False),  # SPEC-F4.5: it excludes `5"`
+        ('50', everywhere('!5"'), True),  # SPEC-F4.5: and not `50`
+        ('red apple', everywhere('"apple red'), True),  # SPEC-F4.9: no phrase, so `apple` and `red` in any order
+        ('apple pie', everywhere('"apple red'), False),
+        ('red apple', everywhere('"apple red"'), False),  # SPEC-F4.1, the phrase the unclosed quote must not become
+        ('red*', everywhere('red*'), True),  # SPEC-F8.3
+        ('redx', everywhere('red*'), False),
+        ('re?', everywhere('re?'), True),
+        ('rex', everywhere('re?'), False),
+        ('xa*by', criterion('title', 'contains', 'a*b'), True),  # SPEC-F8.4
+        ('xaby', criterion('title', 'contains', 'a*b'), False),
+        ('red not apple', everywhere('red NOT apple'), True),  # SPEC-F8.6: `NOT` is a word
+        ('red apple', everywhere('red NOT apple'), False),
+        ('red', everywhere('red NOT apple'), False),  # as a negation it would find this one
+        ('red not apple', everywhere('red not apple'), True),
+        ('red apple', everywhere('red\napple'), True),  # SPEC-F7.1: a line break is a space
+        ('red apple', everywhere('red\rapple'), True),
+        ('red apple', everywhere(f'red{chr(0x2028)}apple'), True),
+        ('red apple', everywhere(f'red{chr(0x2029)}apple'), True),
+        ('red', everywhere('red\napple'), False),
+        ('a\nb', {'column_search': {'title': {'multi_values': ['a\nb']}}}, True),  # SPEC-F7.2: an exact value
+        ('a b', {'column_search': {'title': {'multi_values': ['a\nb']}}}, False),
+        ('a\nb', criterion('title', '=', 'a\nb'), True),
+        ('a b', criterion('title', '=', 'a\nb'), False),
+    ],
+)
+def test_the_smart_search_finds_a_document_by_the_rule_its_statement_gives(
+    client: OpenSearch, title: str, body: dict[str, Any], expected: bool
+):
+    """SPEC-F4.1, SPEC-F4.2, SPEC-F4.4, SPEC-F4.5, SPEC-F4.9, SPEC-F7.1, SPEC-F7.2, SPEC-F8.3, SPEC-F8.4, SPEC-F8.6
+    (named in the comments), on a text+keyword column: the document f6 holds the text as its title, and is found or is
+    not. Each case is asked on its own, so that a document that differs from the next in one character cannot answer
+    for it."""
+    with added_document(client, title=title, body='x'):
+        assert ('f6' in found(table.fetch_sync(request(*NAMES, **body), client))) is expected
+
+
+#: The label as one whole string only, a keyword column: the wildcard alone decides, so what an analyser drops tells
+#: rows apart (the cases of SPEC-F11.9 are the same texts on text+keyword)
+whole = SearchTable(
+    INDEX, [IndexColumn('id', text='keyword'), IndexColumn('label', field='label.keyword', text='keyword')],
+    unique_key='id',
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ('text', 'body', 'expected'),
+    [
+        ('a b”', everywhere('"a b”'), True),  # SPEC-F4.3: one document at a time, each against the same search
+        ('a b', everywhere('"a b”'), False),
+        ('“a b', everywhere('"a b”'), False),
+        ('“a b', everywhere('“a b"'), True),
+        ('a b”', everywhere('“a b"'), False),
+        ('a b', everywhere('“a b"'), False),
+        ('x “abc', everywhere('“abc'), True),  # SPEC-F4.6: the curly quote stays as text
+        ('abc', everywhere('“abc'), False),
+        ('"a b”', everywhere('!"a b”'), False),  # SPEC-F4.7: a negated mixed pair keeps its straight quote
+        ('a b”', everywhere('!"a b”'), True),
+        (' a ', everywhere('" a "'), True),  # SPEC-F4.8: a phrase keeps the spaces inside its quotes
+        ('xax', everywhere('" a "'), False),
+        ('a', everywhere('" a "'), False),
+        ('-red', everywhere('-red'), True),  # SPEC-F8.2: `-red` is text
+        ('red', everywhere('-red'), False),
+    ],
+)
+def test_the_quotes_padding_and_minus_of_a_search_tell_rows_apart_on_a_keyword_column(
+    client: OpenSearch, text: str, body: dict[str, Any], expected: bool
+):
+    """SPEC-F4.3, SPEC-F4.6, SPEC-F4.7, SPEC-F4.8, SPEC-F8.2 on OpenSearch: the column is a keyword column."""
+    with added_document(client, label=text):
+        assert ('f6' in found(whole.fetch_sync(request('id', 'label', **body), client))) is expected
+
+
+@pytest.mark.parametrize(
+    ('searched', 'other', 'body'),
+    [
+        ('-red', 'red', everywhere('-red')),
+        (' a ', 'a', everywhere('" a "')),
+        ('a b”', 'a b', everywhere('"a b”')),
+    ],
+)
+def test_what_the_analyser_drops_does_not_tell_rows_apart_on_text_and_keyword(
+    client: OpenSearch, searched: str, other: str, body: dict[str, Any]
+):
+    """SPEC-F11.9: both rows are found, as the analysed half of the word matches the tokens (SPEC-F11.7). It pins
+    today's result: the text of a row is its title, one row at a time."""
+    for title in (searched, other):
+        with added_document(client, title=title, body='x'):
+            assert 'f6' in found(table.fetch_sync(request(*NAMES, **body), client))
+
+
+def test_a_negation_leaves_every_other_document_and_a_missing_field_passes(client: OpenSearch):
+    """SPEC-F6.5: `!pipe` and `!pipe ""` find the same, all five, c3 (no author) among them (missing on OpenSearch is
+    a NULL; an empty word kept as a condition would drop it)."""
+    plain = found(table.fetch_sync(request(*NAMES, column_search={'author': {'value': '!pipe'}}), client))
+    quoted = found(table.fetch_sync(request(*NAMES, column_search={'author': {'value': '!pipe ""'}}), client))
+    assert plain == quoted == ['a1', 'b2', 'c3', 'd4', 'e5']
 
 
 @pytest.mark.parametrize(

@@ -112,6 +112,15 @@ ENFORCED = (
     'PRD-F31',
     'PRD-F32',
     'PRD-F33',
+    # The smart search of #64; PRD-F11 to PRD-F15 and PRD-F35 follow with #128
+    'PRD-F1',
+    'PRD-F2',
+    'PRD-F3',
+    'PRD-F4',
+    'PRD-F5',
+    'PRD-F6',
+    'PRD-F7',
+    'PRD-F8',
 )
 TABLE_ROW = re.compile(r'^\s*\|\s*[*_`~\[]*PRD-')
 HEADING_LINE = re.compile(r'^\s*#')

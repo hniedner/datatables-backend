@@ -18,17 +18,23 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F4.1** [all] Global search `"red apple"` → rows 1; `"apple red"` → none: a phrase sits inside one column.
 - **SPEC-F4.2** [all] Global search `“red apple”` (U+201C, U+201D) → rows 1.
 - **SPEC-F4.3** [all] Given rows whose `note` is `a b”`, `a b` and `“a b`: global search `"a b”` → only the `a b”`
-  row; `“a b"` searches `“a b` → only the `“a b` row.
+  row; `“a b"` searches `“a b` → only the `“a b` row. On OpenSearch the column is a keyword column; on analysed
+  text `SPEC-F11.9` holds.
 - **SPEC-F4.4** [all] Column search on `name` with `50"` → rows 3 (it searches `50`); `"plum` (unclosed) searches
   `plum` → rows 3.
 - **SPEC-F4.5** [all] Global search `!5"` → rows 1, 2, 3: it excludes rows holding `5"`, not rows holding `5` (row 3
   holds `50`).
 - **SPEC-F4.6** [all] Given rows whose `note` is `x “abc` and `abc`: global search `“abc` (an unclosed curly quote)
-  → the `x “abc` row only; the quote stays as text.
+  → the `x “abc` row only; the quote stays as text. On OpenSearch the column is a keyword column; on analysed text
+  `SPEC-F11.9` holds.
 - **SPEC-F4.7** [all] Given rows whose `note` is `"a b”` and `a b”`: global search `!"a b”` excludes the row holding
-  `"a b”` and keeps the row holding only `a b”`: a negated mixed pair keeps its straight quote.
+  `"a b”` and keeps the row holding only `a b”`: a negated mixed pair keeps its straight quote. On OpenSearch the
+  column is a keyword column; on analysed text `SPEC-F11.9` holds.
 - **SPEC-F4.8** [all] Given rows whose `note` is ` a ` (spaces at both ends), `xax` and `a`: global search `" a "` →
-  the ` a ` row only: a phrase keeps the spaces inside its quotes.
+  the ` a ` row only: a phrase keeps the spaces inside its quotes. On OpenSearch the column is a keyword column; on
+  analysed text `SPEC-F11.9` holds.
+- **SPEC-F4.9** [all] Global search `"apple red` (an unclosed quote) → rows 1, as `apple red`: the quote opens no
+  phrase, and each word must match on its own (the phrase `apple red` gives none, `SPEC-F4.1`).
 - **SPEC-F5.1** [all] Global search `!reddish` → rows 1, 3, 4.
 - **SPEC-F5.2** [all] Column search on `note` with `!pipe` → rows 1, 2, 3: row 1's NULL (missing on OS) contains no
   word, so it passes.
@@ -42,6 +48,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F6.4** [all] With `regex: true`, the value of F6.3 is a categorical value: as a column search on `colour`
   → none (the exact value, which no row holds); on `price` → rows 4 (on a column that is no string it holds
   nothing, so it means empty).
+- **SPEC-F6.5** [all] Column search on `note` with `!pipe ""` → rows 1, 2, 3, as `!pipe` (`SPEC-F5.2`): the empty
+  quote adds nothing next to other words (an empty word kept as a condition would drop row 1's NULL).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
@@ -51,12 +59,15 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F8.1** [all] Global search `red OR blue` → the rows holding `red`, `or` and `blue` → none in the fixture
   (no union of `red` and `blue`).
 - **SPEC-F8.2** [all] Given a row whose `note` is `-red`: global search `-red` → that row only (not rows 1, 2, 4,
-  which hold `red` without the `-`).
+  which hold `red` without the `-`). On OpenSearch the column is a keyword column; on analysed text `SPEC-F11.9`
+  holds.
 - **SPEC-F8.3** [all] Global search `red*` and `re?` → none on the fixture alone; a row whose `note` is `red*` is
   found by `red*`.
 - **SPEC-F8.4** [all] SearchBuilder `contains` `a*b` on `note` matches a row whose `note` is `xa*by` and not `xaby`.
 - **SPEC-F8.5** [SQL] SearchBuilder `contains` `x_y` on `note` → rows 3, not a row whose `note` is `xay`; `contains`
   `50%` on `name` → rows 3, not a row whose `name` is `50 plum`.
+- **SPEC-F8.6** [all] Global search `red NOT apple`, and the same with `not`, → none: `not` is a word (as a
+  negation it would give rows 2, 4, as `red !apple` does, `SPEC-F5.3`).
 
 ## Case, accents, wildcards
 
@@ -131,6 +142,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `starts` `anna_` → the first row only, and `ends` `00%` → the first row only; `!starts` `anna_` and `!ends` `00%` →
   every row but the first. A `_` and a `%` in the value are text, not wildcards. Given rows whose `name` is `a[bc` and
   `abc`: `starts` `a[b` → the first row only.
+- **SPEC-F11.9** [OS] On a text+keyword column a word also matches the analysed text as a phrase of its tokens
+  (PRD-F11), so what the analyser drops does not tell rows apart: given rows whose text is `-red` and `red`, global
+  search `-red` → both rows; given rows ` a ` and `a`, `" a "` → both; given rows `a b”` and `a b`, `"a b”` → both.
 
 ## Combining and refusing
 
