@@ -78,6 +78,10 @@ containers = [
     "pymysql>=1.1",
     "pyodbc>=5.2",
 ]
+# mysqlclient (sync MySQL driver) builds from source on Linux and macOS, so it is a group of its own.
+mysqlclient = [
+    "mysqlclient>=2.2",
+]
 
 [tool.hatch.version]
 path = "src/datatables_backend/__init__.py"

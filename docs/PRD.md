@@ -3,7 +3,7 @@
 - **Product:** datatables-backend, a read-only Python library that answers DataTables server-side requests from SQL
   (SQLAlchemy 2, async and sync) and OpenSearch, with one request model, one column declaration and one set of
   safety rules for every source.
-- **Status:** draft 2, approved by the owner on 2026-11-19, revision 54 of 2026-11-24 (revision 21 was revision 20 with
+- **Status:** draft 2, approved by the owner on 2026-11-19, revision 55 of 2026-11-24 (revision 21 was revision 20 with
   the owner's answers to section 8 folded in, all of section 8 answered; revision 22 holds the changes he approved
   since: PRD-E2, PRD-E3, PRD-E4, PRD-F15, PRD-A11, a clause of PRD-F43, and PRD-F36's wording, which follows PRD-F15's
   code; revision 23 adds PRD-D21 and changes PRD-F9 for columns the library does not fold, for the SQL column types it
@@ -52,8 +52,9 @@
   entry per difference, no word changed (#42); revision 53 adds to section 5's entry for PRD-F11 that what the
   analyser drops does not tell rows apart (#131); revision 54 rewords PRD-F23's first sentence (the owner's decision of
   2026-11-24: a whole number as its digits, any other number as the database spells it), adds its clause that a
-  number as the table shows it is found, and adds a section-5 entry for the spellings (#71)). It replaces draft 1
-  (R1 to R9); section 10 maps every draft-1 item to its place here.
+  number as the table shows it is found, and adds a section-5 entry for the spellings (#71); revision 55 adds
+  MariaDB's default collation to section 5's entry for trailing spaces (#58)). It replaces draft 1 (R1 to R9);
+  section 10 maps every draft-1 item to its place here.
   The first sentence and the priority of a requirement, a goal or non-goal, a public name and an error code change
   only by the owner. A requirement's further clauses, its reason and section 5 change in PR review by the reviewer,
   and the PR body lists each such change for the owner to read. New facts about a database engine go to
@@ -1809,12 +1810,14 @@ where a database decides. Each difference is stated here; every other answer is 
   number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix.
   - **Between:** Numbers with a point or an exponent, and whole numbers
   - **Requirement:** PRD-F25
-- On SQL Server, and on MySQL with a PAD SPACE collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an
-  exact match ignores trailing spaces, as the database compares strings: `'a '` equals `'a'`, and a value of spaces only
-  equals the empty string. PostgreSQL, SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them
-  apart. MEASURED 2026-11-22 for SQL Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite
-  (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md); not measured for a PAD SPACE collation.
-  - **Between:** SQL Server, MySQL with a PAD SPACE collation; PostgreSQL, SQLite
+- On SQL Server, on MariaDB with its default collation (`utf8mb4_uca1400_ai_ci`) and on MySQL with a PAD SPACE
+  collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the
+  database compares strings: `'a '` equals `'a'`, and a value of spaces only equals the empty string. PostgreSQL,
+  SQLite and MySQL's default collation (`utf8mb4_0900_ai_ci`, NO PAD) tell them apart. MEASURED 2026-11-22 for SQL
+  Server 2022, PostgreSQL 18.7, MySQL 8.4.13 with its default collation and SQLite
+  (docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md), and 2026-11-24 for MariaDB 12.3.3 with its
+  default collation; not measured for a MySQL PAD SPACE collation.
+  - **Between:** SQL Server, MariaDB, MySQL with a PAD SPACE collation; PostgreSQL, SQLite
   - **Requirement:** PRD-F20, PRD-F26
 
 ## 6. Release criteria for 1.0

@@ -124,9 +124,9 @@ Options (`TotalCache`, `RowHooks`, page limits, a table per request for a per-us
 ## Tested with
 
 CI runs the tests on Python 3.12 to 3.15 and on SQLite (sync, and async with aiosqlite); PostgreSQL 18 (psycopg 3, sync
-and async; psycopg2 with asyncpg); MySQL 8.4 (pymysql, aiomysql); SQL Server 2022 (pyodbc, aioodbc, ODBC Driver 18);
-and OpenSearch 3.10.0 and 2.19.7. It also runs the oldest supported releases: SQLAlchemy 2.0.31, Pydantic 2.10,
-opensearch-py 2.6 and FastAPI 0.133.
+and async; psycopg2 with asyncpg); MySQL 8.4 (pymysql, aiomysql; also mysqlclient 2.3, sync only); MariaDB 12.3
+(pymysql, aiomysql); SQL Server 2022 (pyodbc, aioodbc, ODBC Driver 18); and OpenSearch 3.10.0 and 2.19.7. It also runs
+the oldest supported releases: SQLAlchemy 2.0.31, Pydantic 2.10, opensearch-py 2.6 and FastAPI 0.133.
 
 ## What the server decides
 

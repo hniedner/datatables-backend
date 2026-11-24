@@ -607,7 +607,7 @@ def test_a_search_value_hook_transforms_what_the_user_typed(session: Session):
 
 CASED = ('id', 'kind', 'wrapped', 'ref', 'secret', 'size', 'plain')
 #: A collation that tells `red` from `RED`, where the database's default does not. PostgreSQL's and SQLite's do.
-CASE_SENSITIVE = {'mysql': 'utf8mb4_bin', 'mssql': 'Latin1_General_CS_AS'}
+CASE_SENSITIVE = {'mysql': 'utf8mb4_bin', 'mariadb': 'utf8mb4_bin', 'mssql': 'Latin1_General_CS_AS'}
 
 
 class Wrapped(TypeDecorator[str]):
@@ -1259,9 +1259,11 @@ def test_white_space_is_a_value_on_a_string_column(session: Session):
     """SPEC-F20.4: an exact value is never rewritten, so an entry of one space is that value, not an empty
     entry, which would find row 2's NULL too. No row holds a space. SQL Server compares strings without their
     trailing spaces (MEASURED on the `sqlserver` leg, run 45044380547), so there the space equals the `''` of
-    row 3."""
+    row 3. So does MariaDB's default collation `utf8mb4_uca1400_ai_ci`, which is PAD SPACE (MEASURED 2026-11-24 on
+    12.3.3: `information_schema.COLLATIONS` says `uca1400_ai_ci` is `PAD SPACE`, `uca1400_nopad_ai_ci` `NO PAD`),
+    unlike MySQL's `utf8mb4_0900_ai_ci`, which is NO PAD."""
     params = request(*EVERY_TYPE, column_search={'email': {'multi_values': [' ']}})
-    found = [3] if session.get_bind().dialect.name == 'mssql' else []
+    found = [3] if session.get_bind().dialect.name in ('mssql', 'mariadb') else []
     assert ids(every_type.fetch_sync(params, session)) == found
 
 
@@ -1459,7 +1461,11 @@ def test_a_filter_with_a_value_on_an_undeclared_column_is_refused_and_an_empty_o
 
 #: What each database does with accents, for the claims of SPEC-F9.6, SPEC-F9.7, SPEC-F10.1 and SPEC-F10.2. MySQL's and
 #: SQL Server's column is declared with the collation the statement names; SQLite and PostgreSQL keep their default.
-ACCENT_COLLATION = {'mysql': 'utf8mb4_0900_ai_ci', 'mssql': 'Latin1_General_CI_AS'}
+ACCENT_COLLATION = {
+    'mysql': 'utf8mb4_0900_ai_ci',
+    'mariadb': 'utf8mb4_uca1400_ai_ci',
+    'mssql': 'Latin1_General_CI_AS',
+}
 
 
 @pytest.fixture
@@ -1479,7 +1485,7 @@ def accented(session: Session) -> SQLTable:
 
 def folds_letters_beyond_ascii(session: Session) -> bool:
     """Whether the database folds `Ä` to `ä` on its own: SQLite folds ASCII only, PostgreSQL does in a UTF-8 locale
-    (the official image's `en_US.utf8`) and not in the `C` locale, MySQL's and SQL Server's collations do."""
+    (the official image's `en_US.utf8`) and not in the `C` locale, MySQL's, MariaDB's and SQL Server's collations do."""
     dialect = session.get_bind().dialect.name
     if dialect == 'sqlite':
         return False
@@ -1502,8 +1508,9 @@ def test_the_global_search_finds_a_capital_beyond_ascii_by_its_own_case_and_a_sm
 
 def test_the_library_folds_no_accent_the_collation_does_not(session: Session, accented: SQLTable):
     """SPEC-F10.1, SPEC-F10.2: `apfel` finds `Äpfel` only where the collation ignores accents: MySQL's
-    `utf8mb4_0900_ai_ci` (SQL Server's `Latin1_General_CI_AS` does not, SQLite and PostgreSQL's default do not)."""
-    found = [4] if session.get_bind().dialect.name == 'mysql' else []
+    `utf8mb4_0900_ai_ci` and MariaDB's default `utf8mb4_uca1400_ai_ci` (SQL Server's `Latin1_General_CI_AS` does not,
+    SQLite and PostgreSQL's default do not)."""
+    found = [4] if session.get_bind().dialect.name in ('mysql', 'mariadb') else []
     assert ids(accented.fetch_sync(request('id', 'name', search={'value': 'apfel'}), session)) == found
 
 
@@ -1550,7 +1557,7 @@ def test_a_reflected_boolean_column_is_typed_by_what_the_database_reports(sessio
             1,
             4,
         ]
-    elif dialect == 'mysql':
+    elif dialect in ('mysql', 'mariadb'):
         assert ids(undeclared.fetch_sync(request('id', 'active', **criterion('active', '<', '1')), session)) == [2, 5]
         declared = SQLTable(reflected, [Column('id'), Column('active', type='boolean')])
         assert ids(declared.fetch_sync(request('id', 'active', **criterion('active', '=', 'true')), session)) == [1, 4]
@@ -2348,9 +2355,9 @@ TWO_64 = 2**64
 def wide(session: Session) -> SQLTable:
     """A table of number columns that are no plain integers. Row 1 holds 2^64 in `ratio` (a float), in `exact` (a
     `Numeric(32, 2)`) and, as text, in `digits` (a string column declared a number). Its `count` holds the largest
-    value the column takes: the column is declared MySQL's unsigned BIGINT, which only MySQL creates unsigned, so
-    2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type, declared a
-    number. Row 2 holds NULL."""
+    value the column takes: the column is declared MySQL's unsigned BIGINT, which only MySQL and MariaDB create
+    unsigned, so 2^64 - 1 there and 2^63 - 1 elsewhere. `untyped` is `ratio` as an expression without a SQL type,
+    declared a number. Row 2 holds NULL."""
     dialect = session.get_bind().dialect.name
     numbers = Table(
         'dtb_test_tags',
@@ -2362,7 +2369,7 @@ def wide(session: Session) -> SQLTable:
         SQLColumn('count', mysql.BIGINT(unsigned=True)),
     )
     numbers.create(session.connection())
-    largest = TWO_64 - 1 if dialect == 'mysql' else 2**63 - 1
+    largest = TWO_64 - 1 if dialect in ('mysql', 'mariadb') else 2**63 - 1
     session.execute(
         numbers.insert(),
         [
@@ -2458,10 +2465,11 @@ def test_a_list_holds_a_whole_number_outside_64_bits(session: Session):
 
 def test_an_unsigned_integer_column_is_bounded_from_zero_up(session: Session):
     """SPEC-F25.6: MySQL's unsigned BIGINT takes 0 to 2^64 - 1, which the type says of itself. A negative number is
-    outside it on every database; the largest value is found on MySQL, the only database that stores it."""
+    outside it on every database; the largest value is found on MySQL and MariaDB, the only databases that store it
+    (MEASURED 2026-11-24 on MariaDB 12.3.3: `bigint(20) unsigned` holds 18446744073709551615)."""
     numbers = wide(session)
     refused(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', '-1')), session), 'invalid_number')
-    if session.get_bind().dialect.name == 'mysql':
+    if session.get_bind().dialect.name in ('mysql', 'mariadb'):
         assert ids(numbers.fetch_sync(request(*WIDE, **criterion('count', '=', str(TWO_64 - 1))), session)) == [1]
 
 

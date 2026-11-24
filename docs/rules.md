@@ -1,8 +1,9 @@
 # What the server decides
 
 The library does not change how a database compares values. Where a database's own rule changes what a user sees
-(trailing spaces on SQL Server and under a MySQL PAD SPACE collation, SQLite's inexact decimals), and where the
-library itself has a limit on one engine, [databases.md](databases.md) says so, engine by engine.
+(trailing spaces on SQL Server, on MariaDB's default collation and under a MySQL PAD SPACE collation, SQLite's inexact
+decimals), and where the library itself has a limit on one engine, [databases.md](databases.md) says so, engine by
+engine.
 
 ## Columns and ordering
 
