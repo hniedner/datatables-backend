@@ -11,6 +11,7 @@ import os as _m56_os
 import sys as _m56_sys
 from typing import Any as _M56Any
 
+import pytest
 import sqlalchemy as _m56_sa
 from sqlalchemy.ext.asyncio import AsyncSession as _M56AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine as _m56_async_engine
@@ -104,7 +105,7 @@ def _m56_answer(response: _M56DTResponse) -> _M56Any:
     return response.error_code or [row['id'] for row in response.data]
 
 
-def test_measure_56_decimal_binds(database: tuple[str, str]):
+def test_measure_56_decimal_binds(database: tuple[str, str], capsys: pytest.CaptureFixture[str]):
     sync_url, async_url = database
     table = _m56_sa.Table(
         'dtb_test_stamps',
@@ -161,7 +162,8 @@ def test_measure_56_decimal_binds(database: tuple[str, str]):
     _m56_asyncio.run(async_engine.dispose())
     engine.dispose()
     report = '\n'.join(lines) + '\n'
-    _m56_sys.stdout.write(report)
+    with capsys.disabled():  # pytest captures stdout; the report must reach the job log
+        _m56_sys.stdout.write(report)
     if summary := _m56_os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(summary, 'a', encoding='utf-8') as handle:
             handle.write(report)
