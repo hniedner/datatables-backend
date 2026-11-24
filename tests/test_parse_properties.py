@@ -97,6 +97,29 @@ criterion = st.recursive(
     max_leaves=8,
 )
 search = st.fixed_dictionaries({}, optional={'value': maybe(words | marked), 'regex': maybe(flag), 'fixed': anything})
+CC_LOGICS = ['contains', 'notContains', 'equal', 'notEqual', 'starts', 'ends', 'empty', 'notEmpty', 'greater',
+             'greaterOrEqual', 'less', 'lessOrEqual', '', 'bogus']  # fmt: skip
+#: ColumnControl's part of a column: a search of a value, a logic and a type from the valid and from arbitrary text, and
+#: a list as an object whose keys are indexes, huge ones and arbitrary text included, or as an array of anything
+columncontrol_search = st.fixed_dictionaries(
+    {},
+    optional={
+        'value': maybe(words | marked),
+        'logic': maybe(st.sampled_from(CC_LOGICS)),
+        'type': maybe(st.sampled_from(['text', 'num', 'date', 'html'])),
+        'mask': anything,
+    },
+)
+columncontrol_list = st.one_of(
+    st.dictionaries(
+        st.one_of(st.integers(0, 5).map(str), st.just('999999999'), keys), maybe(words | marked), max_size=4
+    ),
+    st.lists(anything, max_size=4),
+)
+columncontrol = st.one_of(
+    st.fixed_dictionaries({}, optional={'search': maybe(columncontrol_search), 'list': maybe(columncontrol_list)}),
+    anything,
+)
 column = st.fixed_dictionaries(
     {},
     optional={
@@ -105,7 +128,7 @@ column = st.fixed_dictionaries(
         'searchable': maybe(flag),
         'orderable': maybe(flag),
         'search': maybe(search),
-        'columnControl': anything,
+        'columnControl': columncontrol,
     },
 )
 order_entry = st.fixed_dictionaries(

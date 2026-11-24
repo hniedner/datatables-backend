@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 import pytest
@@ -777,13 +778,14 @@ def test_a_columncontrol_search_and_list_are_read_with_their_value_logic_and_ent
         {'search': {'value': '', 'logic': 'starts', 'type': 'text'}},
         {'search': {'value': '', 'logic': 'greater', 'type': 'num'}},
         {'search': {'value': '', 'logic': 'equal', 'type': 'date', 'mask': ''}},
+        {'search': {'value': '', 'logic': '', 'type': 'text'}},
         {'list': {}},
     ],
-    ids=['starts', 'greater', 'date', 'list'],
+    ids=['starts', 'greater', 'date', 'no-logic', 'list'],
 )
 def test_an_idle_columncontrol_filter_adds_nothing_as_json_and_as_a_form(idle: dict[str, Any]):
-    """SPEC-P5.3: an empty value with a logic that needs none to be empty (`starts`, `greater`), the date control's
-    idle shape and an empty list are what the client sends on every request; they filter nothing."""
+    """SPEC-P5.3: an empty value with a logic that needs none to be empty (`starts`, `greater`) or with no logic, the
+    date control's idle shape and an empty list are what the client sends on every request; they filter nothing."""
     body = _with_columncontrol(idle)
     without = {'columns': {'__all__': {'columnControl'}}}
     for encoded in (body, as_pairs(body)):
@@ -820,6 +822,50 @@ def test_a_columncontrol_logic_outside_the_set_is_refused_with_the_fix_and_none_
             parse_request(encoded)
         assert str(refused.value) == _LOGIC_REFUSAL
         assert refused.value.parameter == 'columns'
+
+
+_NO_LOGIC_REFUSAL = (
+    "Invalid columns parameter: a ColumnControl search sent a value without a logic. Send the control's logic with its "
+    'value.'
+)
+
+
+@pytest.mark.parametrize('search', [{'value': 'SENTINEL-VALUE', 'logic': '', 'type': 'text'}, {'value': 'SENTINEL'}])
+def test_a_columncontrol_value_with_no_logic_is_refused_not_dropped(search: dict[str, Any]):
+    """SPEC-P5.8: the client always sends a logic (decision 007), so a value without one is no search the library can
+    answer; read as idle it would drop a filter with no sign."""
+    body = _with_columncontrol({'search': search})
+    for encoded in (body, as_pairs(body)):
+        with pytest.raises(MalformedRequest) as refused:
+            parse_request(encoded)
+        assert str(refused.value) == _NO_LOGIC_REFUSAL
+        assert refused.value.parameter == 'columns'
+
+
+def test_a_columncontrol_list_is_read_by_sorting_its_keys_not_by_building_a_list_as_long_as_the_largest():
+    """SPEC-P5.9: a gap in the keys is closed up, and a key of nine digits costs no more than a key of one."""
+    started = time.perf_counter()
+    parsed = parse_request(_with_columncontrol({'list': {'999999999': 'b', '0': 'a'}}))
+    alone = parse_request(_with_columncontrol({'list': {'999999999': 'b'}}))
+    assert time.perf_counter() - started < 1.0
+    assert parsed.columns[2].columnControl.list == ['a', 'b']
+    assert alone.columns[2].columnControl.list == ['b']
+
+
+@pytest.mark.parametrize('key', ['x', '1.5', '', ' 1', '\u0661'])
+def test_a_columncontrol_list_key_that_is_not_a_whole_number_is_refused(key: str):
+    """SPEC-P5.9: the object's keys are the client's indexes, so any other key is no list the client sent."""
+    with pytest.raises(MalformedRequest, match=r'^Invalid columns parameter'):
+        parse_request(_with_columncontrol({'list': {'0': 'a', key: 'b'}}))
+
+
+def test_a_columncontrol_form_list_with_a_gap_in_its_indexes_is_refused_quickly():
+    """SPEC-P5.9: a form index is a position, as for every index (`SPEC-P6.2`): a gap is refused, whatever its size, and
+    nothing is built up to it."""
+    started = time.perf_counter()
+    with pytest.raises(MalformedRequest):
+        parse_request(as_pairs(_with_columncontrol({'list': {'0': 'a', '999999999': 'b'}})))
+    assert time.perf_counter() - started < 1.0
 
 
 @pytest.mark.parametrize('entry', [True, None, 1.5, {}], ids=repr)

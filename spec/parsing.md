@@ -25,9 +25,9 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
 - **SPEC-P5.2** [core] `searchPanes[colour][0]=red` → `MalformedRequest`; `searchPanes` with only empty panes (JSON
   `{"colour": []}`), and an empty `searchPanes_null` (JSON `{}`), parse.
 - **SPEC-P5.3** [core] An idle ColumnControl search (an empty value and a logic other than `empty` and `notEmpty`:
-  `contains`, `starts`, `greater`), the date control's idle shape (`type` `date`, `mask` empty) and a list `{}` parse,
-  as JSON and as a form, and add nothing: the request equals the same one without them in everything but its
-  `columnControl` fields.
+  `contains`, `starts`, `greater`, or none), the date control's idle shape (`type` `date`, `mask` empty) and a list
+  `{}` parse, as JSON and as a form, and add nothing: the request equals the same one without them in everything but
+  its `columnControl` fields.
 - **SPEC-P5.4** [core] An active ColumnControl search (`contains` with a value; `empty`; `notEmpty`; `greater` with a
   value) and a list (JSON `{"0":"a","1":"b"}`; form `[list][0]=a&[list][1]=b`; a JSON array `["a","b"]` is the same
   list) parse and are kept, not dropped, and the JSON and the form give equal `DTParams`.
@@ -43,6 +43,13 @@ Statements tagged `[core]` check `parse_request` alone; those tagged `[all]` als
   as a form, raises `MalformedRequest` with the message `Invalid columns parameter: ColumnControl's date search is not
   answered. Remove the date control from this column, or give the column a text search control.`; the idle date shape
   parses (`SPEC-P5.3`).
+- **SPEC-P5.8** [core] A ColumnControl search with a value and no logic (an empty logic, or none sent) is refused, as
+  JSON and as a form, where one with an empty value is idle (`SPEC-P5.3`): `MalformedRequest` with the message `Invalid
+  columns parameter: a ColumnControl search sent a value without a logic. Send the control's logic with its value.`
+- **SPEC-P5.9** [core] A ColumnControl list given as an object is read by sorting its keys, never by building a list as
+  long as the largest: the JSON `{"0":"a","999999999":"b"}` reads as `a`, `b` at once (a gap is closed up), and a key
+  that is not a whole number (`x`, `1.5`, empty) raises `MalformedRequest`; a form whose indexes have a gap is
+  `MalformedRequest` as for every index (`SPEC-P6.2`), at once.
 - **SPEC-P6.1** [core] A decoded JSON list of objects or of numbers (`[{"draw": 1}]`, `[1]`) → `MalformedRequest`
   (a list of key-value pairs is valid, PRD-P1); `columns` as text → `MalformedRequest`;
   `columns[0][searchable]` as an object → `MalformedRequest`; `columns[0][data]` JSON `null` parses (PRD-P21).
