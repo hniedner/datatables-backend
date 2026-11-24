@@ -65,10 +65,10 @@ def request(word: str) -> object:
     return parse_request({'draw': 1, 'start': 0, 'length': 100, 'columns': columns})
 
 
-def culture_and_cost(connection: Connection) -> list[str]:
-    """Second measurement: does the culture argument of FORMAT fix the decimal mark, and what does FORMAT cost beside
-    CAST over 200,000 rows."""
-    out = ['\n== culture']
+def culture(connection: Connection, out: list[str]) -> None:
+    """Does the culture argument of FORMAT fix the decimal mark? Lines go to `out` as they are made, so that a failure
+    keeps what came before it."""
+    out.append('\n== culture')
     out.append(f'   @@LANGUAGE {connection.exec_driver_sql("SELECT @@LANGUAGE").scalar()!r}')
     double = Table('dtb_test_f71_double', MetaData(), SQLColumn('id', Integer), SQLColumn('v', Float(53)))
     double.drop(connection, checkfirst=True)
@@ -90,8 +90,17 @@ def culture_and_cost(connection: Connection) -> list[str]:
             out.append(f'   {probe}: FAILED {type(error).__name__} {str(error)[:120]!r}')
     double.drop(connection)
     connection.commit()
+
+
+def cost(connection: Connection, out: list[str]) -> None:
+    """What FORMAT costs beside CAST over 200,000 rows."""
     out.append('\n== cost, 200,000 Float(53) rows, least of 3 runs')
-    big = Table('dtb_test_f71_big', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('v', Float(53)))
+    big = Table(
+        'dtb_test_f71_big',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('v', Float(53)),
+    )
     big.drop(connection, checkfirst=True)
     big.create(connection)
     connection.exec_driver_sql(
@@ -116,7 +125,6 @@ def culture_and_cost(connection: Connection) -> list[str]:
         out.append(f'   {label}: count {count}, runs {[round(t, 3) for t in times]} s, least {min(times):.3f} s')
     big.drop(connection)
     connection.commit()
-    return out
 
 
 @pytest.mark.skipif(os.environ.get('DTB_SQL_DIALECT') != 'mssql', reason='measures SQL Server only')
@@ -171,10 +179,11 @@ def test_measure_the_search_text_of_a_number_column():
             session.close()
             metadata.drop_all(connection)
         connection.commit()
-        try:
-            out.extend(culture_and_cost(connection))
-        except Exception as error:
-            connection.rollback()
-            out.append(f'\nSECOND MEASUREMENT FAILED {type(error).__name__} {str(error)[:300]!r}')
+        for part in (culture, cost):
+            try:
+                part(connection, out)
+            except Exception as error:
+                connection.rollback()
+                out.append(f'\n{part.__name__.upper()} FAILED {type(error).__name__} {str(error)[:300]!r}')
     engine.dispose()
     pytest.fail('MEASUREMENT (#71), fails on purpose:\n' + '\n'.join(out), pytrace=False)
