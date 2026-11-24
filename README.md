@@ -15,7 +15,7 @@ and [SearchBuilder](https://datatables.net/extensions/searchbuilder/) criteria. 
 
 The library is read-only and framework-agnostic.
 
-> Status: release candidate (0.1.0rc2). Until 1.0, a minor release (0.x) may break the Python API; each such change is
+> Status: release candidate (0.1.0rc3). Until 1.0, a minor release (0.x) may break the Python API; each such change is
 > listed in [CHANGELOG.md][changelog]. The wire format and the error codes change only in a release whose notes say so.
 > See [docs/PRD.md][prd] for the scope and design.
 
