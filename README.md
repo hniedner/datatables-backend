@@ -20,7 +20,7 @@ The library is read-only and framework-agnostic.
 > See [docs/PRD.md][prd] for the scope and design.
 
 If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
-[`datatables_server`](https://datatables.net/manual/python). This library adds:
+[`datatables_server`](https://pypi.org/project/datatables-server/). This library adds:
 
 - async SQLAlchemy;
 - a search-engine backend;
