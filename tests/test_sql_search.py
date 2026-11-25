@@ -202,6 +202,47 @@ def test_text_with_no_word_adds_nothing_on_a_column_of_any_type(session: Session
     assert ids(typed.fetch_sync(request('id', name, **column(text, name)), session)) == [1, 2, 3, 4, 5]
 
 
+#: A column search with `regex` false whose text PRD-F6 reduces to no word
+NO_WORD = ['   ', '"', '""', '"""', '!""', '!', '!x']
+#: Where a column search with a word is refused: the table, the request's columns, the searched one, its other fields
+#: and what the search holds beside the text
+REFUSING = {
+    'undeclared': (table, ('id', 'extra'), 'extra', {}, {}),
+    'nameless': (table, ('id', ''), '', {'': {'data': None}}, {}),
+    'unsearchable': (unsearchable, ('id', 'team'), 'team', {}, {}),
+    'beside multi_values': (table, ALL, 'team', {}, {'multi_values': ['red']}),
+}
+
+
+@pytest.mark.parametrize('place', REFUSING)
+@pytest.mark.parametrize(
+    ('search', 'idle'), [*(({'value': text}, True) for text in NO_WORD), ({'value': '   ', 'regex': True}, False)]
+)
+def test_a_column_search_with_no_word_is_idle_where_a_word_would_be_refused(
+    session: Session, place: str, search: dict[str, Any], idle: bool
+):
+    """SPEC-F6.6: the text adds nothing, so the request answers as without it (beside a list, as the list alone);
+    with `regex: true` spaces are a categorical value (SPEC-F6.4) and stay refused."""
+    source, names, name, flags, beside = REFUSING[place]
+
+    def answer(text: dict[str, Any]) -> DTResponse:
+        return source.fetch_sync(request(*names, column_search={name: {**beside, **text}}, flags=flags), session)
+
+    if idle:
+        assert ids(answer(search)) == ids(answer({}))
+    else:
+        refused(answer(search))
+
+
+@pytest.mark.parametrize('name', ['team', 'extra'])
+@pytest.mark.parametrize('text', ['!\x01', '!\t'])
+def test_a_column_search_with_no_word_but_a_control_character_is_refused(session: Session, name: str, text: str):
+    """SPEC-F6.6 with PRD-F15: the word is dropped, but the control character is refused first, on a declared column
+    and on an undeclared one alike."""
+    params = request('id', 'team', 'extra', column_search={name: {'value': text}})
+    refused(table.fetch_sync(params, session), 'invalid_character')
+
+
 def test_a_search_with_no_word_asks_for_no_searchable_column(session: Session):
     """SPEC-F6.2 with PRD-F13: a refusal for lack of a column is for a search that has a word."""
     assert ids(unsearchable.fetch_sync(request('id', 'team', **glob('!x')), session)) == [1, 2, 3, 4, 5]

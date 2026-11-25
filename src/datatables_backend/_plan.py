@@ -420,7 +420,7 @@ def plan(
 
     column_searches: list[Filter | Group] = []
     listed = 0
-    for key, part in _column_parts(params, mistakes):
+    for key, part in _column_parts(params, declared, mistakes):
         with mistakes.part():
             if isinstance(part, SearchCriterion):
                 built = _criterion(part, declared, describe, hooked)
@@ -588,14 +588,28 @@ def _within_the_words(words: Sequence[tuple[str, bool]], column: Column | None, 
         raise mistake('datatables_too_many_words', reason, column)
 
 
-def _is_search(search: Search) -> bool:
-    """Whether a column search holds anything: a value that is not spaces only (PRD-F6), which as a regex is a
-    categorical value, or a list."""
+def _is_search(search: Search, column: Column | None) -> bool:
+    """Whether a column search holds anything: a list, or text that adds something (``_idle_text``). ``column`` is
+    the declared column it is on; None for a name the server did not declare."""
     if not (search.value or search.multi_values):
         return False
     if not (search.regex or search.multi_values) and len(search.value) > MAX_VALUE_LENGTH:
         return True  # blank or not, it is refused as too long (PRD-F14)
-    return bool(search.regex or search.multi_values or search.value.strip(_SPACES))
+    return bool(search.multi_values) or not _idle_text(search, column)
+
+
+def _idle_text(search: Search, column: Column | None) -> bool:
+    """Whether a column search's text adds nothing (PRD-F6): no text; with ``regex`` false, spaces only, or text that
+    reduces to no word (a lone `"`, a bare `!`, `!x`). As a regex any other text is a categorical value (PRD-F16), and
+    a hooked column's text has no grammar, only a whole value (PRD-D17). Text with a control character is never idle:
+    it is refused (PRD-F15). ``column`` as for ``_is_search``."""
+    if search.regex:
+        return not search.value
+    if not search.value.strip(_SPACES):
+        return True
+    if _control_character([search.value]):  # `!` and a tab reduce to no word, yet must be refused (PRD-F15)
+        return False
+    return (column is None or column.search_value is None) and not _words(search.value)
 
 
 #: The name a ColumnControl criterion carries for a column that has none. A criterion with no column adds nothing
@@ -620,7 +634,9 @@ _COLUMNCONTROL_CONDITIONS: Mapping[str, Condition] = {
 }
 
 
-def _column_parts(params: DTParams, mistakes: Mistakes) -> list[tuple[str, Search | SearchCriterion]]:
+def _column_parts(
+    params: DTParams, declared: Mapping[str, Column], mistakes: Mistakes
+) -> list[tuple[str, Search | SearchCriterion]]:
     """The filters the request's columns hold, each with the request's name for its column, in the order PRD-E3 reads
     them: for each column its search, then its ColumnControl search, then its ColumnControl list. A ColumnControl
     ``contains`` is a column search and its list the ``multi_values`` of one; every other logic is the SearchBuilder
@@ -630,12 +646,12 @@ def _column_parts(params: DTParams, mistakes: Mistakes) -> list[tuple[str, Searc
     read."""
     held: list[tuple[str, Search | SearchCriterion]] = []
     for requested in params.columns:
-        if _is_search(requested.search):
+        if _is_search(requested.search, declared.get(requested.key)):
             held.append((requested.key, requested.search))
         control = requested.columnControl
         if control.search.logic in ('', 'contains'):
             contains = Search(value=control.search.value)
-            if _is_search(contains):
+            if _is_search(contains, declared.get(requested.key)):
                 held.append((requested.key, contains))
         elif control.search.value or control.search.logic in ('empty', 'notEmpty'):
             condition = _COLUMNCONTROL_CONDITIONS[control.search.logic]
@@ -1046,7 +1062,7 @@ def _column_search(
     column each entry of a list is a day. A hooked column (a string, PRD-D14) is searched for its whole text, trimmed,
     by equality, and for its list entries by equality (PRD-D15, PRD-D17)."""
     kind = able.type
-    if search.multi_values and search.value:
+    if search.multi_values and not _idle_text(search, column):  # text with no word adds nothing (PRD-F6)
         # Only a client that builds its own request sends both, so this one tells the integrator what to send
         raise mistake(
             'datatables_values_refused',
