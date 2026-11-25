@@ -1,6 +1,6 @@
 """The example application answers the requests its page sends, so it cannot rot unnoticed.
 
-The page's requests are DataTables' own: ``page_requests.json`` holds three of them, captured from ``index.html`` with
+The page's requests are DataTables' own: ``page_requests.json`` holds four of them, captured from ``index.html`` with
 the pinned DataTables and ColumnControl files in jsdom. ``page_request`` builds the same bodies, and the first test
 pins it to the capture; the others use it for the requests of a person using the page. The expected rows are
 computed here from ``SEED``, in plain Python, never by the library.
@@ -34,7 +34,7 @@ def page_request(
     search: str = '',
     colour: str = '',
     statuses: tuple[str, ...] = (),
-    order: tuple[int, str] = (0, 'asc'),
+    order: tuple[tuple[int, str], ...] = ((0, 'asc'),),
     start: int = 0,
     length: int = 10,
 ) -> dict[str, Any]:
@@ -54,7 +54,7 @@ def page_request(
     return {
         'draw': draw,
         'columns': columns,
-        'order': [{'column': order[0], 'dir': order[1], 'name': ''}],
+        'order': [{'column': column, 'dir': direction, 'name': ''} for column, direction in order],
         'start': start,
         'length': length,
         'search': {'value': search, 'regex': False},
@@ -94,11 +94,12 @@ def post(client: TestClient, body: dict[str, Any], *, as_json: bool = False) -> 
 
 
 def test_the_builder_makes_the_requests_the_page_sends():
-    """The three captured requests, from the page in jsdom, are the builder's: so a change of DataTables' wire form
+    """The four captured requests, from the page in jsdom, are the builder's: so a change of DataTables' wire form
     that the test would not see is seen when the capture is renewed, and the test's other requests are the page's."""
     assert as_form(page_request(1)) == CAPTURED['first_draw']
     assert as_form(page_request(2, colour='red')) == CAPTURED['colour_red']
     assert as_form(page_request(3, colour='red', statuses=('open',))) == CAPTURED['colour_red_and_status_open']
+    assert as_form(page_request(4, order=((2, 'asc'), (3, 'desc')))) == CAPTURED['colour_asc_size_desc']
 
 
 @pytest.mark.parametrize('as_json', [False, True], ids=['form', 'json'])
@@ -129,7 +130,7 @@ def seeded(**held: Any) -> list[dict[str, Any]]:
         ),
         pytest.param({'statuses': ('open', 'closed')}, lambda: example_app.SEED, id='the list, both values'),
         pytest.param(
-            {'search': 'amber', 'colour': 'red', 'statuses': ('closed',), 'order': (3, 'desc')},
+            {'search': 'amber', 'colour': 'red', 'statuses': ('closed',), 'order': ((3, 'desc'),)},
             lambda: seeded(
                 label=lambda label: 'amber' in label,
                 colour=lambda colour: colour == 'red',
@@ -157,9 +158,18 @@ def test_a_person_using_the_page_gets_the_rows_that_match(
 def test_the_second_page_in_descending_size_order(client: TestClient):
     """The page's sort click and its next page: the sizes are the seed's, sorted, from the eleventh to the twentieth.
     A tie is no matter: the sizes do not depend on how the database orders it."""
-    answer = post(client, page_request(3, order=(3, 'desc'), start=10))
+    answer = post(client, page_request(3, order=((3, 'desc'),), start=10))
     sizes = sorted((row['size'] for row in example_app.SEED), reverse=True)
     assert [row['size'] for row in answer['data']] == sizes[10:20]
+
+
+@pytest.mark.parametrize('as_json', [False, True], ids=['form', 'json'])
+def test_a_shift_click_orders_by_colour_then_size(client: TestClient, as_json: bool):
+    """The page's click on Colour and two Shift+clicks on Size: every row by colour ascending, then size descending,
+    a tie by the unique key in the first entry's direction (docs/rules.md, Columns and ordering): `id` ascending."""
+    answer = post(client, page_request(4, order=((2, 'asc'), (3, 'desc')), length=200), as_json=as_json)
+    wanted = sorted(example_app.SEED, key=lambda row: (row['colour'], -row['size'], row['id']))
+    assert [row['id'] for row in answer['data']] == [row['id'] for row in wanted]
 
 
 def test_a_user_mistake_is_the_error_the_page_shows(client: TestClient):
