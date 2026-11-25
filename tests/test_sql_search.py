@@ -234,6 +234,15 @@ def test_a_column_search_with_no_word_is_idle_where_a_word_would_be_refused(
         refused(answer(search))
 
 
+@pytest.mark.parametrize('name', ['team', 'extra'])
+@pytest.mark.parametrize('text', ['!\x01', '!\t'])
+def test_a_column_search_with_no_word_but_a_control_character_is_refused(session: Session, name: str, text: str):
+    """SPEC-F6.6 with PRD-F15: the word is dropped, but the control character is refused first, on a declared column
+    and on an undeclared one alike."""
+    params = request('id', 'team', 'extra', column_search={name: {'value': text}})
+    refused(table.fetch_sync(params, session), 'invalid_character')
+
+
 def test_a_search_with_no_word_asks_for_no_searchable_column(session: Session):
     """SPEC-F6.2 with PRD-F13: a refusal for lack of a column is for a search that has a word."""
     assert ids(unsearchable.fetch_sync(request('id', 'team', **glob('!x')), session)) == [1, 2, 3, 4, 5]

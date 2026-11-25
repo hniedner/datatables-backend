@@ -2753,6 +2753,17 @@ def test_a_column_search_with_no_word_is_idle_where_a_word_would_be_refused(
         assert client.searches == []
 
 
+@pytest.mark.parametrize('name', ['title', 'extra'])
+@pytest.mark.parametrize('text', ['!\x01', '!\t'])
+def test_a_column_search_with_no_word_but_a_control_character_is_refused(name: str, text: str):
+    """SPEC-F6.6 with PRD-F15: the word is dropped, but the control character is refused first, on a declared column
+    and on an undeclared one alike, and nothing is sent."""
+    client = Client()
+    params = request('id', 'title', 'extra', column_search={name: {'value': text}})
+    refused(table.fetch_sync(params, client), 'invalid_character')
+    assert client.searches == []
+
+
 # -- typed filters: what a condition the type does not take, an unfinished criterion and a list of numbers send ---
 
 

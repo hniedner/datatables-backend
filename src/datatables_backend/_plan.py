@@ -601,11 +601,14 @@ def _is_search(search: Search, column: Column | None) -> bool:
 def _idle_text(search: Search, column: Column | None) -> bool:
     """Whether a column search's text adds nothing (PRD-F6): no text; with ``regex`` false, spaces only, or text that
     reduces to no word (a lone `"`, a bare `!`, `!x`). As a regex any other text is a categorical value (PRD-F16), and
-    a hooked column's text has no grammar, only a whole value (PRD-D17). ``column`` as for ``_is_search``."""
+    a hooked column's text has no grammar, only a whole value (PRD-D17). Text with a control character is never idle:
+    it is refused (PRD-F15). ``column`` as for ``_is_search``."""
     if search.regex:
         return not search.value
     if not search.value.strip(_SPACES):
         return True
+    if _control_character([search.value]):  # `!` and a tab reduce to no word, yet must be refused (PRD-F15)
+        return False
     return (column is None or column.search_value is None) and not _words(search.value)
 
 

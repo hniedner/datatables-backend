@@ -54,7 +54,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   false on the undeclared `extra`, on a column with no name, on `name` declared unsearchable, and beside
   `multi_values` `["red"]` on `colour`, is answered as the request without that text (rows 1, 2, 3, 4; beside the
   list rows 1, 4, as the list alone), never refused (PRD-F41, PRD-F39); with `regex: true` three spaces in those
-  places stay `invalid_filter` (`SPEC-F6.4`).
+  places stay `invalid_filter` (`SPEC-F6.4`). Such text holding a control character, `!` + U+0001 or `!` + tab, is
+  error_code `invalid_character` on `name` and on `extra` (PRD-F15).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
