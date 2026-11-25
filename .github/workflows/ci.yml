@@ -483,7 +483,7 @@ jobs:
         with:
           python-version: '3.14'
       - run: uv sync --locked --group containers
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
   # The same server through the other PostgreSQL drivers SQLAlchemy documents: psycopg2 (sync) and asyncpg (async).
   postgresql-psycopg2-asyncpg:
@@ -514,7 +514,7 @@ jobs:
         with:
           python-version: '3.14'
       - run: uv sync --locked --group containers
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
   mysql:
     runs-on: ubuntu-latest
@@ -543,7 +543,7 @@ jobs:
         with:
           python-version: '3.14'
       - run: uv sync --locked --group containers
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
   # The same tests on MySQL 8.4 through mysqlclient, the C driver that most MySQL installations still use. Sync only:
   # mysqlclient has no async form, so the async half stays aiomysql. It builds from source, so it is a group of its own.
@@ -575,7 +575,7 @@ jobs:
           python-version: '3.14'
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config
       - run: uv sync --locked --group containers --group mysqlclient
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
   # MariaDB 12.3, the current long-term support line (https://mariadb.org/about/#maintenance-policy), through the
   # same drivers as MySQL. The `mariadb+` URLs make SQLAlchemy name the dialect `mariadb`, which the library's
@@ -607,7 +607,7 @@ jobs:
         with:
           python-version: '3.14'
       - run: uv sync --locked --group containers
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
   sqlserver:
     runs-on: ubuntu-latest
@@ -661,14 +661,14 @@ jobs:
               raise SystemExit('SQL Server did not answer')
           connection.execute('CREATE DATABASE dtb')
           EOF
-      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py
+      - run: uv run --frozen pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py
 
-  # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py reads DTB_OPENSEARCH_URL), once on
-  # each server line the library is tested on. Docker runs the digest and ignores the tag beside it, so the two move
-  # together. These tracked places name a version a leg runs: docs/PRD.md (PRD-F9, PRD-Q14),
-  # docs/decisions/001-opensearch-case-folding-beyond-ascii.md, spec/README.md (OQ4), tests/test_opensearch_live.py,
-  # README.md and CLAUDE.md. Check them when a leg's version changes: several record a measurement on that version,
-  # which holds for another one only once it is measured again.
+  # The OpenSearch backend against a real cluster (tests/test_opensearch_live.py and tests/test_reference_opensearch.py
+  # read DTB_OPENSEARCH_URL), once on each server line the library is tested on. Docker runs the digest and ignores
+  # the tag beside it, so the two move together. These tracked places name a version a leg runs: docs/PRD.md (PRD-F9,
+  # PRD-Q14), docs/decisions/001-opensearch-case-folding-beyond-ascii.md, spec/README.md (OQ4),
+  # tests/test_opensearch_live.py, README.md and CLAUDE.md. Check them when a leg's version changes: several record a
+  # measurement on that version, which holds for another one only once it is measured again.
   opensearch:
     name: opensearch (${{ matrix.version }})
     runs-on: ubuntu-latest
@@ -709,7 +709,7 @@ jobs:
           done
           exit 1
       # -v: the log names each test and its outcome on this leg's server.
-      - run: uv run --frozen pytest -v tests/test_opensearch_live.py
+      - run: uv run --frozen pytest -v tests/test_opensearch_live.py tests/test_reference_opensearch.py
 
   # The required status check on main. Runs even when a needed job failed, was cancelled or was skipped; passes only
   # if every needed job (every matrix leg included) succeeded.
