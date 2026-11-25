@@ -5,6 +5,18 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-25
+
+This release lets an application keep the `recordsTotal` count in a store of its own, such as Redis, which is handed
+only a hashed key and never a value from a request. It also lets an OpenSearch number column say what type its field
+has: a number outside that type's range then answers `invalid_number`, a mistake the user can fix, where it failed the
+whole request with the client's own error before.
+
+**Upgrade impact:** none. Both additions are optional: a table with no `total_cache` or with a `TotalCache`, and a number
+column that declares no type, behave as in 0.1.2, and no change to your code is needed.
+
+**Security:** none; this release fixes no known vulnerability.
+
 ### Added
 
 - `total_cache=` takes any object with `get` and `put`: `TotalStore`, or `AsyncTotalStore` for `fetch`, both exported
@@ -234,7 +246,8 @@ The first release, a release candidate: install it with `pip install --pre datat
 
 What it does: see [0.1.0].
 
-[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.3
 [0.1.2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.2
 [0.1.1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.1
 [0.1.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0
