@@ -16,7 +16,10 @@ that the work is not wasted.
 ## What a pull request needs
 
 1. **Tests.** Every change of behaviour comes with tests that fail without the change. Write them through the public
-   API: `parse_request`, then `fetch` or `fetch_sync`.
+   API: `parse_request`, then `fetch` or `fetch_sync`. Properties use Hypothesis. CrossHair was tried on the number
+   parser (2026-11-25, 0.0.114) and left out: on a free text it stopped with an error inside its own regex support, and
+   on a bounded alphabet it ran five minutes without a finding, where Hypothesis ran 50,000 examples in nine seconds
+   and found nothing either.
 2. **Checks.** `uv run ruff format . && uv run ruff check .`, `uv run basedpyright` and `uv run pytest` pass. CI also
    runs the SQL and OpenSearch tests on real servers (PostgreSQL, MySQL, MariaDB, SQL Server and OpenSearch).
 3. **Commit headers** are conventional, `type(scope)!: subject` of at most 100 characters (types feat, fix, docs, test,
