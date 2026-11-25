@@ -34,9 +34,9 @@ from datatables_backend import DTParams
 from datatables_backend import RowHooks
 from datatables_backend import parse_request
 
-# The property tests (tests/test_parse_properties.py). `ci` is the default and runs the same examples on every run, so
-# a red run is the code's and never luck's; `explore` is for a developer who wants more, and different, examples:
-# HYPOTHESIS_PROFILE=explore uv run pytest tests/test_parse_properties.py
+# The property tests (tests/test_parse_properties.py and tests/test_reference_properties.py). `ci` is the default and
+# runs the same examples on every run, so a red run is the code's and never luck's; `explore` is for a developer who
+# wants more, and different, examples: HYPOTHESIS_PROFILE=explore uv run pytest tests/test_reference_properties.py
 _SLOW = [HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much]
 settings.register_profile(
     'ci', max_examples=500, derandomize=True, database=None, deadline=None, suppress_health_check=_SLOW

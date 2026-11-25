@@ -196,7 +196,7 @@ _CURLY_PAIR = re.compile('\u201c(.*)\u201d', re.DOTALL)
 _ESCAPED = frozenset('/.*+?|()[]{}\\$^-')
 
 
-def _words(text: str) -> tuple[list[str], list[str]]:
+def words(text: str) -> tuple[list[str], list[str]]:
     """The positive and the negated words of search text. PRD-F7: LF, CR, U+2028 and U+2029 are spaces. PRD-F3: a
     phrase starts where a word does and ends at its closing quote. PRD-F4: a matching pair of quotes is stripped, and
     any other straight quote of a positive word is removed; a negated word keeps it. PRD-F35: a negated word excludes
@@ -221,7 +221,7 @@ def _words(text: str) -> tuple[list[str], list[str]]:
 def _searched(kind: Kind, column: str, text: str) -> Predicate | None:
     """PRD-F2: every word must be found in this one column, and no negated word (PRD-F5: NULL holds no word). PRD-F11:
     a word matches as a substring, wildcards as text. None when the text holds no word (PRD-F6)."""
-    positive, negated = _words(text)
+    positive, negated = words(text)
     if not positive and not negated:
         return None
     wanted, unwanted = [_fold(word) for word in positive], [_fold(word) for word in negated]
@@ -423,7 +423,7 @@ def _boolean_searched(column: str, text: str, reading: _Reading) -> Predicate | 
     """PRD-F44: a column search on a boolean column takes only a value of PRD-F43's (white space around ignored) and
     matches it exactly; any other text is refused, several words, `!` and quotes included. Text that reduces to no
     word adds nothing (PRD-F6)."""
-    positive, negated = _words(text)
+    positive, negated = words(text)
     if not positive and not negated:
         return None
     value = reading.read(_boolean, text)
@@ -444,7 +444,7 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
     if search.multi_values:
         reading.refuse()
         return None
-    positive, negated = _words(search.value)
+    positive, negated = words(search.value)
     flags: dict[str, list[bool]] = {}
     for column in params.columns:
         key = _key(column, declared)
@@ -479,7 +479,7 @@ def _plain(search: Search, key: str | None, found: Declared | None, reading: _Re
     PRD-F44: a boolean column; PRD-F2 and PRD-F23: the smart search of the column's text."""
     reading.next_part()
     values = search.multi_values or []
-    holds_value = bool(search.value) if search.regex else any(_words(search.value))
+    holds_value = bool(search.value) if search.regex else any(words(search.value))
     if not holds_value and not values:
         return None
     if key is None or found is None or not found[2]:
@@ -536,13 +536,14 @@ def _columncontrol(
     """PRD-F45: ColumnControl's search, then its list, each a clause of its own beside the plain search (AND). A
     search is idle when its value is empty and its logic is neither `empty` nor `notEmpty`, a list when it is empty.
     On a column that cannot be searched an active one is refused (PRD-F41)."""
-    refused = key is None or found is None or not found[2]
+    searched = key if found is not None and found[2] else None  # None: a column that cannot be searched (PRD-F41)
     found_kind: Kind = found[1] if found else 'string'
     clauses: list[Predicate | None] = []
     reading.next_part()
     search = column.columnControl.search
+    key = searched
     if search.value or search.logic in ('empty', 'notEmpty'):
-        if refused or key is None:
+        if key is None:
             reading.refuse()
             clauses.append(None)
         elif search.logic == 'contains' and found_kind == 'boolean':
@@ -560,7 +561,7 @@ def _columncontrol(
     reading.next_part()
     entries = column.columnControl.list
     if entries:
-        if refused or key is None:
+        if key is None:
             reading.refuse()
         else:
             clauses.append(_exact(found_kind, key, entries, reading))
@@ -663,10 +664,14 @@ def _step_one_filters(
     params: DTParams, declared: Mapping[str, Declared]
 ) -> Iterator[tuple[list[str], list[str], list[str]]]:
     """The filters of the request in PRD-E3's read order, each as the values a control character is looked for in,
-    the values whose length is measured (PRD-F14: each value as sent, a categorical filter's alternatives after
-    unescaping) and the texts whose words are counted (search text, not a list, nor a value read as one boolean)."""
+    the values whose length is measured and the texts whose words are counted. PRD-F14: each value a condition reads
+    is measured as sent, a categorical filter's alternatives after unescaping; "a value no condition reads is not
+    measured", so neither are the values of an unfinished criterion. PRD-F18: "Any other regex, an unescaped
+    metacharacter included, is refused", unmeasured. Words are counted in search text, ColumnControl's `contains`
+    included, which is the column search of PRD-F2 (PRD-F45); not in a list, nor in a value read as one. A list on
+    the global search is a form PRD-F40 refuses, so its entries are not read (PRD-E3)."""
     search = params.search
-    yield [search.value, *(search.multi_values or [])], [search.value, *(search.multi_values or [])], [search.value]
+    yield [search.value], [search.value], [search.value]
     for column in params.columns:
         key = _key(column, declared)
         kind = declared[key][1] if key is not None and key in declared else 'string'
@@ -674,25 +679,19 @@ def _step_one_filters(
         values = plain.multi_values or []
         measured = [plain.value, *values]
         if plain.regex and plain.value:
-            alternatives = _categorical(plain.value)
-            if alternatives is None and len(plain.value) > 255:
-                raise SpecGap('G13', 'a regex over 255 code points that is no categorical filter')
-            measured = [*(alternatives or []), *values]
+            measured = [*(_categorical(plain.value) or []), *values]
         texts = [] if plain.regex or kind == 'boolean' else [plain.value]
         yield [plain.value, *values], measured, texts
         control = column.columnControl.search
         active = control.logic not in ('empty', 'notEmpty') and control.value
-        if active and control.logic == 'contains' and sum(map(len, _words(control.value))) > 16:
-            raise SpecGap('G13', 'a ColumnControl search of more than 16 words')
-        yield ([control.value] if active else []), ([control.value] if active else []), []
+        searched = [control.value] if active else []
+        yield searched, searched, searched if control.logic == 'contains' and kind != 'boolean' else []
         yield column.columnControl.list, column.columnControl.list, []
     if params.searchBuilder is not None:
         for criterion in _criteria(params.searchBuilder):
             if criterion.condition is not None and criterion.origData:
                 taken = criterion.value[: _arity(criterion.condition)]
                 yield taken, taken, []
-            elif any(_control(value) or len(value) > 255 for value in criterion.value):
-                raise SpecGap('G12', 'an unfinished criterion that holds a control character or a long value')
 
 
 def _criteria(group: SearchGroup) -> Iterator[SearchCriterion]:
@@ -712,7 +711,7 @@ def _step_one(params: DTParams, declared: Mapping[str, Declared]) -> str | None:
             return 'invalid_character'
         if any(len(value) > 255 for value in measured):
             return 'value_too_long'
-        if any(sum(map(len, _words(text))) > 16 for text in texts):
+        if any(sum(map(len, words(text))) > 16 for text in texts):
             return 'too_many_words'
     return None
 
@@ -721,7 +720,7 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
     """The answer the requirements give `params` over `rows`. PRD-E3: a mistake of step 1 in read order, else the
     mistake of the lowest step, the first in read order within it. PRD-F12: every filter joins with AND. PRD-C1,
     PRD-C2: the counts before and after the filters. PRD-C3: a start at or past the end gives an empty page and both
-    counts. Raises `SpecGap` for a request the requirements leave open (none is reached by the generator today)."""
+    counts. Raises `SpecGap` for a request the requirements leave open."""
     declared = {column[0]: column for column in decl}
     if (code := _step_one(params, declared)) is not None:
         return Refusal(code)
@@ -736,7 +735,7 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
         clauses.append(_group(params.searchBuilder, declared, reading))
     applied = _ordering(params, declared, reading)
     if reading.mistakes:
-        return Refusal(min(reading.mistakes)[2])
+        return Refusal(min(reading.mistakes, key=lambda mistake: mistake[:2])[2])
     kept = [clause for clause in clauses if clause is not None]
     matched = [row for row in rows if all(clause(row) for clause in kept)]
     page = _sorted(matched, applied, decl[0][0])[params.start : params.start + params.length]

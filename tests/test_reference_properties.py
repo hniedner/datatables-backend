@@ -8,20 +8,23 @@ The table: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger), `d` 
 inserted in a random key order. The request: the global search, column searches (smart, categorical, `multi_values`),
 ColumnControl's search and list, a SearchBuilder tree of at most 5 criteria, 0 to 3 order entries (often a skipped one
 first, then one applied in the other direction, now and then over rows that tie on the applied column with a short
-page that cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and then column search text that PRD-F6
-reduces to no word, alone or beside a list; columns named twice, nameless columns
-and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
-PRD-E3. The rates are set so that about 60% of the requests are answered and each outcome and path below is reached
-about 30 times in 500 examples, averaged over seeds; one seed, such as the `ci` profile's, varies around that
-(`hypothesis --hypothesis-show-statistics` prints its events). A choice is drawn by `chance` and `rarely` of
-`tests/conftest.py`: Hypothesis draws the first of a list of choices far more often than the others.
+page that cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any
+column, now and then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice,
+nameless columns and an undeclared one; a server declaration with at least one unorderable column, and mistakes of
+every step of PRD-E3. The rates are set so that about 60% of the requests are answered and each outcome and path below
+is reached about 30 times in 500 examples, averaged over seeds; one seed, such as the `ci` profile's, varies around
+that (`uv run pytest tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). A choice is
+drawn by `chance` and `rarely` of `tests/conftest.py`: Hypothesis draws the first of a list of choices far more often
+than the others.
 
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
 (F9); categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26,
 F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as SQLite's `BINARY` collation,
 which is SQLite's own and not the other databases'); counts and paging (C1 to C3); the error codes and which one a
-request with several mistakes gets (E2, E3, F14, F15).
+request with several mistakes gets (E2, E3, F14, F15). Of PRD-E3, the order within step 3 (a day past the last one
+before a number the column's own type does not take) is carried by the examples on the property and by the
+hand-written tests, not by the random draw, which seldom holds both mistakes at once.
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
 datetimes and time zones, and a time of day after a day; numbers with a fraction or an exponent; hooked columns,
@@ -38,21 +41,24 @@ Generator restrictions, each with its reason:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
 - ColumnControl's search is always sent with `type` `text`: the date control is refused while parsing (PRD-F45), which
   `tests/test_parse_properties.py` covers.
-- A step-1 value (a control character, 256 code points, 17 words) goes only into a filter that reads it: no unfinished
-  criterion carries one (the evaluator would raise gap G12), no categorical regex is longer than 255 code points (gap
-  G13) and no list on the global search holds one. A ColumnControl search never holds 17 words (gap G13).
 - No SearchBuilder tree near PRD-F38's bounds, no list near 256 values and no request near PRD-C17's 960 conditions:
   out of scope above.
 
-The spec gaps the evaluator raises (`SpecGap`) are counted with `hypothesis.event` and not compared. Every gap the
-generator met is decided now. Two are not reached, since the generator never sends them (#205): G12, a control
-character or a long value in an unfinished criterion; G13, a regex over 255 code points that is no categorical
-filter, or a ColumnControl search of more than 16 words.
+A step-1 value (a control character, 256 code points, 17 words) is also sent where nothing reads it, and the evaluator
+answers as the requirements say (#205): in an unfinished criterion (PRD-F14: "a value no condition reads is not
+measured"), in a regex that is no categorical filter (PRD-F18: "Any other regex, an unescaped metacharacter included,
+is refused"), and in a list on the global search, a form PRD-F40 refuses unread (PRD-E3). ColumnControl's `contains` is
+the column search of PRD-F2 (PRD-F45), so more than 16 words in it are `too_many_words` (PRD-F14).
+
+A spec gap the evaluator raises (`SpecGap`) would be counted with `hypothesis.event` and not compared; every gap met so
+far is decided, and the evaluator raises none today.
 """
 
 from collections import Counter
+from copy import deepcopy
 from datetime import date
 from typing import Any
+import unicodedata
 
 from hypothesis import event
 from hypothesis import example
@@ -82,8 +88,8 @@ from .reference_evaluator import Declared
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
 from .reference_evaluator import SpecGap
-from .reference_evaluator import _words  # pyright: ignore[reportPrivateUsage]
 from .reference_evaluator import evaluate
+from .reference_evaluator import words
 
 KINDS: dict[str, Kind] = {'id': 'number', 's': 'string', 't': 'string', 'n': 'number', 'd': 'date', 'b': 'boolean'}
 NAMES = list(KINDS)
@@ -131,6 +137,19 @@ def declarations(draw: st.DrawFn) -> tuple[Declared, ...]:
     )
 
 
+#: A cell that holds a value, by column
+VALUED: dict[str, st.SearchStrategy[Any]] = {
+    's': st.sampled_from(STRINGS),
+    't': st.sampled_from(STRINGS),
+    'n': st.sampled_from([-7, 0, 7, 17, 70]),
+    'd': st.sampled_from(DATES),
+    'b': st.booleans(),
+}
+#: The values of a range, low to high, by column
+RANGED: dict[str, list[Any]] = {'n': [-7, 0, 7, 17, 70], 'd': DATES}
+#: A word that ColumnControl's `contains` finds in some cells, by type
+CONTAINED: dict[str, list[str]] = {'string': ['a', 'red', 'b', 'x_y', '-'], 'number': ['7', '0', '1', '-'],
+                                   'date': ['2024', '03', '-', '12-31']}  # fmt: skip
 BIG = '9223372036854775808'  # 2^63, one past a BigInteger (PRD-F25, step 3)
 #: The values a filter sends, by column: most of them read, some not (`abc`, `2024-13-01`, `yes`, and seldom a
 #: number or a day out of range)
@@ -163,12 +182,12 @@ text = st.builds(lambda tokens, joiner: joiner.join(tokens),
                  JOINERS)  # fmt: skip
 
 
-def step_one[T](common: st.SearchStrategy[str], one_in: int, words: bool = True) -> st.SearchStrategy[str]:
+def step_one(common: st.SearchStrategy[str], one_in: int, many_words: bool = True) -> st.SearchStrategy[str]:
     """``common``, and about once in ``one_in`` draws each a mistake of step 1 (PRD-E3): a control character, 256 code
     points and, for search text, 17 words. One draw per kind: a single choice among them would favour its first."""
     control = st.sampled_from(['a\x00', 'a\tb', 'b\x7f'])
     common = rarely(rarely(common, control, one_in * 2 // 3), st.just('x' * 256), one_in)
-    return rarely(common, st.just(' '.join(['a'] * 17)), one_in) if words else common
+    return rarely(common, st.just(' '.join(['a'] * 17)), one_in) if many_words else common
 
 
 SEARCHED: dict[str, st.SearchStrategy[str]] = {
@@ -233,28 +252,30 @@ def column_search(draw: st.DrawFn, name: str, refused: bool, active: bool = Fals
     if form == 'regex':
         anchored = '^(' + '|'.join(map(escaped, values)) + ')$'
         shapes = st.sampled_from([anchored, '|'.join(map(escaped, values)), f'^{escaped(values[0])}$', '^()$', '|'])
-        return {'value': draw(rarely(shapes, st.sampled_from(['a.b', '(a)', '^a|b$', '\\d', 'a$']), 12)), 'regex': True}
-    return {'value': draw(step_one(SEARCHED[kind], 20, words=kind != 'boolean')), 'regex': False}
+        other = rarely(st.sampled_from(['a.b', '(a)', '^a|b$', '\\d', 'a$']), st.just('a.' + 'x' * 256), 3)
+        return {'value': draw(rarely(shapes, other, 6)), 'regex': True}
+    return {'value': draw(step_one(SEARCHED[kind], 20, many_words=kind != 'boolean')), 'regex': False}
 
 
 @st.composite
 def columncontrol(draw: st.DrawFn, name: str, refused: bool, active: bool = False) -> dict[str, Any]:
     """ColumnControl's part: mostly none; a search of a logic that fits the column, now and then one that does not, or
-    a list."""
+    a list. When it must be active, its `contains` half the time, beside the column's own search (PRD-F45)."""
     kind = KINDS.get(name, 'string')
     if not active and not draw(chance(48 if refused else 6)):
         return {}
-    if draw(chance(3)):
+    contains = active and draw(st.booleans())
+    if not contains and draw(chance(3)):
         return {'list': draw(values_of(name))}
-    logic = draw(rarely(st.sampled_from(LOGICS[kind]), st.sampled_from(ALL_LOGICS), 16))
+    logic = 'contains' if contains else draw(rarely(st.sampled_from(LOGICS[kind]), st.sampled_from(ALL_LOGICS), 16))
     if logic in ('empty', 'notEmpty'):
         value = ''
     elif logic == 'contains':
-        value = draw(step_one(SEARCHED[kind], 32, words=False))
+        value = draw(step_one(SEARCHED[kind], 12, many_words=kind != 'boolean'))
     elif logic == 'notContains' and kind == 'date':
         value = draw(SPANS)
     else:
-        value = draw(step_one(VALUES[name], 32, words=False))
+        value = draw(step_one(VALUES[name], 32, many_words=False))
     return {'search': {'value': value, 'logic': logic, 'type': 'text'}}
 
 
@@ -266,12 +287,13 @@ def criterion(draw: st.DrawFn) -> dict[str, Any]:
     kind = KINDS.get(name, 'string')
     if draw(chance(24)):  # unfinished: no condition, or no column
         unfinished = draw(st.sampled_from([{'condition': ''}, {'origData': ''}, {}]))
-        return {'origData': name, 'data': name, 'type': 'string', 'value': [draw(VALUES[name])], **unfinished}
+        value = draw(step_one(VALUES[name], 2, many_words=False))  # read by no condition (PRD-F14)
+        return {'origData': name, 'data': name, 'type': 'string', 'value': [value], **unfinished}
     condition = draw(rarely(st.sampled_from(CONDITIONS[kind]), st.sampled_from(ALL_CONDITIONS), 16))
     takes = 2 if condition in ('between', '!between') else 0 if condition in ('null', '!null') else 1
     count = draw(rarely(st.just(takes), st.sampled_from([0, takes + 1]), 24))
     value = SPANS if kind == 'date' and condition in ('contains', '!contains') else VALUES[name]
-    values = draw(st.lists(step_one(value, 48, words=False), min_size=count, max_size=count))
+    values = draw(st.lists(step_one(value, 48, many_words=False), min_size=count, max_size=count))
     return {'origData': name, 'data': name, 'condition': condition, 'type': 'string', 'value': values}
 
 
@@ -391,17 +413,69 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
     }
     body.update(paging)
     if draw(chance(32)):
-        body['search']['multi_values'] = draw(st.lists(VALUES['s'], max_size=2))
+        # refused unread (PRD-F40, PRD-E3), so a step-1 entry in it is no step-1 mistake
+        body['search']['multi_values'] = draw(st.lists(step_one(VALUES['s'], 3, many_words=False), max_size=2))
     if draw(chance(3)):
         body['searchBuilder'] = draw(tree)
     if added := draw(added_criteria()):
         body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].extend(added)
-    if unfiltered:
+    focused(draw, rows, server=server, body=body, applies=applies, unfiltered=unfiltered)
+    return rows, decl, body
+
+
+def focused(
+    draw: st.DrawFn,
+    rows: list[dict[str, Any]],
+    *,
+    server: dict[str, tuple[bool, bool]],
+    body: dict[str, Any],
+    applies: list[int],
+    unfiltered: bool,
+) -> None:
+    """Now and then one of three requests that tell a mutant of the library apart, each about once in eight, half of
+    them with no other filter (and with ``unfiltered`` none either): M4, an ascending order over NULLs and values with a
+    short page (PRD-O2); M7, a range written high to low over a row inside it (PRD-F27); M6, a list and
+    ColumnControl's `contains` on one column, ANDed (PRD-F45)."""
+    columns = body['columns']
+    nulls_first = draw(chance(8)) and [index for index in applies if columns[index]['data'] != 'id']
+    anded = draw(chance(8)) and [
+        index
+        for index, column in enumerate(columns)
+        if isinstance(column['data'], str)
+        and server.get(column['data'], (False, False))[0]
+        and KINDS[column['data']] != 'boolean'
+    ]
+    reversed_range = draw(chance(8)) and bool(rows)
+    if unfiltered or (bool(nulls_first or anded or reversed_range) and draw(st.booleans())):
         body['search'] = {'value': '', 'regex': False}
         body.pop('searchBuilder', None)
         for column in columns:
             column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
-    return rows, decl, body
+    if nulls_first:
+        index = draw(st.sampled_from(nulls_first))
+        name = columns[index]['data']
+        for row in rows:
+            row[name] = None if draw(st.booleans()) else draw(VALUED[name])
+        body.update(
+            order=[{'column': index, 'dir': 'asc'}], start=draw(st.integers(0, 2)), length=draw(st.integers(1, 3))
+        )
+    if reversed_range:
+        name = draw(st.sampled_from(['n', 'd']))
+        pool = RANGED[name]
+        low, high = sorted(draw(st.lists(st.sampled_from(range(len(pool))), min_size=2, max_size=2, unique=True)))
+        draw(st.sampled_from(rows))[name] = pool[draw(st.integers(low, high))]
+        bounds = [str(pool[high]), str(pool[low])]  # a date's str is its ISO day
+        condition = draw(st.sampled_from(['between', '!between']))
+        written = {'origData': name, 'data': name, 'condition': condition, 'value': bounds}
+        existing = body.get('searchBuilder')
+        body['searchBuilder'] = {'logic': 'AND', 'criteria': [*([existing] if existing else []), written]}
+    if anded:
+        index = draw(st.sampled_from(anded))
+        name = columns[index]['data']
+        columns[index]['search'] = {'value': '', 'regex': False, 'multi_values': draw(values_of(name))}
+        # now and then more than 16 words, which PRD-F14 refuses in this column search too (PRD-F45)
+        word = draw(rarely(st.sampled_from(CONTAINED[KINDS[name]]), st.just(' '.join(['a'] * 17)), 8))
+        columns[index]['columnControl'] = {'search': {'value': word, 'logic': 'contains', 'type': 'text'}}
 
 
 def library(decl: tuple[Declared, ...], rows: list[dict[str, Any]], params: DTParams) -> Answer | Refusal:
@@ -509,7 +583,86 @@ def paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str
             reached.append('path: a skipped first order entry, then one applied in the other direction')
             if tie_cut(rows, decl, body, then['data']):
                 reached.append('path: ... and a tie on the applied column that the page cuts')
-    return list(dict.fromkeys([*reached, *no_word_paths(decl, body)]))
+    return list(dict.fromkeys([*reached, *no_word_paths(decl, body), *survivor_paths(rows, decl, body)]))
+
+
+def survivor_paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]:
+    """The paths that tell three mutants of the library apart, each read from the evaluator's answers to the request
+    and to the request with one part changed. M4: under an ascending first order, putting the NULLs last instead of
+    first would change the page (PRD-O2). M6: dropping either a column search or list, or ColumnControl's `contains`
+    on the same column, would change the answer (PRD-F45: they are ANDed). M7: a range written high to low keeps or
+    drops a row that the unswapped reading would not (PRD-F27)."""
+    reached: list[str] = []
+    answer = evaluate(decl, rows, parse_request(body))
+    first = first_applied(decl, body)
+    if first is not None and first[1] == 'asc':
+        whole = evaluate(decl, rows, parse_request({**body, 'start': 0, 'length': max(1, len(rows))}))
+        if isinstance(whole, Answer):
+            empty = {row['id'] for row in rows if row[first[0]] is None}
+            last = [key for key in whole.ids if key not in empty] + [key for key in whole.ids if key in empty]
+            window = slice(body['start'], body['start'] + body['length'])
+            if whole.ids[window] != tuple(last[window]):
+                reached.append('path M4: under an ascending order, NULLs last would change the page')
+    for index, column in enumerate(body['columns']):
+        search, control = column['search'], column['columnControl'].get('search', {})
+        plain = search.get('multi_values') or (search['value'] and (search['regex'] or any(words(search['value']))))
+        if plain and control.get('logic') == 'contains' and control.get('value'):
+            without_plain, without_control = deepcopy(body), deepcopy(body)
+            without_plain['columns'][index]['search'] = {'value': '', 'regex': False}
+            del without_control['columns'][index]['columnControl']['search']
+            if any(evaluate(decl, rows, parse_request(other)) != answer for other in (without_plain, without_control)):
+                reached.append(
+                    'path M6: dropping a column search or list, or a ColumnControl contains beside it, '
+                    'would change the answer'
+                )
+    for position, leaf in enumerate(criteria_of(body.get('searchBuilder', {}))):
+        if leaf.get('condition') in ('between', '!between') and reversed_bounds(leaf):
+            unswapped = deepcopy(body)
+            target = criteria_of(unswapped['searchBuilder'])[position]
+            target.clear()  # the unswapped reading: `between` high to low holds nothing, `!between` everything
+            target.update(
+                {
+                    'logic': 'AND' if leaf['condition'] == 'between' else 'OR',
+                    'criteria': [
+                        {'origData': leaf['origData'], 'condition': condition} for condition in ('null', '!null')
+                    ],
+                }
+            )
+            if evaluate(decl, rows, parse_request(unswapped)) != answer:
+                reached.append(f'path M7: a reversed {leaf["condition"]} changes the answer')
+    return reached
+
+
+def first_applied(decl: tuple[Declared, ...], body: dict[str, Any]) -> tuple[str, str] | None:
+    """The column and direction of the first order entry applied in an answered request (PRD-O1, PRD-O8)."""
+    orderable = {name: flag for name, _, _, flag in decl}
+    for entry in body['order']:
+        column = body['columns'][entry['column']]
+        if not nameless(column) and isinstance(column['data'], str) and orderable.get(column['data'], False):
+            return column['data'], entry['dir']
+    return None
+
+
+def shapes(body: dict[str, Any]) -> list[str]:
+    """Values of step 1 that no condition reads, and ColumnControl text over the word cap, as sent (#205)."""
+
+    def bad(value: str) -> bool:
+        control = (character not in '\n\r' and unicodedata.category(character) == 'Cc' for character in value)
+        return len(value) > 255 or any(control)
+
+    reached: list[str] = []
+    if any(bad(value) for value in body['search'].get('multi_values') or []):
+        reached.append('shape: a list on the global search holding a step-1 value')
+    if any(not (leaf.get('condition') and leaf.get('origData')) and any(map(bad, leaf['value']))
+           for leaf in criteria_of(body.get('searchBuilder', {}))):  # fmt: skip
+        reached.append('shape: an unfinished criterion holding a step-1 value')
+    for column in body['columns']:
+        if column['search']['regex'] and len(column['search']['value']) > 255:
+            reached.append('shape: a regex over 255 code points that is no categorical filter')
+        control = column['columnControl'].get('search', {})
+        if control.get('logic') == 'contains' and len(control['value'].split()) > 16:
+            reached.append('shape: a ColumnControl contains of more than 16 words')
+    return list(dict.fromkeys(reached))
 
 
 def no_word_paths(decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]:
@@ -518,7 +671,7 @@ def no_word_paths(decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]
     searchable = {name: flag for name, _, flag, _ in decl}
     for column in body['columns']:
         search = column['search']
-        if not search['regex'] and search['value'] and not any(_words(search['value'])):
+        if not search['regex'] and search['value'] and not any(words(search['value'])):
             reached.append('path: a column search with no word')
             if search.get('multi_values'):
                 reached.append('path: a column search with no word beside a list')
@@ -544,7 +697,73 @@ def tie_cut(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[s
     )
 
 
+DECLARED: tuple[Declared, ...] = tuple((name, KINDS[name], True, True) for name in NAMES)
+
+
+def three_rows(**third: Any) -> list[dict[str, Any]]:
+    """Rows 1 to 3, every cell NULL but those given for row 3."""
+    return [{**dict.fromkeys(NAMES), 'id': key, **(third if key == 3 else {})} for key in (1, 2, 3)]
+
+
+def request_of(*columns: dict[str, Any], **body: Any) -> dict[str, Any]:
+    """A request body over the named columns, each searchable and orderable with an idle search, as the generator
+    shapes them."""
+    shaped = [
+        {
+            'data': name,
+            'name': '',
+            'searchable': True,
+            'orderable': True,
+            'search': {'value': '', 'regex': False},
+            'columnControl': {},
+            **fields,
+        }
+        for name, fields in ((column.pop('data'), column) for column in columns)
+    ]
+    return {'draw': 1, 'start': 0, 'length': 10, 'search': {'value': ''}, 'order': [], 'columns': shaped, **body}
+
+
+def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
+    return {'logic': 'AND', 'criteria': [{'origData': name, 'condition': condition, 'value': values}
+                                         for name, condition, values in criteria]}  # fmt: skip
+
+
 @given(cases())
+# M4: d ascending, length 1: the NULL rows come before row 3's day (PRD-O2), so row 1 is the page
+@example(
+    (three_rows(d=date(2023, 1, 1)), DECLARED, request_of({'data': 'd'}, length=1, order=[{'column': 0, 'dir': 'asc'}]))
+)
+# M6: a list `[""]` on n (the NULL rows) and ColumnControl `contains` 7 on n are ANDed (PRD-F45): no row
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of(
+            {
+                'data': 'n',
+                'search': {'value': '', 'regex': False, 'multi_values': ['']},
+                'columnControl': {'search': {'value': '7', 'logic': 'contains', 'type': 'text'}},
+            }
+        ),
+    )
+)
+# M7: `!between` 0 and -7 is the range -7 to 0 (PRD-F27): row 3's -7 is in it, the NULL rows pass (PRD-F37)
+@example((three_rows(n=-7), DECLARED, request_of({'data': 'n'}, searchBuilder=tree_of(('n', '!between', ['0', '-7'])))))
+# PRD-E3, step 3: the last day comes before a number past a BigInteger, in either order: `invalid_date`
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('n', '=', [BIG]), ('d', '<', ['9999-12-31']))),
+    )
+)
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('d', '<', ['9999-12-31']), ('n', '=', [BIG]))),
+    )
+)
 @example((
     [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
     (('id', 'number', True, False), ('s', 'string', True, True), ('t', 'string', True, True),
@@ -568,6 +787,8 @@ def test_the_library_answers_as_the_reference_evaluator(case: tuple[list[dict[st
         event(f'spec gap {gap.name}')
         return
     event(outcome(rows, expected))
+    for shape in shapes(body):
+        event(shape)
     if isinstance(expected, Answer):
         for path in paths(rows, decl, body):
             event(path)
