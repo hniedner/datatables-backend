@@ -283,15 +283,15 @@ or an OpenSearch setting has an entry below.
 
 This is a limit of the databases, not of the library: the library sends the number exactly.
 
-- **What you see:** a number with more than 30 digits after the decimal point, written for example `1e-400`, is
-  compared on MySQL and MariaDB as if it were zero, so `=` finds a row holding 0.00 on a `Numeric` column. PostgreSQL
-  answers exactly (no row), and SQL Server refuses the number (more than 38 digits). On SQLite, on a `Float` column and on OpenSearch the number is a float, which
-  is zero there too.
+- **What you see:** a number with more digits after the decimal point than a MySQL or MariaDB `DECIMAL` holds (30)
+  is compared as a floating-point number there (INFERRED), so a number such as `1e-400` equals zero and `=` finds a
+  row holding 0.00 on a `Numeric` column. PostgreSQL answers exactly (no row), and SQL Server refuses the number (more
+  than 38 digits). On SQLite, on a `Float` column and on OpenSearch the number is a float, which is zero there too.
 - **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
-- **How it is known:** MEASURED 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB 12.3.3
-  (`docs/decisions/010-decimal-numbers.md`); the reason is INFERRED from MySQL's manual, which gives a `DECIMAL` at
-  most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>, fetched
-  2026-11-24).
+- **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and
+  MariaDB 12.3.3 (`docs/decisions/010-decimal-numbers.md`); the rule is INFERRED from MySQL's manual, which gives a
+  `DECIMAL` at most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>,
+  fetched 2026-11-24).
 - **Requirement:** PRD-F25.
 
 ### A shared `TotalCache` cannot tell two scopes apart that the session sets
