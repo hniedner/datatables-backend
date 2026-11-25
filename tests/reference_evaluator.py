@@ -2,9 +2,10 @@
 `docs/PRD.md` and the statements of `spec/`, never from the library's code (issue #205).
 
 `evaluate(decl, rows, params)` gives the page's row keys in order with both counts (`Answer`), or the code of the
-user's mistake (`Refusal`). Where the requirements leave an answer open it raises `SpecGap` and does not guess; a
-request it was not written for (a number with a fraction, for one) raises `OutOfScope`. It is test code: nothing in
-`src` imports it. What it covers, and what it leaves out, is listed in `tests/test_reference_properties.py`.
+user's mistake (`Refusal`). Where the requirements leave an answer open it must not guess: it raises a marked gap,
+reported in #205. No rule needs one today, since every gap met so far is decided; a gap found later is added back as
+a marked `SpecGap` exception. A request it was not written for (a number with a fraction, for one) raises
+`OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in `tests/test_reference_properties.py`.
 
 Every answer is the SQL one on SQLite: number and date columns are searched as their text (PRD-F23), case folds for
 ASCII letters only (PRD-F9), a stored `''` is empty on a string column (PRD-F26), and text orders by code point, which
@@ -55,22 +56,15 @@ class Refusal:
     code: str
 
 
-class SpecGap(Exception):  # raised by no rule today: each gap met so far is decided (#205)
-    """The requirements leave this request's answer open; ``name`` is the gap's short name, reported in #205."""
-
-    def __init__(self, name: str, text: str) -> None:
-        super().__init__(f'{name}: {text}')
-        self.name = name
-
-
 class OutOfScope(AssertionError):
     """A request the evaluator was not written for: the generator must not send it."""
 
 
 class _Refused(Exception):
     """A mistake found while a value is read: its step in PRD-E3's order and its code. Step 3 is split as PRD-E3 says:
-    a mistake against a limit of every column (the last day, PRD-F24) is 3, a number the column's own type does not
-    take (an SQL integer column's range, PRD-F25) is 3.5, after every mistake of 3 in the request."""
+    the maximum date of PRD-F24 as a bound, or a number with more digits after the point than PRD-F25 allows, is 3; a
+    number the column's own type does not take (an SQL integer column's range, PRD-F25) is 3.5, after every mistake of
+    3 in the request. (Numbers with a fraction are out of scope, so only the maximum date reaches 3 here.)"""
 
     def __init__(self, step: float, code: str) -> None:
         super().__init__(code)
@@ -92,9 +86,10 @@ _MONTH = re.compile(r'([0-9]{4})-([0-9]{2})')
 
 def _number(text: str) -> int:
     """PRD-F25: ASCII digits with an optional sign, white space around ignored; a whole number outside the signed
-    64-bit range of a `BigInteger` is a mistake of the column's own type, in step 3 after the limits of every column
-    (PRD-E3). Every number column is read as a BigInteger: the generator sends a number that large only to one, so the
-    narrower range of an Integer column is not modelled. A number with a fraction or an exponent is out of scope."""
+    64-bit range of a `BigInteger` is a mistake of the column's own type, in step 3 after the maximum date of PRD-F24
+    as a bound and a number with more digits after the point than PRD-F25 allows (PRD-E3). Every number column is read
+    as a BigInteger: the generator sends a number that large only to one, so the narrower range of an Integer column is
+    not modelled. A number with a fraction or an exponent is out of scope."""
     written = text.strip()
     if _WHOLE.fullmatch(written):
         number = int(written)
@@ -666,11 +661,14 @@ def _step_one_filters(
     the values whose length is measured and the texts whose words are counted. PRD-F14 measures each value a condition
     reads as sent: "A value no condition reads, a surplus value or that of `null`, is not measured", and PRD-F15 looks
     for a control character only in "a SearchBuilder value its condition reads (PRD-F36)", so neither looks at the
-    values of an unfinished criterion. PRD-F14 measures a categorical filter's alternatives "after unescaping and not
+    values of an unfinished criterion: one with no condition or no column (PRD-F30), which reads none. A criterion
+    with a condition and a column but too few values (a `between` with one) is still measured, value by value
+    (PRD-F14, PRD-F30). PRD-F14 measures a categorical filter's alternatives "after unescaping and not
     the raw pattern", and PRD-F18 refuses any other regex, so that one is not measured. Words are counted in search
     text, ColumnControl's `contains` included, which is the column search of PRD-F2 (PRD-F45), so PRD-F14's word cap
     applies to it; not in a list, nor in a value read as one. PRD-F40: the entries of a list on the global search are
-    not read, so PRD-F14 and PRD-F15 do not apply to them."""
+    not read, so PRD-F14 and PRD-F15 do not apply to them and PRD-F38's bounds on lists do not count them (those
+    bounds are out of scope here, so nothing counts them)."""
     search = params.search
     yield [search.value], [search.value], [search.value]
     for column in params.columns:
@@ -721,7 +719,7 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
     """The answer the requirements give `params` over `rows`. PRD-E3: a mistake of step 1 in read order, else the
     mistake of the lowest step, the first in read order within it. PRD-F12: every filter joins with AND. PRD-C1,
     PRD-C2: the counts before and after the filters. PRD-C3: a start at or past the end gives an empty page and both
-    counts. Raises `SpecGap` for a request the requirements leave open."""
+    counts."""
     declared = {column[0]: column for column in decl}
     if (code := _step_one(params, declared)) is not None:
         return Refusal(code)
