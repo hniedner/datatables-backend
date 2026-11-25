@@ -18,7 +18,9 @@ The checks, each finding a line on stderr that names the condition and the fix, 
 - the version is X.Y.Z, or X.Y.Z with a, b or rc and a number;
 - the tag ``v<version>`` does not exist on another commit (a version once tagged is burnt);
 - (release mode) the version is not already on PyPI;
-- CHANGELOG.md has one non-empty section ``## [<version>] - YYYY-MM-DD``, a real date;
+- CHANGELOG.md has one non-empty section ``## [<version>] - YYYY-MM-DD``, a real date, that opens in the shape of
+  CONTRIBUTING.md, Releases (a summary, an ``**Upgrade impact:**`` and a ``**Security:**`` line; only this version's
+  section is read, ``changelog_notes.check_shape`` is the one rule);
 - cliff.toml exists (without it git-cliff silently applies its default rules);
 - ``git-cliff --bumped-version`` is ``v`` and the release part of the version. The tag ``v<version>`` is ignored when it
   points at HEAD, since git-cliff would otherwise count that tag as released. "Nothing to bump" is not an error for
@@ -96,7 +98,10 @@ def findings(version: str) -> list[str]:
 def changelog_findings(version: str) -> list[str]:
     text = Path('CHANGELOG.md').read_text(encoding='utf-8')
     try:
-        changelog_notes.notes(text, version)
+        notes = changelog_notes.notes(text, version)
+        changelog_notes.check_shape(notes, version)
+    except changelog_notes.ShapeError as error:  # the section is there; the message says which line to add
+        return [str(error)]
     except changelog_notes.NotesError as error:
         return [f'{error}: write the notes of the release under "## [{version}] - YYYY-MM-DD"']
     heading = re.search(rf'^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$', text, re.MULTILINE)

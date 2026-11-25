@@ -23,8 +23,15 @@ from test_cliff_config import build_repo
 INIT = 'src/datatables_backend/__init__.py'
 
 
+SHAPE = (
+    'This release changes something users see.\n\n'
+    '**Upgrade impact:** none; no change to your code is needed.\n\n'
+    '**Security:** none; this release fixes no known vulnerability.\n'
+)
+
+
 def changelog(version: str) -> str:
-    return f'# Changelog\n\n## [{version}] - 2026-01-02\n\n- Something users see.\n'
+    return f'# Changelog\n\n## [{version}] - 2026-01-02\n\n{SHAPE}\n### Fixed\n\n- Something users see.\n'
 
 
 def make(tmp_path: Path, tag: str, *messages: str, version: str = '0.1.1', **files: str | None) -> Path:
@@ -170,9 +177,9 @@ def test_a_version_outside_the_release_forms_fails(
     'text',
     [
         '# Changelog\n',
-        '# Changelog\n\n## [0.1.1]\n\n- x\n',
-        '# Changelog\n\n## [0.1.1] - soon\n\n- x\n',
-        '# Changelog\n\n## [0.1.1] - 2026-19-45\n\n- x\n',
+        f'# Changelog\n\n## [0.1.1]\n\n{SHAPE}',
+        f'# Changelog\n\n## [0.1.1] - soon\n\n{SHAPE}',
+        f'# Changelog\n\n## [0.1.1] - 2026-19-45\n\n{SHAPE}',
         '# Changelog\n\n## [0.1.1] - 2026-01-02\n',
     ],
     ids=['missing', 'undated', 'date not a date', 'no such date', 'empty'],
@@ -217,6 +224,28 @@ def test_a_release_pull_request_without_its_changelog_section_fails(
     repo = make(tmp_path, 'v0.1.0', 'fix: x', version='0.1.0')
     release_commit(repo, '0.1.1', '# Changelog\n')
     assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
+
+
+def test_a_release_pull_request_whose_section_lacks_the_shape_fails_with_the_line_to_add(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#198: the release PR stops on a section without an Upgrade impact line, saying so, and without the hint that
+    belongs to a missing section (the section is there)."""
+    repo = make(tmp_path, 'v0.1.0', 'fix: x', version='0.1.0')
+    release_commit(repo, '0.1.1', '# Changelog\n\n## [0.1.1] - 2026-01-02\n\nA summary.\n\n**Security:** none.\n')
+    assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
+    error = capsys.readouterr().err
+    assert '"**Upgrade impact:**"' in error
+    assert 'write the notes of the release under' not in error
+
+
+def test_a_missing_section_still_says_where_to_write_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = make(tmp_path, 'v0.1.0', 'fix: x', version='0.1.0')
+    release_commit(repo, '0.1.1', '# Changelog\n')
+    assert run(repo, monkeypatch, 'pr', 'HEAD~1') == 1
+    assert 'write the notes of the release under "## [0.1.1] - YYYY-MM-DD"' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
