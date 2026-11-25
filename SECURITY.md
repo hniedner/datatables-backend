@@ -2,7 +2,9 @@
 
 ## Reporting a vulnerability
 
-Report a suspected vulnerability by email to <hannes@niedner-consulting.com>. Please do not open a public issue or
+Report a suspected vulnerability through GitHub's
+[private vulnerability reporting](https://github.com/hniedner/datatables-backend/security/advisories/new), which is
+enabled and the preferred channel, or by email to <hannes@niedner-consulting.com>. Please do not open a public issue or
 pull request for it.
 
 Include:
