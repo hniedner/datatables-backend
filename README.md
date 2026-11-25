@@ -120,13 +120,19 @@ const table = new DataTable('#users', {
 });
 
 table.on('xhr', (e, settings, json) => {
-  document.querySelector('#users-error').textContent = json.error ?? ''; // json.error_code is the stable code
+  // json is null after an HTTP error (a 422 or 500): DataTables fires `xhr` with no JSON
+  document.querySelector('#users-error').textContent = json?.error ?? ''; // json.error_code is the stable code
 });
 ```
 
-A user's mistake comes back as HTTP 200 with `error` and `error_code` in the answer. DataTables (checked in 3.1.5)
-shows an `error` in a browser `alert()` unless `DataTable.ext.errMode` says otherwise, and `errMode: 'none'` would also
-silence its own configuration warnings, so the example logs them. `#users-error` is an element of yours.
+A user's mistake comes back as HTTP 200 with `error` and `error_code` in the answer. DataTables shows an `error` in a
+browser `alert()` unless `DataTable.ext.errMode` says otherwise, and `errMode: 'none'` would also silence its own
+configuration warnings, so the example logs them. `#users-error` is an element of yours.
+
+What was checked, in DataTables 3.1.5 and 3.1.6: the source of both (the default `errMode` is `'alert'`, and a failed
+request fires `xhr` with a null `json`: `js/dataTables.js` line 5582 in 3.1.5, 5587 in 3.1.6), and the requests each
+sends, in jsdom ([decision 007][decision-007]: both, with ColumnControl 2.1.3;
+[the example](https://github.com/hniedner/datatables-backend/tree/main/examples)'s page: 3.1.6).
 
 ColumnControl's text, number and list filters are answered, and an active search of its date control is refused with a
 message that says so. They work with DataTables' default POST and with `submitAs: 'json'`, and not with an `ajax.data`
