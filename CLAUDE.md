@@ -18,15 +18,16 @@ requirements and milestones. Notes about the application this was derived from l
 - `uv audit --locked` checks every package in `uv.lock` against the OSV advisory database, as the `Audit` workflow
   does daily; its header in `.github/workflows/audit.yml` says how a finding is dealt with.
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
-  `uv run pytest tests/test_sql.py tests/test_sql_search.py` with `DTB_SQL_URL` and `DTB_SQL_ASYNC_URL` naming a
+  `uv run pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py` with `DTB_SQL_URL` and
+  `DTB_SQL_ASYNC_URL` naming a
   database called `dtb`, `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and
   `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its dialect, and `TZ` naming a zone far from UTC on every
   database (CI uses `America/Adak`) and on PostgreSQL `PGTZ` too (CI uses `Pacific/Kiritimati`), or the timezone test
   fails; or
-  `uv run pytest tests/test_opensearch_live.py` with `DTB_OPENSEARCH_URL`. SQL Server also needs Microsoft's ODBC
-  Driver 18. The SQL tests own the tables `dtb_test_people`, `dtb_test_tags` and `dtb_test_stamps`, and the live
-  OpenSearch test owns the indices `dtb-test-docs`, `dtb-test-docs-phrases` and `dtb-test-docs-lines`: each run drops
-  them first.
+  `uv run pytest tests/test_opensearch_live.py tests/test_reference_opensearch.py` with `DTB_OPENSEARCH_URL`. SQL
+  Server also needs Microsoft's ODBC Driver 18. The SQL tests own the tables `dtb_test_people`, `dtb_test_tags` and
+  `dtb_test_stamps`, and the live OpenSearch tests own the indices `dtb-test-docs`, `dtb-test-docs-phrases`,
+  `dtb-test-docs-lines` and `dtb-test-docs-oracle`: each run drops them first.
 
 The private-word hooks read a word list kept outside the repository, from the file `DTB_PRIVATE_WORDS` names. Without
 it they fail closed ("could not check"), so set it before committing; never read or print the list. CI skips them, and
@@ -73,7 +74,8 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
   aiosqlite) and against a recording OpenSearch client; CI also runs the SQL tests on PostgreSQL, MySQL and SQL
   Server (`DTB_SQL_URL`, `DTB_SQL_ASYNC_URL`, `DTB_SQL_DIALECT`) and `tests/test_opensearch_live.py` on OpenSearch
-  (`DTB_OPENSEARCH_URL`). A backend gap the PRD has yet to close is pinned as today's result, or as a `strict=True`
+  (`DTB_OPENSEARCH_URL`); the reference-evaluator property runs on each of them (`tests/test_reference_properties.py`,
+  `tests/test_reference_opensearch.py`). A backend gap the PRD has yet to close is pinned as today's result, or as a `strict=True`
   xfail naming the expected exception, citing the PRD requirement; nothing is skipped silently. Before relying on a
   new test, check that it fails when the behaviour is broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
