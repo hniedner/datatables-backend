@@ -32,7 +32,6 @@ from datetime import date
 from typing import Any
 
 from hypothesis import event
-from hypothesis import example
 from hypothesis import given
 from opensearchpy import AsyncOpenSearch
 from opensearchpy import OpenSearch
@@ -49,12 +48,13 @@ from .conftest import server_examples
 from .reference_evaluator import Declared
 from .reference_evaluator import Engine
 from .reference_evaluator import evaluate
-from .test_reference_properties import NEIGHBOURS
 from .test_reference_properties import STRINGS
+from .test_reference_properties import TYPED_EXAMPLES
 from .test_reference_properties import answer_of
 from .test_reference_properties import cases
 from .test_reference_properties import engine_for
 from .test_reference_properties import events
+from .test_reference_properties import pinned
 
 pytestmark = opensearch_live()
 
@@ -123,22 +123,24 @@ def keyword_ranks(leg: Leg) -> dict[str, int]:
 @pytest.fixture(scope='module')
 def leg() -> Iterator[Leg]:
     client = OpenSearch(hosts=[OPENSEARCH_URL])
-    if client.indices.exists(index=INDEX):  # left by an interrupted run
-        client.indices.delete(index=INDEX)
-    client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
-    runner = asyncio.Runner()
-
-    async def opened() -> AsyncOpenSearch:
-        return AsyncOpenSearch(hosts=[OPENSEARCH_URL])
-
-    leg = Leg(client, runner.run(opened()), runner)
     try:
-        leg.reading = engine_for('opensearch', keyword_ranks(leg).__getitem__)
-        yield leg
+        if client.indices.exists(index=INDEX):  # left by an interrupted run
+            client.indices.delete(index=INDEX)
+        client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
+        runner = asyncio.Runner()
+
+        async def opened() -> AsyncOpenSearch:
+            return AsyncOpenSearch(hosts=[OPENSEARCH_URL])
+
+        leg = Leg(client, runner.run(opened()), runner)
+        try:
+            leg.reading = engine_for('opensearch', keyword_ranks(leg).__getitem__)
+            yield leg
+        finally:
+            runner.run(leg.async_client.close())
+            runner.close()
+            client.indices.delete(index=INDEX)
     finally:
-        runner.run(leg.async_client.close())
-        runner.close()
-        client.indices.delete(index=INDEX)
         client.close()
 
 
@@ -157,15 +159,16 @@ def table_of(decl: tuple[Declared, ...]) -> SearchTable:
 
 @server_examples(SERVER_EXAMPLES)
 @given(cases())
-@example(NEIGHBOURS)
+@pinned(TYPED_EXAMPLES)
 def test_the_opensearch_backend_answers_as_the_reference_evaluator(
     leg: Leg, case: tuple[list[dict[str, Any]], Any, dict[str, Any]]
 ):
     """The rows, their order and both counts, or the error code, of `fetch_sync` and of `fetch` over the same indexed
     documents equal the evaluator's reading of OpenSearch. Catches a rule of PRD section 4.3 to 4.6 in scope where the
     backend and the requirements part on a real cluster, through either client: a query the cluster reads otherwise
-    than the recording tests assume. The example: `n = 2^53 + 1` finds the document that holds it, not its neighbour
-    2^53, which a number sent as a double would find too (PRD-F25)."""
+    than the recording tests assume. The examples are the property's that mean something on typed search
+    (`TYPED_EXAMPLES`), among them `n = 2^53 + 1`, which finds the document that holds it, not its neighbour 2^53, as
+    a number sent as a double would (PRD-F25)."""
     rows, decl, body = case
     params = parse_request(body)
     expected = evaluate(decl, rows, params, engine=leg.reading)

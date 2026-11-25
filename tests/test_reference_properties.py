@@ -26,27 +26,34 @@ then one applied in the other direction, now and then over rows that tie on the 
 cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and
 then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice, nameless columns
 and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
-PRD-E3. The rates are set so that about half of the requests are answered (49% on the `ci` seed of SQLite) and most
+PRD-E3. The rates are set so that about half of the requests are answered (55% on the `ci` seed of SQLite) and most
 outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that, and the seed
 follows the test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
 --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events)
-are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 2%, M5b 2%, M6 5%, M7 1%
-(`between`) and 2% (`!between`), M10 2% (the last day read before a number mistake of step 2) and M10b 2%. `n` holds
-2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in
-sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row
-holding one in 7% of the `ci` examples (without that scenario 5,000 `explore` examples missed the mutant that binds an
-integer column's number as a double); `NEIGHBOURS` is the smallest case, an example.
+are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 4%, M5b 3%, M6 2%, M7 1%
+(`between`) and 2% (`!between`), M10 6% (the last day read before a number mistake of step 2) and M10b 4%. The paths
+of `compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
+that finds a row and leaves out another 4% (2%), `%` or `_` alone over number text only 1% (3%), PAD SPACE changing the
+answer 3% (5%), 2^63 on `n` as the only mistake 3% (2%), a column search by date text that finds a row and leaves out
+another 2% (3%). `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its
+neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one
+of them beside a row holding one in 6% of the `ci` examples (without that scenario 5,000 `explore` examples missed the
+mutant that binds an integer column's number as a double).
+
+The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
+them) and one of each `compared` scenario. `TYPED_EXAMPLES` names those that also mean something on typed search, which
+`tests/test_reference_opensearch.py` imports.
 
 Rare cases, and what carries each:
-- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, 2 on the
-  current `ci` seed; carried by an example on the property and by the hand-written tests;
+- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
+  on the current `ci` seed; carried by an example on the property and by the hand-written tests;
 - an entry of 256 code points on a list on the global search: about 1 or 2 in 1,000 random examples, none on the
   current `ci` seed; carried by an example and by the hand-written tests (`explore` found mutants of these two cases
   only after 1,200 to 1,500 examples);
-- a list of more than 256 entries on the global search: about 2% of the `ci` examples, and an example;
-- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 4 on the current `ci` seed; an
+- a list of more than 256 entries on the global search: about 1% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 3 on the current `ci` seed; an
   example;
-- ColumnControl's `contains` of more than 16 words: about 2% of the `ci` examples, and an example;
+- ColumnControl's `contains` of more than 16 words: about 1% of the `ci` examples, and an example;
 - the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
   does not take): the examples and the hand-written tests, since the random draw seldom holds both mistakes at once.
 
@@ -57,8 +64,10 @@ Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
 (F9); categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26,
 F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as each leg's measured collation);
-counts and paging (C1 to C3); the error codes and which one a
-request with several mistakes gets (E2, E3, F14, F15).
+counts and paging (C1 to C3); the error codes and which one a request with several mistakes gets (E2, E3, F14, F15);
+section 5's PAD SPACE, which each SQL leg measures and asserts against the dialect's documented comparison. The
+OpenSearch leg adds typed search (F32, F33, F34) and F26's reading there, where a NULL is a missing field and `''` a
+value.
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
 datetimes and time zones, and a time of day after a day; numbers with a fraction or an exponent; hooked columns,
@@ -96,10 +105,13 @@ gap met so far is decided (#205), and a gap found later is added back as a marke
 import asyncio
 from collections import Counter
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import date
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -144,6 +156,7 @@ from .reference_evaluator import Engine
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
 from .reference_evaluator import categorical
+from .reference_evaluator import code_points
 from .reference_evaluator import evaluate
 from .reference_evaluator import words
 
@@ -165,8 +178,9 @@ reference_rows = Table(
 #: The examples of the property on a SQL server leg under the `ci` profile; SQLite runs the profile's 500
 SERVER_EXAMPLES = 300
 
-STRINGS = ['', ' ', 'a', 'A', 'ab', 'Ab c', 'b a', 'red', 'Red', 'RED', 'reddish', 'x_y', '5%', 'a-b', '-', '7a', '[a]',
-           'a\\b']  # fmt: skip
+#: `'a '` ends in a space: under PAD SPACE it equals `'a'` (PRD section 5)
+STRINGS = ['', ' ', 'a', 'a ', 'A', 'ab', 'Ab c', 'b a', 'red', 'Red', 'RED', 'reddish', 'x_y', '5%', 'a-b', '-', '7a',
+           '[a]', 'a\\b']  # fmt: skip
 DATES = [date(2023, 1, 1), date(2024, 3, 5), date(2024, 3, 6), date(2024, 12, 31)]
 #: The numbers of `n`, 2^53 and 2^53 + 1 among them: a double cannot tell those two apart, so a number bound as a
 #: double finds its neighbour as well
@@ -482,7 +496,94 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
         body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].extend(added)
     focused(draw, rows, server=server, body=body, applies=applies, unfiltered=unfiltered)
     outranked(draw, rows, server=server, body=body)
+    compared(draw, rows, server=server, body=body)
     return rows, decl, body
+
+
+#: Text that a LIKE pattern would read as a wildcard or an escape, and words of it (PRD-F11, PRD-F19)
+LIKE_CELLS = ['a\\b', '5%', 'x_y', '[a]', 'ab', 'a', '50', None]
+LIKE_WORDS = ['\\', '%', '_', '[', '[a]', 'a\\b', '5%', 'x_y']
+
+
+def compared(
+    draw: st.DrawFn, rows: list[dict[str, Any]], *, server: dict[str, tuple[bool, bool]], body: dict[str, Any]
+) -> None:
+    """Now and then a request whose answer hangs on how a database compares or searches text, each from a few rows
+    set for it, with the other filters cleared. At most one per request, so that none undoes another: about once in
+    six and a half for the LIKE words, PAD SPACE and a date's text, once in thirteen for the others. PRD-F11,
+    PRD-F19: a search word holding `\\`, `%`, `_` or `[`, over cells holding them, is plain text. PRD-F23: `%` or `_`
+    alone as a global word over number text only matches no row. PRD section 5: a test of `''`, `' '`, `'a'` and
+    `'a '` that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake, the order
+    entries dropped, since one may hold a mistake of its own. PRD-F23: a column search on a date column by a part of
+    its `YYYY-MM-DD` text."""
+    columns = body['columns']
+    present = {column['data']: index for index, column in enumerate(columns) if isinstance(column['data'], str)}
+    searchable = [name for name in present if server.get(name, (False, False))[0]]
+
+    def clear() -> None:
+        body['search'] = {'value': '', 'regex': False}
+        body.pop('searchBuilder', None)
+        for column in columns:
+            column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
+
+    texts = [name for name in ('s', 't') if name in searchable]
+    scenario = draw(st.sampled_from([None] * 5 + ['like', 'like', 'wildcard', 'pad', 'pad', 'beyond', 'date', 'date']))
+    if scenario == 'like' and rows and 's' in searchable:  # PRD-F11, PRD-F19
+        for row, cell in zip(rows, draw(st.permutations(LIKE_CELLS)), strict=False):
+            row['s'] = cell
+        clear()
+        word = draw(st.sampled_from(LIKE_WORDS))
+        column = columns[present['s']]
+        if draw(st.booleans()):
+            column['searchable'] = True
+            body['search'] = {'value': word, 'regex': False}
+        else:
+            column['search'] = {'value': word, 'regex': False}
+    if scenario == 'wildcard' and rows and 'n' in searchable:  # PRD-F23: a wildcard over number text only
+        clear()
+        for column in columns:
+            column['searchable'] = column['data'] == 'n'
+        body['search'] = {'value': draw(st.sampled_from(['%', '_'])), 'regex': False}
+        draw(st.sampled_from(rows))['n'] = draw(st.sampled_from([7, 17, -3]))
+    if scenario == 'pad' and rows and texts:  # PRD section 5, PRD-F26
+        name = draw(st.sampled_from(texts))
+        for row in rows:
+            row[name] = draw(st.sampled_from([' ', '', 'a', 'a ', None]))
+        clear()
+        padded(draw, columns[present[name]], body)
+    if scenario == 'beyond' and 'n' in searchable:  # PRD-F25, PRD-D23: 2^63 alone
+        clear()
+        body['order'] = []  # an order entry may hold a mistake of its own
+        form = draw(st.sampled_from(['criterion', 'list', 'equal']))
+        if form == 'criterion':
+            joined(body, {'origData': 'n', 'data': 'n', 'condition': draw(st.sampled_from(['=', '<', '!='])),
+                          'value': [BIG]})  # fmt: skip
+        elif form == 'list':
+            columns[present['n']]['search'] = {'value': '', 'regex': False, 'multi_values': [BIG]}
+        else:
+            columns[present['n']]['columnControl'] = {'search': {'value': BIG, 'logic': 'equal', 'type': 'text'}}
+    if scenario == 'date' and rows and 'd' in searchable:  # PRD-F23: a date searched by its text
+        for row in rows:
+            row['d'] = draw(st.sampled_from([date(2024, 3, 5), date(2024, 12, 31), date(2023, 1, 1), None]))
+        clear()
+        word = draw(st.sampled_from(['2024-03', '2024', '03-05', '2024-12', '-03-', '2023-01-01']))
+        columns[present['d']]['search'] = {'value': word, 'regex': False}
+
+
+def padded(draw: st.DrawFn, column: dict[str, Any], body: dict[str, Any]) -> None:
+    """A test of `column`'s text that PAD SPACE may answer otherwise (PRD section 5): NULL or not, `=` or `!=` a value,
+    a list, or ColumnControl's empty, not empty or equal."""
+    name = column['data']
+    form = draw(st.sampled_from(['null', '!null', '=', '!=', 'list', 'empty', 'equal']))
+    value = draw(st.sampled_from([' ', 'a', 'a ']))
+    if form == 'list':
+        column['search'] = {'value': '', 'regex': False, 'multi_values': draw(st.sampled_from([[''], [' '], ['a'], ['a ']]))}  # fmt: skip
+    elif form in ('empty', 'equal'):
+        logic = {'empty': draw(st.sampled_from(['empty', 'notEmpty'])), 'equal': 'equal'}[form]
+        column['columnControl'] = {'search': {'value': value if form == 'equal' else '', 'logic': logic, 'type': 'text'}}  # fmt: skip
+    else:
+        joined(body, {'origData': name, 'data': name, 'condition': form,
+                      'value': [] if form in ('null', '!null') else [value]})  # fmt: skip
 
 
 def outranked(
@@ -596,7 +697,7 @@ def focused(
         columns[index]['columnControl'] = {'search': {'value': word, 'logic': 'contains', 'type': 'text'}}
 
 
-def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None) -> Engine:
+def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None, pad_space: bool | None = None) -> Engine:
     """The evaluator's reading of a backend, by the name SQLAlchemy gives its dialect, or `opensearch`. The flags
     follow the requirements and the measured engine facts:
     - `typed_search` (PRD-F32, PRD-F33, PRD-F34): OpenSearch only; SQL searches a number or a date as its text
@@ -606,16 +707,22 @@ def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None) -> E
       servers.md`): SQL Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3); not PostgreSQL,
       SQLite or MySQL's default collation (NO PAD).
     - `order_key` (PRD-O6): SQLite's `BINARY` is code-point order; every other backend's collation is measured by the
-      leg that runs on it and passed as ``order_key``, else ordering by text is out of scope there."""
-    if dialect == 'sqlite':
+      leg that runs on it and passed as ``order_key``, else ordering by text is out of scope there.
+    A leg that measured PAD SPACE passes it as ``pad_space``, which then wins over the dialect's documented one."""
+    if dialect not in PAD_SPACE:
+        raise ValueError(f'no reading of the backend {dialect}')
+    pads = PAD_SPACE[dialect] if pad_space is None else pad_space
+    if dialect == 'sqlite' and not pads:
         return SQLITE
-    if dialect in ('postgresql', 'mysql'):
-        return Engine(order_key=order_key)
-    if dialect in ('mssql', 'mariadb'):
-        return Engine(pad_space=True, order_key=order_key)
     if dialect == 'opensearch':
-        return Engine(typed_search=True, empty_string_is_empty=False, order_key=order_key)
-    raise ValueError(f'no reading of the backend {dialect}')
+        return Engine(typed_search=True, empty_string_is_empty=False, pad_space=pads, order_key=order_key)
+    return Engine(pad_space=pads, order_key=order_key or (code_points if dialect == 'sqlite' else None))
+
+
+#: PRD section 5 and `docs/databases.md`: whether a backend's default comparison of text ignores trailing spaces. SQL
+#: Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3) are PAD SPACE; MySQL's default
+#: collation is NO PAD; PostgreSQL and SQLite tell `'a '` from `'a'`; OpenSearch compares a `keyword` as stored.
+PAD_SPACE = {'sqlite': False, 'postgresql': False, 'mysql': False, 'mariadb': True, 'mssql': True, 'opensearch': False}
 
 
 def answer_of(response: DTResponse) -> Answer | Refusal:
@@ -623,6 +730,15 @@ def answer_of(response: DTResponse) -> Answer | Refusal:
     if response.error_code:
         return Refusal(response.error_code)
     return Answer(tuple(row['id'] for row in response.data), response.recordsTotal, response.recordsFiltered)
+
+
+def measured_pad_space(connection: Connection) -> bool:
+    """PRD section 5, measured: whether the database finds a stored `' '` by a plain `= ''`, written without any
+    COLLATE, so that it is the comparison the column has."""
+    connection.execute(reference_rows.insert(), [{'id': 1, 's': ''}, {'id': 2, 's': ' '}])
+    found = connection.execute(sql_text("SELECT COUNT(*) FROM dtb_test_tags WHERE s = ''")).scalar_one()
+    connection.execute(reference_rows.delete())
+    return found == 2
 
 
 def collation_ranks(connection: Connection) -> dict[str, int]:
@@ -656,24 +772,33 @@ def leg(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Leg]:
     path: Path = tmp_path_factory.mktemp('reference') / 'reference.db'
     urls = SQL_URLS if SQL_URLS[0] else (f'sqlite:///{path}', f'sqlite+aiosqlite:///{path}')
     sync = create_engine(urls[0])
-    dialect = sync.dialect.name
-    assert dialect == os.environ.get('DTB_SQL_DIALECT', 'sqlite'), 'the property runs on another database than asked'
-    with sync.begin() as connection:
-        reference_rows.drop(connection, checkfirst=True)
-        reference_rows.create(connection)
-        ranks = collation_ranks(connection)
-    if dialect == 'sqlite':
-        # SQLite's BINARY collation is code-point order, the evaluator's default
-        assert ranks == {value: rank for rank, value in enumerate(sorted(STRINGS), 1)}
-    runner = asyncio.Runner()
-    async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
     try:
-        yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__))
-    finally:
-        runner.run(async_.dispose())
-        runner.close()
+        dialect = sync.dialect.name
+        assert dialect == os.environ.get('DTB_SQL_DIALECT', 'sqlite'), (
+            'the property runs on another database than asked'
+        )
         with sync.begin() as connection:
             reference_rows.drop(connection, checkfirst=True)
+            reference_rows.create(connection)
+            pads = measured_pad_space(connection)
+            ranks = collation_ranks(connection)
+        assert pads == PAD_SPACE[dialect], (
+            f'{dialect} compares trailing spaces otherwise than PRD section 5 and docs/databases.md say (PAD SPACE '
+            f'documented {PAD_SPACE[dialect]}, measured {pads}): a finding to report, not to model'
+        )
+        if dialect == 'sqlite':
+            # SQLite's BINARY collation is code-point order, the evaluator's default
+            assert ranks == {value: rank for rank, value in enumerate(sorted(STRINGS), 1)}
+        runner = asyncio.Runner()
+        async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
+        try:
+            yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__, pads))
+        finally:
+            runner.run(async_.dispose())
+            runner.close()
+            with sync.begin() as connection:
+                reference_rows.drop(connection, checkfirst=True)
+    finally:
         sync.dispose()
 
 
@@ -916,11 +1041,64 @@ def events(
 ) -> list[str]:
     """Every event of one example: its outcome, the shapes it sends, and the paths it reaches, each read from the
     evaluator for ``engine``."""
-    reached = [outcome(rows, answer), *shapes(body), *ranking_paths(rows, decl, body, answer, engine)]
+    reached = [
+        outcome(rows, answer),
+        *shapes(body),
+        *ranking_paths(rows, decl, body, answer, engine),
+        *compared_paths(rows, decl, body, answer, engine),
+    ]
     neighbours = {2**53, 2**53 + 1}
     if any(row['n'] in neighbours for row in rows) and any(str(number) in repr(body) for number in neighbours):
         reached.append('shape: 2^53 or 2^53 + 1 sent beside a row that holds one of them')
     return reached + (paths(rows, decl, body, engine) if isinstance(answer, Answer) else [])
+
+
+def compared_paths(
+    rows: list[dict[str, Any]],
+    decl: tuple[Declared, ...],
+    body: dict[str, Any],
+    answer: Answer | Refusal,
+    engine: Engine,
+) -> list[str]:
+    """The paths of `compared`'s scenarios, each read from the evaluator's answer. PAD SPACE (PRD section 5): the
+    answer differs from the one under the opposite `pad_space`. PRD-F11, PRD-F19: a word holding `\\`, `%`, `_` or `[`
+    finds a row and leaves another out. PRD-F23: `%` or `_` alone as the global search over number or date text only,
+    with a value there that a wildcard would match. PRD-F25, PRD-D23: 2^63 is the only mistake, so the answer is that
+    of the request with 7 in its place but for it. PRD-F23: a column search on a date column finds a row and leaves out
+    another that holds a day."""
+    reached: list[str] = []
+    flipped = replace(engine, pad_space=not engine.pad_space)
+    if evaluate(decl, rows, engine=flipped, params=parse_request(body)) != answer:
+        reached.append('path: PAD SPACE would change the answer')
+    kinds = {name: kind for name, kind, _, _ in decl}
+    searchable = {name for name, _, flag, _ in decl if flag}
+    plain = [column for column in body['columns'] if not column['search']['regex'] and column['search']['value']]
+    texts = [body['search']['value'], *(column['search']['value'] for column in plain)]
+    if (
+        isinstance(answer, Answer)
+        and 0 < answer.records_filtered < answer.records_total
+        and any(set(word) & set('\\%_[') for text in texts for word in words(text)[0])
+    ):
+        reached.append('path: a word holding \\, %, _ or [ finds a row and leaves out another')
+    globally = {column['data'] for column in body['columns'] if isinstance(column['data'], str)
+                and column['searchable'] and column['data'] in searchable and kinds[column['data']] != 'boolean'}  # fmt: skip
+    positive, negated = words(body['search']['value'])
+    if (positive and set(positive) <= {'%', '_'} and not negated and globally
+            and all(kinds[name] in ('number', 'date') for name in globally)
+            and any(row[name] is not None for row in rows for name in globally)):  # fmt: skip
+        reached.append('path: % or _ alone as the global search over number or date text only')
+    if answer == Refusal('invalid_number') and BIG in json.dumps(body):
+        fixed = json.loads(json.dumps(body).replace(BIG, '7'))
+        if isinstance(evaluate(decl, rows, engine=engine, params=parse_request(fixed)), Answer):
+            reached.append('path: 2^63 on n is the only mistake')
+    days = sum(row['d'] is not None for row in rows)
+    if (
+        isinstance(answer, Answer)
+        and 0 < answer.records_filtered < days
+        and any(column['data'] == 'd' and words(column['search']['value'])[0] for column in plain)
+    ):
+        reached.append('path: a column search by date text finds a row and leaves out another')
+    return reached
 
 
 def first_applied(decl: tuple[Declared, ...], body: dict[str, Any]) -> tuple[str, str] | None:
@@ -1040,17 +1218,19 @@ NEIGHBOURS = (
 )  # fmt: skip
 
 
-@server_examples(SERVER_EXAMPLES, on_server=bool(SQL_URLS[0]))
-@given(cases())
-@example(NEIGHBOURS)
-# M4: d ascending, length 1: the NULL rows come before row 3's day (PRD-O2), so row 1 is the page
-@example(
-    (three_rows(d=date(2023, 1, 1)), DECLARED, request_of({'data': 'd'}, length=1, order=[{'column': 0, 'dir': 'asc'}]))
-)
-# M6: a list `[""]` on n (rows 1 and 2, NULL) and ColumnControl `contains` 7 on n (row 3) are ANDed (PRD-F45): no
-# row; either alone, or the two ORed, would find one
-@example(
-    (
+#: The pinned examples of the property, one per case the random draw reaches seldom or that a mutant needed; the
+#: OpenSearch leg takes `TYPED_EXAMPLES` of them (tests/test_reference_opensearch.py)
+EXAMPLES: dict[str, tuple[list[dict[str, Any]], tuple[Declared, ...], dict[str, Any]]] = {
+    'neighbours': NEIGHBOURS,
+    # M4: d ascending, length 1: the NULL rows come before row 3's day (PRD-O2), so row 1 is the page
+    'm4': (
+        three_rows(d=date(2023, 1, 1)),
+        DECLARED,
+        request_of({'data': 'd'}, length=1, order=[{'column': 0, 'dir': 'asc'}]),
+    ),
+    # M6: a list `[""]` on n (rows 1 and 2, NULL) and ColumnControl `contains` 7 on n (row 3) are ANDed (PRD-F45): no
+    # row; either alone, or the two ORed, would find one
+    'm6': (
         three_rows(n=7),
         DECLARED,
         request_of(
@@ -1060,74 +1240,76 @@ NEIGHBOURS = (
                 'columnControl': {'search': {'value': '7', 'logic': 'contains', 'type': 'text'}},
             }
         ),
-    )
-)
-# M7: `!between` 0 and -7 is the range -7 to 0 (PRD-F27): row 3's -7 is in it, the NULL rows pass (PRD-F37)
-@example((three_rows(n=-7), DECLARED, request_of({'data': 'n'}, searchBuilder=tree_of(('n', '!between', ['0', '-7'])))))
-# PRD-E3, step 3: the last day comes before a number past a BigInteger, in either order: `invalid_date`
-@example(
-    (
+    ),
+    # M7: `!between` 0 and -7 is the range -7 to 0 (PRD-F27): row 3's -7 is in it, the NULL rows pass (PRD-F37)
+    'm7': (
+        three_rows(n=-7),
+        DECLARED,
+        request_of({'data': 'n'}, searchBuilder=tree_of(('n', '!between', ['0', '-7']))),
+    ),
+    # PRD-E3, step 3: the last day comes before a number past a BigInteger, in either order: `invalid_date`
+    'step3 big first': (
         three_rows(),
         DECLARED,
         request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('n', '=', [BIG]), ('d', '<', ['9999-12-31']))),
-    )
-)
-@example(
-    (
+    ),
+    'step3 last first': (
         three_rows(),
         DECLARED,
         request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('d', '<', ['9999-12-31']), ('n', '=', [BIG]))),
-    )
-)
-# M10: a mistake of step 2 comes before the last day (step 3), in either order: `invalid_number` (PRD-E3)
-@example(
-    (
+    ),
+    # M10: a mistake of step 2 comes before the last day (step 3), in either order: `invalid_number` (PRD-E3)
+    'm10 last first': (
         three_rows(),
         DECLARED,
         request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('d', '=', [LAST]), ('n', '=', ['abc']))),
-    )
-)
-@example(
-    (
+    ),
+    'm10 abc first': (
         three_rows(),
         DECLARED,
         request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('n', '=', ['abc']), ('d', '=', [LAST]))),
-    )
-)
-# M10b: the last day (step 3) comes before a global search with no searchable column (step 4): `invalid_date`
-@example(
-    (
+    ),
+    # M10b: the last day (step 3) comes before a global search with no searchable column (step 4): `invalid_date`
+    'm10b': (
         three_rows(),
         DECLARED,
         request_of(
             {'data': 'd', 'searchable': False}, search={'value': 'a'}, searchBuilder=tree_of(('d', '=', [LAST]))
         ),
-    )
-)
-# M5b: `ab` is in row 3's `s` and in no `t`: a word may be found in any searched column (PRD-F1), so row 3
-@example((three_rows(s='ab', t='x'), DECLARED, request_of({'data': 's'}, {'data': 't'}, search={'value': 'ab'})))
-# A regex over 255 code points that is no categorical filter is refused, not measured (PRD-F14, PRD-F18)
-@example((three_rows(), DECLARED, request_of({'data': 's', 'search': {'value': 'a.' + 'x' * 256, 'regex': True}})))
-# A list on the global search is refused unread (PRD-F40): a control character in it is no `invalid_character`
-@example((three_rows(), DECLARED, request_of({'data': 's'}, search={'value': '', 'multi_values': ['a\x00']})))
-# An entry of 256 code points on the global list: PRD-F40 reads no entry, so it is no `value_too_long`
-@example((three_rows(), DECLARED, request_of({'data': 's'}, search={'value': '', 'multi_values': ['x' * 256]})))
-# An unfinished criterion (no condition) holding a control character: no condition reads it (PRD-F14, PRD-F15), and
-# it adds nothing (PRD-F30), so every row is answered
-@example(
-    (
+    ),
+    # M5b: `ab` is in row 3's `s` and in no `t`: a word may be found in any searched column (PRD-F1), so row 3
+    'm5b': (three_rows(s='ab', t='x'), DECLARED, request_of({'data': 's'}, {'data': 't'}, search={'value': 'ab'})),
+    # A regex over 255 code points that is no categorical filter is refused, not measured (PRD-F14, PRD-F18)
+    'long regex': (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 's', 'search': {'value': 'a.' + 'x' * 256, 'regex': True}}),
+    ),
+    # A list on the global search is refused unread (PRD-F40): a control character in it is no `invalid_character`
+    'global list control': (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 's'}, search={'value': '', 'multi_values': ['a\x00']}),
+    ),
+    # An entry of 256 code points on the global list: PRD-F40 reads no entry, so it is no `value_too_long`
+    'global list long entry': (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 's'}, search={'value': '', 'multi_values': ['x' * 256]}),
+    ),
+    # An unfinished criterion (no condition) holding a control character: no condition reads it (PRD-F14, PRD-F15), and
+    # it adds nothing (PRD-F30), so every row is answered
+    'unfinished control': (
         three_rows(),
         DECLARED,
         request_of(
             {'data': 's'},
             searchBuilder={'logic': 'AND', 'criteria': [{'origData': 's', 'condition': '', 'value': ['a\x00']}]},
         ),
-    )
-)
-# 600 entries on the global list: PRD-F40 reads none and PRD-F38's bounds do not count them, so the list is a step-4
-# refusal and the step-2 number mistake answers: `invalid_number` (PRD-E3)
-@example(
-    (
+    ),
+    # 600 entries on the global list: PRD-F40 reads none and PRD-F38's bounds do not count them, so the list is a step-4
+    # refusal and the step-2 number mistake answers: `invalid_number` (PRD-E3)
+    'global list 600': (
         three_rows(),
         DECLARED,
         request_of(
@@ -1135,11 +1317,9 @@ NEIGHBOURS = (
             search={'value': '', 'multi_values': [f'v{i}' for i in range(600)]},
             searchBuilder=tree_of(('n', '=', ['abc'])),
         ),
-    )
-)
-# ColumnControl's `contains` is a column search (PRD-F45): 17 words are `too_many_words` (PRD-F14)
-@example(
-    (
+    ),
+    # ColumnControl's `contains` is a column search (PRD-F45): 17 words are `too_many_words` (PRD-F14)
+    'columncontrol 17 words': (
         three_rows(),
         DECLARED,
         request_of(
@@ -1148,17 +1328,83 @@ NEIGHBOURS = (
                 'columnControl': {'search': {'value': ' '.join(['a'] * 17), 'logic': 'contains', 'type': 'text'}},
             }
         ),
-    )
-)
-@example((
-    [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
-    (('id', 'number', True, False), ('s', 'string', True, True), ('t', 'string', True, True),
-     ('n', 'number', True, True), ('d', 'date', True, True), ('b', 'boolean', True, True)),
-    {'draw': 1, 'start': 0, 'length': 1, 'search': {'value': ''},
-     'columns': [{'data': name, 'name': '', 'searchable': True, 'orderable': name == 's', 'columnControl': {},
-                  'search': {'value': '', 'regex': False}} for name in ('id', 's')],
-     'order': [{'column': 0, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}]},
-))  # fmt: skip
+    ),
+    'skipped first order': (
+        [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
+        (
+            ('id', 'number', True, False),
+            ('s', 'string', True, True),
+            ('t', 'string', True, True),
+            ('n', 'number', True, True),
+            ('d', 'date', True, True),
+            ('b', 'boolean', True, True),
+        ),
+        {
+            'draw': 1,
+            'start': 0,
+            'length': 1,
+            'search': {'value': ''},
+            'columns': [
+                {
+                    'data': name,
+                    'name': '',
+                    'searchable': True,
+                    'orderable': name == 's',
+                    'columnControl': {},
+                    'search': {'value': '', 'regex': False},
+                }
+                for name in ('id', 's')
+            ],
+            'order': [{'column': 0, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}],
+        },
+    ),
+}
+
+
+def rows_of(name: str, *cells: Any) -> list[dict[str, Any]]:
+    """Rows 1, 2, ... holding ``cells`` in column ``name``, every other cell NULL."""
+    return [{**dict.fromkeys(NAMES), 'id': key, name: cell} for key, cell in enumerate(cells, 1)]
+
+
+EXAMPLES |= {
+    # PRD-F11, PRD-F19: the word `\` is plain text, not a LIKE escape: only row 1 holds it
+    'backslash': (rows_of('s', 'a\\b', '5%', 'ab'), DECLARED, request_of({'data': 's'}, search={'value': '\\'})),
+    # PRD-F23: `%` alone over number text only: no number's text holds `%`, so no row (on a typed-search engine `n` is
+    # skipped, PRD-F32, so no column is left: `invalid_filter`, PRD-F13)
+    'percent over numbers': (rows_of('n', 7, 17, None), DECLARED, request_of(
+        {'data': 'n'}, {'data': 's', 'searchable': False}, search={'value': '%'})),
+    # PRD-F26 and PRD section 5: `null` on `s` holding ' ', '' and 'a': row 2 on SQL; rows 1 and 2 under PAD SPACE;
+    # none where only a missing field is empty
+    'pad space': (rows_of('s', ' ', '', 'a'), DECLARED, request_of({'data': 's'}, searchBuilder=tree_of(('s', 'null', [])))),
+    # PRD-F25, PRD-D23: 2^63 on `n` is the request's only mistake: `invalid_number`
+    'beyond 64 bits': (three_rows(), DECLARED, request_of({'data': 'n'}, searchBuilder=tree_of(('n', '=', [BIG])))),
+    # PRD-F23: `2024-03` as a column search on `d` finds the day written 2024-03-05 (PRD-F34: the span of March on a
+    # typed-search engine): row 1
+    'date text': (rows_of('d', date(2024, 3, 5), date(2024, 12, 31), None), DECLARED,
+                  request_of({'data': 'd', 'search': {'value': '2024-03', 'regex': False}})),
+}  # fmt: skip
+#: The examples that mean something on a typed-search engine, which OpenSearch's leg pins as well
+TYPED_EXAMPLES = [
+    EXAMPLES[name]
+    for name in ('neighbours', 'beyond 64 bits', 'm4', 'step3 big first', 'step3 last first', 'm7', 'backslash',
+                 'percent over numbers', 'pad space', 'date text')
+]  # fmt: skip
+
+
+def pinned[T](cases: Iterable[T]) -> Callable[[Callable[..., None]], Callable[..., None]]:
+    """``@example`` once for each of ``cases``, in their order."""
+
+    def decorate(test: Callable[..., None]) -> Callable[..., None]:
+        for case in reversed(list(cases)):
+            test = example(case)(test)
+        return test
+
+    return decorate
+
+
+@server_examples(SERVER_EXAMPLES, on_server=bool(SQL_URLS[0]))
+@given(cases())
+@pinned(EXAMPLES.values())
 def test_the_library_answers_as_the_reference_evaluator(
     leg: Leg, case: tuple[list[dict[str, Any]], Any, dict[str, Any]]
 ):

@@ -145,7 +145,8 @@ def pytest_report_header() -> list[str]:
 
 
 metadata = MetaData()
-#: the last two are created by tests in test_sql.py
+#: the last two are created by tests in test_sql.py, and `dtb_test_tags` also by the reference property
+#: (tests/test_reference_properties.py)
 TEST_TABLES = frozenset({'dtb_test_people', 'dtb_test_tags', 'dtb_test_stamps'})
 
 people = Table(

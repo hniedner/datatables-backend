@@ -497,9 +497,10 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
     """PRD-F1: every word is found in some searchable column of the row, and no negated word in any (PRD-F5). PRD-F41:
     the columns are those the request names that both sides mark searchable and the server declares; PRD-F38: a column
     the request names twice is covered if any of its entries is searchable. PRD-F44 leaves out boolean columns, PRD-P21
-    nameless ones, and PRD-F32 number and date columns on a typed-search engine. PRD-F6: text that reduces to no word is idle, also with no usable column; otherwise PRD-F13: a
-    search over no usable column is refused. PRD-F18: any regex in the global search is refused, unless the text holds
-    no word (the reviewer's decision of 2026-11-20). PRD-F40: a list is refused, an empty one idle."""
+    nameless ones, and PRD-F32 number and date columns on a typed-search engine. PRD-F6: text that reduces to no word
+    is idle, also with no usable column; otherwise PRD-F13: a search over no usable column is refused. PRD-F18: any
+    regex in the global search is refused, unless the text holds no word (the reviewer's decision of 2026-11-20).
+    PRD-F40: a list is refused, an empty one idle."""
     reading.next_part()
     search = params.search
     if search.multi_values:
