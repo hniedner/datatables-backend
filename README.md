@@ -225,7 +225,7 @@ uv run pytest
 uv run ruff check . && uv run basedpyright
 ```
 
-Commit headers are conventional, `type(scope)!: subject` of at most 100 characters (types feat, fix, docs, test, ci,
-build, refactor, chore, style); the commit-msg hook and CI's `commits` job check them.
+[CONTRIBUTING.md](https://github.com/hniedner/datatables-backend/blob/main/CONTRIBUTING.md) says how to report a
+problem, what a pull request needs and how commit headers are written.
 
 Licence: MIT ([LICENSE](https://github.com/hniedner/datatables-backend/blob/main/LICENSE)).
