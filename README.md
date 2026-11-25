@@ -15,6 +15,9 @@ and [SearchBuilder](https://datatables.net/manual/extensions/searchbuilder/) cri
 
 The library is read-only and framework-agnostic.
 
+Other backends are not a supported extension point before 1.0: a backend outside this repository would have to import
+the plan's nodes (`datatables_backend._plan`), which are private and still change. That may open later.
+
 > Status: 0.1.2, alpha (PyPI classifier "Development Status :: 3 - Alpha"). Before 1.0, a patch release (0.x.y) may add
 > features and never breaks; a minor release (0.x) may break the Python API and lists each such change in
 > [CHANGELOG.md][changelog], so `~=0.1.1` takes every feature and fix and no break. The same holds on the wire: a patch
