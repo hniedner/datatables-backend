@@ -822,6 +822,7 @@ SearchBuilder's conditions are answered by the column's declared type. A string 
 mean the year, month or day span of PRD-F22. A boolean column takes `=`, `!=`, `null`, `!null` (PRD-F43). These sets are
 narrowed by PRD-D18 and PRD-D19. A condition that does not fit the column's type is a user mistake, refused with
 `invalid_filter` and a reason; a condition outside the 16 is structural (PRD-P6).
+The two values of `between` and `!between` are a range in either order, as SearchBuilder's own filter takes them.
 
 - **Reason:** Typed comparisons and range filters for any DataTables 2.x client; a wrong condition is a user mistake
   (draft 2's PRD-F29, merged here).

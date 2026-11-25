@@ -854,6 +854,8 @@ def _criterion(
         )
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
         return None
+    if needed == 2 and values[1] < values[0]:  # a range in either order, as SearchBuilder's own filter takes it
+        values = [values[1], values[0]]
     positive = _positive(column, kind, condition, values)
     return Not(positive) if condition.startswith('!') else positive
 

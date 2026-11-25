@@ -5,6 +5,12 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
+  `between` `8` and `7` is the range from 7 to 8. A reversed pair answered no row for `between` and every row for
+  `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are reversed too.
+
 ## [0.1.3] - 2026-11-25
 
 This release lets an application keep the `recordsTotal` count in a store of its own, such as Redis, which is handed
