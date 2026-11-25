@@ -432,6 +432,15 @@ and the owner's first sentence of the new PRD requirement.
    item 6 (b), and the notes with `--ignore-tags` over the range from the last published tag, as measured in section
    7) **and the release-PR version check.** The (i)/(iii) split, `tag.yml`, hatch-vcs and option P are not built.
 
+## 10. Releases are immutable (owner, 2026-11-25)
+
+From 0.1.4 on, releases are immutable: the owner turned on the repository setting "Disallow assets and tags from being
+modified once a release is published" on 2026-11-25. The draft-then-publish flow already fits it: `draft-release`
+attaches the files while the release is a draft, and `publish-release` makes it public last. After that the release's
+files and its tag cannot change; a draft can still be fixed or deleted. GitHub records a release attestation, which
+`gh release verify v<version>` checks. Reason: it matches "a version once tagged is burnt", and OpenSSF Scorecard's
+Signed-Releases check counts an immutable release. Earlier releases are not immutable.
+
 ## To verify before the token switch (the owner's)
 
 **To verify: not tested.** The calls the sessions use routinely, with the fine-grained permission each needs. Every
