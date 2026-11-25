@@ -1552,9 +1552,12 @@ def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, patt
 
 def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex(session: Session):
     """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
-    non-categorical regex measured as raw text answers `value_too_long` instead."""
+    non-categorical regex measured as raw text answers `value_too_long` instead. PRD-F15 has no such clause: a
+    control character in a regex column search stops being found if the regex is refused first as a form."""
     params = request(*EVERY_TYPE, column_search={'team': {'value': 'a.' + 'x' * 256, 'regex': True}})
     refused(every_type.fetch_sync(params, session))
+    params = request(*EVERY_TYPE, column_search={'team': {'value': 'a.\x01', 'regex': True}})
+    refused(every_type.fetch_sync(params, session), 'invalid_character')
 
 
 @pytest.mark.parametrize('pattern', [r'^C:\\$', r'^(C:\\)$', r'C:\\'])

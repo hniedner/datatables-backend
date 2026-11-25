@@ -2711,10 +2711,13 @@ def test_a_regex_that_is_no_categorical_filter_is_refused_and_nothing_is_sent(pa
 
 def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex_and_nothing_is_sent():
     """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
-    non-categorical regex measured as raw text answers `value_too_long` instead."""
+    non-categorical regex measured as raw text answers `value_too_long` instead. PRD-F15 has no such clause: a
+    control character in a regex column search stops being found if the regex is refused first as a form."""
     client = Client()
     search = {'value': 'a.' + 'x' * 256, 'regex': True}
     refused(table.fetch_sync(request(*NAMES, column_search={'title': search}), client))
+    search = {'value': 'a.\x01', 'regex': True}
+    refused(table.fetch_sync(request(*NAMES, column_search={'title': search}), client), 'invalid_character')
     assert (client.searches, client.counts) == ([], [])
 
 
