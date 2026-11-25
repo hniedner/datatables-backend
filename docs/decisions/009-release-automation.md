@@ -27,7 +27,7 @@ in a run on that tag, publishes the build of that tag, stays in the `pypi` envir
 job that tags cannot publish; the job that publishes cannot tag. An existing tool, no release script of our own. A
 rehearsal that publishes nothing stays possible (READ, #76 body). Owner rule of 2026-11-23 (READ, #76 comment): the
 workflow creates the GitHub release as a draft before the publish job and makes it public after PyPI accepted the
-upload; its notes are the version's section of CHANGELOG.md.
+upload; its notes are the version's section of CHANGELOG.md. Since #198 each section opens in a fixed shape that the release checks, described in CONTRIBUTING.md, Releases.
 
 | Fact | Source |
 |---|---|

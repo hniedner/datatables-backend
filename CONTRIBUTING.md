@@ -23,6 +23,36 @@ that the work is not wasted.
    ci, build, refactor, chore, style); the commit-msg hook and CI's `commits` job check them.
 4. **Docs.** [docs/PRD.md](docs/PRD.md) and [spec/](spec/) define the behaviour. A change of behaviour updates them.
 
+## Releases
+
+The maintainer starts a release through a release pull request, which writes the version's section of
+[CHANGELOG.md](CHANGELOG.md) under `## [X.Y.Z] - YYYY-MM-DD`. That section is the release's notes, word for word, so it
+is written for a reader who has not followed the project. It opens in a fixed shape, before the first `###` group of
+Keep a Changelog:
+
+```markdown
+## [0.1.3] - 2026-12-01
+
+A short paragraph on what changes for adopters.
+
+**Upgrade impact:** none; no change to your code is needed.
+
+**Security:** none; this release fixes no known vulnerability.
+
+### Added
+
+- ...
+```
+
+- The summary comes first. The two lines start at the beginning of a line, exactly as written, with text after them:
+  whether the upgrade breaks anything and what an adopter must change (normally nothing in a patch, per the README's
+  status line), and the vulnerabilities the release fixes with their advisory or CVE ids, or "none".
+- The release run refuses a section without the summary or either line, and says which one to add:
+  `scripts/changelog_notes.py` does it, and the release pull request's check calls the same function.
+- The script cannot know the security line is true. The author of the release pull request checks the repository's
+  security advisories and its Dependabot and code-scanning alerts before writing it.
+- Only the version being released is checked: the sections already published stay as they are.
+
 ## Hooks
 
 `uv run pre-commit install` installs the project's git hooks, and `uv run pre-commit run --all-files` runs them all.
