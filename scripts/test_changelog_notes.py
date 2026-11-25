@@ -165,14 +165,12 @@ def test_only_the_released_version_is_checked():
         checked(text, '0.1.0')
 
 
-def test_the_command_fails_on_a_section_without_the_shape_and_prints_one_with_it(
+def test_the_command_prints_a_published_section_that_lacks_the_shape(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
+    """#198: the rehearsal runs the command on the version in the source, which after a release is a section published
+    before the shape was required. The shape is check_release's to enforce, where a release is pending."""
     file = tmp_path / 'CHANGELOG.md'
     file.write_text(shaped(SUMMARY), encoding='utf-8')
-    assert changelog_notes.main(['1.0.0', '--file', str(file)]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == '' and 'Upgrade impact' in captured.err
-    file.write_text(shaped(f'{SUMMARY}\n\n{UPGRADE}\n\n{SECURITY}'), encoding='utf-8')
     assert changelog_notes.main(['1.0.0', '--file', str(file)]) == 0
-    assert SECURITY in capsys.readouterr().out
+    assert capsys.readouterr().out.startswith(SUMMARY)

@@ -47,8 +47,9 @@ A short paragraph on what changes for adopters.
 - The summary comes first. The two lines start at the beginning of a line, exactly as written, with text after them:
   whether the upgrade breaks anything and what an adopter must change (normally nothing in a patch, per the README's
   status line), and the vulnerabilities the release fixes with their advisory or CVE ids, or "none".
-- The release run refuses a section without the summary or either line, and says which one to add:
-  `scripts/changelog_notes.py` does it, and the release pull request's check calls the same function.
+- A release is refused without the summary or either line, and the message says which one to add. The rule is
+  `check_shape` in `scripts/changelog_notes.py`; `scripts/check_release.py` applies it where a release is pending: on
+  the release pull request, in the rehearsal of a pending release and in the tag run, before anything is built.
 - The script cannot know the security line is true. The author of the release pull request checks the repository's
   security advisories and its Dependabot and code-scanning alerts before writing it.
 - Only the version being released is checked: the sections already published stay as they are.
