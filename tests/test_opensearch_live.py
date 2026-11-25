@@ -30,13 +30,12 @@ from datatables_backend.opensearch import NumberKind
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import NUMBER_EDGES
+from .conftest import OPENSEARCH_URL as URL
 from .conftest import criterion
+from .conftest import opensearch_live
 from .conftest import request
 
-URL = os.environ.get('DTB_OPENSEARCH_URL', '')
-if os.environ.get('DTB_REQUIRE_OPENSEARCH') == '1' and not URL:  # the CI job: a run that skips every test is a failure
-    raise RuntimeError('DTB_REQUIRE_OPENSEARCH is set, but DTB_OPENSEARCH_URL is not')
-pytestmark = pytest.mark.skipif(not URL, reason='DTB_OPENSEARCH_URL is not set')
+pytestmark = opensearch_live()
 
 
 def server_version() -> tuple[int, int]:

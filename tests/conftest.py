@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from collections.abc import Callable
 from collections.abc import Iterator
 from datetime import UTC
 from datetime import date
@@ -45,6 +46,14 @@ settings.register_profile('explore', max_examples=5000, deadline=None, suppress_
 settings.load_profile(os.environ.get('HYPOTHESIS_PROFILE', 'ci'))
 
 
+def server_examples[T](count: int, *, on_server: bool = True) -> Callable[[T], T]:
+    """A property test's number of examples on a leg that runs against a server: ``count`` under the `ci` profile, so
+    the leg's run time stays bounded; under any other profile (`explore`), or off a server, the profile's own."""
+    if not on_server or settings.get_current_profile_name() != 'ci':
+        return lambda test: test
+    return settings(max_examples=count)
+
+
 def chance(one_in: int) -> st.SearchStrategy[bool]:
     """True about once in ``one_in`` draws. True stands in the middle: Hypothesis draws the first choice, its simplest,
     far more often than the others (measured: the first of 16 integers in a quarter of the draws)."""
@@ -80,6 +89,19 @@ for _url in filter(None, SQL_URLS):
     checked_database(_url)
 
 
+#: A live OpenSearch cluster, for the modules that run against one (the CI job starts one)
+OPENSEARCH_URL = os.environ.get('DTB_OPENSEARCH_URL', '')
+
+
+def opensearch_live() -> pytest.MarkDecorator:
+    """The `pytestmark` of a module that runs against a live cluster: without DTB_OPENSEARCH_URL its tests are
+    skipped, and the reason shows in the summary, unless DTB_REQUIRE_OPENSEARCH=1 (the CI job), which makes a missing
+    URL an error while the module is collected: a run that skips every test is a failure there."""
+    if os.environ.get('DTB_REQUIRE_OPENSEARCH') == '1' and not OPENSEARCH_URL:
+        raise RuntimeError('DTB_REQUIRE_OPENSEARCH is set, but DTB_OPENSEARCH_URL is not')
+    return pytest.mark.skipif(not OPENSEARCH_URL, reason='DTB_OPENSEARCH_URL is not set')
+
+
 def async_engine(url: str) -> AsyncEngine:
     """The async engine of the tests. asyncpg does not read ``PGTZ`` (libpq's variable, which psycopg and psycopg2 read):
     the first run on CI showed its session in UTC beside the sync one in the zone ``PGTZ`` names. So where ``PGTZ`` is
@@ -113,10 +135,10 @@ def pytest_report_header() -> list[str]:
                 version += f', session TimeZone {zone} (sync), {asyncio.run(async_time_zone())} (async)'
         engine.dispose()
         lines.append(f'SQL tests on {engine.dialect.name} {version}')
-    if url := os.environ.get('DTB_OPENSEARCH_URL'):
+    if OPENSEARCH_URL:
         from opensearchpy import OpenSearch  # only for a live run
 
-        client = OpenSearch(hosts=[url])
+        client = OpenSearch(hosts=[OPENSEARCH_URL])
         lines.append(f'OpenSearch tests on {client.info()["version"]["number"]}')
         client.close()
     return lines

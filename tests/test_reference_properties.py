@@ -1,35 +1,52 @@
-"""The library against a reference evaluator (issue #205): generated rows and requests, answered by `fetch_sync` on an
-in-memory SQLite database and by `tests/reference_evaluator.py`, which is written from `docs/PRD.md` and `spec/` and
-never from `src`. Both give the same rows in the same order with the same counts, or the same error code. A
-difference is a finding (a gap in the specification, a defect in the library or an engine fact), reported and never
-silenced by narrowing the generator.
+"""The library against a reference evaluator (issues #205 and #206): generated rows and requests, answered by
+`fetch_sync` and by `fetch` over the same loaded rows, and by `tests/reference_evaluator.py`, which is written from
+`docs/PRD.md` and `spec/` and never from `src`. Each of the two gives the same rows in the same order with the same
+counts as the evaluator, or the same error code. A difference is a finding (a gap in the specification, a defect in
+the library or an engine fact), reported and never silenced by narrowing the generator.
 
-The table: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger), `d` (Date) and `b` (Boolean), 0 to 8 rows
-inserted in a random key order. The request: the global search, column searches (smart, categorical, `multi_values`),
-ColumnControl's search and list, a SearchBuilder tree of at most 5 drawn criteria and up to 4 more that `joined` adds
-for the scenarios below, 0 to 3 order entries (often a skipped one first, then one applied in the other direction, now
-and then over rows that tie on the applied column with a short page that cuts the tie, half of those with no filter to
-thin the tie out), paging past the end included; on any column, now and then column search text that PRD-F6 reduces to
-no word, alone or beside a list; columns named twice, nameless columns and an undeclared one; a server declaration with
-at least one unorderable column, and mistakes of every step of PRD-E3. The rates are set so that about half of the
-requests are answered (57% on the `ci` seed) and most outcomes and paths are reached at least about 30 times in 500
-examples; one seed varies around that (`uv run pytest tests/test_reference_properties.py
+The legs: the database of DTB_SQL_URL and DTB_SQL_ASYNC_URL where they are set (CI's container legs; DTB_SQL_DIALECT
+must name its dialect, so a run that fell back to SQLite fails), else an SQLite file opened by both drivers. Each leg is
+compared with the evaluator's reading of its own database (`engine_for`), never with another leg;
+`tests/test_reference_opensearch.py` runs the same property on OpenSearch. The examples: under the `ci` profile 500 on
+SQLite (about 3 seconds for both drivers, measured) and `SERVER_EXAMPLES`, 300, on a SQL server, where each example
+also pays about eight round trips (a delete and an insert, then three statements for each driver), so that a leg grows
+by well under a minute (#206); not yet measured on a server. `explore` keeps its own count everywhere.
+
+PRD-O6, the order of text, is the database's collation. Each leg measures it once: the values of `STRINGS`, stored in
+`s`, ranked by `DENSE_RANK() OVER (ORDER BY s)` on the table's own column, written without any COLLATE, so the rank is
+the column's collation and a library that added a COLLATE of its own would be found. On SQLite the rank must be
+code-point order (its `BINARY` collation), the evaluator's default, which the leg keeps; elsewhere the measured rank is
+the evaluator's sort key.
+
+The table: `dtb_test_tags`, which the SQL tests own: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger),
+`d` (Date) and `b` (Boolean), 0 to 8 rows inserted in a random key order. The request: the global search, column
+searches (smart, categorical, `multi_values`), ColumnControl's search and list, a SearchBuilder tree of at most 5 drawn
+criteria and up to 5 more that `joined` adds for the scenarios below, 0 to 3 order entries (often a skipped one first,
+then one applied in the other direction, now and then over rows that tie on the applied column with a short page that
+cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and
+then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice, nameless columns
+and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
+PRD-E3. The rates are set so that about half of the requests are answered (49% on the `ci` seed of SQLite) and most
+outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that, and the seed
+follows the test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
 --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events)
-are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed M4 3%, M5b 3%, M6 3%, M7 4%
-(`between`) and 3% (`!between`), M10 5% (the last day read before a number mistake of step 2) and M10b 3%. `n` holds
-2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: a request
-sends one of them beside a row holding one in 2% of the `ci` examples.
+are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 2%, M5b 2%, M6 5%, M7 1%
+(`between`) and 2% (`!between`), M10 2% (the last day read before a number mistake of step 2) and M10b 2%. `n` holds
+2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in
+sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row
+holding one in 7% of the `ci` examples (without that scenario 5,000 `explore` examples missed the mutant that binds an
+integer column's number as a double); `NEIGHBOURS` is the smallest case, an example.
 
 Rare cases, and what carries each:
-- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none on
-  the current `ci` seed; carried by an example on the property and by the hand-written tests;
-- an entry of 256 code points on a list on the global search: drawn under `explore` only, none on the `ci` seed;
-  carried by an example and by the hand-written tests (`explore` found mutants of these two cases only after 1,200 to
-  1,500 examples);
-- a list of more than 256 entries on the global search: about 4% of the `ci` examples, and an example;
-- an unfinished criterion holding a step-1 value: about 2 in 1,000 random examples, none on the current `ci` seed;
-  an example;
-- ColumnControl's `contains` of more than 16 words: about 1% of the `ci` examples, and an example;
+- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, 2 on the
+  current `ci` seed; carried by an example on the property and by the hand-written tests;
+- an entry of 256 code points on a list on the global search: about 1 or 2 in 1,000 random examples, none on the
+  current `ci` seed; carried by an example and by the hand-written tests (`explore` found mutants of these two cases
+  only after 1,200 to 1,500 examples);
+- a list of more than 256 entries on the global search: about 2% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 4 on the current `ci` seed; an
+  example;
+- ColumnControl's `contains` of more than 16 words: about 2% of the `ci` examples, and an example;
 - the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
   does not take): the examples and the hand-written tests, since the random draw seldom holds both mistakes at once.
 
@@ -39,8 +56,8 @@ more often than the others.
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
 (F9); categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26,
-F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as SQLite's `BINARY` collation,
-which is SQLite's own and not the other databases'); counts and paging (C1 to C3); the error codes and which one a
+F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as each leg's measured collation);
+counts and paging (C1 to C3); the error codes and which one a
 request with several mistakes gets (E2, E3, F14, F15).
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
@@ -76,10 +93,15 @@ Where the PRD is silent the evaluator must raise a marked gap rather than guess;
 gap met so far is decided (#205), and a gap found later is added back as a marked `SpecGap`.
 """
 
+import asyncio
 from collections import Counter
 from collections.abc import Callable
+from collections.abc import Iterator
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date
+import os
+from pathlib import Path
 from typing import Any
 import unicodedata
 
@@ -87,25 +109,34 @@ from hypothesis import event
 from hypothesis import example
 from hypothesis import given
 from hypothesis import strategies as st
+import pytest
 from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Date
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
-from sqlalchemy import StaticPool
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import create_engine
+from sqlalchemy import text as sql_text
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Engine as SQLEngine
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from datatables_backend import Column
 from datatables_backend import DTParams
+from datatables_backend import DTResponse
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import SQL_URLS
+from .conftest import async_engine
 from .conftest import chance
 from .conftest import rarely
+from .conftest import server_examples
 from .reference_evaluator import SQLITE
 from .reference_evaluator import Answer
 from .reference_evaluator import Declared
@@ -119,20 +150,20 @@ from .reference_evaluator import words
 KINDS: dict[str, Kind] = {'id': 'number', 's': 'string', 't': 'string', 'n': 'number', 'd': 'date', 'b': 'boolean'}
 NAMES = list(KINDS)
 
-_metadata = MetaData()
+#: The SQL tests' own table (tests/conftest.py, TEST_TABLES), dropped and created by the module fixture `leg`, which
+#: replaces its rows per example. The key is no IDENTITY on SQL Server, so an example inserts its own keys.
 reference_rows = Table(
-    'reference_rows',
-    _metadata,
-    SQLColumn('id', Integer, primary_key=True),
+    'dtb_test_tags',
+    MetaData(),
+    SQLColumn('id', Integer, primary_key=True, autoincrement=False),
     SQLColumn('s', String(20)),
     SQLColumn('t', String(20)),
     SQLColumn('n', BigInteger),
     SQLColumn('d', Date),
     SQLColumn('b', Boolean),
 )
-# One in-memory database for every example; its rows are replaced per example.
-_engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
-_metadata.create_all(_engine)
+#: The examples of the property on a SQL server leg under the `ci` profile; SQLite runs the profile's 500
+SERVER_EXAMPLES = 300
 
 STRINGS = ['', ' ', 'a', 'A', 'ab', 'Ab c', 'b a', 'red', 'Red', 'RED', 'reddish', 'x_y', '5%', 'a-b', '-', '7a', '[a]',
            'a\\b']  # fmt: skip
@@ -462,9 +493,10 @@ def outranked(
     taken from one cell, over at least two searchable columns: a word may be found in any of them (PRD-F1). M10, about
     once in eight: the last day beside a mistake of step 1 or 2, in either order (PRD-E3: the earlier step answers);
     M10b, about once in twelve: the last day beside a global search with no searchable column, a mistake of step 4
-    (PRD-E3: step 3 answers). About once in twenty: a list of more than 256, or more than 512, entries on the global
-    search beside a number mistake of step 2, which answers: PRD-F40 reads no entry of that list, and PRD-F38's bounds
-    on lists do not count them."""
+    (PRD-E3: step 3 answers). About once in sixteen: 2^53 or 2^53 + 1 in a row and the other in a criterion on `n`,
+    which a number bound as a double cannot tell apart (PRD-F25). About once in twenty: a list of more than 256, or more
+    than 512, entries on the global search beside a number mistake of step 2, which answers: PRD-F40 reads no entry of
+    that list, and PRD-F38's bounds on lists do not count them."""
     columns = body['columns']
     searched = sorted({column['data'] for column in columns if isinstance(column['data'], str) and column['searchable']
                        and server.get(column['data'], (False, False))[0] and KINDS[column['data']] != 'boolean'})  # fmt: skip
@@ -489,6 +521,12 @@ def outranked(
         body['search'] = {'value': draw(st.sampled_from(['a', 'red', '7'])), 'regex': False}
         for column in columns:
             column['searchable'] = False
+    if rows and draw(chance(16)):
+        # 2^53 in a row, its neighbour in a criterion: a number bound as a double is the other one (PRD-F25)
+        held, sent = draw(st.permutations([2**53, 2**53 + 1]))
+        draw(st.sampled_from(rows))['n'] = held
+        joined(body, {'origData': 'n', 'data': 'n', 'condition': draw(st.sampled_from(['=', '!=', '<', '>=', '>'])),
+                      'value': [str(sent)]})  # fmt: skip
     if draw(chance(20)):
         entries = draw(st.sampled_from([257, 300, 513, 600]))
         body['search'] = {**body['search'], 'multi_values': [f'v{index}' for index in range(entries)]}
@@ -580,8 +618,69 @@ def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None) -> E
     raise ValueError(f'no reading of the backend {dialect}')
 
 
-def library(decl: tuple[Declared, ...], rows: list[dict[str, Any]], params: DTParams) -> Answer | Refusal:
-    """`fetch_sync`'s answer over the rows, as the evaluator gives one."""
+def answer_of(response: DTResponse) -> Answer | Refusal:
+    """A library response as the evaluator gives an answer: the error code, or the page's keys and both counts."""
+    if response.error_code:
+        return Refusal(response.error_code)
+    return Answer(tuple(row['id'] for row in response.data), response.recordsTotal, response.recordsFiltered)
+
+
+def collation_ranks(connection: Connection) -> dict[str, int]:
+    """PRD-O6 as the database orders: the rank of each value of `STRINGS` under `DENSE_RANK() OVER (ORDER BY s)`,
+    read from `s` of the table itself and written without any COLLATE, so that it is the collation the column has. A
+    library that added a COLLATE of its own would order otherwise, and the property would find it."""
+    connection.execute(reference_rows.insert(), [{'id': key, 's': value} for key, value in enumerate(STRINGS, 1)])
+    query = sql_text('SELECT s, DENSE_RANK() OVER (ORDER BY s) FROM dtb_test_tags')
+    ranks: dict[str, int] = {row[0]: row[1] for row in connection.execute(query)}
+    connection.execute(reference_rows.delete())
+    assert sorted(ranks) == sorted(STRINGS), 'the database did not return every value of STRINGS as stored'
+    return ranks
+
+
+@dataclass(frozen=True)
+class Leg:
+    """The database a run reads, through both the sync and the async drivers, and the evaluator's reading of it."""
+
+    sync: SQLEngine
+    async_: AsyncEngine
+    #: The one event loop of the module: an async engine's connections belong to the loop they were opened in
+    runner: asyncio.Runner
+    reading: Engine
+
+
+@pytest.fixture(scope='module')
+def leg(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Leg]:
+    """The database of DTB_SQL_URL and DTB_SQL_ASYNC_URL, else an SQLite file both drivers open (an in-memory one
+    cannot be shared with aiosqlite). `dtb_test_tags` is dropped first and at the end, and created with the columns
+    above. The dialect must be DTB_SQL_DIALECT's, so a run that fell back to SQLite fails."""
+    path: Path = tmp_path_factory.mktemp('reference') / 'reference.db'
+    urls = SQL_URLS if SQL_URLS[0] else (f'sqlite:///{path}', f'sqlite+aiosqlite:///{path}')
+    sync = create_engine(urls[0])
+    dialect = sync.dialect.name
+    assert dialect == os.environ.get('DTB_SQL_DIALECT', 'sqlite'), 'the property runs on another database than asked'
+    with sync.begin() as connection:
+        reference_rows.drop(connection, checkfirst=True)
+        reference_rows.create(connection)
+        ranks = collation_ranks(connection)
+    if dialect == 'sqlite':
+        # SQLite's BINARY collation is code-point order, the evaluator's default
+        assert ranks == {value: rank for rank, value in enumerate(sorted(STRINGS), 1)}
+    runner = asyncio.Runner()
+    async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
+    try:
+        yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__))
+    finally:
+        runner.run(async_.dispose())
+        runner.close()
+        with sync.begin() as connection:
+            reference_rows.drop(connection, checkfirst=True)
+        sync.dispose()
+
+
+def library(
+    leg: Leg, decl: tuple[Declared, ...], rows: list[dict[str, Any]], params: DTParams
+) -> tuple[Answer | Refusal, Answer | Refusal]:
+    """The answers of `fetch_sync` and of `fetch` over the rows, loaded once, as the evaluator gives one."""
     table = SQLTable(
         reference_rows,
         [
@@ -589,15 +688,18 @@ def library(decl: tuple[Declared, ...], rows: list[dict[str, Any]], params: DTPa
             for name, kind, searchable, orderable in decl
         ],
     )
-    with _engine.begin() as connection:
+    with leg.sync.begin() as connection:
         connection.execute(reference_rows.delete())
         if rows:
             connection.execute(reference_rows.insert(), rows)
-    with Session(_engine) as session:
-        response = table.fetch_sync(params, session)
-    if response.error_code:
-        return Refusal(response.error_code)
-    return Answer(tuple(row['id'] for row in response.data), response.recordsTotal, response.recordsFiltered)
+    with Session(leg.sync) as session:
+        synced = answer_of(table.fetch_sync(params, session))
+
+    async def fetched() -> DTResponse:
+        async with AsyncSession(leg.async_) as session:
+            return await table.fetch(params, session)
+
+    return synced, answer_of(leg.runner.run(fetched()))
 
 
 def outcome(rows: list[dict[str, Any]], answer: Answer | Refusal) -> str:
@@ -924,7 +1026,23 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
                                          for name, condition, values in criteria]}  # fmt: skip
 
 
+#: Rows holding 2^53 and 2^53 + 1 in `n`, and `n = 2^53 + 1`: only row 2 holds it. A number bound as a double is 2^53,
+#: so it finds row 1 too (PRD-F25)
+NEIGHBOURS = (
+    [{**dict.fromkeys(NAMES), 'id': 1, 'n': 2**53}, {**dict.fromkeys(NAMES), 'id': 2, 'n': 2**53 + 1}],
+    DECLARED,
+    {
+        'draw': 1, 'start': 0, 'length': 10, 'search': {'value': ''}, 'order': [],
+        'columns': [{'data': 'n', 'name': '', 'searchable': True, 'orderable': True, 'columnControl': {},
+                     'search': {'value': '', 'regex': False}}],
+        'searchBuilder': {'logic': 'AND', 'criteria': [{'origData': 'n', 'condition': '=', 'value': [str(2**53 + 1)]}]},
+    },
+)  # fmt: skip
+
+
+@server_examples(SERVER_EXAMPLES, on_server=bool(SQL_URLS[0]))
 @given(cases())
+@example(NEIGHBOURS)
 # M4: d ascending, length 1: the NULL rows come before row 3's day (PRD-O2), so row 1 is the page
 @example(
     (three_rows(d=date(2023, 1, 1)), DECLARED, request_of({'data': 'd'}, length=1, order=[{'column': 0, 'dir': 'asc'}]))
@@ -1041,15 +1159,19 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
                   'search': {'value': '', 'regex': False}} for name in ('id', 's')],
      'order': [{'column': 0, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}]},
 ))  # fmt: skip
-def test_the_library_answers_as_the_reference_evaluator(case: tuple[list[dict[str, Any]], Any, dict[str, Any]]):
-    """The rows, their order and both counts, or the error code, of `fetch_sync` on SQLite equal the evaluator's.
-    Catches any rule of PRD section 4.3 to 4.6 in scope where the library and the requirements part, in a combination
-    no hand-written test lists. The last example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is
-    the first applied entry, and its tie (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3,
-    PRD-O8)."""
+def test_the_library_answers_as_the_reference_evaluator(
+    leg: Leg, case: tuple[list[dict[str, Any]], Any, dict[str, Any]]
+):
+    """The rows, their order and both counts, or the error code, of `fetch_sync` and of `fetch` over the same loaded
+    rows equal the evaluator's for the database the run is on. Catches any rule of PRD section 4.3 to 4.6 in scope
+    where the library and the requirements part, in a combination no hand-written test lists, on either driver. The
+    last example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is the first applied entry, and
+    its tie (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3, PRD-O8)."""
     rows, decl, body = case
     params = parse_request(body)
-    expected = evaluate(decl, rows, params)
-    for name in events(rows, decl, body, expected):
+    expected = evaluate(decl, rows, params, engine=leg.reading)
+    for name in events(rows, decl, body, expected, leg.reading):
         event(name)
-    assert library(decl, rows, params) == expected, 'the library and the reference evaluator answer differently'
+    synced, fetched = library(leg, decl, rows, params)
+    assert synced == expected, '`fetch_sync` and the reference evaluator answer differently'
+    assert fetched == expected, '`fetch` and the reference evaluator answer differently'
