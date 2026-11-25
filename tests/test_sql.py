@@ -2635,6 +2635,104 @@ def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value:
         assert ids(response) == []
 
 
+EXACT = ('12345678901234567.89', '12345678901234567.90', '12345678901234568.00', '0.30', '0.31', '0.00')
+
+
+def exactly(session: Session) -> SQLTable:
+    """A table of one `Numeric(20, 2)` column, `n`, whose rows 1 to 3 are three numbers of 17 digits that a float
+    cannot tell apart (they are one float) and whose rows 4 to 6 are 0.30, 0.31 and 0.00."""
+    numbers = Table(
+        'dtb_test_tags',
+        MetaData(),
+        SQLColumn('id', Integer, primary_key=True, autoincrement=False),
+        SQLColumn('n', Numeric(20, 2)),
+    )
+    numbers.create(session.connection())
+    session.execute(numbers.insert(), [{'id': row, 'n': Decimal(value)} for row, value in enumerate(EXACT, 1)])
+    return SQLTable(numbers, [Column('id'), Column('n')])
+
+
+@pytest.mark.parametrize(
+    ('where', 'found', 'sqlite'),
+    [
+        (('=', '12345678901234567.89'), [1], [1, 2, 3]),
+        (('=', '12345678901234567.90'), [2], [1, 2, 3]),
+        (('between', '12345678901234567.89', '12345678901234567.89'), [1], [1, 2, 3]),
+        (('<', '12345678901234567.90'), [1, 4, 5, 6], [4, 5, 6]),
+        (('>', '12345678901234567.89'), [2, 3], []),
+        (('=', '12345678901234567.891'), [], [1, 2, 3]),
+    ],
+)
+async def test_a_number_with_a_point_is_compared_exactly_with_a_numeric_column(
+    session: Session,
+    async_session: AsyncSession,
+    where: tuple[str, ...],
+    found: list[int],
+    sqlite: list[int],
+):
+    """SPEC-F25.11, PRD-F25: a number written with a point is sent to a `Numeric` column as a decimal, so numbers of
+    17 digits are told apart, as the sync and the async driver answer alike. It catches a number sent as a float,
+    which is one number for all three rows. SQLite is the stated exception (PRD section 5): it stores the column as
+    a float or an integer, so the three rows are one number there."""
+    numbers = exactly(session)
+    session.commit()
+    expected = sqlite if session.get_bind().dialect.name == 'sqlite' else found
+    params = request('id', 'n', **criterion('n', *where))
+    assert ids(numbers.fetch_sync(params, session)) == expected
+    assert ids(await numbers.fetch(params, async_session)) == expected
+
+
+async def test_a_fraction_longer_than_the_scale_matches_no_row_of_a_numeric_column(
+    session: Session, async_session: AsyncSession
+):
+    """SPEC-F25.11: 0.305 is no number of a `Numeric(20, 2)` column, so `=` finds nothing and `>` stops short of 0.30.
+    asyncpg casts a decimal compared with a column to the column's own scale and would round it to 0.31."""
+    numbers = exactly(session)
+    session.commit()
+    for condition, expected in (('=', []), ('>', [1, 2, 3, 5])):
+        params = request('id', 'n', **criterion('n', condition, '0.305'))
+        assert ids(numbers.fetch_sync(params, session)) == expected
+        assert ids(await numbers.fetch(params, async_session)) == expected
+
+
+@pytest.mark.parametrize(
+    ('value', 'found'),
+    [
+        ('0.' + '1' * 38, [6]),
+        ('1' * 20 + '.' + '1' * 18, [1, 2, 3, 4, 5, 6]),
+        ('0.31' + '0' * 44, [4, 6]),
+        ('1' * 38, [1, 2, 3, 4, 5, 6]),
+        ('0.30e0', [6]),
+        ('3.1e-1', [4, 6]),
+    ],
+)
+async def test_a_numeric_column_takes_a_number_of_38_digits_on_every_database(
+    session: Session, async_session: AsyncSession, value: str, found: list[int]
+):
+    """SPEC-F25.12: 38 digits in all, the most SQL Server's decimal holds, are answered on both of its drivers
+    (pyodbc and aioodbc), a fraction that ends in zeros counting only up to its last digit that is not one."""
+    numbers = exactly(session)
+    session.commit()
+    params = request('id', 'n', **criterion('n', '<', value))
+    assert ids(numbers.fetch_sync(params, session)) == found
+    assert ids(await numbers.fetch(params, async_session)) == found
+
+
+@pytest.mark.parametrize('value', ['0.' + '1' * 39, '1' * 20 + '.' + '1' * 19, '1' * 39, '-0.' + '1' * 39])
+@pytest.mark.parametrize('condition', ['=', '<', 'between'])
+def test_a_number_of_more_than_38_digits_is_refused_on_sql_server(session: Session, condition: str, value: str):
+    """SPEC-F25.12, SPEC-E4.29: on SQL Server a number of 39 digits in all is the user's mistake, as `invalid_number`
+    for every condition, and never the driver's HY104. The other databases take it. It catches a long number
+    reaching the driver."""
+    numbers = exactly(session)
+    values = [value, value] if condition == 'between' else [value]
+    response = numbers.fetch_sync(request('id', 'n', **criterion('n', condition, *values)), session)
+    if session.get_bind().dialect.name == 'mssql':
+        assert 'at most 38 digits' in refused(response, 'invalid_number')
+    else:
+        assert response.error is None
+
+
 def test_the_longest_whole_number_a_request_may_hold_is_compared_as_a_float(session: Session):
     """SPEC-F25.4: a float holds every whole number of up to 308 digits and a value is at most 255 characters
     (PRD-F14), so the longest is answered, with no row. A longer one is `value_too_long`, which another test asserts."""
