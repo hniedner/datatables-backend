@@ -5,6 +5,12 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-25
+
+This release makes number filters on SQL `Numeric` columns exact, fixes an error on PostgreSQL with asyncpg, and stops
+a silent rounding on PostgreSQL with psycopg 3 or asyncpg. An application on 0.1.1 can upgrade without changing code;
+a few numbers that no database can represent are now refused with `invalid_number` (see Fixed).
+
 ### Fixed
 
 - A number filter on a `Numeric` column through `fetch` on PostgreSQL with asyncpg raised `numeric field overflow` when
@@ -212,7 +218,8 @@ The first release, a release candidate: install it with `pip install --pre datat
 
 What it does: see [0.1.0].
 
-[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.2
 [0.1.1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.1
 [0.1.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0
 [0.1.0rc4]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc4
