@@ -1885,6 +1885,14 @@ def test_the_clients_type_is_ignored_both_ways():
     assert refused_client.searches == []
 
 
+@pytest.mark.parametrize('condition', ['between', '!between'])
+def test_the_two_values_of_between_are_a_range_in_either_order(condition: str):
+    """SPEC-F27.9: `30` and `12` on `pages` send the body of `12` and `30`, whose rows the live test pins; catches
+    reversed bounds sent as an empty range, which no document is in."""
+    reversed_bounds = sent(table, request(*NAMES, **criterion('pages', condition, '30', '12')))
+    assert reversed_bounds == sent(table, request(*NAMES, **criterion('pages', condition, '12', '30')))
+
+
 def test_a_number_field_declared_without_a_type_is_a_string_column():
     """SPEC-D8.3: the library does not read the mapping, so `pages` without `type='number'` refuses `<`."""
     untyped = SearchTable('docs', [IndexColumn('id', text='keyword'), Column('pages')], unique_key='id')
