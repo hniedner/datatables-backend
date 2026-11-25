@@ -19,8 +19,7 @@ requirements and milestones. Notes about the application this was derived from l
   does daily; its header in `.github/workflows/audit.yml` says how a finding is dealt with.
 - Container tests (CI runs them; locally they need the servers): `uv sync --group containers`, then
   `uv run pytest tests/test_sql.py tests/test_sql_search.py tests/test_reference_properties.py` with `DTB_SQL_URL` and
-  `DTB_SQL_ASYNC_URL` naming a
-  database called `dtb`, `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and
+  `DTB_SQL_ASYNC_URL` naming a database called `dtb`, `dtb_test` or `dtb_test_...` (e.g. `postgresql+psycopg://...` and
   `postgresql+psycopg_async://...`) and `DTB_SQL_DIALECT` its dialect, and `TZ` naming a zone far from UTC on every
   database (CI uses `America/Adak`) and on PostgreSQL `PGTZ` too (CI uses `Pacific/Kiritimati`), or the timezone test
   fails; or
@@ -74,10 +73,10 @@ Don't use `uv run --with ... pytest`: the project's `pytest` script runs the pro
 - Tests go through the public API: `parse_request`, then `fetch` or `fetch_sync`. They run on real SQLite (sync and
   aiosqlite) and against a recording OpenSearch client; CI also runs the SQL tests on PostgreSQL, MySQL and SQL
   Server (`DTB_SQL_URL`, `DTB_SQL_ASYNC_URL`, `DTB_SQL_DIALECT`) and `tests/test_opensearch_live.py` on OpenSearch
-  (`DTB_OPENSEARCH_URL`); the reference-evaluator property runs on each of them (`tests/test_reference_properties.py`,
-  `tests/test_reference_opensearch.py`). A backend gap the PRD has yet to close is pinned as today's result, or as a `strict=True`
-  xfail naming the expected exception, citing the PRD requirement; nothing is skipped silently. Before relying on a
-  new test, check that it fails when the behaviour is broken.
+  (`DTB_OPENSEARCH_URL`); the reference-evaluator property runs on each of them. A backend gap the PRD has yet to
+  close is pinned as today's result, or as a `strict=True` xfail naming the expected exception, citing the PRD
+  requirement; nothing is skipped silently. Before relying on a new test, check that it fails when the behaviour is
+  broken.
 - No application specifics: no field lists, no domain names, no app logging or config.
 - Design test: maximum functionality with maximum portability and no surprise for the adopter. An exception is
   stated in the PRD and the README with its reason. Nothing asks the consumer to change a schema or a mapping.
