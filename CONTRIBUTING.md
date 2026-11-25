@@ -53,6 +53,8 @@ A short paragraph on what changes for adopters.
 - The script cannot know the security line is true. The author of the release pull request checks the repository's
   security advisories and its Dependabot and code-scanning alerts before writing it.
 - Only the version being released is checked: the sections already published stay as they are.
+- Once a release is published, its files and tag are final (see
+  [decision 009](docs/decisions/009-release-automation.md), section 10).
 
 ## Hooks
 
