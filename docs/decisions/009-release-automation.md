@@ -447,19 +447,19 @@ Signed-Releases check counts an immutable release. Earlier releases are not immu
 **Observed: RUN 2026-11-25.** The owner moved the sessions to a fine-grained token (no Deployments, no
 Administration; it expires about 2027-02-23 and **must be renewed before then**). The calls the sessions use
 routinely, with the fine-grained permission each needs. The REST routes are from the fine-grained token page named in
-item 6 (FETCHED 2026-11-24); every row asked for was found there. The last column says what happened when the sessions used the token. A row nobody
-exercised says "not exercised"; no result is inferred for it. Which REST or GraphQL calls each `gh` subcommand makes is
-still NOT ESTABLISHED (see the end).
+item 6 (FETCHED 2026-11-24); every row asked for was found there. The last column says what happened when the
+sessions used the token. A row nobody exercised says "not exercised"; no result is inferred for it. Which REST or
+GraphQL calls each `gh` subcommand makes is still NOT ESTABLISHED (see the end).
 
 | Use (`gh` command or `gh api` call) | REST route on the page | Permission | Observed |
 |---|---|---|---|
 | Merge a PR (`gh pr merge`) | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` | Contents: write | Worked. |
-| View a PR (`gh pr view`) | `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Contents: read, or Pull requests: read | Not exercised. |
+| View a PR (`gh pr view`) | `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Contents: read, or Pull requests: read | Worked. |
 | List and view runs (`gh run list`, `gh run view`, `gh run watch`) | `GET .../actions/runs`, `GET .../actions/runs/{run_id}` | Actions: read | Worked. |
 | Run logs (`gh run view --log`, `gh api .../logs`) | `GET .../actions/runs/{run_id}/logs`, `GET .../actions/jobs/{job_id}/logs` | Actions: read | Worked (job logs). |
 | Start a workflow (`gh workflow run`, the rehearsal) | `POST .../actions/workflows/{workflow_id}/dispatches` | Actions: write | Not exercised. |
 | Re-run a run (`gh run rerun`) | `POST .../actions/runs/{run_id}/rerun` | Actions: write | Route reached. A CodeQL default-setup run is not re-runnable by design. |
-| Read an issue (`gh issue view`) | `GET .../issues/{issue_number}` | Issues: read | Not exercised. |
+| Read an issue (`gh issue view`) | `GET .../issues/{issue_number}` | Issues: read | Worked. |
 | Create an issue (`gh issue create`) | `POST .../issues` | Issues: write | Worked. |
 | Edit or close an issue (`gh issue edit`, `gh issue close`) | `PATCH .../issues/{issue_number}` | Issues: write, or Pull requests: write | Not exercised. |
 | Comment (`gh issue comment`, `gh pr comment`) | `POST .../issues/{issue_number}/comments` | Issues: write, or Pull requests: write | `gh issue comment` failed with `addComment` until the owner added Issues: write to the token. |
