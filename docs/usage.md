@@ -160,6 +160,15 @@ A JSON body has no such limit, and nothing here limits the size of a body: 4.5 M
 
 Source: `parse_datatables_request` in `datatables_backend/fastapi.py`; SPEC-A9.1 to A9.8; `tests/test_readme.py`.
 
+## What a FastAPI route returns
+
+Return `fetch(...).to_dict()`, as the README does. Annotating the route `-> DTResponse` makes FastAPI serialise the model
+as it is, so every answer also carries `error: null` and `error_code: null` (RUN 2026-11-24 with FastAPI's test
+client: `to_dict()` answered `draw`, `recordsTotal`, `recordsFiltered` and `data`; the model route added the two null
+keys), where `to_dict()` leaves an unset one out. DataTables 3.1.5 reads only a truthy `error` (READ,
+`js/dataTables.js:5541-5543`: `var error = json.error || json.sError; if (error) { log(...) }`), so the nulls are
+harmless to it, and `error_code` appears nowhere in that file (READ).
+
 ## ColumnControl list options from the data
 
 A ColumnControl list (`searchList`) shows the options you give it as static `options` on the control, as the README
