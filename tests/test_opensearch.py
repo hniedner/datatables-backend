@@ -301,6 +301,16 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     refused(searched.fetch_sync(params, Client()), expected)
 
 
+def test_a_mistake_found_while_the_body_is_built_comes_first_when_it_is_read_first():
+    """SPEC-E3.10: the column search `abc` on `pages` is found only while the body is built, and the list on `created`
+    by the plan; both are of step 2, and `pages` is read first. Catches the plan's mistake answered before an earlier
+    one of the same step that the build finds."""
+    searches = {'pages': {'value': 'abc'}, 'created': {'multi_values': ['2024-13-01']}}
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, column_search=searches), client), 'invalid_number')
+    assert (client.searches, client.counts) == ([], [])
+
+
 # -- the counts before a refusal, and the empty page past the end (PRD-C3, PRD-C9, PRD-C11, PRD-C12) ---
 
 EVERYTHING = {'query': {'match_all': {}}}
@@ -922,6 +932,30 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
     table.fetch_sync(request(*('title',) * 1000, search={'value': 'ann'}), many)
     same = many.searches == once.searches  # not asserted inline: a failure would print a thousand clauses
     assert same
+
+
+def test_the_global_search_covers_a_column_named_twice_if_either_entry_is_searchable():
+    """SPEC-F38.8: `id` is marked not searchable, so `title` named twice is searched as when it is named once if
+    either of its entries is searchable, in either order; with both marked not searchable no column is left (PRD-F13)
+    and nothing is sent. Catches the first or the last entry of the name deciding alone."""
+
+    def named_twice(*searchable: bool) -> DTParams:
+        columns = [
+            {'data': name, 'name': '', 'searchable': flag, 'orderable': True, 'search': {'value': '', 'regex': False}}
+            for name, flag in (('id', False), *(('title', flag) for flag in searchable))
+        ]
+        return parse_request({'draw': 1, 'start': 0, 'length': 10, 'columns': columns, 'search': {'value': 'ann'}})
+
+    once = Client()
+    table.fetch_sync(request('id', 'title', flags={'id': {'searchable': False}}, search={'value': 'ann'}), once)
+    assert 'title' in json.dumps(query(once))
+    for searchable in [(True, False), (False, True)]:
+        twice = Client()
+        assert table.fetch_sync(named_twice(*searchable), twice).error is None
+        assert twice.searches == once.searches
+    neither = Client()
+    refused(table.fetch_sync(named_twice(False, False), neither))
+    assert neither.searches == neither.counts == []
 
 
 # -- sorting ---
@@ -1580,10 +1614,12 @@ def test_a_search_with_a_word_on_a_table_of_numbers_dates_and_booleans_is_refuse
     assert (client.searches, client.counts) == ([], [])
 
 
-def test_an_empty_search_on_a_table_with_no_searchable_column_is_the_plain_request():
-    """SPEC-F13.3: nothing is asked, so nothing is refused and the body is the one of a request with no search."""
+@pytest.mark.parametrize('text', ['', '"'])
+def test_an_empty_search_on_a_table_with_no_searchable_column_is_the_plain_request(text: str):
+    """SPEC-F13.3, SPEC-F13.4: nothing is asked, so nothing is refused and the body is the one of a request with no
+    search. Catches a lone `"` counted as a word, which is refused for want of a column."""
     client = Client()
-    assert UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': ''}), client).error is None
+    assert UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': text}), client).error is None
     plain = Client()
     UNSEARCHABLE.fetch_sync(request('id', 'title'), plain)
     assert client.searches == plain.searches
@@ -2414,6 +2450,29 @@ def test_every_user_error_of_the_specs_has_its_code_on_opensearch_and_sends_noth
     assert (client.searches, client.counts) == ([], [])
 
 
+@pytest.mark.parametrize('entry', ['a\x01', 'x' * 256], ids=['control-character', 'too-long'])
+def test_a_global_search_list_is_refused_without_its_entries_being_read_on_opensearch(entry: str):
+    """SPEC-F40.2: the list on the global search is a form PRD-F40 refuses, so it answers `invalid_filter`, and sends
+    nothing, though its entry holds a control character or is too long. Catches the entries of a refused global list
+    being read first, so that `invalid_character` or `value_too_long` of step 1 answers instead."""
+    client = Client()
+    refused(errors.fetch_sync(request(*ERROR_NAMES, search={'value': '', 'multi_values': [entry]}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
+def test_a_global_search_list_is_not_counted_against_the_bounds_on_lists_on_opensearch():
+    """SPEC-F40.3: a global list of 600 entries is over PRD-F38's 256 per list and 512 per request, but its entries are
+    neither read nor counted (PRD-F40), so the number mistake of step 2 beside it answers, and alone it answers its own
+    refusal; nothing is sent. Catches the global list counted against PRD-F38's bounds, which answers `invalid_filter`
+    of step 1 instead."""
+    search = {'value': '', 'multi_values': ['red'] * 600}
+    client = Client()
+    body = request(*ERROR_NAMES, search=search, **criterion('age', '=', 'abc'))
+    refused(errors.fetch_sync(body, client), 'invalid_number')
+    refused(errors.fetch_sync(request(*ERROR_NAMES, search=search), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
 @pytest.mark.parametrize(
     ('searched', 'body', 'code'),
     [
@@ -2650,6 +2709,18 @@ def test_a_regex_that_is_no_categorical_filter_is_refused_and_nothing_is_sent(pa
     assert (client.searches, client.counts) == ([], [])
 
 
+def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex_and_nothing_is_sent():
+    """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
+    non-categorical regex measured as raw text answers `value_too_long` instead. PRD-F15 has no such clause: a
+    control character in a regex column search stops being found if the regex is refused first as a form."""
+    client = Client()
+    search = {'value': 'a.' + 'x' * 256, 'regex': True}
+    refused(table.fetch_sync(request(*NAMES, column_search={'title': search}), client))
+    search = {'value': 'a.\x01', 'regex': True}
+    refused(table.fetch_sync(request(*NAMES, column_search={'title': search}), client), 'invalid_character')
+    assert (client.searches, client.counts) == ([], [])
+
+
 @pytest.mark.parametrize('value', ['red', '^(red)$'])
 def test_a_regex_global_search_with_a_word_is_refused_and_nothing_is_sent(value: str):
     """SPEC-F18.2."""
@@ -2831,6 +2902,10 @@ def _clauses(**body: Any) -> list[dict[str, Any]]:
         ('pages', 'less', '12', criterion('pages', '<', '12')),
         ('pages', 'lessOrEqual', '12', criterion('pages', '<=', '12')),
         ('created', 'equal', '2026-07-15', criterion('created', '=', '2026-07-15')),
+        ('created', 'greater', '2026-07-15', criterion('created', '>', '2026-07-15')),
+        ('created', 'greaterOrEqual', '2026-07-15', criterion('created', '>=', '2026-07-15')),
+        ('created', 'less', '2026-07-15', criterion('created', '<', '2026-07-15')),
+        ('created', 'lessOrEqual', '2026-07-15', criterion('created', '<=', '2026-07-15')),
         ('title', 'contains', 'red fox', {'column_search': {'title': {'value': 'red fox'}}}),
         ('pages', 'contains', '12', {'column_search': {'pages': {'value': '12'}}}),
         ('created', 'contains', '2026-07', {'column_search': {'created': {'value': '2026-07'}}}),
@@ -2839,8 +2914,9 @@ def _clauses(**body: Any) -> list[dict[str, Any]]:
 def test_columncontrol_sends_what_the_equivalent_condition_or_column_search_sends(
     column: str, logic: str, value: str, equivalent: dict[str, Any]
 ):
-    """SPEC-F45.2, SPEC-F45.3, SPEC-F45.4, SPEC-F45.13: each logic is answered with the query of the SearchBuilder
-    condition it names, and `contains` with that of a column search, on a column of text, of numbers and of days."""
+    """SPEC-F45.2, SPEC-F45.3, SPEC-F45.4, SPEC-F45.13, SPEC-F45.16: each logic is answered with the query of the
+    SearchBuilder condition it names, and `contains` with that of a column search, on a column of text, of numbers and
+    of days."""
     expected = _clauses(**equivalent)
     assert expected != []
     assert _clauses(flags=columncontrol(column, logic, value)) == expected
@@ -3035,6 +3111,26 @@ def test_a_number_mistake_waits_for_an_earlier_step_of_the_plan_in_a_search_buil
         }
     }
     refused(searched.fetch_sync(request('created', 'n', **tree), Client()), 'invalid_date')
+
+
+def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses():
+    """SPEC-E3.13: 2147483648 is past an `integer` field (PRD-D23), and `< 9999-12-31` uses the maximum date every
+    date column has as a bound; both are of step 3, and the maximum date is answered in either order, with nothing
+    sent. Catches step 3 answered in read order alone, which answers `invalid_number` when the number is read first."""
+    searched = SearchTable(
+        'docs', [Column('created', type='date'), IndexColumn('n', type='number', number='integer')], unique_key='n'
+    )
+    number = {'condition': '=', 'origData': 'n', 'value': ['2147483648']}
+    day = {'condition': '<', 'origData': 'created', 'value': ['9999-12-31']}
+    refused(
+        searched.fetch_sync(request('created', 'n', searchBuilder={'criteria': [number]}), Client()), 'invalid_number'
+    )
+    for criteria in ([number, day], [day, number]):
+        client = Client()
+        refused(
+            searched.fetch_sync(request('created', 'n', searchBuilder={'criteria': criteria}), client), 'invalid_date'
+        )
+        assert (client.searches, client.counts) == ([], [])
 
 
 def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_names_the_fix():

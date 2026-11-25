@@ -167,6 +167,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-F13.3** [all] On a table whose every column is declared unsearchable, an empty global search → rows 1, 2,
   3, 4 (nothing is asked).
+- **SPEC-F13.4** [all] On a table whose every column is declared unsearchable, a global search that PRD-F6 reduces
+  to no word, a lone `"`, is idle → rows 1, 2, 3, 4 (nothing is asked).
 - **SPEC-F14.1** [all] A global search of one word of 255 code points is answered; 256 → error_code
   `value_too_long`. The same holds for a word of 255 supplementary-plane characters (each one code point) and 256 of
   them.
@@ -185,6 +187,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   column search of 256 code points on a name the server does not declare, each answer the code of step 1, not
   `invalid_filter`. Within one filter, a control character in any value comes before the length of any value, which
   comes before the words: `multi_values` `["a" x 256, "b\x01"]` → `invalid_character`.
+- **SPEC-F14.6** [all] A column search on `name` with `regex: true` and `a.` followed by 256 `x` → error_code
+  `invalid_filter`, not `value_too_long`: the unescaped `.` makes it no categorical filter, so PRD-F14 measures no
+  alternative (after unescaping, not the raw pattern) and PRD-F18 refuses it as any other regex. A global search with
+  `regex` true is still measured whole as the global value (`a.` + 256 `x` → `value_too_long`; `a. ` + 17 words →
+  `too_many_words`, `SPEC-F14.5`), whereas the same text as a column regex is refused as a regex first
+  (`invalid_filter`); a control character in a column regex is still found (`a.` + U+0001 → `invalid_character`), as
+  PRD-F15 has no "not the raw pattern" clause.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_character`; so do U+0009 (TAB), U+001B and
   U+007F.
 - **SPEC-F15.2** [all] U+0000 in a column search, in a SearchBuilder `=` value, in a categorical value and in a
@@ -435,10 +444,19 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   with spaces only (PRD-F6), does not.
 - **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
   database or the cluster exactly what it asks when the column is named once.
+- **SPEC-F38.8** [all] The column `name` named twice in the request, one entry `searchable` true and the other
+  false, in either order, with the other columns marked not searchable: a global search `Apple` → rows 1, found in
+  `name` alone. With both entries false → error_code `invalid_filter` (PRD-F13).
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
   `invalid_filter` (a value with a word, see `SPEC-F6.6`).
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows
   1, 2, 3, 4.
+- **SPEC-F40.2** [all] A global search with `multi_values` holding one entry with the control character U+0001, or
+  one entry of 256 characters → error_code `invalid_filter`, not `invalid_character` or `value_too_long`: the form is
+  refused without its entries being read (PRD-F40).
+- **SPEC-F40.3** [all] A global search with `multi_values` holding 600 entries (more than PRD-F38's 256 per list and
+  512 per request) beside SearchBuilder `=` `abc` on `price` → error_code `invalid_number`: the global list is neither
+  read nor counted, so the mistake of step 2 is answered; the same global list alone → `invalid_filter` (PRD-F40).
 
 ## Searchable, timezone text, booleans
 
@@ -518,3 +536,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   whose rows the live module pins, the missing value left out (`test_searchbuilder_conditions` on `pages`).
 - **SPEC-F45.14** [SQL] `greater` `abc` on `price` → `invalid_number`; `greater` on a text column → `invalid_filter`.
 - **SPEC-F45.15** [SQL] `notEqual` `7` on `price` → rows 2, 3, 4: the row with no price passes (PRD-F37).
+- **SPEC-F45.16** [all] `greater`, `greaterOrEqual`, `less` and `lessOrEqual` with `type` `text` on `made` answer as
+  SearchBuilder `>`, `>=`, `<` and `<=` on it, compared as days: `greater` `2024-03-05` → rows 2; `greaterOrEqual` →
+  1, 2; `less` → 4; `lessOrEqual` → 1, 4. Row 3, with no date, is in none. On OS each sends the body of that
+  condition, whose rows the live module pins (`test_searchbuilder_conditions` on `created`). On `name` (string) each
+  → `invalid_filter`, as `SPEC-F27.1`.

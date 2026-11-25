@@ -924,6 +924,7 @@ request holds at most 64 column searches with a value; beyond any bound the requ
 except a tree deeper than the parser reads, which is malformed (PRD-P6). An active ColumnControl search or a non-empty
 ColumnControl list counts as one of the 64 column searches. The global search covers each declared column once, however
 often the request names it. All the conditions of a request together are bounded by PRD-C17.
+The global search covers a column named twice in the request if any of its entries is searchable.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must
@@ -938,8 +939,12 @@ A column search holding both a value and a non-empty `multi_values` list is refu
 #### PRD-F40
 
 A global search carrying a `multi_values` list is refused with `invalid_filter`; an empty list is idle.
+The entries of a global list are not read, so PRD-F14 and PRD-F15 do not apply to them and PRD-F38's bounds on lists do
+not count them.
 
 - **Reason:** `multi_values` belongs to a column search; on the global search the list would be dropped silently.
+  Only a client that builds its own request sends such a list, and refusing the list first names the one fix it needs;
+  reading its entries would ask the user to fix a value the request must drop anyway.
 - **Priority:** must
 
 #### PRD-F41
@@ -1318,6 +1323,16 @@ number column (PRD-F33); (3) a readable value outside the range is `invalid_date
 of more than 38 digits in all on a `Numeric` column on SQL Server); (4) every other filter error, a
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
+
+Within each of steps 2 to 4, the first mistake is the one found first in step 1's read order: the global search, then
+the column searches in the request's order (within one column the plain search, then the ColumnControl search, then
+the ColumnControl list), then the SearchBuilder tree's criteria in document order. Within step 3, a mistake against a
+limit of every column comes before a number the column's own type does not take: the maximum date of PRD-F24 as a
+bound or a number with more digits after the point than PRD-F25 allows, in read order, then a whole number outside an
+SQL integer column's range or more than 38 digits on SQL Server (PRD-F25), or a number an OpenSearch field type refuses
+(PRD-D23), in read order.
+A refused order entry (PRD-O1, PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request
+is answered before it.
 
 - **Reason:** One code per kind of mistake, decidable when a request holds several.
 - **Priority:** must

@@ -1550,6 +1550,16 @@ def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, patt
     refused(every_type.fetch_sync(params, session))
 
 
+def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex(session: Session):
+    """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
+    non-categorical regex measured as raw text answers `value_too_long` instead. PRD-F15 has no such clause: a
+    control character in a regex column search stops being found if the regex is refused first as a form."""
+    params = request(*EVERY_TYPE, column_search={'team': {'value': 'a.' + 'x' * 256, 'regex': True}})
+    refused(every_type.fetch_sync(params, session))
+    params = request(*EVERY_TYPE, column_search={'team': {'value': 'a.\x01', 'regex': True}})
+    refused(every_type.fetch_sync(params, session), 'invalid_character')
+
+
 @pytest.mark.parametrize('pattern', [r'^C:\\$', r'^(C:\\)$', r'C:\\'])
 def test_a_value_that_ends_in_an_escaped_backslash_is_read_in_every_form(session: Session, pattern: str):
     r"""SPEC-F19.2: row 6 holds `C:\`. In the form `^v$` the `$` after `C:\\` is the anchor, not an escaped `$`;
@@ -2617,6 +2627,24 @@ def test_a_user_error_says_what_is_wrong_and_what_to_do(
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
+@pytest.mark.parametrize('entry', ['a\x01', 'x' * 256], ids=['control-character', 'too-long'])
+def test_a_global_search_list_is_refused_without_its_entries_being_read(session: Session, entry: str):
+    """SPEC-F40.2: the list on the global search is a form PRD-F40 refuses, so it answers `invalid_filter` though its
+    entry holds a control character or is too long. Catches the entries of a refused global list being read first,
+    so that `invalid_character` or `value_too_long` of step 1 answers instead."""
+    refused(table.fetch_sync(request(*ALL, search={'value': '', 'multi_values': [entry]}), session))
+
+
+def test_a_global_search_list_is_not_counted_against_the_bounds_on_lists(session: Session):
+    """SPEC-F40.3: a global list of 600 entries is over PRD-F38's 256 per list and 512 per request, but its entries are
+    neither read nor counted (PRD-F40), so the number mistake of step 2 beside it answers, and alone it answers its own
+    refusal. Catches the global list counted against PRD-F38's bounds, which answers `invalid_filter` of step 1
+    instead."""
+    search = {'value': '', 'multi_values': ['red'] * 600}
+    refused(table.fetch_sync(request(*ALL, search=search, **criterion('age', '=', 'abc')), session), 'invalid_number')
+    refused(table.fetch_sync(request(*ALL, search=search), session))
+
+
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [
@@ -3190,6 +3218,63 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
     refused(table.fetch_sync(params, session), code)
 
 
+def test_within_one_step_the_mistake_read_first_is_answered(session: Session):
+    """SPEC-E3.10: two mistakes of step 2 are answered in step 1's read order, the request's column order and then the
+    tree. Catches an answer that prefers one code (a number before a date, or the reverse), that follows the declared
+    column order instead of the request's, or that reads the tree before the column searches."""
+    both = {'age': {'multi_values': ['abc']}, 'born': {'multi_values': ['2024-13-01']}}
+    refused(table.fetch_sync(request(*ALL, column_search=both), session), 'invalid_number')
+    born_first = ('id', 'name', 'email', 'born', 'age', 'seen', 'team')
+    refused(table.fetch_sync(request(*born_first, column_search=both), session), 'invalid_date')
+    params = request(*ALL, column_search={'born': both['born']}, **criterion('age', '=', 'abc'))
+    refused(table.fetch_sync(params, session), 'invalid_date')
+
+
+def test_a_refused_order_entry_comes_after_a_number_mistake(session: Session):
+    """SPEC-E3.11: `team` is declared unorderable, so the order on it is refused, at step 4; a number mistake of step 2
+    in the tree is answered before it, though the order entry is read first. Catches an order refusal answered as soon
+    as it is found."""
+    order = [{'column': ALL.index('team'), 'dir': 'asc'}]
+    refused(table.fetch_sync(request(*ALL, order=order), session))
+    refused(table.fetch_sync(request(*ALL, order=order, **criterion('age', '=', 'abc')), session), 'invalid_number')
+
+
+def test_a_filter_on_an_unsearchable_column_is_refused_without_its_value_being_read(session: Session):
+    """SPEC-E3.12: the server declared `age` unsearchable, so a filter on it is `invalid_filter`, whatever its value.
+    Catches a value read as a number before the column's refusal, which would answer `invalid_number`."""
+    closed = SQLTable(people, [Column('id'), Column('age', searchable=False)])
+    refused(closed.fetch_sync(request('id', 'age', **criterion('age', '=', 'abc')), session))
+    params = request('id', 'age', column_search={'age': {'multi_values': ['abc']}})
+    refused(closed.fetch_sync(params, session))
+
+
+def test_within_step_3_the_last_day_comes_before_a_number_outside_its_integer_column(session: Session):
+    """SPEC-E3.13: `age` is a SMALLINT, so 40000 is outside its own type, and `< 9999-12-31` uses the maximum date
+    every date column has as a bound; both are of step 3, and the maximum date is answered in either order. Catches
+    step 3 answered in read order alone, which answers `invalid_number` when the number is read first."""
+    number = {'condition': '=', 'origData': 'age', 'value': ['40000']}
+    day = {'condition': '<', 'origData': 'born', 'value': ['9999-12-31']}
+    refused(table.fetch_sync(request(*ALL, searchBuilder={'criteria': [number]}), session), 'invalid_number')
+    for criteria in ([number, day], [day, number]):
+        refused(table.fetch_sync(request(*ALL, searchBuilder={'criteria': criteria}), session), 'invalid_date')
+
+
+def test_a_criterion_without_its_value_is_still_refused_for_its_column_or_its_condition(session: Session):
+    """SPEC-E3.14: with no value the criterion is unfinished (PRD-F30), but its column and its condition can still be
+    checked, and a refusal of either is reported without a value (`SPEC-E3.8`); with no condition nothing can be
+    checked, so it adds nothing, on a refused column and on an undeclared one alike. Catches a criterion without its
+    value dropped before its column or condition is checked, which answers every row, and one without a condition
+    refused for its column."""
+    closed = SQLTable(people, [Column('id'), Column('name'), Column('age', searchable=False)])
+    names = ('id', 'name', 'age')
+    refused(closed.fetch_sync(request(*names, **criterion('age', '=')), session))
+    refused(closed.fetch_sync(request(*names, **criterion('name', '<')), session))
+    for condition in ({}, {'condition': ''}, {'condition': 'undefined'}):
+        for column in ('age', 'extra'):
+            tree = {'criteria': [{**condition, 'origData': column, 'value': ['x']}]}
+            assert ids(closed.fetch_sync(request(*names, searchBuilder=tree), session)) == [1, 2, 3, 4, 5]
+
+
 @pytest.mark.parametrize(
     ('tree', 'answered'),
     [
@@ -3285,6 +3370,23 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
     table.fetch_sync(request(*('name',) * 1000, search={'value': 'ann'}), session)
     same = statements == once  # not asserted inline: a failure would print a thousand terms
     assert same
+
+
+def test_the_global_search_covers_a_column_named_twice_if_either_entry_is_searchable(session: Session):
+    """SPEC-F38.8: `Bob` is only in `name`, and `id` is marked not searchable, so the row is found only if `name` is
+    searched; with both of its entries marked not searchable no column is left (PRD-F13). Catches the first or the last
+    entry of the name deciding alone."""
+
+    def named_twice(*searchable: bool) -> DTParams:
+        columns = [
+            {'data': name, 'name': '', 'searchable': flag, 'orderable': True, 'search': {'value': '', 'regex': False}}
+            for name, flag in (('id', False), *(('name', flag) for flag in searchable))
+        ]
+        return parse_request({'draw': 1, 'start': 0, 'length': 10, 'columns': columns, 'search': {'value': 'Bob'}})
+
+    assert ids(table.fetch_sync(named_twice(True, False), session)) == [2]
+    assert ids(table.fetch_sync(named_twice(False, True), session)) == [2]
+    refused(table.fetch_sync(named_twice(False, False), session))
 
 
 @pytest.mark.parametrize(
@@ -4669,3 +4771,15 @@ def test_columncontrol_number_logics_follow_the_number_rules_and_the_type(sessio
 def test_columncontrol_not_equal_lets_a_null_through(session: Session):
     """SPEC-F45.15: `notEqual` is `!=`, which keeps the row with no value (PRD-F37), on a number as on text."""
     assert _found(flags=columncontrol('age', 'notEqual', '31'), session=session) == [2, 3, 5]
+
+
+@pytest.mark.parametrize(
+    ('logic', 'expected'),
+    [('greater', [4]), ('greaterOrEqual', [1, 4]), ('less', [2, 5]), ('lessOrEqual', [1, 2, 5])],
+)
+def test_columncontrol_comparisons_on_a_date_compare_days(session: Session, logic: str, expected: list[int]):
+    """SPEC-F45.16: sent with `type` `text`, the four answer as `>`, `>=`, `<` and `<=` on the date column, compared
+    as days; row 1 holds the day itself, and row 3, with no date, is in none. On text they are refused (PRD-F27).
+    Catches the four refused, dropped or read as numbers on a date column, and the bound day put on the wrong side."""
+    assert _found(flags=columncontrol('born', logic, '1994-03-01'), session=session) == expected
+    assert _refusal(flags=columncontrol('team', logic, 'red'), session=session) == 'invalid_filter'

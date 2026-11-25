@@ -11,6 +11,7 @@ from typing import Any
 
 from hypothesis import HealthCheck
 from hypothesis import settings
+from hypothesis import strategies as st
 from pydantic import BaseModel
 import pytest
 from sqlalchemy import Boolean
@@ -33,15 +34,28 @@ from datatables_backend import DTParams
 from datatables_backend import RowHooks
 from datatables_backend import parse_request
 
-# The property tests (tests/test_parse_properties.py). `ci` is the default and runs the same examples on every run, so
-# a red run is the code's and never luck's; `explore` is for a developer who wants more, and different, examples:
-# HYPOTHESIS_PROFILE=explore uv run pytest tests/test_parse_properties.py
+# The property tests (tests/test_parse_properties.py and tests/test_reference_properties.py). `ci` is the default and
+# runs the same examples on every run, so a red run is the code's and never luck's; `explore` is for a developer who
+# wants more, and different, examples: HYPOTHESIS_PROFILE=explore uv run pytest tests/test_reference_properties.py
 _SLOW = [HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much]
 settings.register_profile(
     'ci', max_examples=500, derandomize=True, database=None, deadline=None, suppress_health_check=_SLOW
 )
 settings.register_profile('explore', max_examples=5000, deadline=None, suppress_health_check=_SLOW)
 settings.load_profile(os.environ.get('HYPOTHESIS_PROFILE', 'ci'))
+
+
+def chance(one_in: int) -> st.SearchStrategy[bool]:
+    """True about once in ``one_in`` draws. True stands in the middle: Hypothesis draws the first choice, its simplest,
+    far more often than the others (measured: the first of 16 integers in a quarter of the draws)."""
+    return st.sampled_from([False] * (one_in // 2) + [True] + [False] * (one_in - 1 - one_in // 2))
+
+
+def rarely[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], one_in: int) -> st.SearchStrategy[T]:
+    """``common``, and ``rare`` about once in ``one_in`` draws. Not ``one_of`` with ``common`` repeated: Hypothesis
+    flattens a ``one_of`` in a ``one_of``, so when ``common`` is one the rare branch's share grows (measured: one in 24
+    came one in four)."""
+    return chance(one_in).flatmap(lambda now: rare if now else common)
 
 
 def checked_database(url: str) -> str:

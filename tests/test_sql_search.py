@@ -253,10 +253,10 @@ def test_a_search_with_a_word_on_a_table_with_no_searchable_column_is_refused(se
     refused(unsearchable.fetch_sync(request('id', 'team', **glob('red')), session))
 
 
-@pytest.mark.parametrize('text', ['', '   '])
+@pytest.mark.parametrize('text', ['', '   ', '"'])
 def test_an_empty_search_on_a_table_with_no_searchable_column_asks_for_nothing(session: Session, text: str):
-    """SPEC-F13.3: no word, so no column is needed and every row is answered (`!x` is the other such text, in the test
-    above)."""
+    """SPEC-F13.3, SPEC-F13.4: no word, so no column is needed and every row is answered (`!x` is the other such text,
+    in the test above). Catches a lone `"` counted as a word, which is refused for want of a column."""
     assert ids(unsearchable.fetch_sync(request('id', 'team', **glob(text)), session)) == [1, 2, 3, 4, 5]
 
 
