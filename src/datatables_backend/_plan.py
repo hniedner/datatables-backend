@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import date
 from datetime import time
 from datetime import timedelta
+from decimal import Decimal
+from decimal import InvalidOperation
 import logging
 import math
 import re
@@ -253,7 +255,7 @@ class Part:
 class Bound:
     """One end of a ``Range``: a number, or a day."""
 
-    value: int | float | date
+    value: int | Decimal | date
     included: bool
 
 
@@ -888,21 +890,25 @@ def _positive(
             return Range(column, kind, Bound(values[0], condition == '>='), None)
 
 
-def parse_number(text: str, column: Column, *, listed: bool = False) -> int | float:
+def parse_number(text: str, column: Column, *, listed: bool = False) -> int | Decimal:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point, else a ``float``. ``listed`` says the text is one of several values (a list, or the two of a
-    ``between``), where the reason must not ask for one number.
+    point, else a ``Decimal``, which keeps every digit written. ``listed`` says the text is one of several values (a
+    list, or the two of a ``between``), where the reason must not ask for one number.
 
     A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
-    ``inf``), so the spelling is checked first."""
+    ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which
+    is also what decides whether a backend that compares as a float can take it."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
     if stripped.lstrip('+-').isdigit():  # neither a point nor an exponent; at most 255 characters, so `int` converts it
         return int(stripped)
-    number = float(stripped)
-    if not math.isfinite(number):
+    try:
+        number = Decimal(stripped)
+    except InvalidOperation:  # an exponent beyond what a Decimal holds
+        raise number_unreadable(column, listed=listed) from None
+    if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
     return number
 

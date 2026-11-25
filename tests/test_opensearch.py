@@ -1966,6 +1966,9 @@ def test_every_body_the_client_receives_is_a_plain_dict_that_survives_a_json_rou
         request(*NAMES, column_search={'title': {'value': 'pear'}, 'pages': {'value': '3'}}),
         request(*NAMES, **criterion('pages', 'between', '1', '9')),
         request(*NAMES, **criterion('created', '=', '2026-07-15')),
+        request(*NAMES, **criterion('pages', 'between', '1.5', '9.5')),  # a number with a point is a float in the body
+        request(*NAMES, **criterion('pages', '=', '2.5')),
+        request(*NAMES, column_search={'pages': {'multi_values': ['1.5', '2']}}),
         request(*NAMES, order=[{'column': 1, 'dir': 'desc'}, {'column': 3, 'dir': 'asc'}]),
         request(*NAMES, search={'value': 'x'}, column_search={'author': {'multi_values': ['Ann', 'Bob']}}),
     ]

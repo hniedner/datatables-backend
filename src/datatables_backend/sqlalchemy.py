@@ -477,55 +477,82 @@ def _is_text(column: ColumnElement[Any]) -> bool:
         return False
 
 
-def _number(column: ColumnElement[Any], value: int | float, declared: Column, dialect: Dialect, *, listed: bool) -> Any:
+def _number(
+    column: ColumnElement[Any], value: int | Decimal, declared: Column, dialect: Dialect, *, listed: bool
+) -> Any:
     """``value`` as the column compares it, by the type the column stores (PRD-F25).
 
     An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
     ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is
-    unsigned (MySQL's). On SQL Server a ``Numeric`` column takes a number of at most 38 digits before the decimal
-    point, whatever the column declares: its driver refuses a longer one. A number outside either is the user's
-    mistake. No other database bounds a ``Numeric`` column here: a filter such as ``< 1000`` on a ``Numeric(5, 2)``
-    is a fair question, and they answer it.
+    unsigned (MySQL's). On SQL Server a ``Numeric`` column takes a number of at most 38 digits in all, before and after
+    the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses a
+    longer one. A number outside either is the user's mistake. No other database bounds a ``Numeric`` column here: a
+    filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they answer it.
 
-    A driver sends a whole number as a 64-bit integer, so one outside the signed 64-bit range goes as the column
-    compares: to a ``Numeric`` column as a ``Decimal``, which compares exactly; to any other column (a ``Float``, an
-    expression without a type) as the nearest float, which holds every whole number a request may carry (at most 255
-    digits, below 1.8e308).
+    A number goes as the column compares. To an exact ``Numeric`` column it goes as a ``Decimal`` with every digit
+    written, when it has a point or an exponent or lies outside the signed 64-bit range that a driver sends a whole
+    number in. To an integer column a number with a fraction goes as the nearest float, and a whole number written
+    with a point (``8.0``) as that whole number. To any other column (a ``Float``, an expression without a type) it
+    goes as the nearest float, which holds every number a request may carry (at most 255 characters, below 1.8e308).
 
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
-    if isinstance(sql_type, Integer) and isinstance(value, float) and value.is_integer():
-        value = int(value)
+    number: int | float | Decimal = value
+    if isinstance(sql_type, Integer) and isinstance(value, Decimal):
+        number = int(value) if value == value.to_integral_value() else float(value)  # 8.0 is the whole number 8
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
         if listed
         else f'The filter on "{declared.name}" needs a number'
     )
     if isinstance(sql_type, Integer):
-        if isinstance(value, float):  # a number with a fraction, which no integer equals
-            return value
+        if isinstance(number, float):  # a number with a fraction, which no integer equals
+            return number
         bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
         low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
         if getattr(sql_type, 'unsigned', False):
             low, high = 0, 2**bits - 1
-        if not low <= value <= high:
+        if not low <= number <= high:
             raise mistake('datatables_number_out_of_range', f'{needed} between {low} and {high}.', declared)
-        return value
-    exact = isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)  # a Float is a Numeric to SQLAlchemy
-    if exact and dialect.name == 'mssql' and abs(value) >= 10**_MSSQL_DECIMAL_DIGITS:
+        return number
+    if not (isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)):  # a Float is a Numeric to SQLAlchemy
+        return float(value) if isinstance(value, Decimal) or not -(2**63) <= value < 2**63 else value
+    if isinstance(value, Decimal):
+        value = _without_trailing_zeros(value)
+    if dialect.name == 'mssql' and _digits(value) > _MSSQL_DECIMAL_DIGITS:
         raise mistake(
             'datatables_number_out_of_range',
-            f'{needed} with at most {_MSSQL_DECIMAL_DIGITS} digits before the decimal point.',
+            f'{needed} with at most {_MSSQL_DECIMAL_DIGITS} digits in all, before and after the decimal point; '
+            'shorten the number.',
             declared,
         )
-    if isinstance(value, float) or -(2**63) <= value < 2**63:
+    if isinstance(value, int) and -(2**63) <= value < 2**63:
         return value
-    if exact:
-        # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
-        # NUMERIC(p, s), and a number with more digits than that overflowed it
-        return literal(Decimal(value), Numeric())
-    return float(value)
+    # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
+    # NUMERIC(p, s), and a number with more digits than that overflowed it
+    return literal(Decimal(value), Numeric())
+
+
+def _without_trailing_zeros(value: Decimal) -> Decimal:
+    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, but
+    ``1E+2`` stays as written (``Decimal.normalize`` would turn ``100`` into it, a form SQL Server's driver does not
+    take for a number it holds)."""
+    sign, digits, point = value.as_tuple()
+    exponent = int(point)  # a finite number's
+    while exponent < 0 and len(digits) > 1 and digits[-1] == 0:
+        digits, exponent = digits[:-1], exponent + 1
+    return Decimal((sign, digits, exponent))
+
+
+def _digits(value: int | Decimal) -> int:
+    """The digits of ``value`` before and after the decimal point, as SQL Server's decimal counts them (at most 38),
+    the zeros at the end of a whole number included."""
+    if isinstance(value, int):
+        return len(str(abs(value))) if value else 0
+    _, digits, point = value.as_tuple()
+    exponent = int(point)  # a finite number's
+    return max(len(digits) + exponent, 0) + max(-exponent, 0)
 
 
 def _boolean(column: ColumnElement[Any], value: bool) -> bool | int:

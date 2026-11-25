@@ -10,6 +10,18 @@ and the versioning policy is in the README.
 - A number filter on a `Numeric` column through `fetch` on PostgreSQL with asyncpg raised `numeric field overflow` when
   the number had more digits than the column declares (31 nines on a `Numeric(32, 2)`); it
   now answers, as the sync drivers did.
+- A number written with a point or an exponent (`12345678901234567.89`, `3.1e-1`) is now compared exactly with a
+  `Numeric` column on PostgreSQL, MySQL, MariaDB and SQL Server. It went as a float before, so `=` on a column holding
+  `12345678901234567.89`, `...67.90` and `...68.00` found all three rows, and a filter on a number of 17 or more digits
+  could match a neighbour or miss the row. A patch release may correct an answer that was wrong, and this is one: a
+  filter that matched a neighbour now matches the number asked for. SQLite is unchanged, since it stores a `Numeric` as
+  a float or an integer; a `Float` column and OpenSearch still compare as floats.
+- On SQL Server, a number of more than 38 digits in all, before and after the decimal point, is now answered as
+  `invalid_number` ("at most 38 digits in all ... shorten the number") for every condition. A number with a point or
+  an exponent was answered as a float before, which cannot be exact at that length; the driver refuses it as a decimal
+  (HY104). A number written with an exponent beyond what a
+  decimal holds (`1e9999999999999999999999`) is also `invalid_number` on every database; a negative one was read as
+  zero before.
 
 ## [0.1.1] - 2026-11-24
 

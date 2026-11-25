@@ -2010,6 +2010,14 @@ def test_a_categorical_filter_on_a_number_column_matches_its_numbers(session: Se
     assert ids(table.fetch_sync(request(*ALL, column_search={'age': search}), session)) == [1, 4, 5]
 
 
+def test_a_list_leaves_out_a_number_with_a_fraction_on_an_integer_column(session: Session):
+    """SPEC-F25.10: 31.4 is no whole number, and PostgreSQL's cast to an integer would round it to 31, so it is left
+    out of the list as `=` leaves it to match nothing, and only 60 is found. It catches a fraction that reaches the
+    list; SQLite compares it as it is, so only the servers can fail it."""
+    search = {'multi_values': ['31.4', '60.0']}
+    assert ids(table.fetch_sync(request(*ALL, column_search={'age': search}), session)) == [5]
+
+
 def test_a_value_that_is_there_but_unreadable_is_refused_not_left_out(session: Session):
     """SPEC-F30.4: only a missing value is unfinished; an unreadable one is the user's mistake."""
     refused(table.fetch_sync(request(*ALL, **criterion('age', 'between', 'abc')), session), 'invalid_number')
@@ -2128,6 +2136,9 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
     [
         ('age', '>', ['1e999'], 'invalid_number'),  # SPEC-F25.1: written as a number, and no column holds infinity
         ('age', 'between', ['old'], 'invalid_number'),  # the value there is, not the one missing
+        # SPEC-F25.1: an exponent no decimal holds, which a float read as infinity or as zero
+        ('age', '>', ['1e9999999999999999999999'], 'invalid_number'),
+        ('age', '<', ['1e-9999999999999999999999'], 'invalid_number'),
         # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
         ('age', '=', ['3_1'], 'invalid_number'),
         ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
@@ -2620,13 +2631,19 @@ async def test_a_numeric_column_is_not_bounded_by_its_declared_precision_through
 @pytest.mark.parametrize(
     ('value', 'text'),
     [
-        ('9' * 39, 'The filter on "exact" needs a number with at most 38 digits before the decimal point.'),
-        ('1e39', 'The filter on "exact" needs a number with at most 38 digits before the decimal point.'),
+        (
+            '9' * 39,
+            'The filter on "exact" needs a number with at most 38 digits in all, before and after the decimal point; shorten the number.',
+        ),
+        (
+            '1e39',
+            'The filter on "exact" needs a number with at most 38 digits in all, before and after the decimal point; shorten the number.',
+        ),
     ],
 )
 def test_a_numeric_column_takes_38_digits_on_sql_server(session: Session, value: str, text: str):
-    """SPEC-F25.5 and the text of SPEC-E4.29, asserted here only: SQL Server's decimal holds 38 digits before the
-    point, and its driver refuses to send a longer number (MEASURED: HY104), so there such a number is the user's
+    """SPEC-F25.5 and the text of SPEC-E4.29, asserted here only: SQL Server's decimal holds 38 digits in all, and its
+    driver refuses to send a longer number (MEASURED: HY104), so there such a number is the user's
     mistake, written as a whole number or with an exponent. The other databases take it, and no row holds it."""
     response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
     if session.get_bind().dialect.name == 'mssql':
@@ -2731,6 +2748,14 @@ def test_a_number_of_more_than_38_digits_is_refused_on_sql_server(session: Sessi
         assert 'at most 38 digits' in refused(response, 'invalid_number')
     else:
         assert response.error is None
+
+
+@pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])
+def test_a_number_no_float_holds_is_refused_on_every_number_column(session: Session, column: str):
+    """SPEC-F25.1: `1e400` is written as a number, and no column holds infinity, which a float of it would be. The
+    decimal that keeps its digits must not let it through to a column compared as a float."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion(column, '<', '1e400')), session)
+    refused(response, 'invalid_number')
 
 
 def test_the_longest_whole_number_a_request_may_hold_is_compared_as_a_float(session: Session):
