@@ -395,10 +395,10 @@ class AwaitingStore:
     def __init__(self) -> None:
         self.inner = AsyncStore()
 
-    def get(self, key: str) -> CoroutineType[Any, Any, int | None]:
+    def get(self, key: str) -> 'CoroutineType[Any, Any, int | None]':
         return self.inner.get(key)
 
-    def put(self, key: str, total: int) -> CoroutineType[Any, Any, None]:
+    def put(self, key: str, total: int) -> 'CoroutineType[Any, Any, None]':
         return self.inner.put(key, total)
 
     @property
