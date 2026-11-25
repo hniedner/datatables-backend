@@ -608,6 +608,8 @@ def _accepted(kind: str, sent: int | float) -> bool:
     infinity in its format, which is where ``struct.pack`` raises ``OverflowError``. It is given a float: a whole number
     too large for one raises ``OverflowError`` in ``float`` itself, where ``struct`` would raise ``struct.error``."""
     if kind in _FLOAT_FORMATS:
+        # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
+        # refused here, where the server might round it straight to a float it holds: a conservative refusal
         try:
             struct.pack(_FLOAT_FORMATS[kind], float(sent))
         except OverflowError:

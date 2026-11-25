@@ -133,7 +133,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.6** [OS] A number column with no kind: `=` 2^64 is sent as it is and answered with no error from the
   library. Live: a column over an `integer` field fails with the client's `RequestError`; a `scaled_float` answers
   1e300 with the document holding its largest value.
-- **SPEC-D23.7** [OS] A number column, with or without a kind: `=` a number of 255 digits is sent, one of 256 is
+- **SPEC-D23.7** [OS] A number column without a kind: `=` a number of 255 digits is sent, one of 256 is
   `value_too_long`, and 1e400 is `invalid_number`. Live: a `float` field refuses 255 digits, so the declared kind
   answers `invalid_number` and the undeclared column fails with `RequestError`.
 - **SPEC-D23.8** [OS] A SearchBuilder with `created = xx` (a date mistake, step 2) and an `integer` column `=` 2147483648

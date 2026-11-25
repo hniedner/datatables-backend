@@ -436,3 +436,8 @@ NUMBER_EDGES = [
     pytest.param('half_float', '65519', '65520', id='half_float-high'),
     pytest.param('half_float', '-65519', '-65520', id='half_float-low'),
 ]
+
+
+def number_edge(name: str) -> Any:
+    """The `NUMBER_EDGES` pair with this id, for a test that wants a few of them."""
+    return next(edge for edge in NUMBER_EDGES if edge.id == name)

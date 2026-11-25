@@ -409,7 +409,7 @@ it goes away (PRD-D23).
 - **How it is known:** MEASURED 2026-11-22 and 2026-11-25 on OpenSearch 3.10.0 and 2.19.7
   (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`,
   `docs/decisions/011-opensearch-number-kinds.md`).
-- **Requirement:** PRD-F25, PRD-E7.
+- **Requirement:** PRD-F25, PRD-E7, PRD-D23.
 
 ### A boolean field is a boolean column only when it is declared boolean
 

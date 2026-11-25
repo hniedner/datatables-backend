@@ -43,6 +43,7 @@ from .conftest import flat
 from .conftest import labelled
 from .conftest import logged_text
 from .conftest import nested
+from .conftest import number_edge
 from .conftest import request
 
 SHARDS = {'total': 2, 'successful': 2, 'failed': 0}
@@ -2897,7 +2898,10 @@ def test_a_number_is_refused_exactly_where_opensearch_refuses_it_for_the_declare
 
 
 @pytest.mark.parametrize('path', PATHS)
-@pytest.mark.parametrize(('kind', 'last', 'first'), [NUMBER_EDGES[4], NUMBER_EDGES[12], NUMBER_EDGES[9]])
+@pytest.mark.parametrize(
+    ('kind', 'last', 'first'),
+    [number_edge('integer-high'), number_edge('half_float-high'), number_edge('unsigned_long-low')],
+)
 def test_every_way_a_number_reaches_the_query_is_checked(path: str, kind: NumberKind, last: str, first: str):
     """SPEC-D23.2: SearchBuilder conditions (a bound of a range, an equality, a negation), a column search, a
     `multi_values` list (OpenSearch's `terms`, which reads -1 on an `unsigned_long` as 2^64-1 and answers without an
