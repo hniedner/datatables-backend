@@ -2750,6 +2750,73 @@ def test_a_number_of_more_than_38_digits_is_refused_on_sql_server(session: Sessi
         assert response.error is None
 
 
+class Compiling:
+    """A source that runs nothing: it keeps the `Decimal` parameters of each statement as `dialect` would send them."""
+
+    def __init__(self, dialect: Dialect) -> None:
+        self.dialect = dialect
+        self.decimals: list[Decimal] = []
+        self.types: list[Any] = []
+
+    def execute(self, statement: Any) -> Any:
+        compiled = statement.compile(dialect=self.dialect, compile_kwargs={'render_postcompile': True})
+        binds = [bind for bind in compiled.binds.values() if isinstance(bind.value, Decimal)]
+        self.decimals += [bind.value for bind in binds]
+        self.types += [bind.type for bind in binds]
+        return self
+
+    def scalar_one(self) -> int:
+        return 0
+
+    def mappings(self) -> Any:
+        return self
+
+    def all(self) -> list[Any]:
+        return []
+
+
+@pytest.mark.parametrize(
+    ('value', 'sent'),
+    [
+        ('0.31' + '0' * 44, Decimal('0.31')),  # a fraction's trailing zeros are left out
+        ('100.00', Decimal(100)),
+        ('1e37', Decimal('1E+37')),  # an exponent stays as written, 38 digits
+        ('3.1e-1', Decimal('3.1E-1')),
+        ('0.' + '1' * 38, Decimal('0.' + '1' * 38)),
+        ('1' * 20 + '.' + '1' * 18, Decimal('1' * 20 + '.' + '1' * 18)),
+        ('0.' + '1' * 39, None),
+        ('1e38', None),  # 39 digits
+        ('1' * 39, None),
+        ('0.' + '1' * 38 + '0' * 5 + '1', None),
+    ],
+)
+def test_the_38_digits_of_sql_server_are_counted_as_it_counts_them(value: str, sent: Decimal | None):
+    """SPEC-F25.12, SPEC-E4.29: compiled for SQL Server, a number of 38 digits in all goes as a `Decimal` with its
+    fraction's trailing zeros left out and an exponent as written, and one of 39 is `invalid_number`, named by its
+    limit and its fix. Another database takes the longer number. It catches the count and the zeros, which the
+    SQL Server leg shows only with the driver."""
+    numbers = Table(
+        'dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))
+    )
+    table = SQLTable(numbers, [Column('id'), Column('n')])
+    params = request('id', 'n', **criterion('n', '<', value))
+    source: Any = Compiling(mssql.dialect())
+    response = table.fetch_sync(params, source)
+    if sent is None:
+        text = refused(response, 'invalid_number')
+        assert 'at most 38 digits in all' in text
+        assert source.decimals == []
+        other: Any = Compiling(postgresql.dialect())
+        assert table.fetch_sync(params, other).error is None
+        assert other.decimals
+    else:
+        assert response.error is None
+        assert {str(sent_value) for sent_value in source.decimals} == {str(sent)}  # the same digits and exponent
+        # no precision and no scale: asyncpg casts a decimal to the type it is bound as, and the column's own
+        # `NUMERIC(20, 2)` would round a longer fraction and overflow a longer whole number
+        assert all(isinstance(kind, Numeric) and (kind.precision, kind.scale) == (None, None) for kind in source.types)
+
+
 @pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])
 def test_a_number_no_float_holds_is_refused_on_every_number_column(session: Session, column: str):
     """SPEC-F25.1: `1e400` is written as a number, and no column holds infinity, which a float of it would be. The
