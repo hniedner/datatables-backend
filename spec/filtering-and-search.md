@@ -349,6 +349,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `Red Apple` and them → rows 1.
 - **SPEC-F27.8** [all] On `made` (date), `!starts` and `!ends` → error_code `invalid_filter`, as `starts` and `ends`
   are (F27.3).
+- **SPEC-F27.9** [all] The two values of `between` and `!between` are a range in either order: on `price`, `between`
+  `17` and `8` → rows 2, 3, as `between` `8` and `17` (the numbers are compared, not their texts), and `!between` `17`
+  and `8` → rows 1, 4 (PRD-F37); on `made` (date), `between` `2024-12-31` and `2024-03-05` → rows 1, 2 (both ends
+  whole days).
 - **SPEC-F28.1** [all] Group OR of `colour = blue` and `price = 7` → rows 1, 3.
 - **SPEC-F28.2** [all] Group AND of `colour = red` and a nested OR group of `price = 17` and `price null` → rows 4
   (dropping the nested group would give rows 1, 4; OR throughout would give rows 1, 2, 4).

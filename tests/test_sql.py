@@ -1193,6 +1193,22 @@ def test_searchbuilder_conditions(
     assert ids(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session)) == expected
 
 
+@pytest.mark.parametrize(
+    ('column', 'condition', 'values', 'expected'),
+    [
+        ('age', 'between', ['45', '9'], [1, 2, 4]),  # as text `45` comes first, as a number last
+        ('age', '!between', ['45', '9'], [3, 5]),  # row 3 has no age, which passes (PRD-F37)
+        ('born', 'between', ['1994-03-01', '1980-07-15'], [1, 2]),  # both ends are whole days, the later one too
+    ],
+)
+def test_the_two_values_of_between_are_a_range_in_either_order(
+    session: Session, column: str, condition: str, values: list[str], expected: list[int]
+):
+    """SPEC-F27.9: catches reversed bounds being read as an empty range, which gave `between` no row and `!between`
+    every row, and bounds ordered by their text rather than their number or day."""
+    assert ids(table.fetch_sync(request(*ALL, **criterion(column, condition, *values)), session)) == expected
+
+
 #: `seen_tz` holds 23:59 UTC on the 15th (row 1), 00:00 UTC on the 16th (row 2), nothing (row 3), noon on 2025-01-01
 #: (row 4) and 20:00 on the 14th (row 5): the instants of rows 1 and 2 are a minute apart, their UTC days are not
 AWARE_CASES = [
