@@ -5,6 +5,12 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- A number filter on a `Numeric` column through `fetch` on PostgreSQL with asyncpg raised `numeric field overflow` when
+  the number had more digits than the column declares (31 nines on a `Numeric(32, 2)`); it
+  now answers, as the sync drivers did.
+
 ## [0.1.1] - 2026-11-24
 
 This release answers ColumnControl's per-column filters, adds `scope=`, a per-request filter such as a user's rows,

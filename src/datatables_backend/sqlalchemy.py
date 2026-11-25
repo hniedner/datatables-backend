@@ -50,6 +50,7 @@ from sqlalchemy.sql import FromClause
 from sqlalchemy.sql import Select
 from sqlalchemy.sql import operators
 from sqlalchemy.sql.compiler import SQLCompiler
+from sqlalchemy.sql.elements import ClauseElement
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.sql.util import find_tables
@@ -521,7 +522,9 @@ def _number(column: ColumnElement[Any], value: int | float, declared: Column, di
     if isinstance(value, float) or -(2**63) <= value < 2**63:
         return value
     if exact:
-        return Decimal(value)
+        # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
+        # NUMERIC(p, s), and a number with more digits than that overflowed it
+        return literal(Decimal(value), Numeric())
     return float(value)
 
 
@@ -629,7 +632,12 @@ def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], dialect:
         # INTEGER would round it to one, so on an integer column it is left out, as `=` leaves it to match nothing
         whole = isinstance(_sql_type(column), Integer)
         held = [value for value in values if not (whole and isinstance(value, float))]
-        typed = [literal(value, column.type.coerce_compared_value(operators.eq, value)) for value in held]
+        typed = [
+            value
+            if isinstance(value, ClauseElement)
+            else literal(value, column.type.coerce_compared_value(operators.eq, value))
+            for value in held
+        ]
         parts.append(column.in_(typed) if held else false())
     elif values:
         if node.type == 'string' and _folds(node.column, column):
