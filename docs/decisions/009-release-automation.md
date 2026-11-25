@@ -419,7 +419,8 @@ and the owner's first sentence of the new PRD requirement.
      harness, not a GitHub control.
    - **Then:** the sessions move from the owner's classic `repo` token to a fine-grained token without the
      "Deployments" and "Administration" permissions, so the token itself cannot approve a deployment or change an
-     environment or a ruleset. The owner approves in the browser. Before the switch, the list below is checked.
+     environment or a ruleset. The owner approves in the browser. What the switch showed (2026-11-25) is recorded in the
+     section "Observed after the token switch".
    - Both are the owner's, by hand. No session creates, stores or switches a token, or tests the approval call.
    - **(b)** `check-tag` refuses a version with no `## [X] - <date>` section in CHANGELOG.md on `main` (it runs before
      `publish` through `needs`; `publish` runs no repository code, READ, `release.yml:105`). It is built as part of
@@ -441,35 +442,38 @@ files and its tag cannot change; a draft can still be fixed or deleted. GitHub r
 `gh release verify v<version>` checks. Reason: it matches "a version once tagged is burnt", and OpenSSF Scorecard's
 Signed-Releases check counts an immutable release. Earlier releases are not immutable.
 
-## To verify before the token switch (the owner's)
+## Observed after the token switch
 
-**To verify: not tested.** The calls the sessions use routinely, with the fine-grained permission each needs. Every
-row is from the fine-grained token page named in item 6 (FETCHED 2026-11-24); no API was called to test them. `gh`
-subcommands may use GraphQL instead of these REST routes (NOT ESTABLISHED per command), so each is checked once after
-the switch.
+**Observed: RUN 2026-11-25.** The owner moved the sessions to a fine-grained token (no Deployments, no
+Administration; it expires about 2027-02-23 and **must be renewed before then**). The calls the sessions use
+routinely, with the fine-grained permission each needs. The REST routes are from the fine-grained token page named in
+item 6 (FETCHED 2026-11-24); every row asked for was found there. The last column says what happened when the
+sessions used the token. A row nobody exercised says "not exercised"; no result is inferred for it. Which REST or
+GraphQL calls each `gh` subcommand makes is still NOT ESTABLISHED (see the end).
 
-| Use (`gh` command or `gh api` call) | REST route on the page | Permission |
-|---|---|---|
-| Merge a PR (`gh pr merge`) | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` | Contents: write |
-| View a PR (`gh pr view`) | `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Contents: read, or Pull requests: read |
-| List and view runs (`gh run list`, `gh run view`, `gh run watch`) | `GET .../actions/runs`, `GET .../actions/runs/{run_id}` | Actions: read |
-| Run logs (`gh run view --log`, `gh api .../logs`) | `GET .../actions/runs/{run_id}/logs`, `GET .../actions/jobs/{job_id}/logs` | Actions: read |
-| Start a workflow (`gh workflow run`, the rehearsal) | `POST .../actions/workflows/{workflow_id}/dispatches` | Actions: write |
-| Re-run a run (`gh run rerun`) | `POST .../actions/runs/{run_id}/rerun` | Actions: write |
-| Read an issue (`gh issue view`) | `GET .../issues/{issue_number}` | Issues: read |
-| Create an issue (`gh issue create`) | `POST .../issues` | Issues: write |
-| Edit or close an issue (`gh issue edit`, `gh issue close`) | `PATCH .../issues/{issue_number}` | Issues: write, or Pull requests: write |
-| Comment (`gh issue comment`, `gh pr comment`) | `POST .../issues/{issue_number}/comments` | Issues: write, or Pull requests: write |
-| Code-scanning alerts: read, dismiss | `GET .../code-scanning/alerts`, `PATCH .../code-scanning/alerts/{alert_number}` | Code scanning alerts: read, write |
-| Dependabot alerts: read, dismiss | `GET .../dependabot/alerts`, `PATCH .../dependabot/alerts/{alert_number}` | Dependabot alerts: read, write |
-| Secret-scanning alerts: read, dismiss | `GET .../secret-scanning/alerts`, `PATCH .../secret-scanning/alerts/{alert_number}` | Secret scanning alerts: read, write |
-| Environment read (`gh api .../environments/pypi`, its branch policies) | `GET .../environments/{environment_name}`, `GET .../environments/{environment_name}/deployment-branch-policies` | Actions: read |
-| Releases: view, create, edit (`gh release view/create/edit`) | `GET .../releases/tags/{tag}`, `POST .../releases`, `PATCH .../releases/{release_id}` | Contents: read / write (create and edit also listed under Workflows: write) |
-| Rulesets: read | `GET .../rulesets`, `GET .../rulesets/{ruleset_id}` | Metadata: read |
-| Repository settings: read | `GET /repos/{owner}/{repo}` | Metadata: read |
-| Branch protection: read | `GET .../branches/{branch}/protection` | **Administration: read**. Leaving out Administration loses this read; the repository uses rulesets and has no classic protection on `main` (RUN, 404 "Branch not protected"), so the ruleset reads above cover it. |
+| Use (`gh` command or `gh api` call) | REST route on the page | Permission | Observed |
+|---|---|---|---|
+| Merge a PR (`gh pr merge`) | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` | Contents: write | Worked. |
+| View a PR (`gh pr view`) | `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Contents: read, or Pull requests: read | Worked. |
+| List and view runs (`gh run list`, `gh run view`, `gh run watch`) | `GET .../actions/runs`, `GET .../actions/runs/{run_id}` | Actions: read | Worked. |
+| Run logs (`gh run view --log`, `gh api .../logs`) | `GET .../actions/runs/{run_id}/logs`, `GET .../actions/jobs/{job_id}/logs` | Actions: read | Worked (job logs). |
+| Start a workflow (`gh workflow run`, the rehearsal) | `POST .../actions/workflows/{workflow_id}/dispatches` | Actions: write | Not exercised. |
+| Re-run a run (`gh run rerun`) | `POST .../actions/runs/{run_id}/rerun` | Actions: write | Route reached. A CodeQL default-setup run is not re-runnable by design. |
+| Read an issue (`gh issue view`) | `GET .../issues/{issue_number}` | Issues: read | Worked. |
+| Create an issue (`gh issue create`) | `POST .../issues` | Issues: write | Worked. |
+| Edit or close an issue (`gh issue edit`, `gh issue close`) | `PATCH .../issues/{issue_number}` | Issues: write, or Pull requests: write | Not exercised. |
+| Comment (`gh issue comment`, `gh pr comment`) | `POST .../issues/{issue_number}/comments` | Issues: write, or Pull requests: write | `gh issue comment` failed with `addComment` until the owner added Issues: write to the token. |
+| Code-scanning alerts: read, dismiss | `GET .../code-scanning/alerts`, `PATCH .../code-scanning/alerts/{alert_number}` | Code scanning alerts: read, write | Read worked. Dismiss not exercised. |
+| Dependabot alerts: read, dismiss | `GET .../dependabot/alerts`, `PATCH .../dependabot/alerts/{alert_number}` | Dependabot alerts: read, write | Read worked. Dismiss not exercised. |
+| Secret-scanning alerts: read, dismiss | `GET .../secret-scanning/alerts`, `PATCH .../secret-scanning/alerts/{alert_number}` | Secret scanning alerts: read, write | Not exercised. |
+| Environment read (`gh api .../environments/pypi`, its branch policies) | `GET .../environments/{environment_name}`, `GET .../environments/{environment_name}/deployment-branch-policies` | Actions: read | Not exercised. |
+| Releases: view, create, edit (`gh release view/create/edit`) | `GET .../releases/tags/{tag}`, `POST .../releases`, `PATCH .../releases/{release_id}` | Contents: read / write (create and edit also listed under Workflows: write) | `gh release view` worked. Create and edit not exercised. |
+| Rulesets: read | `GET .../rulesets`, `GET .../rulesets/{ruleset_id}` | Metadata: read | Not exercised. |
+| Repository settings: read | `GET /repos/{owner}/{repo}` | Metadata: read | Not exercised. |
+| Branch protection: read | `GET .../branches/{branch}/protection` | **Administration: read**. Leaving out Administration loses this read; the repository uses rulesets and has no classic protection on `main` (RUN, 404 "Branch not protected"), so the ruleset reads above cover it. | Refused as intended: 403, because the token has no Administration. |
 
-Every row asked for was found on the page; none is marked "not found".
+Also observed with the token, in no row above: `git push`, `gh pr create`, `gh pr update-branch`, `gh pr checks`, the
+push of a release tag and the release workflow that tag started.
 
 ## Not established (to verify before relying on it)
 
