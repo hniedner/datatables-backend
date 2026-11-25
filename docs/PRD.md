@@ -939,8 +939,11 @@ A column search holding both a value and a non-empty `multi_values` list is refu
 #### PRD-F40
 
 A global search carrying a `multi_values` list is refused with `invalid_filter`; an empty list is idle.
+The entries of a global list are not read, so PRD-F14 and PRD-F15 do not apply to them.
 
 - **Reason:** `multi_values` belongs to a column search; on the global search the list would be dropped silently.
+  Only a client that builds its own request sends such a list, and refusing the list first names the one fix it needs;
+  reading its entries would ask the user to fix a value the request must drop anyway.
 - **Priority:** must
 
 #### PRD-F41

@@ -2696,6 +2696,15 @@ def test_a_regex_that_is_no_categorical_filter_is_refused_and_nothing_is_sent(pa
     assert (client.searches, client.counts) == ([], [])
 
 
+def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex_and_nothing_is_sent():
+    """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
+    non-categorical regex measured as raw text answers `value_too_long` instead."""
+    client = Client()
+    search = {'value': 'a.' + 'x' * 256, 'regex': True}
+    refused(table.fetch_sync(request(*NAMES, column_search={'title': search}), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
 @pytest.mark.parametrize('value', ['red', '^(red)$'])
 def test_a_regex_global_search_with_a_word_is_refused_and_nothing_is_sent(value: str):
     """SPEC-F18.2."""

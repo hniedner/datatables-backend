@@ -187,6 +187,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   column search of 256 code points on a name the server does not declare, each answer the code of step 1, not
   `invalid_filter`. Within one filter, a control character in any value comes before the length of any value, which
   comes before the words: `multi_values` `["a" x 256, "b\x01"]` → `invalid_character`.
+- **SPEC-F14.6** [all] A column search on `name` with `regex: true` and `a.` followed by 256 `x` → error_code
+  `invalid_filter`, not `value_too_long`: the unescaped `.` makes it no categorical filter, so PRD-F14 measures no
+  alternative (after unescaping, not the raw pattern) and PRD-F18 refuses it as any other regex.
 - **SPEC-F15.1** [all] U+0000 in the global search → error_code `invalid_character`; so do U+0009 (TAB), U+001B and
   U+007F.
 - **SPEC-F15.2** [all] U+0000 in a column search, in a SearchBuilder `=` value, in a categorical value and in a
@@ -446,7 +449,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   1, 2, 3, 4.
 - **SPEC-F40.2** [all] A global search with `multi_values` holding one entry with the control character U+0001, or
   one entry of 256 characters → error_code `invalid_filter`, not `invalid_character` or `value_too_long`: the form is
-  refused without its entries being read (`SPEC-E3.8`).
+  refused without its entries being read (PRD-F40).
 
 ## Searchable, timezone text, booleans
 

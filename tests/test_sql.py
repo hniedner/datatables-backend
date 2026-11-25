@@ -1550,6 +1550,13 @@ def test_a_regex_that_is_no_categorical_filter_is_refused(session: Session, patt
     refused(every_type.fetch_sync(params, session))
 
 
+def test_a_long_regex_that_is_no_categorical_filter_is_refused_as_a_regex(session: Session):
+    """SPEC-F14.6: PRD-F14 measures a categorical alternative after unescaping, not the raw pattern; a long
+    non-categorical regex measured as raw text answers `value_too_long` instead."""
+    params = request(*EVERY_TYPE, column_search={'team': {'value': 'a.' + 'x' * 256, 'regex': True}})
+    refused(every_type.fetch_sync(params, session))
+
+
 @pytest.mark.parametrize('pattern', [r'^C:\\$', r'^(C:\\)$', r'C:\\'])
 def test_a_value_that_ends_in_an_escaped_backslash_is_read_in_every_form(session: Session, pattern: str):
     r"""SPEC-F19.2: row 6 holds `C:\`. In the form `^v$` the `$` after `C:\\` is the anchor, not an escaped `$`;
