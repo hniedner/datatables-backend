@@ -7,13 +7,15 @@ requirement.
 
 ## How it was measured
 
-CI run 45502948086 of a throwaway branch (`measure/56-decimal-binds`, closed unmerged), on PostgreSQL 18.7 (psycopg 3
-and psycopg2 with asyncpg), MySQL 8.4.13 (PyMySQL and mysqlclient, with aiomysql), MariaDB 12.3.3 (PyMySQL, aiomysql),
-SQL Server 2022 (16.0.4325.4, pyodbc and aioodbc, ODBC Driver 18) and SQLite 3.46.1 (pysqlite and aiosqlite). One test
-created a `Numeric(20, 2)` column `n` and a `Float(53)` column `f` holding the same six values and, for each case
-below, sent one condition with three binds (a Python `float`, a `Decimal` typed by the column, and a `Decimal` typed
-by a `Numeric()` without precision or scale), sync and async, and the same request through the library as it was on
-the branch's base, main at b716023 ("library today"). The branch's logs expire with the run; the tables are quoted below.
+CI run 45502948086 of a throwaway branch (`measure/56-decimal-binds`, pull request #185, a draft closed unmerged), on
+PostgreSQL 18.7 (psycopg 3 and psycopg2 with asyncpg), MySQL 8.4.13 (PyMySQL and mysqlclient, with aiomysql), MariaDB
+12.3.3 (PyMySQL, aiomysql), SQL Server 2022 (16.0.4325.4, pyodbc and aioodbc, ODBC Driver 18) and SQLite 3.46.1
+(pysqlite and aiosqlite). One test created a `Numeric(20, 2)` column `n` and a `Float(53)` column `f` holding the same
+six values and, for each case below, sent one condition with three binds (a Python `float`, a `Decimal` typed by the
+column, and a `Decimal` typed by a `Numeric()` without precision or scale), sync and async, and the same request
+through the library as it was on 01307bf, the branch's base (main) ("library today"), which is before #187. #187 has
+since fixed the asyncpg overflow that the table shows for `< 9999...` of 25 digits on the column-typed bind. The
+branch's logs expire with the run; the tables are quoted below.
 
 The stored values, read back from every server: 12345678901234567.89, 12345678901234567.90, 12345678901234568.00,
 0.30, 0.31 and 0.00 (rows 1 to 6). SQLite reads back 12345678901234568.00 for the first three. Not measured: other
