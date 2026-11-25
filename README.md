@@ -19,8 +19,9 @@ The library is read-only and framework-agnostic.
 > features and never breaks; a minor release (0.x) may break the Python API and lists each such change in
 > [CHANGELOG.md][changelog], so `~=0.1.1` takes every feature and fix and no break. The same holds on the wire: a patch
 > release may answer a request that an earlier one refused, and nothing else changes, except that a patch release may
-> refuse a request to close a security hole, and its notes say so; what an accepted request means, the shape of the
-> answer and the set of error codes change only in a minor release whose notes say so. See [docs/PRD.md][prd] for the
+> refuse a request to close a security hole, and that a patch release may correct an answer that was wrong, and its
+> notes say so; what an accepted request means, the shape of the answer and the set of error codes change only in a
+> minor release whose notes say so. See [docs/PRD.md][prd] for the
 > scope and design.
 
 If you need a SQL backend with editing (DataTables Editor), use SpryMedia's own
