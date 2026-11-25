@@ -387,19 +387,28 @@ filter, and it sees nothing else.
   scope); not run on a server.
 - **Requirement:** PRD-C15.
 
-### A number outside the range of its field fails the request
+### A number outside the range of an undeclared field fails the request
 
-This is a limit of the library, not of OpenSearch, which says clearly what it refuses. Issue #47 holds the
-fix, so it may change.
+This is a limit of the library, not of OpenSearch, which says clearly what it refuses. Declare the field's kind and
+it goes away (PRD-D23).
 
-- **What you see:** a number that the field's own mapping cannot hold (`long`, `integer`, `unsigned_long`) is
-  refused by the server with a 400, which reaches the application as the client's `RequestError`, not as
-  `invalid_number`. The library does not read the mapping, so it cannot know the range. SQL answers such a number
-  on an integer column with `invalid_number`. A `double` field takes every finite number, and refuses a whole
-  number of 400 digits in the same way.
+- **What you see:** a number that the field's own mapping cannot hold (`integer`, `long`, `unsigned_long`, `float`,
+  `half_float`) is refused by the server with a 400, which reaches the application as the client's `RequestError`, not
+  as `invalid_number`. The library does not read the mapping, so a column that declares no kind cannot know the range.
+  `IndexColumn('pages', type='number', number='integer')` makes the library answer `invalid_number` before the query,
+  with the range in the message and never the value. A `double` field takes every number of at most 255 characters,
+  which is what every request holds, and so does a `scaled_float`.
+- **Two answers are wrong without an error:** `-1` in a list (`multi_values`, ColumnControl's list) on an
+  `unsigned_long` field finds the document holding 2^64-1, which OpenSearch reads it as; and a number beyond a
+  `scaled_float`'s range finds the document holding its largest value. A declared `unsigned_long` refuses the first; a
+  `scaled_float` has no kind, since nothing fails.
+- **`byte` and `short`:** OpenSearch refuses them only beyond an `integer`'s range and answers 128 on a `byte`, so a
+  declared `byte` or `short` carries the `integer` bounds. SQL bounds a `SmallInteger` by 16 bits (PRD-F25) and refuses
+  40000; OpenSearch answers 40000 on a `short`, and the library follows each engine.
 - **Example:** `=` 18446744073709551616 on a column over an `integer` or a `long` field.
-- **How it is known:** MEASURED 2026-11-22 on OpenSearch 3.10.0 and 2.19.7
-  (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`).
+- **How it is known:** MEASURED 2026-11-22 and 2026-11-25 on OpenSearch 3.10.0 and 2.19.7
+  (`docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md`,
+  `docs/decisions/011-opensearch-number-kinds.md`).
 - **Requirement:** PRD-F25, PRD-E7.
 
 ### A boolean field is a boolean column only when it is declared boolean

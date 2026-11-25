@@ -491,6 +491,28 @@ is judged by the type it stores. Every other declaration constructs as before, a
   found at start-up, not by a user.
 - **Priority:** must
 
+#### PRD-D23
+
+An OpenSearch number column may declare its field's number kind, and a number that OpenSearch refuses for that kind is
+refused with `invalid_number` before the query.
+
+The kind is `IndexColumn(..., type='number', number=...)`, the field's mapping type: `byte`, `short`, `integer`,
+`long`, `unsigned_long`, `float` or `half_float`. A number is checked as the request sends it, and the refusal names
+the field type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses it
+(MEASURED 2026-11-25, `docs/decisions/011-opensearch-number-kinds.md`): `integer` outside -2147483648 and 2147483647,
+`long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where a number rounds to
+infinity in their format (about 3.4e38 and 65520). `byte` and `short` carry the `integer` bounds: OpenSearch answers 128
+on a `byte` and 40000 on a `short`, so the library follows the engine and SQL's 16-bit bound for a `SmallInteger` does
+not apply there. A `double` or `scaled_float` field refuses nothing, so neither has a kind. A column that declares no
+kind is checked as before, by the floor every number column has: at most 255 characters (PRD-F14) and finite as a
+double (PRD-F25). `number=` on a column that is no number column raises `SchemaError` when the table is built. The
+mapping is still never read (PRD-D8).
+
+- **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
+  mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads
+  as 2^64-1. The names are the mapping's own, so the rule stays "write your field's type".
+- **Priority:** must
+
 ### 4.3 Filtering and search (F)
 
 #### PRD-F1
@@ -1847,12 +1869,17 @@ where a database decides. Each difference is stated here; every other answer is 
   SQL matches substrings only, so it does neither.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F11
-- On OpenSearch a number outside the range of the field's own mapping (`long`, `integer`, `unsigned_long`) is refused by
-  the server, so the request fails as any server failure does, a limit of this library, not of OpenSearch; SQL answers
-  such a number on an integer column with `invalid_number`. A `double` field takes every finite number. The measurements
-  are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix.
+- On OpenSearch a number column that declares no kind (PRD-D23) sends a number outside the range of its field's mapping
+  (`integer`, `long`, `unsigned_long`, `float`, `half_float`) to the server, which refuses it, so the request fails as
+  any server failure does, a limit of the library, not of OpenSearch: the mapping is never read (PRD-D8). Declare the
+  kind and the request is answered with `invalid_number`; a number of at most 255 characters is finite as a double, so a
+  `double` field takes every one. Two answers are wrong without an error: `-1` in a list on an `unsigned_long` finds the
+  document holding 2^64-1, and a number beyond a `scaled_float`'s range finds the document holding its largest value.
+  A kind that does not match the mapping has the same limit. The measurements are in
+  docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md and
+  docs/decisions/011-opensearch-number-kinds.md.
   - **Between:** SQL and OpenSearch
-  - **Requirement:** PRD-F25, PRD-E7
+  - **Requirement:** PRD-F25, PRD-E7, PRD-D23
 - On SQLite a number is not compared exactly with a `Numeric` column beyond about 15 significant digits: SQLite stores
   the column as an integer or a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is stored as
   12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there, so the number can match a
@@ -1987,7 +2014,7 @@ first release is published as version 0.1.0.
 | R3 OpenSearch keyword sort; analysed text dropped with a warning | PRD-O7, PRD-O5 (now refused, or skipped when the request also marks it unorderable), PRD-D13 |
 | R4 global search, column searches, "contains" | PRD-F1 to F3 (changed), F9, F12, F13, F11 |
 | R4 dates (SQL date text; OpenSearch global search skips dates) | PRD-F21, F22, F23, F24, F32 |
-| R4 numbers, "empty" | PRD-F25, F26 |
+| R4 numbers, "empty"; an OpenSearch number field's kind | PRD-F25, F26, D23 |
 | R4 SearchBuilder | PRD-F27 (PRD-F29 merged into it), F28, F30; an unknown condition: PRD-P6 |
 | R4 multi-select, `multi_values` | PRD-F16, F18, F20, F39, F40 |
 | R4 base filter | PRD-F31 |

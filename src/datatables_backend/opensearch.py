@@ -19,6 +19,7 @@ from dataclasses import replace
 from decimal import Decimal
 import json
 import logging
+import struct
 from typing import Any
 from typing import Literal
 from typing import Protocol
@@ -60,13 +61,34 @@ from .protocol import PartialResultError
 from .protocol import SchemaError
 from .rows import RowHooks
 
-__all__ = ['IndexColumn', 'SearchTable', 'TextKind', 'partial_answer']
+__all__ = ['IndexColumn', 'NumberKind', 'SearchTable', 'TextKind', 'partial_answer']
 
 log = logging.getLogger('datatables_backend')
 
 #: How a string field is mapped: ``keyword``; ``text`` (analysed only); or ``text`` with a ``.keyword`` subfield,
 #: which is what dynamic mapping creates for a string
 type TextKind = Literal['keyword', 'text', 'text+keyword']
+
+#: The mapping type of a number field, for the kinds that refuse a number (decision 011). ``byte`` and ``short`` are
+#: refused by OpenSearch only beyond an ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float``
+#: refuse nothing, so they have no kind.
+type NumberKind = Literal['byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float']
+
+#: What OpenSearch accepts for each ``NumberKind`` (decision 011): the lowest and the highest number, as the message
+#: names them. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The floats'
+#: range is where a number rounds to infinity in their format, which ``_accepted`` asks of ``struct``.
+_INTEGER_BOUNDS = (-(2**31), 2**31 - 1)
+_NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
+    'byte': _INTEGER_BOUNDS,
+    'short': _INTEGER_BOUNDS,
+    'integer': _INTEGER_BOUNDS,
+    'long': (-(2**63), 2**63 - 1),
+    'unsigned_long': (0, 2**64 - 1),
+    'float': (-3.4028234663852886e38, 3.4028234663852886e38),
+    'half_float': (-65504, 65504),
+}
+_FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
+_AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
 _MAX_RESULT_WINDOW = 10_000
@@ -82,9 +104,15 @@ class IndexColumn(Column):
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
     ``orderable=True`` on it raises ``SchemaError``.
+
+    A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
+    refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
+    fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
+    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``.
     """
 
     text: TextKind = 'text+keyword'
+    number: NumberKind | None = None
 
 
 class _SyncClient(Protocol):
@@ -274,7 +302,8 @@ class SearchTable:
             with mistakes.part():
                 must.append(_compile(column_search))
         if request.search_builder is not None:
-            must.append(_compile(request.search_builder))
+            with mistakes.part():  # a number the field refuses (step 3) waits for the plan's own, earlier mistakes
+                must.append(_compile(request.search_builder))
         mistakes.raise_first()
         beyond = None
         if params.start + params.length > self.max_result_window:  # the last step of PRD-E3, so any other mistake won
@@ -381,7 +410,14 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
     plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
-    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake."""
+    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
+    declared on a column that is no number column is the server's mistake too."""
+    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
+        raise SchemaError(
+            f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
+            f'range applies to it. Declare it IndexColumn("{column.name}", type="number", number="{column.number}"), '
+            'or drop number=.'
+        )
     if column.source != _DOCUMENT_ID:
         return column
     if column.orderable:
@@ -543,14 +579,14 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
         case Range():
             bounds: dict[str, Any] = {}
             if node.lower is not None:
-                bounds['gte' if node.lower.included else 'gt'] = _json(node.lower.value)
+                bounds['gte' if node.lower.included else 'gt'] = _number(column, node.lower.value)
             if node.upper is not None:
-                bounds['lte' if node.upper.included else 'lt'] = _json(node.upper.value)
+                bounds['lte' if node.upper.included else 'lt'] = _number(column, node.upper.value)
             if node.type == 'date':  # days, in the one format every date field reads
                 bounds = {**{key: str(day) for key, day in bounds.items()}, 'format': 'strict_date'}  # ISO days
             return {'range': {field: bounds}}
         case Equals() if node.type != 'string':
-            return {'term': {field: _json(node.value)}}
+            return {'term': {field: _number(column, node.value)}}
         case Equals():  # the plan lets no analysed-only text through to a match that needs the whole string (PRD-D19)
             return _term(column, cast(str, _keyword(column)), str(node.value))
         case Part() if node.where == 'any':
@@ -565,6 +601,38 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             )
         case OneOf():
             return _one_of(node)
+
+
+def _accepted(kind: str, sent: int | float) -> bool:
+    """Whether OpenSearch answers ``sent`` on a field of ``kind``. A float field refuses a number that rounds to
+    infinity in its format, which is where ``struct.pack`` raises ``OverflowError``. It is given a float: a whole number
+    too large for one raises ``OverflowError`` in ``float`` itself, where ``struct`` would raise ``struct.error``."""
+    if kind in _FLOAT_FORMATS:
+        try:
+            struct.pack(_FLOAT_FORMATS[kind], float(sent))
+        except OverflowError:
+            return False
+        return True
+    low, high = _NUMBER_BOUNDS[kind]
+    return low <= sent <= high  # exact: Python compares an int and a float without rounding either
+
+
+def _number(column: Column, value: Any) -> Any:
+    """``value`` as the request body carries it (``_json``), checked against the field type the column declares: a
+    number OpenSearch refuses for it is the user's mistake, answered before the query (PRD-D23). The check is on what is
+    sent: a number with a point goes as a float, which may round to the edge."""
+    sent = _json(value)
+    kind = column.number if isinstance(column, IndexColumn) else None
+    if kind is None or not isinstance(sent, int | float) or _accepted(kind, sent):
+        return sent
+    low, high = _NUMBER_BOUNDS[kind]
+    article = 'an' if kind in _AN else 'a'
+    raise mistake(
+        'datatables_number_out_of_range',
+        f'A number in the filter on "{column.name}" must be one OpenSearch accepts for {article} {kind} field, between '
+        f'{low} and {high}; use a number within that range.',
+        column,
+    )
 
 
 def _json(value: Any) -> Any:
@@ -586,7 +654,10 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     if field is not None and node.type == 'string' and _folds(column):
         # A terms query takes no case_insensitive, so a list of strings is one term query for each value
         return _any([*(_term(column, field, str(value)) for value in node.values), *missing])
-    clauses = [*([{'terms': {field: [_json(value) for value in node.values]}}] if node.values else []), *missing]
+    clauses = [
+        *([{'terms': {field: [_number(column, value) for value in node.values]}}] if node.values else []),
+        *missing,
+    ]
     return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 

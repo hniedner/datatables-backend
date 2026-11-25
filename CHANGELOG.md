@@ -12,6 +12,14 @@ and the versioning policy is in the README.
   opaque SHA-256 digest of the key, never a bound value. `fetch_sync` raises a `TypeError` for an async store: before
   it queries anything when the store's methods are coroutine functions, at the first store call when a plain method
   returns an awaitable ([#162]).
+- `IndexColumn(..., type='number', number=...)` declares an OpenSearch number field's mapping type: `byte`, `short`,
+  `integer`, `long`, `unsigned_long`, `float` or `half_float` (`NumberKind`, exported from
+  `datatables_backend.opensearch`). A number OpenSearch refuses for that type is answered with `invalid_number` before
+  the query, where it failed the request with the client's `RequestError`; the message names the range and never the
+  value. `byte` and `short` refuse only beyond an `integer`'s range, as OpenSearch does. A column that declares no kind
+  behaves as before, and `number=` on a column that is no number column raises `SchemaError`. A list of `-1` on an
+  undeclared `unsigned_long` still finds the document holding 2^64-1, which OpenSearch reads it as; a declared kind
+  refuses it ([#47]).
 
 ## [0.1.2] - 2026-11-25
 
@@ -235,6 +243,7 @@ What it does: see [0.1.0].
 [0.1.0rc2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc2
 [0.1.0rc1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.0rc1
 [#46]: https://github.com/hniedner/datatables-backend/issues/46
+[#47]: https://github.com/hniedner/datatables-backend/issues/47
 [#50]: https://github.com/hniedner/datatables-backend/issues/50
 [#58]: https://github.com/hniedner/datatables-backend/issues/58
 [#71]: https://github.com/hniedner/datatables-backend/issues/71

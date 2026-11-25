@@ -25,9 +25,12 @@ from datatables_backend import SchemaError
 from datatables_backend import TotalCache
 from datatables_backend import parse_request
 from datatables_backend.opensearch import IndexColumn
+from datatables_backend.opensearch import NumberKind
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import ERROR_CODES
+from .conftest import KIND_BOUNDS
+from .conftest import NUMBER_EDGES
 from .conftest import AsyncStore
 from .conftest import AwaitingStore
 from .conftest import EmptyStore
@@ -2847,3 +2850,134 @@ def test_columncontrol_logics_answered_on_analysed_text_send_the_equivalent_body
     assert expected != []
     assert _clauses(flags=columncontrol('body', logic, 'red fox')) == expected
     assert _clauses(flags=columncontrol_list('body', [''])) == _clauses(column_search={'body': {'multi_values': ['']}})
+
+
+# -- the number kinds of an index column (PRD-D23, decision 011) ---
+
+#: Each way a number reaches the query, as the keyword arguments of `request`.
+PATHS: dict[str, Callable[[str], dict[str, Any]]] = {
+    'equals': lambda text: criterion('n', '=', text),
+    'not-equals': lambda text: criterion('n', '!=', text),
+    'less': lambda text: criterion('n', '<', text),
+    'greater-or-equal': lambda text: criterion('n', '>=', text),
+    'between': lambda text: criterion('n', 'between', text, text),
+    'not-between': lambda text: criterion('n', '!between', text, text),
+    'column-search': lambda text: {'column_search': {'n': {'value': text}}},
+    'multi-values': lambda text: {'column_search': {'n': {'multi_values': [text, '7']}}},
+    'columncontrol': lambda text: {'flags': columncontrol('n', 'equal', text)},
+    'columncontrol-list': lambda text: {'flags': columncontrol_list('n', [text])},
+}
+
+
+def numbered(kind: NumberKind | None) -> SearchTable:
+    column = IndexColumn('n', type='number', number=kind) if kind else Column('n', type='number')
+    return SearchTable('docs', [IndexColumn('id', text='keyword'), column], unique_key='id')
+
+
+def asked(kind: NumberKind | None, **body: Any) -> tuple[DTResponse, Client]:
+    client = Client()
+    return numbered(kind).fetch_sync(request('id', 'n', **body), client), client
+
+
+@pytest.mark.parametrize(('kind', 'last', 'first'), NUMBER_EDGES)
+def test_a_number_is_refused_exactly_where_opensearch_refuses_it_for_the_declared_kind(
+    kind: NumberKind, last: str, first: str
+):
+    """SPEC-D23.1: the last value the field answers is sent; the first it refuses is answered with `invalid_number`
+    and nothing is sent. The edges are the measured ones (decision 011); `byte` and `short` carry an integer's, since
+    OpenSearch answers 128 on a byte."""
+    response, client = asked(kind, **criterion('n', '=', last))
+    assert response.error is None
+    assert len(client.searches) == 1
+    response, client = asked(kind, **criterion('n', '=', first))
+    text = refused(response, 'invalid_number')
+    assert (client.searches, client.counts) == ([], [])
+    assert f'{kind} field' in text
+    assert KIND_BOUNDS[kind] in text
+
+
+@pytest.mark.parametrize('path', PATHS)
+@pytest.mark.parametrize(('kind', 'last', 'first'), [NUMBER_EDGES[4], NUMBER_EDGES[12], NUMBER_EDGES[9]])
+def test_every_way_a_number_reaches_the_query_is_checked(path: str, kind: NumberKind, last: str, first: str):
+    """SPEC-D23.2: SearchBuilder conditions (a bound of a range, an equality, a negation), a column search, a
+    `multi_values` list (OpenSearch's `terms`, which reads -1 on an `unsigned_long` as 2^64-1 and answers without an
+    error) and both ColumnControl forms. The value the field answers goes through every one; the first it refuses is
+    refused by every one."""
+    response, client = asked(kind, **PATHS[path](last))
+    assert response.error is None
+    assert len(client.searches) == 1
+    response, client = asked(kind, **PATHS[path](first))
+    refused(response, 'invalid_number')
+    assert client.searches == []
+
+
+@pytest.mark.parametrize('kind', ['byte', 'short'])
+@pytest.mark.parametrize('text', ['128', '40000', '-129'])
+def test_a_byte_or_a_short_refuses_only_beyond_an_integer(kind: NumberKind, text: str):
+    """SPEC-D23.3: OpenSearch answers 128 on a `byte` and 40000 on a `short` (`=` finds nothing, `<=` every row), so a
+    refusal there would take away an answer the library gives without a kind."""
+    response, client = asked(kind, **criterion('n', '<=', text))
+    assert response.error is None
+    assert len(client.searches) == 1
+
+
+@pytest.mark.parametrize('kind', list(KIND_BOUNDS))
+def test_the_refusal_never_holds_the_value(kind: NumberKind):
+    """SPEC-D23.4: it names the field type and its range and the fix, never what the user sent."""
+    value = '9' * 45 + '73'  # beyond every kind, and no part of any bound
+    text = refused(asked(kind, **criterion('n', '=', value))[0], 'invalid_number')
+    assert value not in text
+    assert 'within that range' in text
+
+
+def test_a_value_past_a_fraction_that_rounds_to_the_edge_is_refused_as_it_is_sent():
+    """SPEC-D23.5: a number with a point goes as a float, so 2^63 - 0.5 is the float 2^63, which OpenSearch refuses on a
+    `long`, though the exact number is inside the range. The check is on what is sent."""
+    refused(asked('long', **criterion('n', '=', '9223372036854775807.5'))[0], 'invalid_number')
+    refused(asked('long', **criterion('n', '=', '9223372036854775806.5'))[0], 'invalid_number')
+    assert asked('long', **criterion('n', '=', '9223372036854774784.5'))[0].error is None  # a float below 2^63
+
+
+def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
+    """SPEC-D23.6, PRD section 5: 2^64 reaches the server, which refuses it on a `long` or an `integer`; no kind, no
+    check beyond the finite double the plan insists on."""
+    response, client = asked(None, **criterion('n', '=', str(2**64)))
+    assert response.error is None
+    assert client.searches[0]['query']['bool']['must'][0] == {'term': {'n': 2**64}}
+
+
+def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():
+    """SPEC-D23.7: a number the plan reads holds at most 255 characters, so a double holds it; `1e400` is no finite
+    double. Every number column has the floor, with or without a kind."""
+    assert asked(None, **criterion('n', '=', '9' * 255))[1].searches
+    refused(asked(None, **criterion('n', '=', '9' * 256))[0], 'value_too_long')
+    refused(asked(None, **criterion('n', '=', '1e400'))[0], 'invalid_number')
+
+
+def test_a_number_mistake_waits_for_an_earlier_step_of_the_plan_in_a_search_builder_too():
+    """SPEC-D23.8: the SearchBuilder is built in one place with the column searches; a range mistake (step 3) found
+    there must not be raised on the spot while the plan holds a date mistake (step 2) beside it."""
+    columns = [Column('created', type='date'), IndexColumn('n', type='number', number='integer')]
+    searched = SearchTable('docs', columns, unique_key='n')
+    tree = {
+        'searchBuilder': {
+            'logic': 'AND',
+            'criteria': [
+                {'condition': '=', 'origData': 'created', 'value': ['xx']},
+                {'condition': '=', 'origData': 'n', 'value': ['2147483648']},
+            ],
+        }
+    }
+    refused(searched.fetch_sync(request('created', 'n', **tree), Client()), 'invalid_date')
+
+
+def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_names_the_fix():
+    """SPEC-D23.9: raised when the table is built; the message names the column and what to declare."""
+    with pytest.raises(SchemaError, match=r'"title".*type="number"'):
+        SearchTable('docs', [IndexColumn('id', text='keyword'), IndexColumn('title', number='long')], unique_key='id')
+    with pytest.raises(SchemaError, match='"created"'):
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('created', type='date', number='long')],
+            unique_key='id',
+        )
