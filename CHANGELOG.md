@@ -5,6 +5,14 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Added
+
+- `total_cache=` takes any object with `get` and `put`: `TotalStore`, or `AsyncTotalStore` for `fetch`, both exported
+  from `datatables_backend`. `TotalCache` is the in-process one and is unchanged for a caller. The store is handed an
+  opaque SHA-256 digest of the key, never a bound value. `fetch_sync` raises a `TypeError` for an async store: before
+  it queries anything when the store's methods are coroutine functions, at the first store call when a plain method
+  returns an awaitable ([#162]).
+
 ## [0.1.2] - 2026-11-25
 
 This release makes number filters on SQL `Numeric` columns exact, fixes an error on PostgreSQL with asyncpg, and stops
@@ -234,6 +242,7 @@ What it does: see [0.1.0].
 [#79]: https://github.com/hniedner/datatables-backend/issues/79
 [#151]: https://github.com/hniedner/datatables-backend/issues/151
 [#152]: https://github.com/hniedner/datatables-backend/issues/152
+[#162]: https://github.com/hniedner/datatables-backend/issues/162
 [#163]: https://github.com/hniedner/datatables-backend/issues/163
 [#164]: https://github.com/hniedner/datatables-backend/issues/164
 [#165]: https://github.com/hniedner/datatables-backend/issues/165

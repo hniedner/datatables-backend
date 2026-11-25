@@ -119,6 +119,19 @@ means a SQL connection that records each statement it runs, or an OpenSearch cli
   request answers `recordsTotal` 4; after a row 5 is inserted and `TotalCache.clear()` is called, the next request
   counts again and answers 5 (without the clear it would answer 4).
 - **SPEC-C16.2** [SQL] Constructing a table and a cache registers no SQLAlchemy event listener on the engine or pool.
+- **SPEC-C18.1** [all] A plain class with `get` and `put` (not a `TotalCache`) as `total_cache`, through `fetch_sync`:
+  [SQL] an unfiltered request twice, a row deleted between them, with a scope whose bound value is a distinctive
+  string → `recordsTotal` 5 both times; [OS] recording, a global search `x` twice with a scope holding a distinctive
+  string → one total count sent and `recordsTotal` 40 both times. Every key the store was given is 64 hexadecimal
+  characters, and none contains the distinctive string (PRD-C18: a store sees a digest, never a bound value).
+- **SPEC-C18.2** [all] As `SPEC-C18.1` through `fetch` with a store whose `get` and `put` are coroutine functions, and
+  with a store whose methods are plain functions returning awaitables: the same answers and the same keys.
+- **SPEC-C18.3** [all] As `SPEC-C18.1`, through `fetch_sync` and through `fetch`, with a store whose `__len__` returns 0:
+  the total is still served from it on the second request.
+- **SPEC-C18.4** [all] `fetch_sync` with a store whose methods are coroutine functions raises `TypeError` whose message
+  contains `call fetch`, before any statement or search is sent. With a store whose methods are plain functions
+  returning awaitables, it raises the same on a request that calls `get` and on one that only calls `put` ([OS], an
+  unfiltered request; [SQL] either).
 - **SPEC-C17.1** [all] A request of exactly 960 conditions is answered (PRD-C17). [SQL] Nearly the most binds: lists of
   256 and 255 days on `seen` and `seen_tz`, which may hold a time (two parameters each), 64 criteria `between` `0` and
   `99` on `id`, 24 column searches of the 16 words of `LARGEST_WORDS` and one of a word, on columns that read

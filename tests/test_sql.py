@@ -76,6 +76,10 @@ from datatables_backend.sqlalchemy import SQLTable
 from .conftest import ERROR_CODES
 from .conftest import LARGEST_WORDS
 from .conftest import ROWS
+from .conftest import AsyncStore
+from .conftest import AwaitingStore
+from .conftest import EmptyStore
+from .conftest import Store
 from .conftest import async_engine
 from .conftest import checked_database
 from .conftest import columncontrol
@@ -331,6 +335,83 @@ def test_a_base_filter_only_its_database_can_compile_works_with_a_cache(session:
     """SPEC-C15.7: a cache key compiled for another dialect than the session's raises on every request."""
     cached = SQLTable(people, COLUMNS, base_filter=_every_row(), total_cache=TotalCache(ttl=60))
     assert cached.fetch_sync(request(*ALL), session).recordsTotal == 5
+
+
+SCOPE_VALUE = 'tenant-zq-4711'
+
+
+def test_a_store_that_is_no_total_cache_serves_the_second_draw_and_sees_only_digests(session: Session):
+    """SPEC-C18.1: a plain class with `get` and `put`. A row deleted between two draws leaves the total at 5, so the
+    second is served from it. Every key it was given is a SHA-256 digest: the scope's bound value is in the count that
+    makes the key, and never reaches the store."""
+    store = Store()
+    cached = SQLTable(people, COLUMNS, total_cache=store)
+    scope = people.c.team != SCOPE_VALUE
+    assert cached.fetch_sync(request(*ALL), session, scope=scope).recordsTotal == 5
+    session.execute(people.delete().where(people.c.id == 5))
+    assert cached.fetch_sync(request(*ALL), session, scope=scope).recordsTotal == 5
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+async def test_an_async_store_serves_the_second_async_draw_and_sees_only_digests(async_session: AsyncSession):
+    """SPEC-C18.2: the same through `fetch` with a store whose methods are coroutines."""
+    store = AsyncStore()
+    cached = SQLTable(people, COLUMNS, total_cache=store)
+    scope = people.c.team != SCOPE_VALUE
+    assert (await cached.fetch(request(*ALL), async_session, scope=scope)).recordsTotal == 5
+    await async_session.execute(people.delete().where(people.c.id == 5))
+    assert (await cached.fetch(request(*ALL), async_session, scope=scope)).recordsTotal == 5
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+async def test_a_store_whose_methods_return_awaitables_is_awaited_too(async_session: AsyncSession):
+    """SPEC-C18.2: `fetch` awaits what `get` and `put` return, whichever way the store is written."""
+    store = AwaitingStore()
+    cached = SQLTable(people, COLUMNS, total_cache=store)
+    scope = people.c.team != SCOPE_VALUE
+    assert (await cached.fetch(request(*ALL), async_session, scope=scope)).recordsTotal == 5
+    await async_session.execute(people.delete().where(people.c.id == 5))
+    assert (await cached.fetch(request(*ALL), async_session, scope=scope)).recordsTotal == 5
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+def test_a_store_that_says_it_is_empty_is_used_all_the_same(session: Session):
+    """SPEC-C18.3: a store is in use because it was given, not because it is truthy."""
+    cached = SQLTable(people, COLUMNS, total_cache=EmptyStore())
+    assert cached.fetch_sync(request(*ALL), session).recordsTotal == 5
+    session.execute(people.delete().where(people.c.id == 5))
+    assert cached.fetch_sync(request(*ALL), session).recordsTotal == 5
+
+
+async def test_the_async_fetch_uses_a_store_that_says_it_is_empty_too(async_session: AsyncSession):
+    """SPEC-C18.3 through `fetch`, which reads and fills the store in code of its own."""
+    cached = SQLTable(people, COLUMNS, total_cache=EmptyStore())
+    assert (await cached.fetch(request(*ALL), async_session)).recordsTotal == 5
+    await async_session.execute(people.delete().where(people.c.id == 5))
+    assert (await cached.fetch(request(*ALL), async_session)).recordsTotal == 5
+
+
+def test_fetch_sync_with_an_async_store_raises_before_any_statement_runs(session: Session):
+    """SPEC-C18.4: the message names the condition and the fix, and the database saw nothing."""
+    statements: list[str] = []
+    event.listen(session.get_bind(), 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    cached = SQLTable(people, COLUMNS, total_cache=AsyncStore())
+    with pytest.raises(TypeError, match='call fetch'):
+        cached.fetch_sync(request(*ALL), session)
+    assert not [s for s in statements if 'dtb_test_people' in s]
+
+
+def test_fetch_sync_with_a_store_returning_awaitables_raises(session: Session):
+    """SPEC-C18.4: `get` returns an awaitable the sync path cannot use; it is an error, not a total."""
+    cached = SQLTable(people, COLUMNS, total_cache=AwaitingStore())
+    with pytest.raises(TypeError, match='call fetch'):
+        cached.fetch_sync(request(*ALL), session)
 
 
 # -- ordering ---

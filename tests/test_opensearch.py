@@ -9,6 +9,7 @@ from collections.abc import Callable
 from collections.abc import Mapping
 import json
 import logging
+import re
 from typing import Any
 from typing import cast
 
@@ -27,6 +28,10 @@ from datatables_backend.opensearch import IndexColumn
 from datatables_backend.opensearch import SearchTable
 
 from .conftest import ERROR_CODES
+from .conftest import AsyncStore
+from .conftest import AwaitingStore
+from .conftest import EmptyStore
+from .conftest import Store
 from .conftest import columncontrol
 from .conftest import columncontrol_list
 from .conftest import criterion
@@ -2037,6 +2042,83 @@ async def test_the_async_fetch_counts_a_cached_total_once_between_two_requests_w
     answers = [await cached.fetch(request(*NAMES, search={'value': 'x'}), client) for _ in range(2)]
     assert [answer.recordsTotal for answer in answers] == [40, 40]
     assert len(client.counts) == 1
+
+
+SCOPE_VALUE = 'tenant-zq-4711'
+SCOPE = {'term': {'tenant': SCOPE_VALUE}}
+
+
+def test_a_store_that_is_no_total_cache_serves_the_second_draw_and_sees_only_digests():
+    """SPEC-C18.1: a plain class with `get` and `put`; the second filtered draw is served from it, so one count runs.
+    Every key it was given is a SHA-256 digest: the request's scope is in the key's source, and never reaches the store."""
+    store, client = Store(), Client(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=store)
+    answers = [cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client, scope=SCOPE) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+async def test_an_async_store_serves_the_second_async_draw_and_sees_only_digests():
+    """SPEC-C18.2: the same through `fetch` with a store whose methods are coroutines."""
+    store, client = AsyncStore(), AsyncClient(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=store)
+    answers = [await cached.fetch(request(*NAMES, search={'value': 'x'}), client, scope=SCOPE) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+async def test_a_store_whose_methods_return_awaitables_is_awaited_too():
+    """SPEC-C18.2: `fetch` awaits what `get` and `put` return, whichever way the store is written."""
+    store, client = AwaitingStore(), AsyncClient(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=store)
+    answers = [await cached.fetch(request(*NAMES, search={'value': 'x'}), client, scope=SCOPE) for _ in range(2)]
+    assert [answer.recordsTotal for answer in answers] == [40, 40]
+    assert len(client.counts) == 1
+    assert store.keys
+    assert all(re.fullmatch('[0-9a-f]{64}', key) for key in store.keys)
+    assert not any(SCOPE_VALUE in key for key in store.keys)
+
+
+def test_a_store_that_says_it_is_empty_is_used_all_the_same():
+    """SPEC-C18.3: a store is in use because it was given, not because it is truthy."""
+    client = Client(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=EmptyStore())
+    for _ in range(2):
+        cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert len(client.counts) == 1
+
+
+async def test_the_async_fetch_uses_a_store_that_says_it_is_empty_too():
+    """SPEC-C18.3 through `fetch`, which reads and fills the store in code of its own."""
+    client = AsyncClient(total=3, count=40)
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=EmptyStore())
+    for _ in range(2):
+        await cached.fetch(request(*NAMES, search={'value': 'x'}), client)
+    assert len(client.counts) == 1
+
+
+def test_fetch_sync_with_an_async_store_raises_before_anything_is_sent():
+    """SPEC-C18.4: the message names the condition and the fix, and no search or count has run."""
+    client = Client()
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=AsyncStore())
+    with pytest.raises(TypeError, match='call fetch'):
+        cached.fetch_sync(request(*NAMES, search={'value': 'x'}), client)
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize('params', [request(*NAMES), request(*NAMES, search={'value': 'x'})])
+def test_fetch_sync_with_a_store_returning_awaitables_raises_and_never_drops_one_silently(params: DTParams):
+    """SPEC-C18.4: an unfiltered draw only calls `put`, a filtered one `get` first; either way the awaitable the store
+    returned is no answer, and a dropped one would leave the total uncached without a word."""
+    cached = SearchTable('docs', COLUMNS, unique_key='id', total_cache=AwaitingStore())
+    with pytest.raises(TypeError, match='call fetch'):
+        cached.fetch_sync(params, Client())
 
 
 class Indexes:

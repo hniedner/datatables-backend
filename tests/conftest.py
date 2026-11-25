@@ -6,6 +6,7 @@ from datetime import date
 from datetime import datetime
 import os
 from pathlib import Path
+from types import CoroutineType
 from typing import Any
 
 from hypothesis import HealthCheck
@@ -343,3 +344,63 @@ def reshaped(key: str, form: str) -> str:
     if form == 'mixed':  # dots and brackets alternate, each following the other kind
         return head + ''.join(f'[{part}]' if position % 2 else f'.{part}' for position, part in enumerate(parts))
     return '.'.join([head, *parts])
+
+
+# -- total stores that are no TotalCache (PRD-C18) ---
+
+
+class Store:
+    """A total store that is no `TotalCache`: a dict, with the keys it was given kept for the tests to read."""
+
+    def __init__(self) -> None:
+        self.totals: dict[str, int] = {}
+        self.keys: list[str] = []
+
+    def get(self, key: str) -> int | None:
+        self.keys.append(key)
+        return self.totals.get(key)
+
+    def put(self, key: str, total: int) -> None:
+        self.keys.append(key)
+        self.totals[key] = total
+
+
+class AsyncStore:
+    """`Store` with coroutine methods, for `fetch`."""
+
+    def __init__(self) -> None:
+        self.inner = Store()
+
+    async def get(self, key: str) -> int | None:
+        return self.inner.get(key)
+
+    async def put(self, key: str, total: int) -> None:
+        self.inner.put(key, total)
+
+    @property
+    def keys(self) -> list[str]:
+        return self.inner.keys
+
+
+class EmptyStore(Store):
+    """Holds totals but says it is empty, as a container whose `__len__` counts something else does."""
+
+    def __len__(self) -> int:
+        return 0
+
+
+class AwaitingStore:
+    """An async store whose methods are plain functions returning awaitables: no `iscoroutinefunction` sees it."""
+
+    def __init__(self) -> None:
+        self.inner = AsyncStore()
+
+    def get(self, key: str) -> 'CoroutineType[Any, Any, int | None]':
+        return self.inner.get(key)
+
+    def put(self, key: str, total: int) -> 'CoroutineType[Any, Any, None]':
+        return self.inner.put(key, total)
+
+    @property
+    def keys(self) -> list[str]:
+        return self.inner.keys

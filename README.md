@@ -156,7 +156,7 @@ A value is text or a whole number. A list with static `options` shows them and i
 `columnControl: {<column>: [{label, value}]}` to the answer itself ([the recipe][usage-columncontrol]), and an answer
 with `columnControl: {}` hides a list that has none.
 
-Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
+Options (`TotalCache` or a total store of your own, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
 A runnable example, FastAPI on SQLite with a DataTables page, is in
 [`examples/`](https://github.com/hniedner/datatables-backend/tree/main/examples); it is not part of the package.
