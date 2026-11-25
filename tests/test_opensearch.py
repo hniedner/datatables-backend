@@ -660,6 +660,29 @@ def test_a_column_search_with_no_word_sends_no_clause_on_a_number_or_a_date(colu
     assert query(client) == []
 
 
+@pytest.mark.parametrize(
+    ('column', 'term', 'code'), [('pages', '7', 'invalid_number'), ('created', '2024', 'invalid_date')]
+)
+def test_a_number_or_date_search_without_a_word_is_idle_and_one_with_a_word_is_read_whole(
+    column: str, term: str, code: str
+):
+    """SPEC-F34.3: PRD-F6 decides the whole text before it is read as one term. Breaks if a text with no word is
+    read as a number or a date (`!7` refused), or if a text holding `!` or quotes beside a word is read as that word
+    alone (`!x 7` answered as `7`)."""
+
+    def sent(value: str) -> tuple[DTResponse, Client]:
+        client = Client()
+        return table.fetch_sync(request(*NAMES, column_search={column: {'value': value}}), client), client
+
+    (response, client), (_, without) = sent('!7'), sent('')
+    assert response.error is None, response.error
+    assert (client.searches, client.counts) == (without.searches, without.counts)
+    for text in (f'!x {term}', f'"" {term}'):
+        response, client = sent(text)
+        refused(response, code)
+        assert (client.searches, client.counts) == ([], [])
+
+
 def test_a_date_column_search_reads_a_day_with_a_time_after_it_as_that_day():
     """SPEC-F34.1: the time comes after a space, and it is one date term all the same, not several (PRD-F34)."""
     client, params = Client(), request(*NAMES)

@@ -408,6 +408,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   day with a time after it (PRD-F22) → rows 1.
 - **SPEC-F34.2** [OS] Column search on `made`: `2024 2023`, `!2024`, `"2024"` and `2024-13` → error_code
   `invalid_date`.
+- **SPEC-F34.3** [OS] PRD-F6 reads the whole text first, on `made` and on `price` alike: `!7`, a negation PRD-F35
+  drops, holds no word and adds nothing (the request sends what it sends without that text); `!x 2024` and `"" 2024`
+  hold a word beside `!` or quotes, are read as one term and are error_code `invalid_date` on `made`, as `!x 7` and
+  `"" 7` are `invalid_number` on `price` (PRD-F33), and nothing is sent.
 - **SPEC-F35.1** [all] Given rows 5 (`note` `a-b`) and 6 (`note` `a.b`), every other column of both but `id` NULL
   or missing: global search `!-` → rows 3, 6 on SQL (the date text of rows 1, 2, 4 holds `-`) and rows 1, 2, 3, 4, 6
   on OS (dates take no part, PRD-F32); `!.` → rows 1, 2, 3, 4, 5 on all.
