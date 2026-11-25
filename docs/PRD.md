@@ -788,7 +788,8 @@ Server a number with more than 38 digits in all, before and after the decimal po
 counted), is out of range on a `Numeric` column, whatever precision the column declares (MEASURED 2026-11-22 for a
 whole number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary of 38 is pinned by the
 tests, not measured); no other database bounds a `Numeric` column, and a declared precision bounds
-nothing. On a SQL column that is not an integer, a number written with a decimal point or an exponent, and a whole
+nothing. The zero before the point of a number below one is not one of those 38 digits.
+On a SQL column that is not an integer, a number written with a decimal point or an exponent, and a whole
 number outside the signed 64-bit range, is compared as the column compares: exactly on a `Numeric` column (see
 section 5 for SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a
 type. A number is finite when a floating-point number holds it, so `1e400` is refused, and so is an exponent beyond
@@ -1333,6 +1334,7 @@ SQL integer column's range or more than 38 digits on SQL Server (PRD-F25), or a 
 (PRD-D23), in read order.
 A refused order entry (PRD-O1, PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request
 is answered before it.
+A number that is not finite, such as `1e400`, is a value its column cannot read: a mistake of step 2.
 
 - **Reason:** One code per kind of mistake, decidable when a request holds several.
 - **Priority:** must
