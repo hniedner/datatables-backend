@@ -161,6 +161,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter`.
 - **SPEC-F13.3** [all] On a table whose every column is declared unsearchable, an empty global search → rows 1, 2,
   3, 4 (nothing is asked).
+- **SPEC-F13.4** [all] On a table whose every column is declared unsearchable, a global search that PRD-F6 reduces
+  to no word, a lone `"`, is idle → rows 1, 2, 3, 4 (nothing is asked).
 - **SPEC-F14.1** [all] A global search of one word of 255 code points is answered; 256 → error_code
   `value_too_long`. The same holds for a word of 255 supplementary-plane characters (each one code point) and 256 of
   them.
@@ -429,6 +431,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   with spaces only (PRD-F6), does not.
 - **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
   database or the cluster exactly what it asks when the column is named once.
+- **SPEC-F38.8** [all] The column `name` named twice in the request, one entry `searchable` true and the other
+  false, in either order, with the other columns marked not searchable: a global search `Apple` → rows 1, found in
+  `name` alone. With both entries false → error_code `invalid_filter` (PRD-F13).
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
   `invalid_filter`.
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows

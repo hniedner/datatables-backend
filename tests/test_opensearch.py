@@ -1590,10 +1590,12 @@ def test_a_search_with_a_word_on_a_table_of_numbers_dates_and_booleans_is_refuse
     assert (client.searches, client.counts) == ([], [])
 
 
-def test_an_empty_search_on_a_table_with_no_searchable_column_is_the_plain_request():
-    """SPEC-F13.3: nothing is asked, so nothing is refused and the body is the one of a request with no search."""
+@pytest.mark.parametrize('text', ['', '"'])
+def test_an_empty_search_on_a_table_with_no_searchable_column_is_the_plain_request(text: str):
+    """SPEC-F13.3, SPEC-F13.4: nothing is asked, so nothing is refused and the body is the one of a request with no
+    search. Catches a lone `"` counted as a word, which is refused for want of a column."""
     client = Client()
-    assert UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': ''}), client).error is None
+    assert UNSEARCHABLE.fetch_sync(request('id', 'title', search={'value': text}), client).error is None
     plain = Client()
     UNSEARCHABLE.fetch_sync(request('id', 'title'), plain)
     assert client.searches == plain.searches
@@ -2996,6 +2998,26 @@ def test_a_number_mistake_waits_for_an_earlier_step_of_the_plan_in_a_search_buil
         }
     }
     refused(searched.fetch_sync(request('created', 'n', **tree), Client()), 'invalid_date')
+
+
+def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses():
+    """SPEC-E3.13: 2147483648 is past an `integer` field (PRD-D23), and `< 9999-12-31` past the last day every date
+    column has; both are of step 3, and the last day is answered in either order, with nothing sent. Catches step 3
+    answered in read order alone, which answers `invalid_number` when the number is read first."""
+    searched = SearchTable(
+        'docs', [Column('created', type='date'), IndexColumn('n', type='number', number='integer')], unique_key='n'
+    )
+    number = {'condition': '=', 'origData': 'n', 'value': ['2147483648']}
+    day = {'condition': '<', 'origData': 'created', 'value': ['9999-12-31']}
+    refused(
+        searched.fetch_sync(request('created', 'n', searchBuilder={'criteria': [number]}), Client()), 'invalid_number'
+    )
+    for criteria in ([number, day], [day, number]):
+        client = Client()
+        refused(
+            searched.fetch_sync(request('created', 'n', searchBuilder={'criteria': criteria}), client), 'invalid_date'
+        )
+        assert (client.searches, client.counts) == ([], [])
 
 
 def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_names_the_fix():

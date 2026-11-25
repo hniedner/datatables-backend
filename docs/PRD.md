@@ -924,6 +924,7 @@ request holds at most 64 column searches with a value; beyond any bound the requ
 except a tree deeper than the parser reads, which is malformed (PRD-P6). An active ColumnControl search or a non-empty
 ColumnControl list counts as one of the 64 column searches. The global search covers each declared column once, however
 often the request names it. All the conditions of a request together are bounded by PRD-C17.
+The global search covers a column named twice in the request if any of its entries is searchable.
 
 - **Reason:** Every criterion and value is query work, and walking the tree must never recurse without bound.
 - **Priority:** must
@@ -1321,8 +1322,12 @@ boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then
 
 Within each of steps 2 to 4, the first mistake is the one found first in step 1's read order: the global search, then
 the column searches in the request's order (within one column the plain search, then the ColumnControl search, then
-the ColumnControl list), then the SearchBuilder tree's criteria in document order. A refused order entry (PRD-O1,
-PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request is answered before it.
+the ColumnControl list), then the SearchBuilder tree's criteria in document order. Within step 3, a mistake against a
+limit of every column comes before a number the column's own type does not take: a day past PRD-F24's last day or a
+number past PRD-F25's digits after the point, in read order, then a whole number outside an SQL integer column's range
+or more than 38 digits on SQL Server (PRD-F25), or a number an OpenSearch field type refuses (PRD-D23), in read order.
+A refused order entry (PRD-O1, PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request
+is answered before it.
 
 - **Reason:** One code per kind of mistake, decidable when a request holds several.
 - **Priority:** must

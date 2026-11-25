@@ -53,6 +53,16 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E3.12** [all] With `price` declared unsearchable: SearchBuilder `=` `abc` on `price`, and `multi_values`
   `["abc"]` on it → `invalid_filter`, not `invalid_number`: the refusal of the column is reported without its value
   being read (`SPEC-E3.8`).
+- **SPEC-E3.13** [all] Within step 3 the last day comes before a number the column's own type does not take: [SQL]
+  SearchBuilder `=` `9223372036854775808` on `price` (a `BigInteger`) read before `<` `9999-12-31` on `made` →
+  `invalid_date`; with the two criteria in the reverse order → `invalid_date`. [OS] With `price` declared an
+  `integer` field (PRD-D23), `=` `2147483648` on it beside `<` `9999-12-31` on `made`, in either order →
+  `invalid_date`.
+- **SPEC-E3.14** [all] A SearchBuilder criterion without its value (`[]`) is refused when its column or its
+  condition is: with `price` declared unsearchable, `=` with `[]` on it → `invalid_filter`; `<` with `[]` on `name`
+  → `invalid_filter`, as `SPEC-E3.8` reports a condition that does not fit without reading a value. Without its
+  condition (missing, empty text or `undefined`) nothing can be checked, so it adds nothing (PRD-F30): on `price`
+  declared unsearchable, and on the undeclared `extra` → rows 1, 2, 3, 4.
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value. A limit
   the server holds (an integer column's bounds, the result window, the year 9999 of the last day there is) is the

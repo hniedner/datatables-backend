@@ -3220,6 +3220,33 @@ def test_a_filter_on_an_unsearchable_column_is_refused_without_its_value_being_r
     refused(closed.fetch_sync(params, session))
 
 
+def test_within_step_3_the_last_day_comes_before_a_number_outside_its_integer_column(session: Session):
+    """SPEC-E3.13: `age` is a SMALLINT, so 40000 is outside its own type, and `< 9999-12-31` is past the last day every
+    date column has; both are of step 3, and the last day is answered in either order. Catches step 3 answered in read
+    order alone, which answers `invalid_number` when the number is read first."""
+    number = {'condition': '=', 'origData': 'age', 'value': ['40000']}
+    day = {'condition': '<', 'origData': 'born', 'value': ['9999-12-31']}
+    refused(table.fetch_sync(request(*ALL, searchBuilder={'criteria': [number]}), session), 'invalid_number')
+    for criteria in ([number, day], [day, number]):
+        refused(table.fetch_sync(request(*ALL, searchBuilder={'criteria': criteria}), session), 'invalid_date')
+
+
+def test_a_criterion_without_its_value_is_still_refused_for_its_column_or_its_condition(session: Session):
+    """SPEC-E3.14: with no value the criterion is unfinished (PRD-F30), but its column and its condition can still be
+    checked, and a refusal of either is reported without a value (`SPEC-E3.8`); with no condition nothing can be
+    checked, so it adds nothing, on a refused column and on an undeclared one alike. Catches a criterion without its
+    value dropped before its column or condition is checked, which answers every row, and one without a condition
+    refused for its column."""
+    closed = SQLTable(people, [Column('id'), Column('name'), Column('age', searchable=False)])
+    names = ('id', 'name', 'age')
+    refused(closed.fetch_sync(request(*names, **criterion('age', '=')), session))
+    refused(closed.fetch_sync(request(*names, **criterion('name', '<')), session))
+    for condition in ({}, {'condition': ''}, {'condition': 'undefined'}):
+        for column in ('age', 'extra'):
+            tree = {'criteria': [{**condition, 'origData': column, 'value': ['x']}]}
+            assert ids(closed.fetch_sync(request(*names, searchBuilder=tree), session)) == [1, 2, 3, 4, 5]
+
+
 @pytest.mark.parametrize(
     ('tree', 'answered'),
     [
@@ -3315,6 +3342,23 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
     table.fetch_sync(request(*('name',) * 1000, search={'value': 'ann'}), session)
     same = statements == once  # not asserted inline: a failure would print a thousand terms
     assert same
+
+
+def test_the_global_search_covers_a_column_named_twice_if_either_entry_is_searchable(session: Session):
+    """SPEC-F38.8: `Bob` is only in `name`, and `id` is marked not searchable, so the row is found only if `name` is
+    searched; with both of its entries marked not searchable no column is left (PRD-F13). Catches the first or the last
+    entry of the name deciding alone."""
+
+    def named_twice(*searchable: bool) -> DTParams:
+        columns = [
+            {'data': name, 'name': '', 'searchable': flag, 'orderable': True, 'search': {'value': '', 'regex': False}}
+            for name, flag in (('id', False), *(('name', flag) for flag in searchable))
+        ]
+        return parse_request({'draw': 1, 'start': 0, 'length': 10, 'columns': columns, 'search': {'value': 'Bob'}})
+
+    assert ids(table.fetch_sync(named_twice(True, False), session)) == [2]
+    assert ids(table.fetch_sync(named_twice(False, True), session)) == [2]
+    refused(table.fetch_sync(named_twice(False, False), session))
 
 
 @pytest.mark.parametrize(
