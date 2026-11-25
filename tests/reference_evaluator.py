@@ -55,7 +55,7 @@ class Refusal:
     code: str
 
 
-class SpecGap(Exception):
+class SpecGap(Exception):  # raised by no rule today: each gap met so far is decided (#205)
     """The requirements leave this request's answer open; ``name`` is the gap's short name, reported in #205."""
 
     def __init__(self, name: str, text: str) -> None:
@@ -536,12 +536,11 @@ def _columncontrol(
     """PRD-F45: ColumnControl's search, then its list, each a clause of its own beside the plain search (AND). A
     search is idle when its value is empty and its logic is neither `empty` nor `notEmpty`, a list when it is empty.
     On a column that cannot be searched an active one is refused (PRD-F41)."""
-    searched = key if found is not None and found[2] else None  # None: a column that cannot be searched (PRD-F41)
+    key = key if found is not None and found[2] else None  # None: a column that cannot be searched (PRD-F41)
     found_kind: Kind = found[1] if found else 'string'
     clauses: list[Predicate | None] = []
     reading.next_part()
     search = column.columnControl.search
-    key = searched
     if search.value or search.logic in ('empty', 'notEmpty'):
         if key is None:
             reading.refuse()
@@ -664,12 +663,14 @@ def _step_one_filters(
     params: DTParams, declared: Mapping[str, Declared]
 ) -> Iterator[tuple[list[str], list[str], list[str]]]:
     """The filters of the request in PRD-E3's read order, each as the values a control character is looked for in,
-    the values whose length is measured and the texts whose words are counted. PRD-F14: each value a condition reads
-    is measured as sent, a categorical filter's alternatives after unescaping; "a value no condition reads is not
-    measured", so neither are the values of an unfinished criterion. PRD-F18: "Any other regex, an unescaped
-    metacharacter included, is refused", unmeasured. Words are counted in search text, ColumnControl's `contains`
-    included, which is the column search of PRD-F2 (PRD-F45); not in a list, nor in a value read as one. A list on
-    the global search is a form PRD-F40 refuses, so its entries are not read (PRD-E3)."""
+    the values whose length is measured and the texts whose words are counted. PRD-F14 measures each value a condition
+    reads as sent: "A value no condition reads, a surplus value or that of `null`, is not measured", and PRD-F15 looks
+    for a control character only in "a SearchBuilder value its condition reads (PRD-F36)", so neither looks at the
+    values of an unfinished criterion. PRD-F14 measures a categorical filter's alternatives "after unescaping and not
+    the raw pattern", and PRD-F18 refuses any other regex, so that one is not measured. Words are counted in search
+    text, ColumnControl's `contains` included, which is the column search of PRD-F2 (PRD-F45), so PRD-F14's word cap
+    applies to it; not in a list, nor in a value read as one. PRD-F40: the entries of a list on the global search are
+    not read, so PRD-F14 and PRD-F15 do not apply to them."""
     search = params.search
     yield [search.value], [search.value], [search.value]
     for column in params.columns:

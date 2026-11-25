@@ -11,11 +11,14 @@ first, then one applied in the other direction, now and then over rows that tie 
 page that cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any
 column, now and then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice,
 nameless columns and an undeclared one; a server declaration with at least one unorderable column, and mistakes of
-every step of PRD-E3. The rates are set so that about 60% of the requests are answered and each outcome and path below
-is reached about 30 times in 500 examples, averaged over seeds; one seed, such as the `ci` profile's, varies around
-that (`uv run pytest tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). A choice is
-drawn by `chance` and `rarely` of `tests/conftest.py`: Hypothesis draws the first of a list of choices far more often
-than the others.
+every step of PRD-E3. The rates are set so that a little over half of the requests are answered (55% averaged over
+seeds) and most outcomes and paths are reached at least about 30 times in 500 examples; one seed, such as the `ci`
+profile's, varies around that (`uv run pytest tests/test_reference_properties.py --hypothesis-show-statistics` prints
+its events). The paths that tell known mutants apart (M4 to M10b in the events) are drawn on purpose, each in about 3%
+or more of the examples. Some cases are rare on any seed and carried by the examples on the property: a regex over
+255 code points that is no categorical filter (about 6 in 1,000 random examples, none on the `ci` seed), a list on the
+global search holding a step-1 value, and the order within step 3 of PRD-E3. A choice is drawn by `chance` and
+`rarely` of `tests/conftest.py`: Hypothesis draws the first of a list of choices far more often than the others.
 
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
@@ -45,13 +48,14 @@ Generator restrictions, each with its reason:
   out of scope above.
 
 A step-1 value (a control character, 256 code points, 17 words) is also sent where nothing reads it, and the evaluator
-answers as the requirements say (#205): in an unfinished criterion (PRD-F14: "a value no condition reads is not
-measured"), in a regex that is no categorical filter (PRD-F18: "Any other regex, an unescaped metacharacter included,
-is refused"), and in a list on the global search, a form PRD-F40 refuses unread (PRD-E3). ColumnControl's `contains` is
-the column search of PRD-F2 (PRD-F45), so more than 16 words in it are `too_many_words` (PRD-F14).
+answers as the requirements say (#205): in an unfinished criterion (PRD-F14: "A value no condition reads, a surplus
+value or that of `null`, is not measured"; PRD-F15 looks only at "a SearchBuilder value its condition reads
+(PRD-F36)"); in a regex that is no categorical filter (PRD-F14 measures alternatives "after unescaping and not the raw
+pattern", and PRD-F18 refuses any other regex); and in a list on the global search, whose entries PRD-F40 does not
+read, so PRD-F14 and PRD-F15 do not apply to them. ColumnControl's `contains` is the column search of PRD-F2
+(PRD-F45), so PRD-F14's word cap applies to it: more than 16 words are `too_many_words`.
 
-A spec gap the evaluator raises (`SpecGap`) would be counted with `hypothesis.event` and not compared; every gap met so
-far is decided, and the evaluator raises none today.
+Every spec gap met so far is decided, so the evaluator raises none (`SpecGap` stays for the next one, #205).
 """
 
 from collections import Counter
@@ -87,7 +91,6 @@ from .reference_evaluator import Answer
 from .reference_evaluator import Declared
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
-from .reference_evaluator import SpecGap
 from .reference_evaluator import evaluate
 from .reference_evaluator import words
 
@@ -150,7 +153,8 @@ RANGED: dict[str, list[Any]] = {'n': [-7, 0, 7, 17, 70], 'd': DATES}
 #: A word that ColumnControl's `contains` finds in some cells, by type
 CONTAINED: dict[str, list[str]] = {'string': ['a', 'red', 'b', 'x_y', '-'], 'number': ['7', '0', '1', '-'],
                                    'date': ['2024', '03', '-', '12-31']}  # fmt: skip
-BIG = '9223372036854775808'  # 2^63, one past a BigInteger (PRD-F25, step 3)
+BIG = '9223372036854775808'
+LAST = '9999-12-31'  # the last day there is (PRD-F24)  # 2^63, one past a BigInteger (PRD-F25, step 3)
 #: The values a filter sends, by column: most of them read, some not (`abc`, `2024-13-01`, `yes`, and seldom a
 #: number or a day out of range)
 VALUES: dict[str, st.SearchStrategy[str]] = {
@@ -186,7 +190,7 @@ def step_one(common: st.SearchStrategy[str], one_in: int, many_words: bool = Tru
     """``common``, and about once in ``one_in`` draws each a mistake of step 1 (PRD-E3): a control character, 256 code
     points and, for search text, 17 words. One draw per kind: a single choice among them would favour its first."""
     control = st.sampled_from(['a\x00', 'a\tb', 'b\x7f'])
-    common = rarely(rarely(common, control, one_in * 2 // 3), st.just('x' * 256), one_in)
+    common = rarely(rarely(common, control, max(2, one_in * 2 // 3)), st.just('x' * 256), one_in)
     return rarely(common, st.just(' '.join(['a'] * 17)), one_in) if many_words else common
 
 
@@ -287,7 +291,7 @@ def criterion(draw: st.DrawFn) -> dict[str, Any]:
     kind = KINDS.get(name, 'string')
     if draw(chance(24)):  # unfinished: no condition, or no column
         unfinished = draw(st.sampled_from([{'condition': ''}, {'origData': ''}, {}]))
-        value = draw(step_one(VALUES[name], 2, many_words=False))  # read by no condition (PRD-F14)
+        value = draw(step_one(VALUES[name], 2, many_words=False))  # read by no condition (PRD-F14, PRD-F15)
         return {'origData': name, 'data': name, 'type': 'string', 'value': [value], **unfinished}
     condition = draw(rarely(st.sampled_from(CONDITIONS[kind]), st.sampled_from(ALL_CONDITIONS), 16))
     takes = 2 if condition in ('between', '!between') else 0 if condition in ('null', '!null') else 1
@@ -413,14 +417,52 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
     }
     body.update(paging)
     if draw(chance(32)):
-        # refused unread (PRD-F40, PRD-E3), so a step-1 entry in it is no step-1 mistake
+        # PRD-F40: its entries are not read, so PRD-F14 and PRD-F15 do not apply to them
         body['search']['multi_values'] = draw(st.lists(step_one(VALUES['s'], 3, many_words=False), max_size=2))
     if draw(chance(3)):
         body['searchBuilder'] = draw(tree)
     if added := draw(added_criteria()):
         body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].extend(added)
     focused(draw, rows, server=server, body=body, applies=applies, unfiltered=unfiltered)
+    outranked(draw, rows, server=server, body=body)
     return rows, decl, body
+
+
+def outranked(
+    draw: st.DrawFn, rows: list[dict[str, Any]], *, server: dict[str, tuple[bool, bool]], body: dict[str, Any]
+) -> None:
+    """Now and then a request that tells three more mutants apart. M5b, about once in four: a one-word global search
+    taken from one cell, over at least two searchable columns: a word may be found in any of them (PRD-F1). M10, about
+    once in ten: the last day beside a mistake of step 1 or 2, in either order (PRD-E3: the earlier step answers);
+    M10b, about once in seven: the last day beside a global search with no searchable column, a mistake of step 4
+    (PRD-E3: step 3 answers)."""
+    columns = body['columns']
+    searched = sorted({column['data'] for column in columns if isinstance(column['data'], str) and column['searchable']
+                       and server.get(column['data'], (False, False))[0] and KINDS[column['data']] != 'boolean'})  # fmt: skip
+    if len(searched) >= 2 and rows and draw(chance(4)):
+        name, row = draw(st.sampled_from(searched)), draw(st.sampled_from(rows))
+        cell = '' if row[name] is None else str(row[name])  # a date's str is its ISO day
+        begin = draw(st.integers(0, max(0, len(cell) - 1)))
+        word = cell[begin : begin + draw(st.integers(1, 3))]
+        if word.strip() == word and word and ' ' not in word:
+            body.update(search={'value': word, 'regex': False}, start=0)
+            if draw(st.booleans()):  # half the time no other filter hides the row
+                body.pop('searchBuilder', None)
+                for column in columns:
+                    column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
+    last_day = {'origData': 'd', 'data': 'd', 'condition': draw(st.sampled_from(['=', '<', '>='])), 'value': [LAST]}
+    if draw(chance(10)):
+        other = {'origData': 'n', 'data': 'n', 'condition': '=',
+                 'value': [draw(st.sampled_from(['abc', '1_000', 'a\x00', 'x' * 256]))]}  # fmt: skip
+        body['searchBuilder'] = {
+            'logic': 'AND',
+            'criteria': [last_day, other] if draw(st.booleans()) else [other, last_day],
+        }
+    elif draw(chance(7)):
+        body['searchBuilder'] = {'logic': 'AND', 'criteria': [last_day]}
+        body['search'] = {'value': draw(st.sampled_from(['a', 'red', '7'])), 'regex': False}
+        for column in columns:
+            column['searchable'] = False
 
 
 def focused(
@@ -432,13 +474,14 @@ def focused(
     applies: list[int],
     unfiltered: bool,
 ) -> None:
-    """Now and then one of three requests that tell a mutant of the library apart, each about once in eight, half of
+    """Now and then one of three requests that tell a mutant of the library apart (M4 and M6 about once in five, M7
+    once in eight), half of
     them with no other filter (and with ``unfiltered`` none either): M4, an ascending order over NULLs and values with a
     short page (PRD-O2); M7, a range written high to low over a row inside it (PRD-F27); M6, a list and
     ColumnControl's `contains` on one column, ANDed (PRD-F45)."""
     columns = body['columns']
-    nulls_first = draw(chance(8)) and [index for index in applies if columns[index]['data'] != 'id']
-    anded = draw(chance(8)) and [
+    nulls_first = draw(chance(5)) and [index for index in applies if columns[index]['data'] != 'id']
+    anded = draw(chance(5)) and [
         index
         for index, column in enumerate(columns)
         if isinstance(column['data'], str)
@@ -630,7 +673,59 @@ def survivor_paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body:
             )
             if evaluate(decl, rows, parse_request(unswapped)) != answer:
                 reached.append(f'path M7: a reversed {leaf["condition"]} changes the answer')
+    if isinstance(answer, Answer) and found_in_one_column(rows, decl, body, answer):
+        reached.append('path M5b: a global word found in one searchable column of a row and not the others')
     return reached
+
+
+def found_in_one_column(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer
+) -> bool:
+    """Whether a one-word global search finds a row of the page through one of two or more searched columns only:
+    a word must be found in some column, not in each (PRD-F1)."""
+    positive, negated = words(body['search']['value'])
+    searchable = {name for name, kind, flag, _ in decl if flag and kind != 'boolean'}
+    searched = {column['data'] for column in body['columns']
+                if isinstance(column['data'], str) and column['searchable'] and column['data'] in searchable}  # fmt: skip
+    if len(positive) != 1 or negated or len(searched) < 2:
+        return False
+    word = positive[0].lower()  # ASCII text: PRD-F9's fold on SQLite
+    by_key = {row['id']: row for row in rows}
+    return any(
+        sum(by_key[key][name] is not None and word in str(by_key[key][name]).lower() for name in searched) == 1
+        for key in answer.ids
+    )
+
+
+def ranking_paths(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer | Refusal
+) -> list[str]:
+    """M10: the last day there is (step 3 of PRD-E3) beside a mistake of step 1 or 2, which answers; M10b: beside a
+    refusal of step 4, where the last day answers. Each read from the evaluator: the tree's criteria on `d` holding
+    the last day, alone, answer `invalid_date`."""
+    tree = body.get('searchBuilder') or {}
+    last = [leaf for leaf in criteria_of(tree) if leaf.get('origData') == 'd' and LAST in leaf.get('value', [])]
+    if not last or not isinstance(answer, Refusal):
+        return []
+    alone = evaluate(decl, rows, parse_request({**body, 'search': {'value': ''}, 'columns': [
+        {**column, 'search': {'value': '', 'regex': False}, 'columnControl': {}} for column in body['columns']],
+        'order': [], 'searchBuilder': {'logic': 'AND', 'criteria': last}}))  # fmt: skip
+    if alone != Refusal('invalid_date'):
+        return []
+    if answer.code in ('invalid_character', 'value_too_long', 'too_many_words', 'invalid_number'):
+        return ['path M10: a mistake of step 1 or 2 answers before the last day']
+    without = evaluate(decl, rows, parse_request({key: value for key, value in body.items() if key != 'searchBuilder'}))
+    if answer.code == 'invalid_date' and without == Refusal('invalid_filter'):
+        return ['path M10b: the last day answers before a refusal of step 4']
+    return []
+
+
+def events(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer | Refusal
+) -> list[str]:
+    """Every event of one example: its outcome, the shapes it sends, and the paths it reaches."""
+    reached = [outcome(rows, answer), *shapes(body), *ranking_paths(rows, decl, body, answer)]
+    return reached + (paths(rows, decl, body) if isinstance(answer, Answer) else [])
 
 
 def first_applied(decl: tuple[Declared, ...], body: dict[str, Any]) -> tuple[str, str] | None:
@@ -733,10 +828,11 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
 @example(
     (three_rows(d=date(2023, 1, 1)), DECLARED, request_of({'data': 'd'}, length=1, order=[{'column': 0, 'dir': 'asc'}]))
 )
-# M6: a list `[""]` on n (the NULL rows) and ColumnControl `contains` 7 on n are ANDed (PRD-F45): no row
+# M6: a list `[""]` on n (rows 1 and 2, NULL) and ColumnControl `contains` 7 on n (row 3) are ANDed (PRD-F45): no
+# row; either alone, or the two ORed, would find one
 @example(
     (
-        three_rows(),
+        three_rows(n=7),
         DECLARED,
         request_of(
             {
@@ -764,6 +860,50 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
         request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('d', '<', ['9999-12-31']), ('n', '=', [BIG]))),
     )
 )
+# M10: a mistake of step 2 comes before the last day (step 3), in either order: `invalid_number` (PRD-E3)
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('d', '=', [LAST]), ('n', '=', ['abc']))),
+    )
+)
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of({'data': 'n'}, {'data': 'd'}, searchBuilder=tree_of(('n', '=', ['abc']), ('d', '=', [LAST]))),
+    )
+)
+# M10b: the last day (step 3) comes before a global search with no searchable column (step 4): `invalid_date`
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of(
+            {'data': 'd', 'searchable': False}, search={'value': 'a'}, searchBuilder=tree_of(('d', '=', [LAST]))
+        ),
+    )
+)
+# M5b: `ab` is in row 3's `s` and in no `t`: a word may be found in any searched column (PRD-F1), so row 3
+@example((three_rows(s='ab', t='x'), DECLARED, request_of({'data': 's'}, {'data': 't'}, search={'value': 'ab'})))
+# A regex over 255 code points that is no categorical filter is refused, not measured (PRD-F14, PRD-F18)
+@example((three_rows(), DECLARED, request_of({'data': 's', 'search': {'value': 'a.' + 'x' * 256, 'regex': True}})))
+# A list on the global search is refused unread (PRD-F40): a control character in it is no `invalid_character`
+@example((three_rows(), DECLARED, request_of({'data': 's'}, search={'value': '', 'multi_values': ['a\x00']})))
+# ColumnControl's `contains` is a column search (PRD-F45): 17 words are `too_many_words` (PRD-F14)
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of(
+            {
+                'data': 's',
+                'columnControl': {'search': {'value': ' '.join(['a'] * 17), 'logic': 'contains', 'type': 'text'}},
+            }
+        ),
+    )
+)
 @example((
     [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
     (('id', 'number', True, False), ('s', 'string', True, True), ('t', 'string', True, True),
@@ -776,20 +916,12 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
 def test_the_library_answers_as_the_reference_evaluator(case: tuple[list[dict[str, Any]], Any, dict[str, Any]]):
     """The rows, their order and both counts, or the error code, of `fetch_sync` on SQLite equal the evaluator's.
     Catches any rule of PRD section 4.3 to 4.6 in scope where the library and the requirements part, in a combination
-    no hand-written test lists. The example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is
+    no hand-written test lists. The last example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is
     the first applied entry, and its tie (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3,
     PRD-O8)."""
     rows, decl, body = case
     params = parse_request(body)
-    try:
-        expected = evaluate(decl, rows, params)
-    except SpecGap as gap:
-        event(f'spec gap {gap.name}')
-        return
-    event(outcome(rows, expected))
-    for shape in shapes(body):
-        event(shape)
-    if isinstance(expected, Answer):
-        for path in paths(rows, decl, body):
-            event(path)
+    expected = evaluate(decl, rows, params)
+    for name in events(rows, decl, body, expected):
+        event(name)
     assert library(decl, rows, params) == expected, 'the library and the reference evaluator answer differently'
