@@ -2460,6 +2460,19 @@ def test_a_global_search_list_is_refused_without_its_entries_being_read_on_opens
     assert (client.searches, client.counts) == ([], [])
 
 
+def test_a_global_search_list_is_not_counted_against_the_bounds_on_lists_on_opensearch():
+    """SPEC-F40.3: a global list of 600 entries is over PRD-F38's 256 per list and 512 per request, but its entries are
+    neither read nor counted (PRD-F40), so the number mistake of step 2 beside it answers, and alone it answers its own
+    refusal; nothing is sent. Catches the global list counted against PRD-F38's bounds, which answers `invalid_filter`
+    of step 1 instead."""
+    search = {'value': '', 'multi_values': ['red'] * 600}
+    client = Client()
+    body = request(*ERROR_NAMES, search=search, **criterion('age', '=', 'abc'))
+    refused(errors.fetch_sync(body, client), 'invalid_number')
+    refused(errors.fetch_sync(request(*ERROR_NAMES, search=search), client))
+    assert (client.searches, client.counts) == ([], [])
+
+
 @pytest.mark.parametrize(
     ('searched', 'body', 'code'),
     [
@@ -3098,9 +3111,9 @@ def test_a_number_mistake_waits_for_an_earlier_step_of_the_plan_in_a_search_buil
 
 
 def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses():
-    """SPEC-E3.13: 2147483648 is past an `integer` field (PRD-D23), and `< 9999-12-31` past the last day every date
-    column has; both are of step 3, and the last day is answered in either order, with nothing sent. Catches step 3
-    answered in read order alone, which answers `invalid_number` when the number is read first."""
+    """SPEC-E3.13: 2147483648 is past an `integer` field (PRD-D23), and `< 9999-12-31` uses the maximum date every
+    date column has as a bound; both are of step 3, and the maximum date is answered in either order, with nothing
+    sent. Catches step 3 answered in read order alone, which answers `invalid_number` when the number is read first."""
     searched = SearchTable(
         'docs', [Column('created', type='date'), IndexColumn('n', type='number', number='integer')], unique_key='n'
     )

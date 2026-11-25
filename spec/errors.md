@@ -53,7 +53,8 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
 - **SPEC-E3.12** [all] With `price` declared unsearchable: SearchBuilder `=` `abc` on `price`, and `multi_values`
   `["abc"]` on it → `invalid_filter`, not `invalid_number`: the refusal of the column is reported without its value
   being read (`SPEC-E3.8`).
-- **SPEC-E3.13** [all] Within step 3 the last day comes before a number the column's own type does not take: [SQL]
+- **SPEC-E3.13** [all] Within step 3 the maximum date (PRD-F24) as a bound comes before a number the column's own
+  type does not take: [SQL]
   SearchBuilder `=` `9223372036854775808` on `price` (a `BigInteger`) read before `<` `9999-12-31` on `made` →
   `invalid_date`; with the two criteria in the reverse order → `invalid_date`. [OS] With `price` declared an
   `integer` field (PRD-D23), `=` `2147483648` on it beside `<` `9999-12-31` on `made`, in either order →

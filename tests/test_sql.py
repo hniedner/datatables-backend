@@ -2632,6 +2632,16 @@ def test_a_global_search_list_is_refused_without_its_entries_being_read(session:
     refused(table.fetch_sync(request(*ALL, search={'value': '', 'multi_values': [entry]}), session))
 
 
+def test_a_global_search_list_is_not_counted_against_the_bounds_on_lists(session: Session):
+    """SPEC-F40.3: a global list of 600 entries is over PRD-F38's 256 per list and 512 per request, but its entries are
+    neither read nor counted (PRD-F40), so the number mistake of step 2 beside it answers, and alone it answers its own
+    refusal. Catches the global list counted against PRD-F38's bounds, which answers `invalid_filter` of step 1
+    instead."""
+    search = {'value': '', 'multi_values': ['red'] * 600}
+    refused(table.fetch_sync(request(*ALL, search=search, **criterion('age', '=', 'abc')), session), 'invalid_number')
+    refused(table.fetch_sync(request(*ALL, search=search), session))
+
+
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [
@@ -3236,9 +3246,9 @@ def test_a_filter_on_an_unsearchable_column_is_refused_without_its_value_being_r
 
 
 def test_within_step_3_the_last_day_comes_before_a_number_outside_its_integer_column(session: Session):
-    """SPEC-E3.13: `age` is a SMALLINT, so 40000 is outside its own type, and `< 9999-12-31` is past the last day every
-    date column has; both are of step 3, and the last day is answered in either order. Catches step 3 answered in read
-    order alone, which answers `invalid_number` when the number is read first."""
+    """SPEC-E3.13: `age` is a SMALLINT, so 40000 is outside its own type, and `< 9999-12-31` uses the maximum date
+    every date column has as a bound; both are of step 3, and the maximum date is answered in either order. Catches
+    step 3 answered in read order alone, which answers `invalid_number` when the number is read first."""
     number = {'condition': '=', 'origData': 'age', 'value': ['40000']}
     day = {'condition': '<', 'origData': 'born', 'value': ['9999-12-31']}
     refused(table.fetch_sync(request(*ALL, searchBuilder={'criteria': [number]}), session), 'invalid_number')
