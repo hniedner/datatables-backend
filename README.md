@@ -229,4 +229,10 @@ uv run ruff check . && uv run basedpyright
 [CONTRIBUTING.md](https://github.com/hniedner/datatables-backend/blob/main/CONTRIBUTING.md) says how to report a
 problem, what a pull request needs and how commit headers are written.
 
+## How it is built
+
+Every change to this project, from the first commit on, was made with Claude Code (Anthropic's Claude models) and
+reviewed by the maintainer, who answers for all of it. Each commit made with Claude after this section was added names
+it in a `Co-Authored-By` line; before, only some did, so the commit log understates its part.
+
 Licence: MIT ([LICENSE](https://github.com/hniedner/datatables-backend/blob/main/LICENSE)).

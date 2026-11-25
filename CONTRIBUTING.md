@@ -23,7 +23,8 @@ that the work is not wasted.
 2. **Checks.** `uv run ruff format . && uv run ruff check .`, `uv run basedpyright` and `uv run pytest` pass. CI also
    runs the SQL and OpenSearch tests on real servers (PostgreSQL, MySQL, MariaDB, SQL Server and OpenSearch).
 3. **Commit headers** are conventional, `type(scope)!: subject` of at most 100 characters (types feat, fix, docs, test,
-   ci, build, refactor, chore, style); the commit-msg hook and CI's `commits` job check them.
+   ci, build, refactor, chore, style); the commit-msg hook and CI's `commits` job check them. A commit made with an AI
+   assistant names it in a `Co-Authored-By` line.
 4. **Docs.** [docs/PRD.md](docs/PRD.md) and [spec/](spec/) define the behaviour. A change of behaviour updates them.
 
 ## Releases
