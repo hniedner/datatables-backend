@@ -8,9 +8,11 @@ as a marked `SpecGap` exception. A request it was not written for (a number with
 `OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in
 `tests/test_reference_properties.py`.
 
-Every answer is the SQL one on SQLite: number and date columns are searched as their text (PRD-F23), case folds for
-ASCII letters only (PRD-F9), a stored `''` is empty on a string column (PRD-F26), and text orders by code point, which
-is SQLite's default `BINARY` collation (PRD-O6). Those four lines are what an evaluator for another backend changes.
+By default every answer is the SQL one on SQLite: number and date columns are searched as their text (PRD-F23), case
+folds for ASCII letters only (PRD-F9), a stored `''` is empty on a string column (PRD-F26), an exact match keeps
+trailing spaces, and text orders by code point, which is SQLite's default `BINARY` collation (PRD-O6). `Engine` holds
+what another backend reads differently, as properties with their PRD clauses; a test maps a backend to one. Folding
+beyond ASCII is not among them: the evaluator's text is ASCII.
 
 A declaration is a tuple of `(name, type, searchable, orderable)`; the first column is the table's unique key, the
 tie-breaker of PRD-O3, and every row holds every declared name.
@@ -55,6 +57,37 @@ class Refusal:
     """A request refused for a user's mistake: the stable code only (PRD-E2); the message is not modelled."""
 
     code: str
+
+
+def code_points(text: str) -> str:
+    """PRD-O6 on SQLite: text in code-point order, its default `BINARY` collation."""
+    return text
+
+
+@dataclass(frozen=True)
+class Engine:
+    """What the requirements leave to a backend, as properties: every rule reads a flag, never an engine's name. The
+    default is SQLite's reading, which the property against SQLite uses."""
+
+    #: False, PRD-F23: on SQL a number or a date column takes part in the global and column searches as its text.
+    #: True: PRD-F32, the global search skips number and date columns; PRD-F33, a column search on a number column
+    #: takes one number and matches it exactly; PRD-F34, one on a date column takes one date term, PRD-F22's span. Each
+    #: is read as one value: several words, `!` or quotes are refused at step 2 (PRD-E3), and no word cap applies
+    #: (PRD-F14). PRD-F45 reads ColumnControl's `contains` as that column search.
+    typed_search: bool = False
+    #: PRD-F26: True on SQL, where a stored `''` is empty beside NULL; False where only a missing field is empty
+    #: (OpenSearch), so a stored `''` is a value.
+    empty_string_is_empty: bool = True
+    #: PRD section 5 (`docs/databases.md`, `docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`):
+    #: an exact match, a list entry and the empty test ignore trailing spaces, so a stored `' '` equals `''`.
+    pad_space: bool = False
+    #: PRD-O6: text order is the database's collation, given as a sort key of a text value; equal keys tie, and the
+    #: unique key then breaks the tie (PRD-O3). None: the order is not known, and ordering by text raises
+    #: `OutOfScope`.
+    order_key: Callable[[str], Any] | None = code_points
+
+
+SQLITE = Engine()
 
 
 class OutOfScope(AssertionError):
@@ -175,9 +208,19 @@ def _text(kind: Kind, value: Any) -> str | None:
     return str(value)
 
 
-def _empty(kind: Kind, value: Any) -> bool:
-    """PRD-F26: empty is NULL, and on a column that stores text also `''`."""
-    return value is None or (kind == 'string' and value == '')
+def _empty(kind: Kind, value: Any, engine: Engine) -> bool:
+    """PRD-F26: empty is NULL, and on a column that stores text also `''` where the engine says so; under PAD SPACE a
+    value of spaces only equals `''`."""
+    if value is None:
+        return True
+    return kind == 'string' and engine.empty_string_is_empty and _exactly(value, engine) == ''
+
+
+def _exactly(text: str, engine: Engine) -> str:
+    """Text as an exact match compares it: folded (PRD-F9), and without its trailing spaces under PAD SPACE (PRD
+    section 5)."""
+    folded = _fold(text)
+    return folded.rstrip(' ') if engine.pad_space else folded
 
 
 # -- the smart search: words, phrases and negations (PRD-F3, PRD-F4, PRD-F5, PRD-F6, PRD-F7, PRD-F35) ---
@@ -230,6 +273,24 @@ def _searched(kind: Kind, column: str, text: str) -> Predicate | None:
         return all(word in folded for word in wanted) and not any(word in folded for word in unwanted)
 
     return matches
+
+
+def _typed(kind: Kind, column: str, text: str, reading: '_Reading') -> Predicate | None:
+    """A column search on a number or a date column of a typed-search engine. PRD-F6 decides the whole text first:
+    text that reduces to no word adds nothing. Text that holds a word is read as one value: PRD-F33, one number,
+    matched exactly, else `invalid_number`; PRD-F34, one date term, the span of PRD-F22, else `invalid_date`. Several
+    words, `!` or quotes are no number or date term, so they are refused (step 2 of PRD-E3)."""
+    positive, negated = words(text)
+    if not positive and not negated:
+        return None
+    if kind == 'number':
+        number = reading.read(_number, text)
+        return None if number is _NO_VALUE else lambda row: row[column] == number
+    span = reading.read(_span, text)
+    if span is _NO_VALUE:
+        return None
+    first, last = span
+    return lambda row: row[column] is not None and first <= row[column] <= last
 
 
 # -- categorical filters (PRD-F16, PRD-F17, PRD-F18, PRD-F19) ---
@@ -310,22 +371,24 @@ def _reader(kind: Kind, condition: str) -> Callable[[str], Any]:
     return str
 
 
-def _compared(kind: Kind, column: str, condition: str, values: Sequence[Any]) -> Predicate:
-    """A condition that fits the column, over read values. PRD-F9: text folds. PRD-F21: days compare as days, and
-    PRD-F22's span is a range of days. PRD-F37: NULL satisfies every negative condition and no positive one."""
+def _compared(kind: Kind, column: str, condition: str, values: Sequence[Any], engine: Engine) -> Predicate:
+    """A condition that fits the column, over read values. PRD-F9: text folds; `=` and `!=` are exact matches, which
+    PAD SPACE compares without trailing spaces (PRD section 5). PRD-F21: days compare as days, and PRD-F22's span is a
+    range of days. PRD-F37: NULL satisfies every negative condition and no positive one."""
     if condition in ('null', '!null'):
-        return lambda row: _empty(kind, row[column]) == (condition == 'null')
+        return lambda row: _empty(kind, row[column], engine) == (condition == 'null')
     negated = condition.startswith('!')
     base = condition[1:] if negated else condition  # `!=` is the negation of `=`
     if kind == 'string':
         value = _fold(values[0])
+        exact = _exactly(values[0], engine)
         tests: dict[str, Callable[[str], bool]] = {
-            '=': lambda cell: cell == value,
+            '=': lambda cell: _exactly(cell, engine) == exact,
             'contains': lambda cell: value in cell,
             'starts': lambda cell: cell.startswith(value),
             'ends': lambda cell: cell.endswith(value),
         }
-        test: Callable[[Any], bool] = lambda cell: tests[base](_fold(cell))  # noqa: E731
+        test: Callable[[Any], bool] = lambda cell: tests[base](cell if base == '=' else _fold(cell))  # noqa: E731
     elif base in ('between', 'contains'):
         low, high = values[0] if base == 'contains' else values  # a span, or the two bounds
         test = lambda cell: low <= cell <= high  # noqa: E731
@@ -356,9 +419,10 @@ class _Reading:
     column's plain search, ColumnControl search and list, each criterion, each order entry) has a place in PRD-E3's
     read order; a mistake is kept with its step and that place."""
 
-    def __init__(self) -> None:
+    def __init__(self, engine: Engine) -> None:
         self.mistakes: list[tuple[float, int, str]] = []
         self.place = 0
+        self.engine = engine
 
     def next_part(self) -> None:
         self.place += 1
@@ -388,7 +452,8 @@ def _exact(kind: Kind, column: str, values: Sequence[str], reading: _Reading) ->
     """A categorical filter's values or a list (`multi_values`, ColumnControl's list) matched exactly. PRD-F9: text
     folds. PRD-F20: an empty entry means empty, an entry of only white space is that value on a string column and
     empty on any other. PRD-F21, PRD-F33, PRD-F44: a value on a date, number or boolean column is read as `=` reads it;
-    every entry is read, so each mistake is found."""
+    every entry is read, so each mistake is found. PAD SPACE compares text without trailing spaces (PRD section 5)."""
+    engine = reading.engine
     wanted: list[Any] = []
     empty = False
     failed = False
@@ -396,7 +461,7 @@ def _exact(kind: Kind, column: str, values: Sequence[str], reading: _Reading) ->
         if value == '' or (kind != 'string' and not value.strip()):
             empty = True
         elif kind == 'string':
-            wanted.append(_fold(value))
+            wanted.append(_exactly(value, engine))
         else:
             read = reading.read(_reader(kind, '='), value)
             failed = failed or read is _NO_VALUE
@@ -406,11 +471,11 @@ def _exact(kind: Kind, column: str, values: Sequence[str], reading: _Reading) ->
 
     def matches(row: Row) -> bool:
         cell = row[column]
-        if empty and _empty(kind, cell):
+        if empty and _empty(kind, cell, engine):
             return True
         if cell is None:
             return False
-        return (_fold(cell) if kind == 'string' else cell) in wanted
+        return (_exactly(cell, engine) if kind == 'string' else cell) in wanted
 
     return matches
 
@@ -432,7 +497,7 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
     """PRD-F1: every word is found in some searchable column of the row, and no negated word in any (PRD-F5). PRD-F41:
     the columns are those the request names that both sides mark searchable and the server declares; PRD-F38: a column
     the request names twice is covered if any of its entries is searchable. PRD-F44 leaves out boolean columns, PRD-P21
-    nameless ones. PRD-F6: text that reduces to no word is idle, also with no usable column; otherwise PRD-F13: a
+    nameless ones, and PRD-F32 number and date columns on a typed-search engine. PRD-F6: text that reduces to no word is idle, also with no usable column; otherwise PRD-F13: a
     search over no usable column is refused. PRD-F18: any regex in the global search is refused, unless the text holds
     no word (the reviewer's decision of 2026-11-20). PRD-F40: a list is refused, an empty one idle."""
     reading.next_part()
@@ -444,7 +509,8 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
     flags: dict[str, list[bool]] = {}
     for column in params.columns:
         key = _key(column, declared)
-        if key is not None and key in declared and declared[key][2] and declared[key][1] != 'boolean':
+        skipped = ('boolean', 'number', 'date') if reading.engine.typed_search else ('boolean',)
+        if key is not None and key in declared and declared[key][2] and declared[key][1] not in skipped:
             flags.setdefault(key, []).append(column.searchable)
     columns = [key for key, marks in flags.items() if any(marks)]
     if not positive and not negated:
@@ -472,7 +538,8 @@ def _plain(search: Search, key: str | None, found: Declared | None, reading: _Re
     first, PRD-F15). PRD-D6, PRD-F41, PRD-P21: one with a value or a non-empty list on a column the server does not
     declare searchable, or on a nameless one, is refused without its value being read (PRD-E3). PRD-F39: a value
     beside a list is refused. PRD-F20: a list; PRD-F16: a categorical filter, any other regex refused (PRD-F18);
-    PRD-F44: a boolean column; PRD-F2 and PRD-F23: the smart search of the column's text."""
+    PRD-F44: a boolean column; on a typed-search engine PRD-F33 and PRD-F34 a number or a date column; PRD-F2 and
+    PRD-F23: the smart search of the column's text."""
     reading.next_part()
     values = search.multi_values or []
     holds_value = bool(search.value) if search.regex else any(words(search.value))
@@ -493,9 +560,18 @@ def _plain(search: Search, key: str | None, found: Declared | None, reading: _Re
             reading.refuse()
             return None
         return _exact(kind, key, alternatives, reading)
+    return _column_searched(kind, key, search.value, reading)
+
+
+def _column_searched(kind: Kind, column: str, text: str, reading: _Reading) -> Predicate | None:
+    """The column search of PRD-F2 on a column of any type (and ColumnControl's `contains`, PRD-F45): PRD-F44 on a
+    boolean column, PRD-F33 and PRD-F34 on a number or a date column of a typed-search engine, else the smart search
+    of the column's text (PRD-F23)."""
     if kind == 'boolean':
-        return _boolean_searched(key, search.value, reading)
-    return _searched(kind, key, search.value)
+        return _boolean_searched(column, text, reading)
+    if reading.engine.typed_search and kind in ('number', 'date'):
+        return _typed(kind, column, text, reading)
+    return _searched(kind, column, text)
 
 
 #: PRD-F45: the SearchBuilder condition each ColumnControl logic is read as; `contains` is a column search
@@ -523,7 +599,7 @@ def _condition(kind: Kind, column: str, condition: str, values: Sequence[str], r
         return None
     if condition in ('between', '!between'):
         read = sorted(read)
-    return _compared(kind, column, condition, read)
+    return _compared(kind, column, condition, read, reading.engine)
 
 
 def _columncontrol(
@@ -541,10 +617,8 @@ def _columncontrol(
         if key is None:
             reading.refuse()
             clauses.append(None)
-        elif search.logic == 'contains' and found_kind == 'boolean':
-            clauses.append(_boolean_searched(key, search.value, reading))
         elif search.logic == 'contains':
-            clauses.append(_searched(found_kind, key, search.value))
+            clauses.append(_column_searched(found_kind, key, search.value, reading))
         else:
             condition = _LOGICS[search.logic]
             if condition not in _CONDITIONS[found_kind]:
@@ -636,14 +710,22 @@ def _ordering(params: DTParams, declared: Mapping[str, Declared], reading: _Read
     return applied
 
 
-def _sorted(rows: Sequence[Row], applied: list[tuple[str, bool]], unique: str) -> list[Row]:
+def _sorted(rows: Sequence[Row], applied: list[tuple[str, bool]], unique: str, engine: Engine) -> list[Row]:
     """PRD-O8: the first applied entry is primary. PRD-O2: NULL is the lowest value, false before true. PRD-O6: text in
-    code-point order, SQLite's `BINARY`. PRD-O3, PRD-O4: the unique key breaks ties in the first applied entry's
-    direction, ascending when none is applied."""
+    the database's collation, the engine's sort key (code-point order on SQLite). PRD-O3, PRD-O4: the unique key breaks
+    ties, equal sort keys included, in the first applied entry's direction, ascending when none is applied."""
+
+    def key(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if engine.order_key is None:
+            raise OutOfScope('an order by text where the collation is not known')
+        return engine.order_key(value)
+
     first_descending = applied[0][1] if applied else False
     ordered = sorted(rows, key=lambda row: row[unique], reverse=first_descending)
     for name, descending in reversed(applied):
-        ordered.sort(key=lambda row: (0, 0) if row[name] is None else (1, row[name]), reverse=descending)
+        ordered.sort(key=lambda row: (0, 0) if row[name] is None else (1, key(row[name])), reverse=descending)
     return ordered
 
 
@@ -656,7 +738,7 @@ def _control(text: str) -> bool:
 
 
 def _step_one_filters(
-    params: DTParams, declared: Mapping[str, Declared]
+    params: DTParams, declared: Mapping[str, Declared], engine: Engine
 ) -> Iterator[tuple[list[str], list[str], list[str]]]:
     """The filters of the request in PRD-E3's read order, each as the values a control character is looked for in,
     the values whose length is measured and the texts whose words are counted. PRD-F14 measures each value a condition
@@ -667,7 +749,8 @@ def _step_one_filters(
     (PRD-F14, PRD-F30). PRD-F14 measures a categorical filter's alternatives "after unescaping and not
     the raw pattern", and PRD-F18 refuses any other regex, so that one is not measured. Words are counted in search
     text, ColumnControl's `contains` included, which is the column search of PRD-F2 (PRD-F45), so PRD-F14's word cap
-    applies to it; not in a list, nor in a value read as one. PRD-F40: the entries of a list on the global search are
+    applies to it; not in a list, nor in a value read as one (a boolean, and on a typed-search engine a number or a
+    date, PRD-F33, PRD-F34). PRD-F40: the entries of a list on the global search are
     not read, so PRD-F14 and PRD-F15 do not apply to them and PRD-F38's bounds on lists do not count them (those
     bounds are out of scope here, so nothing counts them)."""
     search = params.search
@@ -675,17 +758,18 @@ def _step_one_filters(
     for column in params.columns:
         key = _key(column, declared)
         kind = declared[key][1] if key is not None and key in declared else 'string'
+        one_value = ('boolean', 'number', 'date') if engine.typed_search else ('boolean',)
         plain = column.search
         values = plain.multi_values or []
         measured = [plain.value, *values]
         if plain.regex and plain.value:
             measured = [*(categorical(plain.value) or []), *values]
-        texts = [] if plain.regex or kind == 'boolean' else [plain.value]
+        texts = [] if plain.regex or kind in one_value else [plain.value]
         yield [plain.value, *values], measured, texts
         control = column.columnControl.search
         active = control.logic not in ('empty', 'notEmpty') and control.value
         searched = [control.value] if active else []
-        yield searched, searched, searched if control.logic == 'contains' and kind != 'boolean' else []
+        yield searched, searched, searched if control.logic == 'contains' and kind not in one_value else []
         yield column.columnControl.list, column.columnControl.list, []
     if params.searchBuilder is not None:
         for criterion in _criteria(params.searchBuilder):
@@ -702,11 +786,11 @@ def _criteria(group: SearchGroup) -> Iterator[SearchCriterion]:
             yield node
 
 
-def _step_one(params: DTParams, declared: Mapping[str, Declared]) -> str | None:
+def _step_one(params: DTParams, declared: Mapping[str, Declared], engine: Engine) -> str | None:
     """PRD-E3 step 1: the first filter in read order with a mistake answers; within one filter a control character in
     any value comes first (PRD-F15), then any value over 255 code points, then more than 16 words (PRD-F14). The
     bounds of PRD-F38 and PRD-C17 are left out: the generator stays far within them."""
-    for checked, measured, texts in _step_one_filters(params, declared):
+    for checked, measured, texts in _step_one_filters(params, declared, engine):
         if any(_control(value) for value in checked):
             return 'invalid_character'
         if any(len(value) > 255 for value in measured):
@@ -716,15 +800,17 @@ def _step_one(params: DTParams, declared: Mapping[str, Declared]) -> str | None:
     return None
 
 
-def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) -> Answer | Refusal:
+def evaluate(
+    decl: Sequence[Declared], rows: Sequence[Row], params: DTParams, engine: Engine = SQLITE
+) -> Answer | Refusal:
     """The answer the requirements give `params` over `rows`. PRD-E3: a mistake of step 1 in read order, else the
     mistake of the lowest step, the first in read order within it. PRD-F12: every filter joins with AND. PRD-C1,
     PRD-C2: the counts before and after the filters. PRD-C3: a start at or past the end gives an empty page and both
-    counts."""
+    counts. ``engine`` says what the requirements leave to the backend; the default is SQLite's reading."""
     declared = {column[0]: column for column in decl}
-    if (code := _step_one(params, declared)) is not None:
+    if (code := _step_one(params, declared, engine)) is not None:
         return Refusal(code)
-    reading = _Reading()
+    reading = _Reading(engine)
     clauses = [_global(params, declared, reading)]
     for column in params.columns:
         key = _key(column, declared)
@@ -738,5 +824,5 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
         return Refusal(min(reading.mistakes, key=lambda mistake: mistake[:2])[2])
     kept = [clause for clause in clauses if clause is not None]
     matched = [row for row in rows if all(clause(row) for clause in kept)]
-    page = _sorted(matched, applied, decl[0][0])[params.start : params.start + params.length]
+    page = _sorted(matched, applied, decl[0][0], engine)[params.start : params.start + params.length]
     return Answer(tuple(row[decl[0][0]] for row in page), len(rows), len(matched))

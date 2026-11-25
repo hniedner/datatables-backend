@@ -12,21 +12,24 @@ and then over rows that tie on the applied column with a short page that cuts th
 thin the tie out), paging past the end included; on any column, now and then column search text that PRD-F6 reduces to
 no word, alone or beside a list; columns named twice, nameless columns and an undeclared one; a server declaration with
 at least one unorderable column, and mistakes of every step of PRD-E3. The rates are set so that about half of the
-requests are answered (54% on the `ci` seed) and most outcomes and paths are reached at least about 30 times in 500
+requests are answered (57% on the `ci` seed) and most outcomes and paths are reached at least about 30 times in 500
 examples; one seed varies around that (`uv run pytest tests/test_reference_properties.py
 --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events)
-are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed M4 1%, M5b 3%, M6 4%, M7 2%
-(`!between`) and 0.4% (`between`), M10 3% (the last day read before a number mistake of step 2) and M10b 2%.
+are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed M4 3%, M5b 3%, M6 3%, M7 4%
+(`between`) and 3% (`!between`), M10 5% (the last day read before a number mistake of step 2) and M10b 3%. `n` holds
+2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: a request
+sends one of them beside a row holding one in 2% of the `ci` examples.
 
 Rare cases, and what carries each:
-- a regex over 255 code points that is no categorical filter: drawn in about 3 of 1,000 examples (`explore`), none on
+- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none on
   the current `ci` seed; carried by an example on the property and by the hand-written tests;
 - an entry of 256 code points on a list on the global search: drawn under `explore` only, none on the `ci` seed;
   carried by an example and by the hand-written tests (`explore` found mutants of these two cases only after 1,200 to
   1,500 examples);
-- a list of more than 256 entries on the global search: about 3% of the `ci` examples, and an example;
-- an unfinished criterion holding a step-1 value: about 2% of the `ci` examples, and an example;
-- ColumnControl's `contains` of more than 16 words: about 2% of the `ci` examples, and an example;
+- a list of more than 256 entries on the global search: about 4% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 2 in 1,000 random examples, none on the current `ci` seed;
+  an example;
+- ColumnControl's `contains` of more than 16 words: about 1% of the `ci` examples, and an example;
 - the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
   does not take): the examples and the hand-written tests, since the random draw seldom holds both mistakes at once.
 
@@ -74,6 +77,7 @@ gap met so far is decided (#205), and a gap found later is added back as a marke
 """
 
 from collections import Counter
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import date
 from typing import Any
@@ -102,8 +106,10 @@ from datatables_backend.sqlalchemy import SQLTable
 
 from .conftest import chance
 from .conftest import rarely
+from .reference_evaluator import SQLITE
 from .reference_evaluator import Answer
 from .reference_evaluator import Declared
+from .reference_evaluator import Engine
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
 from .reference_evaluator import categorical
@@ -131,10 +137,13 @@ _metadata.create_all(_engine)
 STRINGS = ['', ' ', 'a', 'A', 'ab', 'Ab c', 'b a', 'red', 'Red', 'RED', 'reddish', 'x_y', '5%', 'a-b', '-', '7a', '[a]',
            'a\\b']  # fmt: skip
 DATES = [date(2023, 1, 1), date(2024, 3, 5), date(2024, 3, 6), date(2024, 12, 31)]
+#: The numbers of `n`, 2^53 and 2^53 + 1 among them: a double cannot tell those two apart, so a number bound as a
+#: double finds its neighbour as well
+NUMBERS = [-7, 0, 7, 17, 70, 2**53, 2**53 + 1]
 CELLS: dict[str, st.SearchStrategy[Any]] = {
     's': st.none() | st.sampled_from(STRINGS),
     't': st.none() | st.sampled_from(STRINGS),
-    'n': st.none() | st.sampled_from([-7, 0, 7, 17, 70]),
+    'n': st.none() | st.sampled_from(NUMBERS),
     'd': st.none() | st.sampled_from(DATES),
     'b': st.none() | st.booleans(),
 }
@@ -160,12 +169,12 @@ def declarations(draw: st.DrawFn) -> tuple[Declared, ...]:
 VALUED: dict[str, st.SearchStrategy[Any]] = {
     's': st.sampled_from(STRINGS),
     't': st.sampled_from(STRINGS),
-    'n': st.sampled_from([-7, 0, 7, 17, 70]),
+    'n': st.sampled_from(NUMBERS),
     'd': st.sampled_from(DATES),
     'b': st.booleans(),
 }
 #: The values of a range, low to high, by column
-RANGED: dict[str, list[Any]] = {'n': [-7, 0, 7, 17, 70], 'd': DATES}
+RANGED: dict[str, list[Any]] = {'n': NUMBERS, 'd': DATES}
 #: A word that ColumnControl's `contains` finds in some cells, by type
 CONTAINED: dict[str, list[str]] = {'string': ['a', 'red', 'b', 'x_y', '-'], 'number': ['7', '0', '1', '-'],
                                    'date': ['2024', '03', '-', '12-31']}  # fmt: skip
@@ -177,7 +186,8 @@ VALUES: dict[str, st.SearchStrategy[str]] = {
     's': st.sampled_from([*STRINGS, 'x', 'zz', 'REDDISH', 'A-B']),
     't': st.sampled_from([*STRINGS, 'x', 'zz', 'REDDISH', 'A-B']),
     'id': rarely(st.sampled_from(['1', '2', '3', '5', '8', ' 2 ', '+3', '-1', '4']), st.just('abc'), 6),
-    'n': rarely(st.sampled_from(['-7', '0', '7', '17', '70', '8', ' 7 ', '+7', '-7', '0', '7', '17', '70']),
+    'n': rarely(st.sampled_from(['-7', '0', '7', '17', '70', '8', ' 7 ', '+7', '-7', '0', '7', '17', '70', str(2**53),
+                                 str(2**53 + 1)]),
                 st.sampled_from(['abc', '1_000', '7 7', BIG]), 10),
     'd': rarely(st.sampled_from(['2023-01-01', '2024-03-05', '2024-03-06', '2024-12-31', ' 2024-03-05 ', '2024-03-05',
                                  '2024-12-31', '2024-03-06', '2023-01-01']),
@@ -381,7 +391,7 @@ def added_criteria(draw: st.DrawFn) -> list[dict[str, Any]]:
     for condition in ('between', '!between'):
         if draw(chance(4)):
             name = draw(st.sampled_from(['n', 'd']))
-            pool = ['-7', '0', '7', '17', '70'] if name == 'n' else [day.isoformat() for day in DATES]
+            pool = [str(number) for number in NUMBERS] if name == 'n' else [day.isoformat() for day in DATES]
             low, high = sorted(draw(st.lists(st.sampled_from(range(len(pool))), min_size=2, max_size=2, unique=True)))
             added.append({'origData': name, 'data': name, 'condition': condition, 'value': [pool[high], pool[low]]})
     return added
@@ -504,13 +514,13 @@ def focused(
     applies: list[int],
     unfiltered: bool,
 ) -> None:
-    """Now and then one of three requests that tell a mutant of the library apart (M4 and M6 about once in five, M7
+    """Now and then one of three requests that tell a mutant of the library apart (M4 and M6 about once in four, M7
     once in eight), half of them with no other filter (and with ``unfiltered`` none either): M4, an ascending order
     over NULLs and values with a short page (PRD-O2); M7, a range written high to low over a row inside it (PRD-F27);
     M6, a list and ColumnControl's `contains` on one column, ANDed (PRD-F45)."""
     columns = body['columns']
     nulls_first = draw(chance(4)) and [index for index in applies if columns[index]['data'] != 'id']
-    anded = draw(chance(5)) and [
+    anded = draw(chance(4)) and [
         index
         for index, column in enumerate(columns)
         if isinstance(column['data'], str)
@@ -546,6 +556,28 @@ def focused(
         # now and then more than 16 words, which PRD-F14 refuses in this column search too (PRD-F45)
         word = draw(rarely(st.sampled_from(CONTAINED[KINDS[name]]), st.just(' '.join(['a'] * 17)), 8))
         columns[index]['columnControl'] = {'search': {'value': word, 'logic': 'contains', 'type': 'text'}}
+
+
+def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None) -> Engine:
+    """The evaluator's reading of a backend, by the name SQLAlchemy gives its dialect, or `opensearch`. The flags
+    follow the requirements and the measured engine facts:
+    - `typed_search` (PRD-F32, PRD-F33, PRD-F34): OpenSearch only; SQL searches a number or a date as its text
+      (PRD-F23).
+    - `empty_string_is_empty` (PRD-F26): every SQL database; on OpenSearch only a missing field is empty.
+    - `pad_space` (PRD section 5, `docs/databases.md`, `docs/decisions/004-numbers-and-the-empty-string-on-the-sql-
+      servers.md`): SQL Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3); not PostgreSQL,
+      SQLite or MySQL's default collation (NO PAD).
+    - `order_key` (PRD-O6): SQLite's `BINARY` is code-point order; every other backend's collation is measured by the
+      leg that runs on it and passed as ``order_key``, else ordering by text is out of scope there."""
+    if dialect == 'sqlite':
+        return SQLITE
+    if dialect in ('postgresql', 'mysql'):
+        return Engine(order_key=order_key)
+    if dialect in ('mssql', 'mariadb'):
+        return Engine(pad_space=True, order_key=order_key)
+    if dialect == 'opensearch':
+        return Engine(typed_search=True, empty_string_is_empty=False, order_key=order_key)
+    raise ValueError(f'no reading of the backend {dialect}')
 
 
 def library(decl: tuple[Declared, ...], rows: list[dict[str, Any]], params: DTParams) -> Answer | Refusal:
@@ -602,7 +634,9 @@ def reversed_bounds(leaf: dict[str, Any]) -> bool:
         return False
 
 
-def paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]:
+def paths(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], engine: Engine = SQLITE
+) -> list[str]:
     """The paths of an answered request that the generator is tuned to reach."""
     filters: Counter[str] = Counter()
     negated: set[str] = set()
@@ -651,22 +685,26 @@ def paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str
         applied = isinstance(then['data'], str) and server.get(then['data'], False)
         if skipped and applied and second['dir'] != first['dir']:
             reached.append('path: a skipped first order entry, then one applied in the other direction')
-            if tie_cut(rows, decl, body, then['data']):
+            if tie_cut(rows, decl, body, then['data'], engine):
                 reached.append('path: ... and a tie on the applied column that the page cuts')
-    return list(dict.fromkeys([*reached, *no_word_paths(decl, body), *survivor_paths(rows, decl, body)]))
+    return list(dict.fromkeys([*reached, *no_word_paths(decl, body), *survivor_paths(rows, decl, body, engine)]))
 
 
-def survivor_paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]:
+def survivor_paths(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], engine: Engine = SQLITE
+) -> list[str]:
     """The paths that tell three mutants of the library apart, each read from the evaluator's answers to the request
     and to the request with one part changed. M4: under an ascending first order, putting the NULLs last instead of
     first would change the page (PRD-O2). M6: dropping either a column search or list, or ColumnControl's `contains`
     on the same column, would change the answer (PRD-F45: they are ANDed). M7: a range written high to low keeps or
     drops a row that the unswapped reading would not (PRD-F27)."""
     reached: list[str] = []
-    answer = evaluate(decl, rows, parse_request(body))
+    answer = evaluate(decl, rows, engine=engine, params=parse_request(body))
     first = first_applied(decl, body)
     if first is not None and first[1] == 'asc':
-        whole = evaluate(decl, rows, parse_request({**body, 'start': 0, 'length': max(1, len(rows))}))
+        whole = evaluate(
+            decl, rows, engine=engine, params=parse_request({**body, 'start': 0, 'length': max(1, len(rows))})
+        )
         if isinstance(whole, Answer):
             empty = {row['id'] for row in rows if row[first[0]] is None}
             last = [key for key in whole.ids if key not in empty] + [key for key in whole.ids if key in empty]
@@ -680,7 +718,10 @@ def survivor_paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body:
             without_plain, without_control = deepcopy(body), deepcopy(body)
             without_plain['columns'][index]['search'] = {'value': '', 'regex': False}
             del without_control['columns'][index]['columnControl']['search']
-            if any(evaluate(decl, rows, parse_request(other)) != answer for other in (without_plain, without_control)):
+            if any(
+                evaluate(decl, rows, engine=engine, params=parse_request(other)) != answer
+                for other in (without_plain, without_control)
+            ):
                 reached.append(
                     'path M6: dropping a column search or list, or a ColumnControl contains beside it, '
                     'would change the answer'
@@ -698,15 +739,15 @@ def survivor_paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body:
                     ],
                 }
             )
-            if evaluate(decl, rows, parse_request(unswapped)) != answer:
+            if evaluate(decl, rows, engine=engine, params=parse_request(unswapped)) != answer:
                 reached.append(f'path M7: a reversed {leaf["condition"]} changes the answer')
-    if isinstance(answer, Answer) and found_in_one_column(rows, decl, body, answer):
+    if isinstance(answer, Answer) and found_in_one_column(rows, decl, body, answer, engine):
         reached.append('path M5b: a global word found in one searchable column of a row and not the others')
     return reached
 
 
 def found_in_one_column(
-    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer, engine: Engine
 ) -> bool:
     """Whether a one-word global search finds a row of the page through one of two or more searched columns only: a
     word must be found in some column, not in each (PRD-F1). Read from the evaluator: the request is run once per
@@ -721,14 +762,18 @@ def found_in_one_column(
     for name in searched:
         alone = {**body, 'start': 0, 'length': max(1, len(rows)), 'columns': [
             {**column, 'searchable': column['searchable'] and column['data'] == name} for column in body['columns']]}  # fmt: skip
-        run = evaluate(decl, rows, parse_request(alone))
+        run = evaluate(decl, rows, engine=engine, params=parse_request(alone))
         if isinstance(run, Answer):
             found.update(run.ids)
     return any(found[key] == 1 for key in answer.ids)
 
 
 def ranking_paths(
-    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer | Refusal
+    rows: list[dict[str, Any]],
+    decl: tuple[Declared, ...],
+    body: dict[str, Any],
+    answer: Answer | Refusal,
+    engine: Engine = SQLITE,
 ) -> list[str]:
     """M10: the last day there is (step 3 of PRD-E3) read first, then a number mistake of step 2 later in the tree,
     which answers `invalid_number`: the shape where an answer by read order alone would give `invalid_date`. M10b:
@@ -737,7 +782,7 @@ def ranking_paths(
     leaves = criteria_of(body.get('searchBuilder') or {})
 
     def alone(*criteria: dict[str, Any]) -> Answer | Refusal:
-        return evaluate(decl, rows, parse_request({**body, 'search': {'value': ''}, 'columns': [
+        return evaluate(decl, rows, engine=engine, params=parse_request({**body, 'search': {'value': ''}, 'columns': [
             {**column, 'search': {'value': '', 'regex': False}, 'columnControl': {}} for column in body['columns']],
             'order': [], 'searchBuilder': {'logic': 'AND', 'criteria': list(criteria)}}))  # fmt: skip
 
@@ -749,18 +794,31 @@ def ranking_paths(
         leaf.get('origData') == 'n' and alone(leaf) == Refusal('invalid_number') for leaf in leaves[last[0] + 1 :]
     ):
         return ['path M10: a number mistake of step 2 read after the last day answers']
-    without = evaluate(decl, rows, parse_request({key: value for key, value in body.items() if key != 'searchBuilder'}))
+    without = evaluate(
+        decl,
+        rows,
+        engine=engine,
+        params=parse_request({key: value for key, value in body.items() if key != 'searchBuilder'}),
+    )
     if answer.code == 'invalid_date' and without == Refusal('invalid_filter'):
         return ['path M10b: the last day answers before a refusal of step 4']
     return []
 
 
 def events(
-    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer | Refusal
+    rows: list[dict[str, Any]],
+    decl: tuple[Declared, ...],
+    body: dict[str, Any],
+    answer: Answer | Refusal,
+    engine: Engine = SQLITE,
 ) -> list[str]:
-    """Every event of one example: its outcome, the shapes it sends, and the paths it reaches."""
-    reached = [outcome(rows, answer), *shapes(body), *ranking_paths(rows, decl, body, answer)]
-    return reached + (paths(rows, decl, body) if isinstance(answer, Answer) else [])
+    """Every event of one example: its outcome, the shapes it sends, and the paths it reaches, each read from the
+    evaluator for ``engine``."""
+    reached = [outcome(rows, answer), *shapes(body), *ranking_paths(rows, decl, body, answer, engine)]
+    neighbours = {2**53, 2**53 + 1}
+    if any(row['n'] in neighbours for row in rows) and any(str(number) in repr(body) for number in neighbours):
+        reached.append('shape: 2^53 or 2^53 + 1 sent beside a row that holds one of them')
+    return reached + (paths(rows, decl, body, engine) if isinstance(answer, Answer) else [])
 
 
 def first_applied(decl: tuple[Declared, ...], body: dict[str, Any]) -> tuple[str, str] | None:
@@ -817,10 +875,12 @@ def no_word_paths(decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]
     return reached
 
 
-def tie_cut(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], name: str) -> bool:
+def tie_cut(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], name: str, engine: Engine
+) -> bool:
     """Whether rows that tie on ``name`` stand both inside and outside the page: only the tie-breaker's direction
     decides which of them the page shows (PRD-O3)."""
-    whole = evaluate(decl, rows, parse_request({**body, 'start': 0, 'length': max(1, len(rows))}))
+    whole = evaluate(decl, rows, engine=engine, params=parse_request({**body, 'start': 0, 'length': max(1, len(rows))}))
     if not isinstance(whole, Answer):
         return False
     values = {row['id']: row[name] for row in rows}
