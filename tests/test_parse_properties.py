@@ -56,11 +56,9 @@ CONDITIONS = ['=', '!=', 'starts', '!starts', 'ends', '!ends', 'contains', '!con
 SEGMENTS = ['[0]', '[1]', '[]', '[', ']', '[]]', '[[0]]', '.0', '.', ' ', '[00]', '[0123456789]', '[0].x', '[a.b]', '']
 
 marked = st.text(alphabet='abcdefghijklmnopqrstuvwxyz', min_size=4, max_size=10).map(f'{MARK}{{}}'.format)
-#: A marked value over the 255 code points a value may hold, so the refusal of a value too long is reached with a mark in
-#: the value it must not repeat
+#: A marked value over the 255 code points a value may hold, so the refusal of a value too long is reached with a
+#: mark in the value it must not repeat
 long_marked = marked.map(lambda text: text + 'x' * 256)
-#: ``base`` mostly, a long marked value one time in sixteen: often enough to reach the refusal of a value too long, seldom
-#: enough that most requests still reach the query. A column search is pinned by an example instead.
 
 
 def seldom[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], every: int = 16) -> st.SearchStrategy[T]:
@@ -73,6 +71,8 @@ def seldom[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], every: i
 
 
 def seldom_long(base: st.SearchStrategy[str]) -> st.SearchStrategy[str]:
+    """``base`` mostly, a long marked value one time in sixteen: often enough to reach the refusal of a value too long,
+    seldom enough that most requests still reach the query. A column search is pinned by an example instead."""
     return seldom(base, long_marked)
 
 
@@ -178,10 +178,11 @@ shaped = st.fixed_dictionaries(
 def plausible(draw: st.DrawFn) -> dict[str, Any]:
     """A request the server's own columns could get: columns by their declared names, SearchBuilder conditions on
     them, orders by index. It is what reaches the planner and the query, which ``shaped`` seldom does with three
-    names to match at once; a part of it is wrong now and then. It also names columns the server never declared, and now and
-    then sends a value over the 255 code points a value may hold, both marked."""
+    names to match at once; a part of it is wrong now and then. It also names columns the server never declared, and
+    now and then sends a value over the 255 code points a value may hold, both marked."""
     names = draw(st.lists(st.sampled_from(NAMES), min_size=1, max_size=7, unique=True))
-    # Names the server never declared, marked: one request in sixteen. More would end most requests in a refusal of the name
+    # Names the server never declared, marked: one request in sixteen. More would end most requests in a refusal of
+    # the name
     undeclared = draw(seldom(st.just([]), st.lists(marked, min_size=1, max_size=2, unique=True)))
     columns = [
         {
@@ -414,7 +415,7 @@ def test_a_request_that_is_read_is_answered_or_refused_with_a_stable_code(data: 
 
 
 def text_of(value: Any) -> str:
-    """A scalar as DataTables writes it into a form (dataTables.mjs:884-890): digits, `true` and `false`, or the text."""
+    """A scalar as DataTables writes it into a form (dataTables.mjs:884-890): digits, `true`, `false` or the text."""
     return str(value).lower() if isinstance(value, bool) else str(value)
 
 
