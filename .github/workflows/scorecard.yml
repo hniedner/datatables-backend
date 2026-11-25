@@ -31,9 +31,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # v2.6.0's image index on ghcr.io references deleted manifests (404, ossf/scorecard-action#1752): v2.5.0 until
-      # that is fixed, then forward again
-      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+      # v2.6.0's image on ghcr.io was unpullable for a day (ossf/scorecard-action#1752, restored by the maintainers, the
+      # cause removed), so this was v2.5.0 meanwhile. The action is pinned by sha, but the image it runs is pulled from
+      # ghcr.io by tag: a later deletion there would fail this job again, and v2.5.0 is the way back.
+      - uses: ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5 # v2.6.0
         with:
           results_file: results.sarif
           results_format: sarif
