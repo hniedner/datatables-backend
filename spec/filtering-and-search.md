@@ -436,7 +436,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F38.7** [all] A global search `ann` on a request that names `name` (SQL) or `title` (OS) 1,000 times asks the
   database or the cluster exactly what it asks when the column is named once.
 - **SPEC-F39.1** [all] A column search on `colour` with value `red` and `multi_values` `["blue"]` → error_code
-  `invalid_filter`.
+  `invalid_filter` (a value with a word, see `SPEC-F6.6`).
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows
   1, 2, 3, 4.
 
@@ -448,8 +448,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   error_code `invalid_filter`.
 - **SPEC-F41.3** [all] With `name` marked `searchable: false` in the request: global search `apple` → none; column
   search `apple` on `name` → rows 1.
-- **SPEC-F41.4** [all] A column search with a value, or a non-empty `multi_values` list, on the undeclared `extra` →
-  error_code `invalid_filter`; an empty one is answered (PRD-D6).
+- **SPEC-F41.4** [all] A column search with a value (a value with a word, see `SPEC-F6.6`), or a non-empty
+  `multi_values` list, on the undeclared `extra` → error_code `invalid_filter`; an empty one is answered (PRD-D6).
 - **SPEC-F42.1** [PostgreSQL] With the session `TimeZone` `America/Los_Angeles`: global search `2024-03-05` → rows 1
   (not row 2); column search `2024-03-06` on `at` → rows 2.
 - **SPEC-F42.2** [SQL Server] Given `at` as `DATETIMEOFFSET` with row 1 stored as `2024-03-06T04:30+05:00`: column

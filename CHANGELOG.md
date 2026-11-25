@@ -13,10 +13,11 @@ and the versioning policy is in the README.
   as the range from 9 to 10, though `10` sorts first as text.
 - A column search whose text has no word, such as a lone `"`, a bare `!` or `!x`, adds nothing, so the request is
   answered as if it were not sent, on a column that is undeclared, nameless or declared unsearchable, and beside a
-  `multi_values` list, which alone then answers. Before, each of these was refused with `invalid_filter`, and so was
-  text of spaces only beside such a list. A column search with `regex: true` is unchanged: spaces there are still a
-  categorical value. So is one on a column with a `search_value` hook, whose text is one whole value (PRD-D17), and
-  text holding a control character is still refused with `invalid_character`.
+  `multi_values` list, which alone then answers. ColumnControl's `contains`, a column search, is covered too. Before,
+  each of these was refused with `invalid_filter`, and so was text of spaces only beside such a list. A column search
+  with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
+  with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
+  refused with `invalid_character`.
 
 ## [0.1.3] - 2026-11-25
 
