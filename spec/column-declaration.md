@@ -114,3 +114,29 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D22.2** [SQL] Each of these constructs and answers as before: an `Integer` and a `Boolean` column declared
   `string`, a `Boolean` declared `number`, an expression without a type declared `number`, a `Uuid` declared
   `string`.
+- **SPEC-D23.1** [OS] A number column declared with each kind, SearchBuilder `=`: the last value OpenSearch answers is
+  sent and answered, and the first it refuses is answered with `invalid_number` and nothing sent. The pairs: `byte`,
+  `short` and `integer` 2147483647 and 2147483648, -2147483648 and -2147483649; `long` 2^63-1 and 2^63, -2^63 and
+  -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0 and -1; `float` 3.4028235677973362e38 and 3.4028235677973366e38 and
+  their negatives; `half_float` 65519 and 65520 and their negatives. Live, on both servers: the same value through an
+  undeclared column is the server's own 400, and `byte` and `short` are refused at 2^31 as the integer is.
+- **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query
+  is checked, and the value just past the edge is refused by every one: SearchBuilder `=`, `!=`, `<`, `>=`, `between`
+  and `!between`, a column search, a `multi_values` list, and ColumnControl's `equal` and its list. Live: a list of -1
+  on an undeclared `unsigned_long` answers the document holding 2^64-1, and a declared one refuses it.
+- **SPEC-D23.3** [OS] A `byte` and a `short` answer `<=` with 128, 40000 and -129: they refuse only beyond an
+  `integer`'s range.
+- **SPEC-D23.4** [OS] The refusal of a number of 47 digits, for each kind, names the field type, says `within that
+  range`, and holds no part of the value.
+- **SPEC-D23.5** [OS] On a `long`, `=` 9223372036854775807.5 and 9223372036854775806.5 are refused (each is sent as
+  the float 2^63, which the server refuses), and 9223372036854774784.5 is sent.
+- **SPEC-D23.6** [OS] A number column with no kind: `=` 2^64 is sent as it is and answered with no error from the
+  library. Live: a column over an `integer` field fails with the client's `RequestError`; a `scaled_float` answers
+  1e300 with the document holding its largest value.
+- **SPEC-D23.7** [OS] A number column without a kind: `=` a number of 255 digits is sent, one of 256 is
+  `value_too_long`, and 1e400 is `invalid_number`. Live: a `float` field refuses 255 digits, so the declared kind
+  answers `invalid_number` and the undeclared column fails with `RequestError`.
+- **SPEC-D23.8** [OS] A SearchBuilder with `created = xx` (a date mistake, step 2) and an `integer` column `=` 2147483648
+  (a range mistake, step 3) is answered `invalid_date`.
+- **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
+  column and, for the text column, `type="number"`.

@@ -198,13 +198,13 @@ The library does not change how a database compares values. Each rule below is s
 - OpenSearch's global search skips number and date columns, and every backend's skips boolean columns
   ([the rule][rules-types]).
 - On OpenSearch a stored `""` is not empty, where on SQL it is ([the rule][rules-opensearch]).
-- On OpenSearch a number outside its field's mapped range fails the request, a stated limit of this library
-  ([the entry][db-number-range], [issue #47][issue-47]).
+- On OpenSearch a number column should declare its field's kind, `IndexColumn('pages', type='number', number='integer')`:
+  a number outside the range its mapping holds is then answered with `invalid_number`, and fails the request when the
+  kind is not declared ([the entry][db-number-range]).
 
 [prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
 [changelog]: https://github.com/hniedner/datatables-backend/blob/main/CHANGELOG.md
-[db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-its-field-fails-the-request
-[issue-47]: https://github.com/hniedner/datatables-backend/issues/47
+[db-number-range]: https://github.com/hniedner/datatables-backend/blob/main/docs/databases.md#a-number-outside-the-range-of-an-undeclared-field-fails-the-request
 [decision-007]: https://github.com/hniedner/datatables-backend/blob/main/docs/decisions/007-columncontrol-wire-form.md#the-lists-options-under-server-side-processing-167
 [usage-columncontrol]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md#columncontrol-list-options-from-the-data
 [usage]: https://github.com/hniedner/datatables-backend/blob/main/docs/usage.md

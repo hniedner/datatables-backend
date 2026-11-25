@@ -404,3 +404,40 @@ class AwaitingStore:
     @property
     def keys(self) -> list[str]:
         return self.inner.keys
+
+
+# -- the number kinds of an index column (PRD-D23, decision 011), shared by the recording and the live tests ---
+
+INTEGER_BOUNDS = '-2147483648 and 2147483647'
+KIND_BOUNDS = {
+    'byte': INTEGER_BOUNDS,  # OpenSearch refuses a byte or a short only beyond an integer's range
+    'short': INTEGER_BOUNDS,
+    'integer': INTEGER_BOUNDS,
+    'long': '-9223372036854775808 and 9223372036854775807',
+    'unsigned_long': '0 and 18446744073709551615',
+    'float': '-3.4028234663852886e+38 and 3.4028234663852886e+38',
+    'half_float': '-65504 and 65504',
+}
+#: (kind, the last value OpenSearch answers, the first it refuses). `float`'s are the two floats either side of the one
+#: that rounds to infinity, and `half_float`'s 65519 and 65520, which the measurement found on both servers.
+NUMBER_EDGES = [
+    pytest.param('byte', '2147483647', '2147483648', id='byte-high'),
+    pytest.param('byte', '-2147483648', '-2147483649', id='byte-low'),
+    pytest.param('short', '2147483647', '2147483648', id='short-high'),
+    pytest.param('short', '-2147483648', '-2147483649', id='short-low'),
+    pytest.param('integer', '2147483647', '2147483648', id='integer-high'),
+    pytest.param('integer', '-2147483648', '-2147483649', id='integer-low'),
+    pytest.param('long', str(2**63 - 1), str(2**63), id='long-high'),
+    pytest.param('long', str(-(2**63)), str(-(2**63) - 1), id='long-low'),
+    pytest.param('unsigned_long', str(2**64 - 1), str(2**64), id='unsigned_long-high'),
+    pytest.param('unsigned_long', '0', '-1', id='unsigned_long-low'),
+    pytest.param('float', '3.4028235677973362e38', '3.4028235677973366e38', id='float-high'),
+    pytest.param('float', '-3.4028235677973362e38', '-3.4028235677973366e38', id='float-low'),
+    pytest.param('half_float', '65519', '65520', id='half_float-high'),
+    pytest.param('half_float', '-65519', '-65520', id='half_float-low'),
+]
+
+
+def number_edge(name: str) -> Any:
+    """The `NUMBER_EDGES` pair with this id, for a test that wants a few of them."""
+    return next(edge for edge in NUMBER_EDGES if edge.id == name)

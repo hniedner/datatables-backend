@@ -26,8 +26,10 @@ from datatables_backend import Column
 from datatables_backend import DTResponse
 from datatables_backend import TotalCache
 from datatables_backend.opensearch import IndexColumn
+from datatables_backend.opensearch import NumberKind
 from datatables_backend.opensearch import SearchTable
 
+from .conftest import NUMBER_EDGES
 from .conftest import criterion
 from .conftest import request
 
@@ -65,6 +67,15 @@ MAPPING = {
         'seen': {'type': 'date'},  # a date-time field, in the default format; searched only by the table `timed`
         'meta': {'properties': {'author': KEYWORD_TEXT}},
         'active': {'type': 'boolean'},
+        # One field of each type that refuses a number, for the tests of `IndexColumn(number=...)` below (`pages` is
+        # the `integer`); and a `scaled_float`, which refuses none
+        'n_byte': {'type': 'byte'},
+        'n_short': {'type': 'short'},
+        'n_long': {'type': 'long'},
+        'n_unsigned': {'type': 'unsigned_long'},
+        'n_float': {'type': 'float'},
+        'n_half': {'type': 'half_float'},
+        'n_scaled': {'type': 'scaled_float', 'scaling_factor': 100},
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
         # A whole string the server folds to ASCII and to small letters; declared only by the table `folded` below
         'folded': {'type': 'keyword', 'normalizer': 'to_ascii'},
@@ -102,7 +113,8 @@ DOCUMENTS: list[dict[str, Any]] = [
      'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED, 'folded': 'a*b'},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
      'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b'},
-    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b'},
+    {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b',
+     'n_unsigned': 2**64 - 1, 'n_scaled': (2**63 - 1) / 100},  # the largest of each, for the two silent answers below
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
      'meta': {'author': 'Cy'}, 'active': True, 'label': [REPEATED_LETTER, DOTTED, LONGEST_PATTERN, 'bär'],
      'seen': '2026-08-02T22:00:00-05:00',  # written on the 2nd, and 03:00 UTC on the 3rd
@@ -792,18 +804,76 @@ def test_a_fullwidth_mark_is_searched_as_the_character_its_field_folds_it_to(
     assert found(folded.fetch_sync(params, client)) == expected
 
 
-@pytest.mark.xfail(
-    reason="PRD-E7, issue #47: a number outside the range of the field's own mapping (`pages` is an `integer`) is "
-    'refused by the server with a 400 ("out of range for an integer"), so the request fails where the user\'s '
-    'mistake should be answered with invalid_number. PRD section 5 states the limit until the issue is closed',
-    strict=True,
-    raises=RequestError,
-)
-def test_a_number_outside_the_range_of_its_field_is_the_users_mistake(client: OpenSearch):
-    """The library does not read the mapping (PRD-D8), so it cannot know the field's range; SQL knows its
-    column's."""
+NUMBER_FIELDS = {
+    'byte': 'n_byte',
+    'short': 'n_short',
+    'integer': 'pages',
+    'long': 'n_long',
+    'unsigned_long': 'n_unsigned',
+    'float': 'n_float',
+    'half_float': 'n_half',
+}
+
+
+def numbers_in(field: str, kind: NumberKind | None) -> SearchTable:
+    """A table whose one number column reads ``field`` and declares ``kind``, or nothing."""
+    column = (
+        Column('n', field=field, type='number')
+        if kind is None
+        else IndexColumn('n', field=field, type='number', number=kind)
+    )
+    return SearchTable(INDEX, [IndexColumn('id', text='keyword'), column], unique_key='id')
+
+
+@pytest.mark.parametrize(('kind', 'last', 'first'), NUMBER_EDGES)
+def test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers(
+    client: OpenSearch, kind: NumberKind, last: str, first: str
+):
+    """SPEC-D23.1 on a real server: the last value of each edge is answered through the declared column, the first is
+    `invalid_number` before the query, and the same value through an undeclared column is the server's own 400. So the
+    edge the kind carries is the server's, including the exact edge of `byte` and `short` (an integer's) and the
+    rounding edge of `float`, which the measurement of decision 011 only bracketed."""
+    field = NUMBER_FIELDS[kind]
+    assert numbers_in(field, kind).fetch_sync(request('id', 'n', **criterion('n', '=', last)), client).error is None
+    params = request('id', 'n', **criterion('n', '=', first))
+    assert numbers_in(field, kind).fetch_sync(params, client).error_code == 'invalid_number'
+    with pytest.raises(RequestError):
+        numbers_in(field, None).fetch_sync(params, client)
+
+
+def test_a_number_outside_the_range_of_an_undeclared_column_fails_with_the_clients_error(client: OpenSearch):
+    """PRD section 5, today's result: the mapping is never read (PRD-D8), so a column that declares no kind sends 2^64 to
+    its `integer` field, which refuses it with a 400 that reaches the application as the client's `RequestError`. The
+    declared case is `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`."""
     params = request(*NAMES, **criterion('pages', '=', str(2**64)))
-    assert table.fetch_sync(params, client).error_code == 'invalid_number'
+    with pytest.raises(RequestError):
+        table.fetch_sync(params, client)
+
+
+def test_a_declared_unsigned_long_refuses_minus_one_in_a_list_where_the_server_answers_the_largest_number(
+    client: OpenSearch,
+):
+    """SPEC-D23.2, PRD section 5: a `terms` query reads -1 on an `unsigned_long` as 2^64-1 and answers the document that
+    holds it, without an error, so an undeclared column returns c3 for a list of -1. A declared kind refuses it."""
+    params = request('id', 'n', column_search={'n': {'multi_values': ['-1']}})
+    assert ids(numbers_in('n_unsigned', None).fetch_sync(params, client)) == ['c3']
+    assert numbers_in('n_unsigned', 'unsigned_long').fetch_sync(params, client).error_code == 'invalid_number'
+
+
+def test_a_scaled_float_answers_a_number_beyond_its_range_as_its_largest(client: OpenSearch):
+    """PRD section 5, decision 011: no request fails on a `scaled_float`, so there is no kind for it; 1e300 finds the
+    document that holds the largest value, which is a wrong match without an error."""
+    response = numbers_in('n_scaled', None).fetch_sync(request('id', 'n', **criterion('n', '=', '1e300')), client)
+    assert ids(response) == ['c3']
+
+
+def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field(client: OpenSearch):
+    """SPEC-D23.7 on a real server: the floor of every number column, a number of at most 255 characters, is finite as a
+    double, which `double` takes; a `float` field refuses it, which is why `float` has a kind."""
+    params = request('id', 'n', **criterion('n', '=', '9' * 255))
+    assert numbers_in('n_float', 'float').fetch_sync(params, client).error_code == 'invalid_number'
+    with pytest.raises(RequestError):
+        numbers_in('n_float', None).fetch_sync(params, client)
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
@@ -1250,7 +1320,8 @@ def test_a_searchbuilder_equality_on_a_hooked_column_keeps_a_document_without_th
 
 
 # What a recording client cannot show: that the cluster answers a value of 255 code points. The number `1` * 255 is
-# one no `integer` field takes (the strict xfail above, #47), so here the numbers are zeros and a one.
+# one no `integer` field takes (an undeclared column fails with the client's error, the test above), so here the numbers
+# are zeros and a one.
 LONG_ANSWERED = [
     ('search', everywhere('a' * 255)),
     ('title search', in_title('a' * 255)),
