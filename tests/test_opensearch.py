@@ -2710,6 +2710,49 @@ def test_a_filter_with_a_value_on_an_undeclared_column_is_refused_and_an_empty_o
     assert query(client) == []
 
 
+#: A column search with `regex` false whose text PRD-F6 reduces to no word
+NO_WORD = ['   ', '"', '""', '"""', '!""', '!', '!x']
+unsearchable_title = SearchTable(
+    'docs',
+    [IndexColumn('id', text='keyword'), IndexColumn('title', searchable=False)],
+    unique_key='id',
+    base_filter={'term': {'published': True}},
+)
+#: Where a column search with a word is refused: the table, the request's columns, the searched one, its other fields
+#: and what the search holds beside the text
+REFUSING = {
+    'undeclared': (table, ('id', 'extra'), 'extra', {}, {}),
+    'nameless': (table, ('id', ''), '', {'': {'data': None}}, {}),
+    'unsearchable': (unsearchable_title, ('id', 'title'), 'title', {}, {}),
+    'beside multi_values': (table, NAMES, 'title', {}, {'multi_values': ['x']}),
+}
+
+
+@pytest.mark.parametrize('place', REFUSING)
+@pytest.mark.parametrize(
+    ('search', 'idle'), [*(({'value': text}, True) for text in NO_WORD), ({'value': '   ', 'regex': True}, False)]
+)
+def test_a_column_search_with_no_word_is_idle_where_a_word_would_be_refused(
+    place: str, search: dict[str, Any], idle: bool
+):
+    """SPEC-F6.6: the text adds nothing, so the request sends what it sends without it (beside a list, the list
+    alone); with `regex: true` spaces are a categorical value (SPEC-F6.4), refused before anything is sent."""
+    source, names, name, flags, beside = REFUSING[place]
+
+    def sent(text: dict[str, Any]) -> tuple[DTResponse, Client]:
+        client = Client()
+        params = request(*names, column_search={name: {**beside, **text}}, flags=flags)
+        return source.fetch_sync(params, client), client
+
+    (response, client), (_, without) = sent(search), sent({})
+    if idle:
+        assert response.error is None, response.error
+        assert client.searches == without.searches
+    else:
+        refused(response)
+        assert client.searches == []
+
+
 # -- typed filters: what a condition the type does not take, an unfinished criterion and a list of numbers send ---
 
 

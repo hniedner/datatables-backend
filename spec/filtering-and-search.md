@@ -50,6 +50,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   nothing, so it means empty).
 - **SPEC-F6.5** [all] Column search on `note` with `!pipe ""` → rows 1, 2, 3, as `!pipe` (`SPEC-F5.2`): the empty
   quote adds nothing next to other words (an empty word kept as a condition would drop row 1's NULL).
+- **SPEC-F6.6** [all] Each of three spaces, `"`, `""`, `"""`, `!""`, `!` and `!x`, as a column search with `regex`
+  false on the undeclared `extra`, on a column with no name, on `name` declared unsearchable, and beside
+  `multi_values` `["red"]` on `colour`, is answered as the request without that text (rows 1, 2, 3, 4; beside the
+  list rows 1, 4, as the list alone), never refused (PRD-F41, PRD-F39); with `regex: true` three spaces in those
+  places stay `invalid_filter` (`SPEC-F6.4`).
 - **SPEC-F7.1** [all] Global search `red` + LF + `apple`, and the same with CR, U+2028 or U+2029 in place of LF,
   → rows 1, as `red apple` does.
 - **SPEC-F7.2** [all] Given rows whose `note` is `a` + LF + `b` and `a b`: `multi_values` `["a\nb"]` on `note` →
