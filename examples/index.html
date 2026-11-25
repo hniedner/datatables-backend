@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>datatables-backend example</title>
+  <!-- DataTables 3.1.6 and ColumnControl 2.1.3 from jsDelivr, pinned, with the sha384 of the npm package's own file -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/datatables.net-dt@3.1.6/css/dataTables.dataTables.css"
+        integrity="sha384-2k9uLoQeYmuou+pC4erXygdeL+yT3d6Ila9GLHKP6ePBTHikB2cJUBB+WvpOcROP" crossorigin="anonymous">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/datatables.net-columncontrol-dt@2.1.3/css/columnControl.dataTables.css"
+        integrity="sha384-jjOdfOeMnOC59RbXCaANuzhi7ef2//5rnxvpqAsMfzXBCBfAhynjj7lkb7x6Gslj" crossorigin="anonymous">
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    #items-error { color: #b00020; min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <h1>Items</h1>
+  <p>
+    <label>Colour
+      <select id="colour-filter">
+        <option value="">any</option>
+        <option>red</option>
+        <option>green</option>
+        <option>blue</option>
+        <option>yellow</option>
+      </select>
+    </label>
+  </p>
+  <p id="items-error" role="alert"></p>
+  <table id="items" class="display" style="width: 100%">
+    <thead>
+      <tr><th>Id</th><th>Label</th><th>Colour</th><th>Size</th><th>Added</th><th>Status</th></tr>
+    </thead>
+  </table>
+
+  <script src="https://cdn.jsdelivr.net/npm/datatables.net@3.1.6/js/dataTables.js"
+          integrity="sha384-kjMsuXECk5iOSaQaDlW6suB6KfPnl2jvIbEUafAqXP/+UmkXRGxDu+LGphwJANSL"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/datatables.net-columncontrol@2.1.3/js/dataTables.columnControl.js"
+          integrity="sha384-SaILH+cWLKYHHh5fdhwiev9uYj6RSYI3vSkbD8u3xTob7ApCRnM0ED4b0rnmAS/L"
+          crossorigin="anonymous"></script>
+  <script>
+    DataTable.ext.errMode = (settings, techNote, message) => console.warn(message); // no alert(); the page shows the error
+
+    const table = new DataTable('#items', {
+      serverSide: true,
+      processing: true,
+      ajax: { url: '/items/table', type: 'POST' },
+      columns: [
+        { data: 'id' },
+        { data: 'label' },
+        { data: 'colour' },
+        { data: 'size' },
+        { data: 'added' },
+        {
+          data: 'status',
+          columnControl: [[{
+            extend: 'searchList',
+            options: [{ label: 'Open', value: 'open' }, { label: 'Closed', value: 'closed' }],
+          }]],
+        },
+      ],
+    });
+
+    // A user's mistake comes back as HTTP 200 with `error`; an HTTP error comes with no JSON at all
+    table.on('xhr', (e, settings, json) => {
+      document.querySelector('#items-error').textContent = json?.error ?? '';
+    });
+
+    // The column filter: DataTables' own column search, sent as columns[2][search][value]
+    document.querySelector('#colour-filter').addEventListener('change', (event) => {
+      table.column(2).search(event.target.value).draw();
+    });
+  </script>
+</body>
+</html>

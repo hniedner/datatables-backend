@@ -152,6 +152,9 @@ with `columnControl: {}` hides a list that has none.
 
 Options (`TotalCache`, `RowHooks`, page limits, `scope=` on `fetch` for a per-user filter): [docs/usage.md][usage].
 
+A runnable example, FastAPI on SQLite with a DataTables page, is in
+[`examples/`](https://github.com/hniedner/datatables-backend/tree/main/examples); it is not part of the package.
+
 ## Tested with
 
 CI runs the tests on Python 3.12 to 3.15 and on SQLite (sync, and async with aiosqlite); PostgreSQL 18 (psycopg 3, sync
