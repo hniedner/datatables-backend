@@ -356,13 +356,12 @@ def _compared(kind: Kind, column: str, condition: str, values: Sequence[Any]) ->
 
 
 class _Reading:
-    """The mistakes and the gaps found while a request is read. Each part of the request (the global search, each
+    """The mistakes found while a request is read. Each part of the request (the global search, each
     column's plain search, ColumnControl search and list, each criterion, each order entry) has a place in PRD-E3's
     read order; a mistake is kept with its step and that place."""
 
     def __init__(self) -> None:
         self.mistakes: list[tuple[float, int, str]] = []
-        self.gaps: list[SpecGap] = []
         self.place = 0
 
     def next_part(self) -> None:
@@ -377,9 +376,6 @@ class _Reading:
         except _Refused as mistake:
             self.refuse(mistake.step, mistake.code)
             return _NO_VALUE
-
-    def gap(self, name: str, text: str) -> None:
-        self.gaps.append(SpecGap(name, text))
 
 
 def _key(column: DTColumn, declared: Mapping[str, Declared]) -> str | None:
@@ -475,26 +471,22 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
 
 
 def _plain(search: Search, key: str | None, found: Declared | None, reading: _Reading) -> Predicate | None:
-    """One column's search. PRD-D6, PRD-F41, PRD-P21: one with a value or a non-empty list on a column the server does
-    not declare searchable, or on a nameless one, is refused without its value being read (PRD-E3). PRD-F39: a value
+    """One column's search. PRD-F6: with `regex` false, text that reduces to no word (spaces only, a lone quote, a `!`
+    word PRD-F35 drops) is idle, as an empty value is, wherever it is sent (a control character in it was refused
+    first, PRD-F15). PRD-D6, PRD-F41, PRD-P21: one with a value or a non-empty list on a column the server does not
+    declare searchable, or on a nameless one, is refused without its value being read (PRD-E3). PRD-F39: a value
     beside a list is refused. PRD-F20: a list; PRD-F16: a categorical filter, any other regex refused (PRD-F18);
     PRD-F44: a boolean column; PRD-F2 and PRD-F23: the smart search of the column's text."""
     reading.next_part()
     values = search.multi_values or []
-    if not search.value and not values:
-        return None
     holds_value = bool(search.value) if search.regex else any(_words(search.value))
-    if key is None or found is None or not found[2]:
-        if values or holds_value:
-            reading.refuse()
-        else:
-            reading.gap('G11', 'a column search whose text reduces to no word, on a column that cannot be searched')
+    if not holds_value and not values:
         return None
-    if search.value and values:
-        if holds_value:
-            reading.refuse()
-        else:
-            reading.gap('G11', 'a column search whose text reduces to no word, beside a list')
+    if key is None or found is None or not found[2]:
+        reading.refuse()
+        return None
+    if holds_value and values:
+        reading.refuse()
         return None
     kind = found[1]
     if values:
@@ -729,7 +721,7 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
     """The answer the requirements give `params` over `rows`. PRD-E3: a mistake of step 1 in read order, else the
     mistake of the lowest step, the first in read order within it. PRD-F12: every filter joins with AND. PRD-C1,
     PRD-C2: the counts before and after the filters. PRD-C3: a start at or past the end gives an empty page and both
-    counts. Raises `SpecGap` when no mistake decides and a part's answer is not given by the requirements."""
+    counts. Raises `SpecGap` for a request the requirements leave open (none is reached by the generator today)."""
     declared = {column[0]: column for column in decl}
     if (code := _step_one(params, declared)) is not None:
         return Refusal(code)
@@ -745,8 +737,6 @@ def evaluate(decl: Sequence[Declared], rows: Sequence[Row], params: DTParams) ->
     applied = _ordering(params, declared, reading)
     if reading.mistakes:
         return Refusal(min(reading.mistakes)[2])
-    if reading.gaps:
-        raise reading.gaps[0]
     kept = [clause for clause in clauses if clause is not None]
     matched = [row for row in rows if all(clause(row) for clause in kept)]
     page = _sorted(matched, applied, decl[0][0])[params.start : params.start + params.length]

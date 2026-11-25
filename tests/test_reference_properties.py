@@ -7,7 +7,9 @@ silenced by narrowing the generator.
 The table: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger), `d` (Date) and `b` (Boolean), 0 to 8 rows
 inserted in a random key order. The request: the global search, column searches (smart, categorical, `multi_values`),
 ColumnControl's search and list, a SearchBuilder tree of at most 5 criteria, 0 to 3 order entries (often a skipped one
-first, then one applied in the other direction), paging past the end included; columns named twice, nameless columns
+first, then one applied in the other direction, now and then over rows that tie on the applied column with a short
+page that cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and then column search text that PRD-F6
+reduces to no word, alone or beside a list; columns named twice, nameless columns
 and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
 PRD-E3. The rates are set so that about 60% of the requests are answered and each outcome and path below is reached
 about 30 times in 500 examples, averaged over seeds; one seed, such as the `ci` profile's, varies around that
@@ -42,11 +44,10 @@ Generator restrictions, each with its reason:
 - No SearchBuilder tree near PRD-F38's bounds, no list near 256 values and no request near PRD-C17's 960 conditions:
   out of scope above.
 
-The spec gaps the evaluator raises (`SpecGap`) are counted with `hypothesis.event` and not compared; each one the
-generator meets has a test below that pins today's answer, citing #205, until the specification decides it: G11 today.
-Two more are not reached, since the generator never sends them (#205): G12, a control character or a long value in an
-unfinished criterion; G13, a regex over 255 code points that is no categorical filter, or a ColumnControl search of
-more than 16 words.
+The spec gaps the evaluator raises (`SpecGap`) are counted with `hypothesis.event` and not compared. Every gap the
+generator met is decided now. Two are not reached, since the generator never sends them (#205): G12, a control
+character or a long value in an unfinished criterion; G13, a regex over 255 code points that is no categorical
+filter, or a ColumnControl search of more than 16 words.
 """
 
 from collections import Counter
@@ -54,9 +55,9 @@ from datetime import date
 from typing import Any
 
 from hypothesis import event
+from hypothesis import example
 from hypothesis import given
 from hypothesis import strategies as st
-import pytest
 from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import Column as SQLColumn
@@ -81,6 +82,7 @@ from .reference_evaluator import Declared
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
 from .reference_evaluator import SpecGap
+from .reference_evaluator import _words  # pyright: ignore[reportPrivateUsage]
 from .reference_evaluator import evaluate
 
 KINDS: dict[str, Kind] = {'id': 'number', 's': 'string', 't': 'string', 'n': 'number', 'd': 'date', 'b': 'boolean'}
@@ -200,6 +202,12 @@ def escaped(value: str) -> str:
     return ''.join(f'\\{character}' if character in '/.*+?|()[]{}\\$^-' else character for character in value)
 
 
+#: Column search text that PRD-F6 reduces to no word (`!a` and `!x` are words PRD-F35 drops), now and then with a
+#: control character, which PRD-F15 refuses first
+NO_WORD = rarely(st.sampled_from(['   ', '"', '""', '"""', '!""', '!', '!x', '!a', ' \n ']),
+                 st.sampled_from(['!\x01', '!\t']), 12)  # fmt: skip
+
+
 def values_of(name: str) -> st.SearchStrategy[list[str]]:
     """The entries of a list: one to three values, now and then an empty one."""
     return st.lists(rarely(VALUES[name], st.just(''), 6), min_size=1, max_size=3)
@@ -208,8 +216,13 @@ def values_of(name: str) -> st.SearchStrategy[list[str]]:
 @st.composite
 def column_search(draw: st.DrawFn, name: str, refused: bool, active: bool = False) -> dict[str, Any]:
     """A column's search: mostly idle, on a column that cannot be searched almost always; smart text, a categorical
-    regex, a list, or now and then a value beside a list."""
+    regex, a list, or now and then a value beside a list. On any column, now and then text with no word (PRD-F6),
+    alone or beside a list."""
     kind = KINDS.get(name, 'string')
+    if draw(chance(3 if refused else 8)):
+        no_word = {'value': draw(NO_WORD), 'regex': False}
+        beside = not refused and draw(st.booleans())  # on a column that cannot be searched the list is refused
+        return {**no_word, 'multi_values': draw(values_of(name))} if beside else no_word
     if not active and not draw(chance(32 if refused else 4)):
         return {'value': '', 'regex': False}
     form = draw(st.sampled_from(['text', 'text', 'text', 'regex', 'multi', 'multi']))
@@ -278,11 +291,9 @@ def nameless(column: dict[str, Any]) -> bool:
 
 
 @st.composite
-def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], dict[str, Any]]:
-    """Rows, a declaration and a request body."""
-    rows = draw(table_rows())
-    decl = draw(declarations())
-    server = {name: (searchable, orderable) for name, _, searchable, orderable in decl}
+def request_columns(draw: st.DrawFn, server: dict[str, tuple[bool, bool]]) -> list[dict[str, Any]]:
+    """The request's columns, with their searches: declared ones, now and then one named twice, a nameless one and an
+    undeclared one."""
     names: list[str | None] = list(draw(st.lists(st.sampled_from(NAMES), min_size=1, max_size=5, unique=True)))
     if draw(chance(3)):
         names.append(draw(st.sampled_from(names)))  # a column named twice
@@ -311,6 +322,36 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
         index = draw(st.sampled_from(searched))
         columns[index]['search'] = draw(column_search(columns[index]['data'], refused=False, active=True))
         columns[index]['columnControl'] = draw(columncontrol(columns[index]['data'], refused=False, active=True))
+    return columns
+
+
+@st.composite
+def added_criteria(draw: st.DrawFn) -> list[dict[str, Any]]:
+    """Criteria added to the tree now and then: a value the column cannot read, so that steps 2 and 3 of PRD-E3 meet
+    the others, and a range written high to low, which PRD-F27 reads in either order."""
+    added: list[dict[str, Any]] = []
+    for name, unreadable, one_in in (('d', ['2024-13-01', '2024', '9999-12-31', '05.03.2024'], 12),
+                                     ('n', ['abc', '7.5.1', BIG], 18)):  # fmt: skip
+        if draw(chance(one_in)):
+            condition = draw(st.sampled_from(['=', '<', '!=', '>=']))
+            added.append({'origData': name, 'data': name, 'condition': condition,
+                          'value': [draw(st.sampled_from(unreadable))]})  # fmt: skip
+    for condition in ('between', '!between'):
+        if draw(chance(4)):
+            name = draw(st.sampled_from(['n', 'd']))
+            pool = ['-7', '0', '7', '17', '70'] if name == 'n' else [day.isoformat() for day in DATES]
+            low, high = sorted(draw(st.lists(st.sampled_from(range(len(pool))), min_size=2, max_size=2, unique=True)))
+            added.append({'origData': name, 'data': name, 'condition': condition, 'value': [pool[high], pool[low]]})
+    return added
+
+
+@st.composite
+def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], dict[str, Any]]:
+    """Rows, a declaration and a request body."""
+    rows = draw(table_rows())
+    decl = draw(declarations())
+    server = {name: (searchable, orderable) for name, _, searchable, orderable in decl}
+    columns = draw(request_columns(server))
 
     def skipped(column: dict[str, Any]) -> bool:
         key = column['data'] if isinstance(column['data'], str) else None
@@ -319,13 +360,27 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
     entry = st.fixed_dictionaries({'column': st.integers(0, len(columns) - 1), 'dir': st.sampled_from(['asc', 'desc'])})
     order = draw(st.lists(entry, max_size=3))
     skips = [index for index, column in enumerate(columns) if skipped(column)]
+    paging: dict[str, int] = {}
+    unfiltered = False
     applies = [index for index, column in enumerate(columns)
                if isinstance(column['data'], str) and server.get(column['data'], (False, False))[1]]  # fmt: skip
-    if skips and applies and draw(chance(2)):  # a skipped entry first, then one applied, in the other direction
+    if skips and applies and not draw(chance(4)):  # a skipped entry first, then one applied, in the other direction
         direction = draw(st.sampled_from(['asc', 'desc']))
         other = 'desc' if direction == 'asc' else 'asc'
+        # the key cannot tie, so another column is applied where there is one
+        applied = draw(st.sampled_from([index for index in applies if columns[index]['data'] != 'id'] or applies))
         order = [{'column': draw(st.sampled_from(skips)), 'dir': direction},
-                 {'column': draw(st.sampled_from(applies)), 'dir': other}, *order[:1]]  # fmt: skip
+                 {'column': applied, 'dir': other}, *order[:1]]  # fmt: skip
+        tied = columns[applied]['data']
+        if tied != 'id' and len(rows) >= 2:
+            # A tie on the applied column that a short page cuts: only the key, in the applied entry's direction,
+            # orders the tied rows (PRD-O3, PRD-O8)
+            value = draw(CELLS[tied])
+            for row in rows:
+                row[tied] = value
+            order = order[:2]
+            paging = {'start': draw(st.integers(0, len(rows) - 2)), 'length': draw(st.integers(1, 2))}
+            unfiltered = draw(st.booleans())  # half the time no filter thins the tie out
     body: dict[str, Any] = {
         'draw': 1,
         'start': draw(st.sampled_from([0, 0, 0, 1, 2, 3, 5, 8, 9, 20])),
@@ -334,26 +389,18 @@ def cases(draw: st.DrawFn) -> tuple[list[dict[str, Any]], tuple[Declared, ...], 
         'order': order,
         'search': {'value': draw(step_one(rarely(st.just(''), text, 3), 20)), 'regex': draw(chance(24))},
     }
+    body.update(paging)
     if draw(chance(32)):
         body['search']['multi_values'] = draw(st.lists(VALUES['s'], max_size=2))
     if draw(chance(3)):
         body['searchBuilder'] = draw(tree)
-    # Now and then a value the column cannot read, so that steps 2 and 3 of PRD-E3 meet the others
-    for name, unreadable, one_in in (('d', ['2024-13-01', '2024', '9999-12-31', '05.03.2024'], 12),
-                                     ('n', ['abc', '7.5.1', BIG], 18)):  # fmt: skip
-        if draw(chance(one_in)):
-            condition = draw(st.sampled_from(['=', '<', '!=', '>=']))
-            bad = {'origData': name, 'data': name, 'condition': condition, 'value': [draw(st.sampled_from(unreadable))]}
-            body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].append(bad)
-    # Now and then a range written high to low, which PRD-F27 reads in either order
-    for condition in ('between', '!between'):
-        if not draw(chance(4)):
-            continue
-        name = draw(st.sampled_from(['n', 'd']))
-        pool = ['-7', '0', '7', '17', '70'] if name == 'n' else ['2023-01-01', '2024-03-05', '2024-03-06', '2024-12-31']
-        low, high = sorted(draw(st.lists(st.sampled_from(range(len(pool))), min_size=2, max_size=2, unique=True)))
-        bounds = {'origData': name, 'data': name, 'condition': condition, 'value': [pool[high], pool[low]]}
-        body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].append(bounds)
+    if added := draw(added_criteria()):
+        body.setdefault('searchBuilder', {'logic': 'AND', 'criteria': []})['criteria'].extend(added)
+    if unfiltered:
+        body['search'] = {'value': '', 'regex': False}
+        body.pop('searchBuilder', None)
+        for column in columns:
+            column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
     return rows, decl, body
 
 
@@ -460,48 +507,59 @@ def paths(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str
         applied = isinstance(then['data'], str) and server.get(then['data'], False)
         if skipped and applied and second['dir'] != first['dir']:
             reached.append('path: a skipped first order entry, then one applied in the other direction')
+            if tie_cut(rows, decl, body, then['data']):
+                reached.append('path: ... and a tie on the applied column that the page cuts')
+    return list(dict.fromkeys([*reached, *no_word_paths(decl, body)]))
+
+
+def no_word_paths(decl: tuple[Declared, ...], body: dict[str, Any]) -> list[str]:
+    """The paths of column search text that PRD-F6 reduces to no word."""
+    reached: list[str] = []
+    searchable = {name: flag for name, _, flag, _ in decl}
+    for column in body['columns']:
+        search = column['search']
+        if not search['regex'] and search['value'] and not any(_words(search['value'])):
+            reached.append('path: a column search with no word')
+            if search.get('multi_values'):
+                reached.append('path: a column search with no word beside a list')
+            key = column['data'] if isinstance(column['data'], str) else None
+            if nameless(column) or not searchable.get(key or '', False):
+                reached.append('path: a column search with no word on a column that cannot be searched')
     return reached
 
 
-#: A small table for the examples below: `t` is declared unsearchable
-SMALL: tuple[Declared, ...] = (
-    ('id', 'number', True, True),
-    ('s', 'string', True, True),
-    ('t', 'string', False, True),
-    ('n', 'number', True, True),
-    ('d', 'date', True, True),
-    ('b', 'boolean', True, True),
-)
-SMALL_ROWS: list[dict[str, Any]] = [
-    {'id': 1, 's': 'red', 't': 'x', 'n': 7, 'd': None, 'b': True},
-    {'id': 2, 's': 'blue', 't': None, 'n': None, 'd': None, 'b': False},
-    {'id': 3, 's': None, 't': '', 'n': 17, 'd': None, 'b': None},
-]
-
-
-def small(*columns: dict[str, Any], criteria: list[dict[str, Any]] | None = None, search: str = '') -> dict[str, Any]:
-    """A request body for `SMALL`."""
-    body: dict[str, Any] = {'draw': 1, 'start': 0, 'length': 10, 'columns': list(columns), 'search': {'value': search}}
-    if criteria is not None:
-        body['searchBuilder'] = {'logic': 'AND', 'criteria': criteria}
-    return body
-
-
-def col(data: str | None, value: str = '', **fields: Any) -> dict[str, Any]:
-    """A request column, with a column search of ``value``; ``multi_values`` goes into the search too."""
-    search = {
-        'value': value,
-        'regex': False,
-        **({'multi_values': fields.pop('multi_values')} if 'multi_values' in fields else {}),
-    }
-    return {'data': data, 'name': '', 'searchable': True, 'orderable': True, 'search': search, **fields}
+def tie_cut(rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], name: str) -> bool:
+    """Whether rows that tie on ``name`` stand both inside and outside the page: only the tie-breaker's direction
+    decides which of them the page shows (PRD-O3)."""
+    whole = evaluate(decl, rows, parse_request({**body, 'start': 0, 'length': max(1, len(rows))}))
+    if not isinstance(whole, Answer):
+        return False
+    values = {row['id']: row[name] for row in rows}
+    window = range(body['start'], body['start'] + body['length'])
+    sequence = [values[key] for key in whole.ids]
+    return any(
+        sequence.count(value) >= 2
+        and {index in window for index, other in enumerate(sequence) if other == value} == {True, False}
+        for value in set(sequence)
+    )
 
 
 @given(cases())
+@example((
+    [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
+    (('id', 'number', True, False), ('s', 'string', True, True), ('t', 'string', True, True),
+     ('n', 'number', True, True), ('d', 'date', True, True), ('b', 'boolean', True, True)),
+    {'draw': 1, 'start': 0, 'length': 1, 'search': {'value': ''},
+     'columns': [{'data': name, 'name': '', 'searchable': True, 'orderable': name == 's', 'columnControl': {},
+                  'search': {'value': '', 'regex': False}} for name in ('id', 's')],
+     'order': [{'column': 0, 'dir': 'asc'}, {'column': 1, 'dir': 'desc'}]},
+))  # fmt: skip
 def test_the_library_answers_as_the_reference_evaluator(case: tuple[list[dict[str, Any]], Any, dict[str, Any]]):
     """The rows, their order and both counts, or the error code, of `fetch_sync` on SQLite equal the evaluator's.
     Catches any rule of PRD section 4.3 to 4.6 in scope where the library and the requirements part, in a combination
-    no hand-written test lists."""
+    no hand-written test lists. The example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is
+    the first applied entry, and its tie (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3,
+    PRD-O8)."""
     rows, decl, body = case
     params = parse_request(body)
     try:
@@ -514,24 +572,3 @@ def test_the_library_answers_as_the_reference_evaluator(case: tuple[list[dict[st
         for path in paths(rows, decl, body):
             event(path)
     assert library(decl, rows, params) == expected, 'the library and the reference evaluator answer differently'
-
-
-@pytest.mark.parametrize(
-    'body',
-    [
-        small(col('t', '!x')),
-        small(col('extra', '"')),
-        small(col('s', '"', multi_values=['red'])),
-    ],
-)  # fmt: skip
-def test_a_spec_gap_is_answered_as_today(body: dict[str, Any]):
-    """#205, gap G11: column search text that PRD-F6 reduces to no word (`!x`, a lone `"`), on a column that cannot be
-    searched or beside a list. The requirements leave it open, so the evaluator raises the gap and the property does
-    not compare it; today the library refuses it, where text of spaces only is idle. Pinned until the specification
-    decides. Catches a change in today's answer, which must come with a decision in `spec/`, and an evaluator that
-    stops raising the gap."""
-    params = parse_request(body)
-    with pytest.raises(SpecGap) as raised:
-        evaluate(SMALL, SMALL_ROWS, params)
-    assert raised.value.name == 'G11'
-    assert library(SMALL, SMALL_ROWS, params) == Refusal('invalid_filter')
