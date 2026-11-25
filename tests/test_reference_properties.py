@@ -55,9 +55,12 @@ moves by several points from one seed to the next, and each of these paths also 
 an integer column's number as a double).
 
 The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
-them) and one of each `compared` scenario. `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the
-backend, its query or the 64-bit range of a `long` declaration, which `tests/test_reference_opensearch.py` imports; one
-the shared plan refuses alike on every backend (`%` alone over number text, PRD-F32 and PRD-F13) is left out.
+them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
+(step 2) in a criterion, a categorical filter and a list, which the random draw reaches on the last two only after
+about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5).
+`TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
+declaration, which `tests/test_reference_opensearch.py` imports; one the shared plan refuses alike on every backend
+(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals) is left out.
 
 Rare cases, and what carries each:
 - a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
@@ -1633,6 +1636,12 @@ EXAMPLES |= {
     'decimal fraction limit': (rows_of('m', *DECIMALS), DECLARED,
                                request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
                                    ('m', '=', ['1e-16384']), ('d', '<', [LAST])))),
+    # PRD-F25, PRD-E3: a value that is not finite is one its column cannot read (step 2), also as a categorical filter
+    # (PRD-F16) or a list entry (PRD-F20), which read a number as `=` does: `invalid_number`
+    'decimal not finite in a categorical filter': (three_rows(), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '^(1e400)$', 'regex': True}})),
+    'decimal not finite in a list': (three_rows(), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '', 'regex': False, 'multi_values': ['1e400']}})),
 }  # fmt: skip
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 #: declaration, which OpenSearch's leg pins as well; one the shared plan refuses alike on every backend is left out
