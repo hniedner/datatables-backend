@@ -2735,7 +2735,7 @@ async def test_a_numeric_column_takes_a_number_of_38_digits_on_every_database(
     assert ids(await numbers.fetch(params, async_session)) == found
 
 
-@pytest.mark.parametrize('value', ['0.' + '1' * 39, '1' * 20 + '.' + '1' * 19, '1' * 39, '-0.' + '1' * 39])
+@pytest.mark.parametrize('value', ['0.' + '1' * 39, '1' * 20 + '.' + '1' * 19, '-0.' + '1' * 39])
 @pytest.mark.parametrize('condition', ['=', '<', 'between'])
 def test_a_number_of_more_than_38_digits_is_refused_on_sql_server(session: Session, condition: str, value: str):
     """SPEC-F25.12, SPEC-E4.29: on SQL Server a number of 39 digits in all is the user's mistake, as `invalid_number`
@@ -2784,6 +2784,9 @@ class Compiling:
         ('3.1e-1', Decimal('3.1E-1')),
         ('0.' + '1' * 38, Decimal('0.' + '1' * 38)),
         ('1' * 20 + '.' + '1' * 18, Decimal('1' * 20 + '.' + '1' * 18)),
+        ('0.' + '0' * 40, Decimal(0)),  # zero has no digits, however long its fraction is written
+        ('0e-50', Decimal(0)),
+        ('0e40', Decimal(0)),
         ('0.' + '1' * 39, None),
         ('1e38', None),  # 39 digits
         ('1' * 39, None),
@@ -2815,6 +2818,96 @@ def test_the_38_digits_of_sql_server_are_counted_as_it_counts_them(value: str, s
         # no precision and no scale: asyncpg casts a decimal to the type it is bound as, and the column's own
         # `NUMERIC(20, 2)` would round a longer fraction and overflow a longer whole number
         assert all(isinstance(kind, Numeric) and (kind.precision, kind.scale) == (None, None) for kind in source.types)
+
+
+def integer_numbers() -> SQLTable:
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
+    return SQLTable(numbers, [Column('id'), Column('i')])
+
+
+@pytest.mark.parametrize('dialect', [postgresql.dialect, mssql.dialect])
+def test_a_fraction_on_an_integer_column_is_compared_as_the_number_written(dialect: Callable[[], Dialect]):
+    """SPEC-F25.10: 8.0000000000000000001 is no whole number and a float of it is 8.0, which an integer column
+    holds, so it goes as a `Decimal` typed `Numeric()`, as on a `Numeric` column, and a list leaves it out as `=`
+    leaves it to match nothing. SQLite compares it as a float whatever the bind (PRD section 5), so only a compiled
+    statement shows it there."""
+    fraction = '8.0000000000000000001'
+    source: Any = Compiling(dialect())
+    integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', fraction)), source)
+    assert {str(value) for value in source.decimals} == {fraction}
+    assert all(isinstance(kind, Numeric) and (kind.precision, kind.scale) == (None, None) for kind in source.types)
+    listed: Any = Compiling(dialect())
+    search = {'multi_values': [fraction, '8']}
+    integer_numbers().fetch_sync(request('id', 'i', column_search={'i': search}), listed)
+    assert listed.decimals == []
+
+
+def test_a_fraction_of_more_than_38_digits_on_an_integer_column_is_refused_on_sql_server():
+    """SPEC-F25.12: the count of SQL Server's digits holds on an integer column too, for a fraction it compares."""
+    source: Any = Compiling(mssql.dialect())
+    response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', '8.' + '1' * 38)), source)
+    assert 'at most 38 digits in all' in refused(response, 'invalid_number')
+
+
+class Hundredths(TypeDecorator[Decimal]):
+    """A number held in hundredths: the column stores 150 for 1.5."""
+
+    impl = Numeric(20, 0)
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
+        return None if value is None else value * 100
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        return None if value is None else Decimal(value) / 100
+
+
+def test_a_converting_numeric_type_sees_the_number_a_filter_asks_for(session: Session):
+    """SPEC-F25.13: a `TypeDecorator` over `Numeric` converts what it is given, so the number goes through the
+    column's own type, as any other comparison does: with a column that holds hundredths, `= 1.5` finds 150 and `= 2`
+    and `= 2.0` find 200. It catches a bind that bypasses the decorator, which compared 1.5 with 150. (On asyncpg
+    the decimal is cast as the decorator's impl says; only a server shows it.)"""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Hundredths))
+    numbers.create(session.connection())
+    session.execute(numbers.insert(), [{'id': 1, 'n': Decimal('1.5')}, {'id': 2, 'n': Decimal(2)}])
+    table = SQLTable(numbers, [Column('id'), Column('n')])
+    for value, found in (('1.5', [1]), ('2', [2]), ('2.0', [2]), ('3.5', [])):
+        assert ids(table.fetch_sync(request('id', 'n', **criterion('n', '=', value)), session)) == found
+
+
+class Counted(TypeDecorator[int]):
+    """A whole number that converts nothing."""
+
+    impl = Integer
+    cache_ok = True
+
+
+def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session: Session):
+    """SPEC-F25.10: a `TypeDecorator` over an integer sees no `Decimal` of a fraction: it gets the nearest float, as
+    it always did, so `> 7.5` finds 8 and `= 7.5` finds nothing."""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Counted))
+    numbers.create(session.connection())
+    session.execute(numbers.insert(), [{'id': 1, 'i': 8}])
+    table = SQLTable(numbers, [Column('id'), Column('i')])
+    assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), session)) == [1]
+    assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', '7.5')), session)) == []
+
+
+def test_an_exponent_of_more_than_16383_digits_after_the_point_is_refused():
+    """SPEC-F25.14: 1e-16383 is the smallest number PostgreSQL's `numeric` takes (its manual, Table 8.2, fetched
+    2026-11-24), so a longer one is `invalid_number`, never the driver's error; it was a float that read as zero."""
+    for dialect in (postgresql.dialect, mssql.dialect):
+        source: Any = Compiling(dialect())
+        assert refused(
+            integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16384')), source),
+            'invalid_number',
+        ).endswith('with at most 16383 digits after the decimal point.')
+    taken: Any = Compiling(postgresql.dialect())
+    exact = SQLTable(
+        Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
+        [Column('id'), Column('n')],
+    )
+    assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', '1e-16383')), taken).error is None
 
 
 @pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])

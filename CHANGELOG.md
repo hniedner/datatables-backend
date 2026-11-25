@@ -16,12 +16,18 @@ and the versioning policy is in the README.
   could match a neighbour or miss the row. A patch release may correct an answer that was wrong, and this is one: a
   filter that matched a neighbour now matches the number asked for. SQLite is unchanged, since it stores a `Numeric` as
   a float or an integer; a `Float` column and OpenSearch still compare as floats.
-- On SQL Server, a number of more than 38 digits in all, before and after the decimal point, is now answered as
-  `invalid_number` ("at most 38 digits in all ... shorten the number") for every condition. A number with a point or
-  an exponent was answered as a float before, which cannot be exact at that length; the driver refuses it as a decimal
-  (HY104). A number written with an exponent beyond what a
-  decimal holds (`1e9999999999999999999999`) is also `invalid_number` on every database; a negative one was read as
-  zero before.
+- On SQL Server, a number of more than 38 digits in all, before and after the decimal point, that is compared with a
+  `Numeric` column (or with an integer column, for a number with a fraction) is now refused with `invalid_number` ("at
+  most 38 digits in all ... shorten the number") for every condition, where such a number written with a point or an
+  exponent was answered as a float before. A `Float` column is not refused. The request no longer fails in the driver
+  for a number that is a decimal.
+- `invalid_number` is now also the answer for a number written with an exponent beyond what a decimal holds
+  (`1e9999999999999999999999`, or `1e-20000`, which has more than the 16,383 digits after the decimal point that
+  PostgreSQL's `numeric` takes), on every database; the negative ones were read as zero before. On PostgreSQL, `=
+  1e-400` on a `Numeric` column now finds no row, where it matched a row holding zero. On MySQL and MariaDB it still
+  does (see docs/databases.md).
+- A number with a fraction on an integer column (`= 8.0000000000000000001`) is compared as written on PostgreSQL,
+  MySQL, MariaDB and SQL Server, where a float of it was the whole number 8.
 
 ## [0.1.1] - 2026-11-24
 

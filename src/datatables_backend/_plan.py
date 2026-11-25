@@ -186,6 +186,10 @@ _AS_SPACE = str.maketrans(dict.fromkeys(_SPACES, ' '))
 _SPLIT = re.compile(r'!?["\u201C][^"\u201D]+["\u201D]|[^ ]+')
 # How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
+#: The most digits after the decimal point a database takes in a number: PostgreSQL's `numeric` (its manual, Table 8.2,
+#: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a longer exponent is the user's
+#: mistake, never the driver's error
+_MAX_FRACTION_DIGITS = 16383
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
 _DAY = re.compile(
     r'(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})'
@@ -898,7 +902,8 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which
-    is also what decides whether a backend that compares as a float can take it."""
+    is also what decides whether a backend that compares as a float can take it, and has at most 16,383 digits after
+    the decimal point (``1e-20000`` is refused, the most PostgreSQL's ``numeric`` takes)."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
@@ -910,6 +915,17 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
         raise number_unreadable(column, listed=listed) from None
     if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
+    if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
+        needed = (
+            f'Each value in the filter on "{column.name}" must be a number'
+            if listed
+            else f'The filter on "{column.name}" needs a number'
+        )
+        raise mistake(
+            'datatables_number_out_of_range',
+            f'{needed} with at most {_MAX_FRACTION_DIGITS} digits after the decimal point.',
+            column,
+        )
     return number
 
 

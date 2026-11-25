@@ -498,17 +498,17 @@ def _number(
     The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
     is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
-    number: int | float | Decimal = value
-    if isinstance(sql_type, Integer) and isinstance(value, Decimal):
-        number = int(value) if value == value.to_integral_value() else float(value)  # 8.0 is the whole number 8
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
         if listed
         else f'The filter on "{declared.name}" needs a number'
     )
     if isinstance(sql_type, Integer):
-        if isinstance(number, float):  # a number with a fraction, which no integer equals
-            return number
+        if _fraction(value):  # no integer equals it: an exact decimal compares as it is, a converting type's as a float
+            if isinstance(column.type, TypeDecorator):
+                return float(value)
+            return _decimal(column, value, needed, declared, dialect)
+        number = int(value)  # 8.0 is the whole number 8
         bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32
         low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
         if getattr(sql_type, 'unsigned', False):
@@ -518,6 +518,20 @@ def _number(
         return number
     if not (isinstance(sql_type, Numeric) and not isinstance(sql_type, Float)):  # a Float is a Numeric to SQLAlchemy
         return float(value) if isinstance(value, Decimal) or not -(2**63) <= value < 2**63 else value
+    return _decimal(column, value, needed, declared, dialect)
+
+
+def _fraction(value: int | Decimal) -> bool:
+    """Whether ``value`` has a fraction, which no whole number equals."""
+    return isinstance(value, Decimal) and value != value.to_integral_value()
+
+
+def _decimal(
+    column: ColumnElement[Any], value: int | Decimal, needed: str, declared: Column, dialect: Dialect
+) -> int | Decimal | ColumnElement[Any]:
+    """``value`` for a column that compares exactly: a whole number within 64 bits as an ``int`` (the driver's own
+    integer), any other as a ``Decimal`` with every digit written. SQL Server refuses a number of more than 38 digits
+    in all, which is the user's mistake here (``_number``)."""
     if isinstance(value, Decimal):
         value = _without_trailing_zeros(value)
     if dialect.name == 'mssql' and _digits(value) > _MSSQL_DECIMAL_DIGITS:
@@ -529,17 +543,22 @@ def _number(
         )
     if isinstance(value, int) and -(2**63) <= value < 2**63:
         return value
+    if isinstance(column.type, TypeDecorator):  # it converts what it is given, so the column's own type must see it
+        return Decimal(value)
     # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
     # NUMERIC(p, s), and a number with more digits than that overflowed it
     return literal(Decimal(value), Numeric())
 
 
 def _without_trailing_zeros(value: Decimal) -> Decimal:
-    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, but
-    ``1E+2`` stays as written (``Decimal.normalize`` would turn ``100`` into it, a form SQL Server's driver does not
-    take for a number it holds)."""
+    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and zero is
+    zero. The count of SQL Server's 38 digits needs it (a number is no longer for the zeros it is written with), and
+    every database then gets the same number. A whole number stays as written: ``1E+2`` is not turned into ``100``,
+    nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would), which changes nothing for a database."""
     sign, digits, point = value.as_tuple()
     exponent = int(point)  # a finite number's
+    if not any(digits):  # zero has no digits to keep, however long its fraction is written
+        return Decimal(0)
     while exponent < 0 and len(digits) > 1 and digits[-1] == 0:
         digits, exponent = digits[:-1], exponent + 1
     return Decimal((sign, digits, exponent))
@@ -658,7 +677,7 @@ def _one_of(node: OneOf, column: ColumnElement[Any], values: list[Any], dialect:
         # PostgreSQL, and SQLite binds no Decimal. A number with a fraction equals no whole number, and a cast to
         # INTEGER would round it to one, so on an integer column it is left out, as `=` leaves it to match nothing
         whole = isinstance(_sql_type(column), Integer)
-        held = [value for value in values if not (whole and isinstance(value, float))]
+        held = [value for raw, value in zip(node.values, values, strict=True) if not (whole and _fraction(raw))]
         typed = [
             value
             if isinstance(value, ClauseElement)
