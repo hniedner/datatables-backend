@@ -4,11 +4,15 @@ code, never with another exception.
 
 Generated input is biased to DataTables' own keys, so it reaches the paths under ``columns``, ``order``, ``search`` and
 ``searchBuilder`` and not only "no DataTables parameter". Text that a client could see echoed carries ``MARK``: a
-message that holds it quotes the client. That proves no marked key or value is echoed, nothing about every text.
+message or a log record that holds it quotes the client. That proves no marked key or value is echoed, nothing about
+every text. A refusal is logged once, as a WARNING, and a request that is answered logs nothing; and one request is read
+the same in every form a client can send it.
 """
 
 from collections.abc import Iterator
 from collections.abc import Mapping
+from contextlib import contextmanager
+import logging
 from typing import Any
 
 from hypothesis import example
@@ -52,6 +56,26 @@ CONDITIONS = ['=', '!=', 'starts', '!starts', 'ends', '!ends', 'contains', '!con
 SEGMENTS = ['[0]', '[1]', '[]', '[', ']', '[]]', '[[0]]', '.0', '.', ' ', '[00]', '[0123456789]', '[0].x', '[a.b]', '']
 
 marked = st.text(alphabet='abcdefghijklmnopqrstuvwxyz', min_size=4, max_size=10).map(f'{MARK}{{}}'.format)
+#: A marked value over the 255 code points a value may hold, so the refusal of a value too long is reached with a mark in
+#: the value it must not repeat
+long_marked = marked.map(lambda text: text + 'x' * 256)
+#: ``base`` mostly, a long marked value one time in sixteen: often enough to reach the refusal of a value too long, seldom
+#: enough that most requests still reach the query. A column search is pinned by an example instead.
+
+
+def seldom[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], every: int = 16) -> st.SearchStrategy[T]:
+    """``common`` and, one time in ``every``, ``rare``. ``one_of`` weighs its branches alike, and one strategy repeated
+    is counted once, so ``common`` is mapped ``every - 1`` times; ``rare`` stands in the middle, since the first and
+    the last branch are drawn more than the others."""
+    branches = [common.map(lambda value: value) for _ in range(every - 1)]
+    branches.insert(every // 2, rare)
+    return st.one_of(*branches)
+
+
+def seldom_long(base: st.SearchStrategy[str]) -> st.SearchStrategy[str]:
+    return seldom(base, long_marked)
+
+
 words = st.sampled_from(
     ['', ' ', 'a', 'Ann', '31', '-1', '0', '2026-07-15', '2026-13-45', '2026-07', '1e999', '٣', '%', '_', '\x00', 'x' * 300]
 )  # fmt: skip
@@ -154,8 +178,11 @@ shaped = st.fixed_dictionaries(
 def plausible(draw: st.DrawFn) -> dict[str, Any]:
     """A request the server's own columns could get: columns by their declared names, SearchBuilder conditions on
     them, orders by index. It is what reaches the planner and the query, which ``shaped`` seldom does with three
-    names to match at once; a part of it is wrong now and then."""
+    names to match at once; a part of it is wrong now and then. It also names columns the server never declared, and now and
+    then sends a value over the 255 code points a value may hold, both marked."""
     names = draw(st.lists(st.sampled_from(NAMES), min_size=1, max_size=7, unique=True))
+    # Names the server never declared, marked: one request in sixteen. More would end most requests in a refusal of the name
+    undeclared = draw(seldom(st.just([]), st.lists(marked, min_size=1, max_size=2, unique=True)))
     columns = [
         {
             'data': name,
@@ -164,16 +191,16 @@ def plausible(draw: st.DrawFn) -> dict[str, Any]:
             'orderable': draw(flag),
             'search': {'value': draw(st.one_of(st.just(''), words, marked)), 'regex': False},
         }
-        for name in names
+        for name in [*names, *undeclared]
     ]
     leaf = st.fixed_dictionaries(
         {
-            'origData': st.sampled_from([*NAMES, 'born', 'seen']),
+            'origData': seldom(st.sampled_from([*NAMES, 'born', 'seen']), marked),
             'condition': st.sampled_from([*CONDITIONS, '=', '<', '>', 'between']),
             'type': st.sampled_from(['string', 'num', 'date', 'html']),
             'value': st.lists(words | marked, max_size=3),
         },
-        optional={'value1': words | marked, 'value2': words | marked},
+        optional={'value1': seldom_long(words | marked), 'value2': words | marked},
     )
 
     def groups_of(child: st.SearchStrategy[Any]) -> st.SearchStrategy[dict[str, Any]]:
@@ -193,12 +220,13 @@ def plausible(draw: st.DrawFn) -> dict[str, Any]:
                     {
                         'column': st.one_of(st.integers(0, len(names) - 1), st.integers(0, len(names) + 3)),
                         'dir': st.sampled_from(['asc', 'desc']),
-                    }
+                    },
+                    optional={'name': marked},
                 ),
                 max_size=3,
             )
         ),
-        'search': {'value': draw(st.one_of(st.just(''), words, marked)), 'regex': False},
+        'search': {'value': draw(seldom_long(st.one_of(st.just(''), words, marked))), 'regex': False},
         **draw(st.one_of(st.just({}), *[st.builds(lambda g: {'searchBuilder': g}, maybe(group))] * 3)),
     }
 
@@ -250,6 +278,36 @@ containers = st.one_of(
 requests = st.one_of(bodies, containers)
 
 
+@contextmanager
+def captured() -> Iterator[list[logging.LogRecord]]:
+    """The records the library logs while the block runs, whatever the logging configuration says: a handler on the
+    library's logger, at its lowest level, removed again whatever happens."""
+    records: list[logging.LogRecord] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger('datatables_backend')
+    handler, level = Collect(logging.DEBUG), logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(level)
+
+
+def holds_nothing_sent(records: list[logging.LogRecord]) -> None:
+    """Every record is a WARNING (SPEC-E13.1) and none holds a marked value or name, in its message, arguments or extra
+    fields, in either case: search text is lower-cased for a LIKE, so a record may echo the lower-cased mark."""
+    for record in records:
+        assert record.levelno == logging.WARNING, 'a refusal is logged as a WARNING'
+        text = repr(vars(record)) + record.getMessage()
+        assert MARK.lower() not in text.lower(), 'a log record quotes what the client sent'
+
+
 def parsed_or_refused(data: Any) -> DTParams | None:
     """The request's parameters, or None for a refusal that quotes nothing marked."""
     try:
@@ -257,6 +315,7 @@ def parsed_or_refused(data: Any) -> DTParams | None:
     except MalformedRequest as refused:
         assert MARK not in str(refused)
         assert MARK not in getattr(refused, 'event', '')
+        assert MARK.lower() not in str(refused).lower(), 'a refusal quotes what the client sent, lower-cased'
         return None
 
 
@@ -265,8 +324,13 @@ def parsed_or_refused(data: Any) -> DTParams | None:
 @example([{'columns': 1}])
 @example({'columns': {'0': {'data': None}}, 'order': 'x'})
 def test_a_request_is_read_or_refused_as_malformed_and_the_refusal_quotes_nothing(data: Any):
-    """Any other exception is a client-caused crash, which the library promises not to have (a 500 in the adapter)."""
-    parsed_or_refused(data)
+    """Any other exception is a client-caused crash, which the library promises not to have (a 500 in the adapter).
+    A refusal is logged once and a request that is read logs nothing (SPEC-E13.1, SPEC-E13.2), and no record quotes
+    what the client sent (SPEC-E10.1)."""
+    with captured() as records:
+        parsed = parsed_or_refused(data)
+    assert len(records) == (parsed is None), 'a refusal is logged once, a request that is read is not logged'
+    holds_nothing_sent(records)
 
 
 @given(st.integers(50, 5000), st.sampled_from(['columns', 'order', 'search', 'searchBuilder', 'draw']))
@@ -300,16 +364,187 @@ _table = SQLTable(
 )
 
 
+def one_column_request(**parts: Any) -> dict[str, Any]:
+    """The plainest request the table above answers, with ``parts`` added: pins what the generators must reach."""
+    column = {'data': 'id', 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False}}
+    return {'draw': 1, 'start': 0, 'length': 5, 'columns': [column], 'order': [], 'search': {'value': ''}, **parts}
+
+
 @settings(max_examples=max(1, settings().max_examples // 2))
 @given(st.one_of(plausible(), plausible(), shaped))
+@example(
+    one_column_request(
+        searchBuilder={
+            'logic': 'AND',
+            'criteria': [{'origData': f'{MARK}name', 'condition': '=', 'type': 'string', 'value': ['a']}],
+        }
+    )
+)  # an undeclared name in a criterion: a refusal that echoed it would be found here
+@example(
+    one_column_request(
+        columns=[
+            {
+                'data': 'id',
+                'name': '',
+                'searchable': True,
+                'orderable': True,
+                'search': {'value': f'{MARK}{"x" * 256}', 'regex': False},
+            }
+        ]
+    )
+)  # a marked value over 255 code points: a record that carried it would be found here
 def test_a_request_that_is_read_is_answered_or_refused_with_a_stable_code(data: dict[str, Any]):
     """A client-caused exception in ``fetch_sync`` would be a 500 for a request any browser could send."""
-    params = parsed_or_refused(data)
-    if params is None:
-        return
-    with Session(_engine) as session:
-        response = _table.fetch_sync(params, session)
+    with captured() as records:
+        params = parsed_or_refused(data)
+        if params is None:
+            assert len(records) == 1, 'a refusal is logged once'
+            holds_nothing_sent(records)
+            return
+        assert not records, 'a request that is read is not logged'
+        with Session(_engine) as session:
+            response = _table.fetch_sync(params, session)
     assert isinstance(response, DTResponse)
     assert response.error_code is None or response.error_code in STABLE_CODES
     assert (response.error is None) == (response.error_code is None)
     assert MARK not in (response.error or '')
+    assert MARK.lower() not in (response.error or '').lower(), 'an answer quotes what the client sent, lower-cased'
+    assert len(records) == (response.error_code is not None), 'a user error is logged once, an answer is not'
+    holds_nothing_sent(records)
+
+
+def text_of(value: Any) -> str:
+    """A scalar as DataTables writes it into a form (dataTables.mjs:884-890): digits, `true` and `false`, or the text."""
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def flatten(node: Any, key: str, *, dotted: bool, append: bool) -> list[tuple[str, str]]:
+    """``node`` as flat pairs, written from the generated value alone (nothing here reads a key back). A segment is
+    ``[name]``, or ``.name`` when ``dotted``; a list of text is repeated ``key[]`` entries when ``append``, else
+    indexed like a list of objects."""
+
+    def under(name: Any) -> str:
+        return f'{key}.{name}' if dotted and key else f'{key}[{name}]' if key else str(name)
+
+    if isinstance(node, dict):
+        return [
+            pair for name, item in node.items() for pair in flatten(item, under(name), dotted=dotted, append=append)
+        ]
+    if isinstance(node, list):
+        if append and not dotted and not any(isinstance(item, dict) for item in node):
+            return [(f'{key}[]', text_of(item)) for item in node]
+        return [
+            pair
+            for index, item in enumerate(node)
+            for pair in flatten(item, under(index), dotted=dotted, append=append)
+        ]
+    return [(key, text_of(node))]
+
+
+def forms_of(body: dict[str, Any]) -> list[Any]:
+    """One request in every form a client can send it: the JSON body (the reference), DataTables' own bracket keys as
+    pairs and as a multi-dict, with a list of text as repeated ``key[]`` entries, and every list indexed, in brackets
+    and in dots, as a plain mapping (which cannot repeat a key)."""
+    bracket = flatten(body, '', dotted=False, append=True)
+    return [
+        body,
+        bracket,
+        iter(bracket),
+        MultiDict(bracket),
+        dict(flatten(body, '', dotted=False, append=False)),
+        dict(flatten(body, '', dotted=True, append=False)),
+    ]
+
+
+def outcome(data: Any) -> tuple[Any, ...]:
+    try:
+        return ('read', parse_request(data))
+    except MalformedRequest as refused:
+        return ('refused', str(refused), refused.parameter, refused.draw)
+
+
+criterion_value_lists = st.lists(words | marked, min_size=1, max_size=12)
+encodable_criterion = st.fixed_dictionaries(
+    {
+        'origData': st.sampled_from(NAMES),
+        'condition': st.sampled_from(CONDITIONS),
+        'type': st.sampled_from(['string', 'num', 'date', 'html']),
+        'value': criterion_value_lists,
+    },
+    optional={'value1': words | marked, 'value2': words | marked},
+)
+
+
+def encodable_groups_of(child: st.SearchStrategy[Any]) -> st.SearchStrategy[dict[str, Any]]:
+    return st.fixed_dictionaries(
+        {'logic': st.sampled_from(['AND', 'OR']), 'criteria': st.lists(child, min_size=1, max_size=3)}
+    )
+
+
+encodable_group = encodable_groups_of(st.recursive(encodable_criterion, encodable_groups_of, max_leaves=6))
+encodable_column = st.fixed_dictionaries(
+    {
+        'data': st.sampled_from(NAMES),
+        'name': st.one_of(st.just(''), st.sampled_from(NAMES)),
+        'searchable': flag,
+        'orderable': flag,
+        'search': st.fixed_dictionaries({'value': words | marked, 'regex': flag}),
+    }
+)
+encodable = st.fixed_dictionaries(
+    {
+        'draw': st.integers(0, 10**6),
+        'start': st.integers(0, 50),
+        'length': st.integers(1, 200),
+        'columns': st.lists(encodable_column, min_size=1, max_size=12),
+        'search': st.fixed_dictionaries({'value': words | marked, 'regex': flag}),
+    },
+    optional={
+        'order': st.lists(
+            st.fixed_dictionaries({'column': st.integers(0, 13), 'dir': st.sampled_from(['asc', 'desc'])}),
+            min_size=1,
+            max_size=12,
+        ),
+        'searchBuilder': encodable_group,
+    },
+)
+
+
+@given(encodable)
+@example(
+    {
+        'draw': 1,
+        'start': 0,
+        'length': 10,
+        'columns': [
+            {'data': 'id', 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False}}
+        ]
+        * 11,
+        'search': {'value': '', 'regex': False},
+    }
+)  # eleven columns: an index of two digits, which sorts before 2 as text
+@example(
+    {
+        'draw': 1,
+        'start': 0,
+        'length': 10,
+        'columns': [
+            {'data': 'id', 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False}}
+        ],
+        'search': {'value': '', 'regex': False},
+        'searchBuilder': {
+            'logic': 'AND',
+            'criteria': [{'origData': 'id', 'condition': 'between', 'type': 'num', 'value': ['1', '', '2']}],
+        },
+    }
+)  # an empty entry in the middle of a list of text, sent as `value[]=`
+def test_one_request_is_read_the_same_in_every_form(body: dict[str, Any]):
+    """SPEC-P1.1, SPEC-P2.1: the JSON body, the bracket form (as pairs and as a multi-dict) and the indexed bracket and
+    dotted forms of one request are read to equal parameters, or refused with the same message, parameter and draw.
+    Only requests every form can say are generated: no empty list and no empty object (a flat form sends no key for
+    one), and no null, float or key with a `.` or a bracket (a flat form reads them as text or as a path). The
+    ColumnControl and SearchPanes parameters and an order entry's `name` are left out as out of scope: examples pin them
+    (SPEC-P5.3, SPEC-P5.4). Each encoder writes keys from the generated value and never calls the parser."""
+    reference = outcome(body)
+    for form in forms_of(body):
+        assert outcome(form) == reference, 'a form of the request is read differently from its JSON body'
