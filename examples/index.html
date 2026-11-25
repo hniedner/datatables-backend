@@ -12,6 +12,22 @@
   <style>
     body { font-family: sans-serif; margin: 2rem; }
     #items-error { color: #b00020; min-height: 1.5em; }
+    .hint { color: #444; max-width: 40rem; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+    /* Sort marks: one arrow per sorted column, in an accent colour; from two sorted columns on, the column's place in
+       the order sits in the arrow pair's vacant place */
+    #items { --dt-order-arrow_color-current: #b45309; --dt-order-arrow_opacity-current: 1; }
+    #items thead th.dt-ordering-asc .dt-column-order::after,
+    #items thead th.dt-ordering-desc .dt-column-order::before { visibility: hidden; }
+    #items thead .order-rank {
+      position: absolute; left: 0; width: var(--dt-order-arrow-width); text-align: center;
+      font-size: 9px; font-weight: bold; line-height: 1; color: var(--dt-order-arrow_color-current);
+    }
+    #items thead th.dt-ordering-asc .order-rank { top: calc(50% + 1px); }
+    #items thead th.dt-ordering-desc .order-rank { bottom: calc(50% + var(--dt-order-arrow-gap)); }
   </style>
 </head>
 <body>
@@ -28,6 +44,10 @@
     </label>
   </p>
   <p id="items-error" role="alert"></p>
+  <p class="hint">
+    Click a header to sort by it. Shift+click another header (or press Shift+Enter on its arrows) to add it to the
+    order: a number beside each arrow says its place, 1 first.
+  </p>
   <table id="items" class="display" style="width: 100%">
     <thead>
       <tr><th>Id</th><th>Label</th><th>Colour</th><th>Size</th><th>Added</th><th>Status</th></tr>
@@ -67,6 +87,51 @@
     table.on('xhr', (e, settings, json) => {
       document.querySelector('#items-error').textContent = json?.error ?? '';
     });
+
+    // Multi-column order: DataTables adds a column on Shift+click or Shift+Enter, and removes it on the third press.
+    // Every header says its state and place for a screen reader (`aria-describedby`, on the arrows' own button, to a
+    // visually hidden text beside it) and as a tooltip; from two sorted columns on, a sorted header also shows its
+    // place as a number, which is only for the eyes (`aria-hidden`). `aria-sort` stays on the first column, as DataTables
+    // sets it
+    const markOrder = (sorting) => {
+      table.columns().every(function () {
+        const header = this.header();
+        const arrows = header.querySelector('.dt-column-order');
+        const place = sorting.findIndex((entry) => entry.col === this.index());
+        const several = sorting.length > 1;
+
+        let rank = arrows.querySelector('.order-rank');
+        if (place === -1 || !several) {
+          rank?.remove();
+        } else {
+          if (!rank) {
+            rank = document.createElement('span');
+            rank.className = 'order-rank';
+            rank.setAttribute('aria-hidden', 'true');
+            arrows.append(rank);
+          }
+          rank.textContent = String(place + 1);
+        }
+
+        const state =
+          place === -1
+            ? 'not sorted'
+            : `sorted ${sorting[place].dir === 'desc' ? 'descending' : 'ascending'}${several ? `, priority ${place + 1}` : ''}`;
+        const text = `${state}. Shift+click or Shift+Enter adds this column to the sort.`;
+        let note = header.querySelector('.order-note');
+        if (!note) {
+          note = document.createElement('span');
+          note.className = 'sr-only order-note';
+          note.id = `order-note-${this.index()}`;
+          header.append(note);
+          arrows.setAttribute('aria-describedby', note.id);
+        }
+        note.textContent = text;
+        arrows.title = text;
+      });
+    };
+    table.on('order', (e, settings, sorting) => markOrder(sorting));
+    markOrder(table.order().map(([col, dir]) => ({ col, dir }))); // the first order is set before any `order` event
 
     // The column filter: DataTables' own column search, sent as columns[2][search][value]
     document.querySelector('#colour-filter').addEventListener('change', (event) => {
