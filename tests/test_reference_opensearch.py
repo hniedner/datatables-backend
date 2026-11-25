@@ -20,8 +20,9 @@ plain search sorted on `s` over the documents of `STRINGS`, not through the libr
 evaluator; it is not asserted.
 
 The count: 300 examples under the `ci` profile (`explore` keeps its own), so that the leg grows by well under a minute
-(#206). Each example sends one `bulk` with a refresh, then a search and a count for `fetch_sync` and for `fetch`. Not
-yet measured on a cluster.
+(#206). Each example sends one `bulk` with a refresh, then a search and a count for `fetch_sync` and for `fetch`.
+Measured on a local Podman VM (CI is expected at about twice that), the test's call time: under `ci` 4.0 to 5 s on
+OpenSearch 3.10 and 4.0 s on 2.19.7; under `explore` (5,000 examples) 62 s and 48 s.
 """
 
 import asyncio
@@ -128,16 +129,18 @@ def leg() -> Iterator[Leg]:
             client.indices.delete(index=INDEX)
         client.indices.create(index=INDEX, body={'mappings': MAPPING, 'settings': {'number_of_replicas': 0}})
         runner = asyncio.Runner()
-
-        async def opened() -> AsyncOpenSearch:
-            return AsyncOpenSearch(hosts=[OPENSEARCH_URL])
-
-        leg = Leg(client, runner.run(opened()), runner)
         try:
-            leg.reading = engine_for('opensearch', keyword_ranks(leg).__getitem__)
-            yield leg
+
+            async def opened() -> AsyncOpenSearch:
+                return AsyncOpenSearch(hosts=[OPENSEARCH_URL])
+
+            leg = Leg(client, runner.run(opened()), runner)
+            try:
+                leg.reading = engine_for('opensearch', keyword_ranks(leg).__getitem__)
+                yield leg
+            finally:
+                runner.run(leg.async_client.close())
         finally:
-            runner.run(leg.async_client.close())
             runner.close()
             client.indices.delete(index=INDEX)
     finally:
@@ -166,9 +169,9 @@ def test_the_opensearch_backend_answers_as_the_reference_evaluator(
     """The rows, their order and both counts, or the error code, of `fetch_sync` and of `fetch` over the same indexed
     documents equal the evaluator's reading of OpenSearch. Catches a rule of PRD section 4.3 to 4.6 in scope where the
     backend and the requirements part on a real cluster, through either client: a query the cluster reads otherwise
-    than the recording tests assume. The examples are the property's that mean something on typed search
-    (`TYPED_EXAMPLES`), among them `n = 2^53 + 1`, which finds the document that holds it, not its neighbour 2^53, as
-    a number sent as a double would (PRD-F25)."""
+    than the recording tests assume. The examples are the property's whose answer here hangs on the backend, its query
+    or the 64-bit range of a `long` declaration (`TYPED_EXAMPLES`), among them `n = 2^53 + 1`, which finds the document
+    that holds it, not its neighbour 2^53, as a number sent as a double would (PRD-F25)."""
     rows, decl, body = case
     params = parse_request(body)
     expected = evaluate(decl, rows, params, engine=leg.reading)

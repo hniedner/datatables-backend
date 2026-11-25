@@ -10,7 +10,10 @@ compared with the evaluator's reading of its own database (`engine_for`), never 
 `tests/test_reference_opensearch.py` runs the same property on OpenSearch. The examples: under the `ci` profile 500 on
 SQLite (about 3 seconds for both drivers, measured) and `SERVER_EXAMPLES`, 300, on a SQL server, where each example
 also pays about eight round trips (a delete and an insert, then three statements for each driver), so that a leg grows
-by well under a minute (#206); not yet measured on a server. `explore` keeps its own count everywhere.
+by well under a minute (#206). `explore` keeps its own count everywhere. Measured on a local Podman VM (CI is expected
+at about twice that), the test's call time under `ci`: PostgreSQL 2.4 to 2.8 s, MySQL 2.9 s, MariaDB 2.4 to 2.5 s;
+under `explore` (5,000 examples): PostgreSQL 41 s, MySQL 48 s, MariaDB 41 s. SQL Server and the mysqlclient leg are not
+yet measured: first in CI.
 
 PRD-O6, the order of text, is the database's collation. Each leg measures it once: the values of `STRINGS`, stored in
 `s`, ranked by `DENSE_RANK() OVER (ORDER BY s)` on the table's own column, written without any COLLATE, so the rank is
@@ -26,32 +29,34 @@ then one applied in the other direction, now and then over rows that tie on the 
 cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and
 then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice, nameless columns
 and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
-PRD-E3. The rates are set so that about half of the requests are answered (55% on the `ci` seed of SQLite) and most
+PRD-E3. The rates are set so that half or more of the requests are answered (65% on the `ci` seed of SQLite) and most
 outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that, and the seed
 follows the test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
---hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events)
-are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 4%, M5b 3%, M6 2%, M7 1%
-(`between`) and 2% (`!between`), M10 6% (the last day read before a number mistake of step 2) and M10b 4%. The paths
-of `compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
-that finds a row and leaves out another 4% (2%), `%` or `_` alone over number text only 1% (3%), PAD SPACE changing the
-answer 3% (5%), 2^63 on `n` as the only mistake 3% (2%), a column search by date text that finds a row and leaves out
-another 2% (3%). `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its
-neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one
-of them beside a row holding one in 6% of the `ci` examples (without that scenario 5,000 `explore` examples missed the
-mutant that binds an integer column's number as a double).
+--hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
+drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 4%, M5b 3%, M6 4%, M7 2%
+(`between`) and 1% (`!between`), M10 1% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
+`compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
+that finds a row and leaves out another 2% (3%), `%` or `_` alone over number text only 0.4% (3%; the seed draws that
+scenario seldom, and its example carries it), PAD SPACE changing the answer 5% (3%), 2^63 on `n` as the only mistake 3%
+(2%), a column search by date text that finds a row and leaves out another 3% (3%). `n` holds 2^53 and 2^53 + 1, which a
+double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen `outranked` puts one
+in a row and the other in a criterion, and a request sends one of them beside a row holding one in 2% of the `ci`
+examples, 7% over the 2,000 (without that scenario 5,000 `explore` examples missed the mutant that binds an integer
+column's number as a double).
 
 The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
-them) and one of each `compared` scenario. `TYPED_EXAMPLES` names those that also mean something on typed search, which
-`tests/test_reference_opensearch.py` imports.
+them) and one of each `compared` scenario. `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the
+backend, its query or the 64-bit range of a `long` declaration, which `tests/test_reference_opensearch.py` imports; one
+the shared plan refuses alike on every backend (`%` alone over number text, PRD-F32 and PRD-F13) is left out.
 
 Rare cases, and what carries each:
-- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
-  on the current `ci` seed; carried by an example on the property and by the hand-written tests;
-- an entry of 256 code points on a list on the global search: about 1 or 2 in 1,000 random examples, none on the
+- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, 2 on
+  the current `ci` seed; carried by an example on the property and by the hand-written tests;
+- an entry of 256 code points on a list on the global search: about 1 or 2 in 1,000 random examples, 5 on the
   current `ci` seed; carried by an example and by the hand-written tests (`explore` found mutants of these two cases
   only after 1,200 to 1,500 examples);
-- a list of more than 256 entries on the global search: about 1% of the `ci` examples, and an example;
-- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 3 on the current `ci` seed; an
+- a list of more than 256 entries on the global search: about 4% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 5 on the current `ci` seed; an
   example;
 - ColumnControl's `contains` of more than 16 words: about 1% of the `ci` examples, and an example;
 - the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
@@ -66,8 +71,14 @@ F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched
 F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as each leg's measured collation);
 counts and paging (C1 to C3); the error codes and which one a request with several mistakes gets (E2, E3, F14, F15);
 section 5's PAD SPACE, which each SQL leg measures and asserts against the dialect's documented comparison. The
-OpenSearch leg adds typed search (F32, F33, F34) and F26's reading there, where a NULL is a missing field and `''` a
-value.
+OpenSearch leg adds typed search (F32, F33, F34), F26's reading there, where a NULL is a missing field and `''` a
+value, and D23 on a `long` field.
+
+A risk, not modelled: on SQL Server LIKE ignores trailing blanks of the matched non-Unicode value (Microsoft's
+documentation), so a criterion `ends` `a` over a stored `'a '` may match there while the evaluator says no
+(PRD-F11: a word matches as a substring; section 5 states trailing-space insensitivity only for an exact match). If
+that leg reports it, it is a finding to triage (an entry in section 5 and docs/databases.md, or a library fix), never a
+narrowed generator.
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
 datetimes and time zones, and a time of day after a day; numbers with a fraction or an exponent; hooked columns,
@@ -180,7 +191,7 @@ SERVER_EXAMPLES = 300
 
 #: `'a '` ends in a space: under PAD SPACE it equals `'a'` (PRD section 5)
 STRINGS = ['', ' ', 'a', 'a ', 'A', 'ab', 'Ab c', 'b a', 'red', 'Red', 'RED', 'reddish', 'x_y', '5%', 'a-b', '-', '7a',
-           '[a]', 'a\\b']  # fmt: skip
+           '[a]', 'a\\b', '50']  # fmt: skip
 DATES = [date(2023, 1, 1), date(2024, 3, 5), date(2024, 3, 6), date(2024, 12, 31)]
 #: The numbers of `n`, 2^53 and 2^53 + 1 among them: a double cannot tell those two apart, so a number bound as a
 #: double finds its neighbour as well
@@ -513,9 +524,9 @@ def compared(
     six and a half for the LIKE words, PAD SPACE and a date's text, once in thirteen for the others. PRD-F11,
     PRD-F19: a search word holding `\\`, `%`, `_` or `[`, over cells holding them, is plain text. PRD-F23: `%` or `_`
     alone as a global word over number text only matches no row. PRD section 5: a test of `''`, `' '`, `'a'` and
-    `'a '` that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake, the order
-    entries dropped, since one may hold a mistake of its own. PRD-F23: a column search on a date column by a part of
-    its `YYYY-MM-DD` text."""
+    `'a '` that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake. PRD-F23: a
+    column search on a date column by a part of its `YYYY-MM-DD` text. The `%` and the 2^63 scenarios drop the order
+    entries, since one may hold a mistake of its own."""
     columns = body['columns']
     present = {column['data']: index for index, column in enumerate(columns) if isinstance(column['data'], str)}
     searchable = [name for name in present if server.get(name, (False, False))[0]]
@@ -541,6 +552,7 @@ def compared(
             column['search'] = {'value': word, 'regex': False}
     if scenario == 'wildcard' and rows and 'n' in searchable:  # PRD-F23: a wildcard over number text only
         clear()
+        body['order'] = []
         for column in columns:
             column['searchable'] = column['data'] == 'n'
         body['search'] = {'value': draw(st.sampled_from(['%', '_'])), 'regex': False}
@@ -565,6 +577,8 @@ def compared(
     if scenario == 'date' and rows and 'd' in searchable:  # PRD-F23: a date searched by its text
         for row in rows:
             row['d'] = draw(st.sampled_from([date(2024, 3, 5), date(2024, 12, 31), date(2023, 1, 1), None]))
+        draw(st.sampled_from(rows))['d'] = date(2024, 3, 5)  # so that most words find a row and leave out another
+        draw(st.sampled_from(rows))['d'] = date(2024, 12, 31)
         clear()
         word = draw(st.sampled_from(['2024-03', '2024', '03-05', '2024-12', '-03-', '2023-01-01']))
         columns[present['d']]['search'] = {'value': word, 'regex': False}
@@ -780,22 +794,25 @@ def leg(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Leg]:
         with sync.begin() as connection:
             reference_rows.drop(connection, checkfirst=True)
             reference_rows.create(connection)
-            pads = measured_pad_space(connection)
-            ranks = collation_ranks(connection)
-        assert pads == PAD_SPACE[dialect], (
-            f'{dialect} compares trailing spaces otherwise than PRD section 5 and docs/databases.md say (PAD SPACE '
-            f'documented {PAD_SPACE[dialect]}, measured {pads}): a finding to report, not to model'
-        )
-        if dialect == 'sqlite':
-            # SQLite's BINARY collation is code-point order, the evaluator's default
-            assert ranks == {value: rank for rank, value in enumerate(sorted(STRINGS), 1)}
-        runner = asyncio.Runner()
-        async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
         try:
-            yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__, pads))
+            with sync.begin() as connection:
+                pads = measured_pad_space(connection)
+                ranks = collation_ranks(connection)
+            assert pads == PAD_SPACE[dialect], (
+                f'{dialect} compares trailing spaces otherwise than PRD section 5 and docs/databases.md say (PAD SPACE '
+                f'documented {PAD_SPACE[dialect]}, measured {pads}): a finding to report, not to model'
+            )
+            if dialect == 'sqlite':
+                # SQLite's BINARY collation is code-point order, the evaluator's default
+                assert ranks == {value: rank for rank, value in enumerate(sorted(STRINGS), 1)}
+            async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
+            runner = asyncio.Runner()
+            try:
+                yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__, pads))
+            finally:
+                runner.run(async_.dispose())
+                runner.close()
         finally:
-            runner.run(async_.dispose())
-            runner.close()
             with sync.begin() as connection:
                 reference_rows.drop(connection, checkfirst=True)
     finally:
@@ -1083,7 +1100,7 @@ def compared_paths(
     globally = {column['data'] for column in body['columns'] if isinstance(column['data'], str)
                 and column['searchable'] and column['data'] in searchable and kinds[column['data']] != 'boolean'}  # fmt: skip
     positive, negated = words(body['search']['value'])
-    if (positive and set(positive) <= {'%', '_'} and not negated and globally
+    if (isinstance(answer, Answer) and positive and set(positive) <= {'%', '_'} and not negated and globally
             and all(kinds[name] in ('number', 'date') for name in globally)
             and any(row[name] is not None for row in rows for name in globally)):  # fmt: skip
         reached.append('path: % or _ alone as the global search over number or date text only')
@@ -1329,6 +1346,8 @@ EXAMPLES: dict[str, tuple[list[dict[str, Any]], tuple[Declared, ...], dict[str, 
             }
         ),
     ),
+    # The entry on `id` is skipped (unorderable on both sides), so `s` desc is the first applied entry, and its tie
+    # (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3, PRD-O8)
     'skipped first order': (
         [{'id': key, 's': None, 't': None, 'n': None, 'd': None, 'b': None} for key in (1, 2, 3)],
         (
@@ -1371,11 +1390,12 @@ EXAMPLES |= {
     'backslash': (rows_of('s', 'a\\b', '5%', 'ab'), DECLARED, request_of({'data': 's'}, search={'value': '\\'})),
     # PRD-F23: `%` alone over number text only: no number's text holds `%`, so no row (on a typed-search engine `n` is
     # skipped, PRD-F32, so no column is left: `invalid_filter`, PRD-F13)
-    'percent over numbers': (rows_of('n', 7, 17, None), DECLARED, request_of(
-        {'data': 'n'}, {'data': 's', 'searchable': False}, search={'value': '%'})),
+    'percent over numbers': (rows_of('n', 7, 17, None), DECLARED,
+                             request_of({'data': 'n'}, {'data': 's', 'searchable': False}, search={'value': '%'})),
     # PRD-F26 and PRD section 5: `null` on `s` holding ' ', '' and 'a': row 2 on SQL; rows 1 and 2 under PAD SPACE;
     # none where only a missing field is empty
-    'pad space': (rows_of('s', ' ', '', 'a'), DECLARED, request_of({'data': 's'}, searchBuilder=tree_of(('s', 'null', [])))),
+    'pad space': (rows_of('s', ' ', '', 'a'), DECLARED,
+                  request_of({'data': 's'}, searchBuilder=tree_of(('s', 'null', [])))),
     # PRD-F25, PRD-D23: 2^63 on `n` is the request's only mistake: `invalid_number`
     'beyond 64 bits': (three_rows(), DECLARED, request_of({'data': 'n'}, searchBuilder=tree_of(('n', '=', [BIG])))),
     # PRD-F23: `2024-03` as a column search on `d` finds the day written 2024-03-05 (PRD-F34: the span of March on a
@@ -1383,11 +1403,12 @@ EXAMPLES |= {
     'date text': (rows_of('d', date(2024, 3, 5), date(2024, 12, 31), None), DECLARED,
                   request_of({'data': 'd', 'search': {'value': '2024-03', 'regex': False}})),
 }  # fmt: skip
-#: The examples that mean something on a typed-search engine, which OpenSearch's leg pins as well
+#: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
+#: declaration, which OpenSearch's leg pins as well; one the shared plan refuses alike on every backend is left out
 TYPED_EXAMPLES = [
     EXAMPLES[name]
-    for name in ('neighbours', 'beyond 64 bits', 'm4', 'step3 big first', 'step3 last first', 'm7', 'backslash',
-                 'percent over numbers', 'pad space', 'date text')
+    for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',
+                 'skipped first order', 'backslash', 'pad space', 'date text')
 ]  # fmt: skip
 
 
@@ -1411,8 +1432,7 @@ def test_the_library_answers_as_the_reference_evaluator(
     """The rows, their order and both counts, or the error code, of `fetch_sync` and of `fetch` over the same loaded
     rows equal the evaluator's for the database the run is on. Catches any rule of PRD section 4.3 to 4.6 in scope
     where the library and the requirements part, in a combination no hand-written test lists, on either driver. The
-    last example: the entry on `id` is skipped (unorderable on both sides), so `s` desc is the first applied entry, and
-    its tie (every `s` NULL) is broken by the key descending: row 3 comes first (PRD-O3, PRD-O8)."""
+    examples are `EXAMPLES`, each with its reason beside it."""
     rows, decl, body = case
     params = parse_request(body)
     expected = evaluate(decl, rows, params, engine=leg.reading)
