@@ -6,36 +6,45 @@ silenced by narrowing the generator.
 
 The table: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger), `d` (Date) and `b` (Boolean), 0 to 8 rows
 inserted in a random key order. The request: the global search, column searches (smart, categorical, `multi_values`),
-ColumnControl's search and list, a SearchBuilder tree of at most 5 criteria, 0 to 3 order entries (often a skipped one
-first, then one applied in the other direction, now and then over rows that tie on the applied column with a short
-page that cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any
-column, now and then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice,
-nameless columns and an undeclared one; a server declaration with at least one unorderable column, and mistakes of
-every step of PRD-E3. The rates are set so that about half of the requests are answered (54% averaged over seeds,
-63% on the `ci` seed) and most outcomes and paths are reached at least about 30 times in 500 examples; one seed varies
-around that (`uv run pytest tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The
-paths that tell known mutants apart (M4 to M10b in the events) are drawn on purpose, each in about 1% or more of the
-examples: on the `ci` seed M4 about 4%, M5b 3%, M6 2%, M7 9% (`between`) and 2% (`!between`), M10 4% and M10b 3%.
-Some cases are rare on any seed and carried by the examples on the property and by the hand-written tests, not by the
-`ci` draw: a regex over 255 code points that is no categorical filter (about 4 in 1,000 random examples) and an entry
-of 256 code points on a list on the global search (`explore` found mutants of these two only after 1,200 to 1,500
-examples), and the order within step 3 of PRD-E3. A choice is drawn by `chance`
-and `rarely` of `tests/conftest.py`: Hypothesis draws the first of a list of choices far more often than the others.
+ColumnControl's search and list, a SearchBuilder tree of at most 5 drawn criteria and up to 4 more that `joined` adds
+for the scenarios below, 0 to 3 order entries (often a skipped one first, then one applied in the other direction, now
+and then over rows that tie on the applied column with a short page that cuts the tie, half of those with no filter to
+thin the tie out), paging past the end included; on any column, now and then column search text that PRD-F6 reduces to
+no word, alone or beside a list; columns named twice, nameless columns and an undeclared one; a server declaration with
+at least one unorderable column, and mistakes of every step of PRD-E3. The rates are set so that about half of the
+requests are answered (54% on the `ci` seed) and most outcomes and paths are reached at least about 30 times in 500
+examples; one seed varies around that (`uv run pytest tests/test_reference_properties.py
+--hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events)
+are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed M4 1%, M5b 3%, M6 4%, M7 2%
+(`!between`) and 0.4% (`between`), M10 3% (the last day read before a number mistake of step 2) and M10b 2%.
+
+Rare cases, and what carries each:
+- a regex over 255 code points that is no categorical filter: drawn in about 3 of 1,000 examples (`explore`), none on
+  the current `ci` seed; carried by an example on the property and by the hand-written tests;
+- an entry of 256 code points on a list on the global search: drawn under `explore` only, none on the `ci` seed;
+  carried by an example and by the hand-written tests (`explore` found mutants of these two cases only after 1,200 to
+  1,500 examples);
+- a list of more than 256 entries on the global search: about 3% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 2% of the `ci` examples, and an example;
+- ColumnControl's `contains` of more than 16 words: about 2% of the `ci` examples, and an example;
+- the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
+  does not take): the examples and the hand-written tests, since the random draw seldom holds both mistakes at once.
+
+A choice is drawn by `chance` and `rarely` of `tests/conftest.py`: Hypothesis draws the first of a list of choices far
+more often than the others.
 
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
 (F9); categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26,
 F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as SQLite's `BINARY` collation,
 which is SQLite's own and not the other databases'); counts and paging (C1 to C3); the error codes and which one a
-request with several mistakes gets (E2, E3, F14, F15). Of PRD-E3, the order within step 3 (the maximum date of
-PRD-F24 as a bound before a number the column's own type does not take) is carried by the examples on the property and by the
-hand-written tests, not by the random draw, which seldom holds both mistakes at once.
+request with several mistakes gets (E2, E3, F14, F15).
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
 datetimes and time zones, and a time of day after a day; numbers with a fraction or an exponent; hooked columns,
-`fold_case=False` and `field=`; a base filter and a scope; the size bounds (PRD-F38's, and `request_too_large`); what is
-OpenSearch's only (`page_out_of_range`, PRD-C10 to PRD-C13, PRD-O5, PRD-O7); the total cache; the `error` texts and
-the log records; the types a database adds of its own.
+`fold_case=False` and `field=`; a base filter and a scope; the size bounds (PRD-F38's, which a list on the global
+search does not meet, see below, and `request_too_large`); what is OpenSearch's only (`page_out_of_range`, PRD-C10 to
+PRD-C13, PRD-O5, PRD-O7); the total cache; the `error` texts and the log records; the types a database adds of its own.
 
 Generator restrictions, each with its reason:
 - A number beyond 32 bits is sent only to `n`, the BigInteger: `id` is an Integer, whose width the evaluator does not
@@ -46,8 +55,9 @@ Generator restrictions, each with its reason:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
 - ColumnControl's search is always sent with `type` `text`: the date control is refused while parsing (PRD-F45), which
   `tests/test_parse_properties.py` covers.
-- No SearchBuilder tree near PRD-F38's bounds, no list near 256 values and no request near PRD-C17's 960 conditions:
-  out of scope above.
+- No SearchBuilder tree near PRD-F38's bounds, no column list near 256 values and no request near PRD-C17's 960
+  conditions: out of scope above. A list on the global search is sent with 257 to 600 entries, since PRD-F40 exempts
+  it from PRD-F38's bounds.
 
 A step-1 value (a control character, 256 code points, 17 words) is also sent where nothing reads it, and the evaluator
 answers as the requirements say (#205): in an unfinished criterion (PRD-F14: "A value no condition reads, a surplus
@@ -55,8 +65,9 @@ value or that of `null`, is not measured"; PRD-F15 looks only at "a SearchBuilde
 (PRD-F36)"); in a regex that is no categorical filter (PRD-F14 measures alternatives "after unescaping and not the raw
 pattern", and PRD-F18 refuses any other regex); and in a list on the global search, whose entries PRD-F40 does not
 read, so PRD-F14 and PRD-F15 do not apply to them and PRD-F38's bounds on lists do not count them: now and then such a
-list holds more than 256, or more than 512, entries beside a mistake of step 2, which answers. ColumnControl's `contains` is the column search of PRD-F2
-(PRD-F45), so PRD-F14's word cap applies to it: more than 16 words are `too_many_words`.
+list holds more than 256, or more than 512, entries beside a mistake of step 2, which answers. ColumnControl's
+`contains` is the column search of PRD-F2 (PRD-F45), so PRD-F14's word cap applies to it: more than 16 words are
+`too_many_words`.
 
 Where the PRD is silent the evaluator must raise a marked gap rather than guess; no rule needs one today, since every
 gap met so far is decided (#205), and a gap found later is added back as a marked `SpecGap`.
@@ -95,6 +106,7 @@ from .reference_evaluator import Answer
 from .reference_evaluator import Declared
 from .reference_evaluator import Kind
 from .reference_evaluator import Refusal
+from .reference_evaluator import categorical
 from .reference_evaluator import evaluate
 from .reference_evaluator import words
 
@@ -436,9 +448,9 @@ def outranked(
     draw: st.DrawFn, rows: list[dict[str, Any]], *, server: dict[str, tuple[bool, bool]], body: dict[str, Any]
 ) -> None:
     """Now and then a request that tells more mutants apart, each only adding to the request's filters (a criterion
-    joins the tree under an AND), so a range `focused` wrote stays. M5b, about once in four: a one-word global search
+    joins the tree under an AND), so a range `focused` wrote stays. M5b, about once in three: a one-word global search
     taken from one cell, over at least two searchable columns: a word may be found in any of them (PRD-F1). M10, about
-    once in sixteen: the last day beside a mistake of step 1 or 2, in either order (PRD-E3: the earlier step answers);
+    once in eight: the last day beside a mistake of step 1 or 2, in either order (PRD-E3: the earlier step answers);
     M10b, about once in twelve: the last day beside a global search with no searchable column, a mistake of step 4
     (PRD-E3: step 3 answers). About once in twenty: a list of more than 256, or more than 512, entries on the global
     search beside a number mistake of step 2, which answers: PRD-F40 reads no entry of that list, and PRD-F38's bounds
@@ -446,7 +458,7 @@ def outranked(
     columns = body['columns']
     searched = sorted({column['data'] for column in columns if isinstance(column['data'], str) and column['searchable']
                        and server.get(column['data'], (False, False))[0] and KINDS[column['data']] != 'boolean'})  # fmt: skip
-    if len(searched) >= 2 and rows and draw(chance(4)):
+    if len(searched) >= 2 and rows and draw(chance(3)):
         name, row = draw(st.sampled_from(searched)), draw(st.sampled_from(rows))
         cell = '' if row[name] is None else str(row[name])  # a date's str is its ISO day
         begin = draw(st.integers(0, max(0, len(cell) - 1)))
@@ -457,10 +469,11 @@ def outranked(
                 for column in columns:
                     column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
     last_day = {'origData': 'd', 'data': 'd', 'condition': draw(st.sampled_from(['=', '<', '>='])), 'value': [LAST]}
-    if draw(chance(16)):
+    if draw(chance(8)):
+        # mostly a number mistake of step 2 read after the last day: an earlier step answers though read later
         other = {'origData': 'n', 'data': 'n', 'condition': '=',
-                 'value': [draw(st.sampled_from(['abc', '1_000', 'a\x00', 'x' * 256]))]}  # fmt: skip
-        joined(body, *([last_day, other] if draw(st.booleans()) else [other, last_day]))
+                 'value': [draw(rarely(st.sampled_from(['abc', '1_000', '7 7']), st.sampled_from(['a\x00', 'x' * 256]), 6))]}  # fmt: skip
+        joined(body, *([other, last_day] if draw(chance(4)) else [last_day, other]))
     elif draw(chance(12)):
         joined(body, last_day)
         body['search'] = {'value': draw(st.sampled_from(['a', 'red', '7'])), 'regex': False}
@@ -496,7 +509,7 @@ def focused(
     over NULLs and values with a short page (PRD-O2); M7, a range written high to low over a row inside it (PRD-F27);
     M6, a list and ColumnControl's `contains` on one column, ANDed (PRD-F45)."""
     columns = body['columns']
-    nulls_first = draw(chance(5)) and [index for index in applies if columns[index]['data'] != 'id']
+    nulls_first = draw(chance(4)) and [index for index in applies if columns[index]['data'] != 'id']
     anded = draw(chance(5)) and [
         index
         for index, column in enumerate(columns)
@@ -717,20 +730,25 @@ def found_in_one_column(
 def ranking_paths(
     rows: list[dict[str, Any]], decl: tuple[Declared, ...], body: dict[str, Any], answer: Answer | Refusal
 ) -> list[str]:
-    """M10: the last day there is (step 3 of PRD-E3) beside a mistake of step 1 or 2, which answers; M10b: beside a
-    refusal of step 4, where the last day answers. Each read from the evaluator: the tree's criteria on `d` holding
-    the last day, alone, answer `invalid_date`."""
-    tree = body.get('searchBuilder') or {}
-    last = [leaf for leaf in criteria_of(tree) if leaf.get('origData') == 'd' and LAST in leaf.get('value', [])]
+    """M10: the last day there is (step 3 of PRD-E3) read first, then a number mistake of step 2 later in the tree,
+    which answers `invalid_number`: the shape where an answer by read order alone would give `invalid_date`. M10b:
+    the last day beside a refusal of step 4, where the last day answers. Each read from the evaluator, a criterion
+    alone over the same columns."""
+    leaves = criteria_of(body.get('searchBuilder') or {})
+
+    def alone(*criteria: dict[str, Any]) -> Answer | Refusal:
+        return evaluate(decl, rows, parse_request({**body, 'search': {'value': ''}, 'columns': [
+            {**column, 'search': {'value': '', 'regex': False}, 'columnControl': {}} for column in body['columns']],
+            'order': [], 'searchBuilder': {'logic': 'AND', 'criteria': list(criteria)}}))  # fmt: skip
+
+    last = [position for position, leaf in enumerate(leaves)
+            if leaf.get('origData') == 'd' and LAST in leaf.get('value', []) and alone(leaf) == Refusal('invalid_date')]  # fmt: skip
     if not last or not isinstance(answer, Refusal):
         return []
-    alone = evaluate(decl, rows, parse_request({**body, 'search': {'value': ''}, 'columns': [
-        {**column, 'search': {'value': '', 'regex': False}, 'columnControl': {}} for column in body['columns']],
-        'order': [], 'searchBuilder': {'logic': 'AND', 'criteria': last}}))  # fmt: skip
-    if alone != Refusal('invalid_date'):
-        return []
-    if answer.code in ('invalid_character', 'value_too_long', 'too_many_words', 'invalid_number'):
-        return ['path M10: a mistake of step 1 or 2 answers before the last day']
+    if answer.code == 'invalid_number' and any(
+        leaf.get('origData') == 'n' and alone(leaf) == Refusal('invalid_number') for leaf in leaves[last[0] + 1 :]
+    ):
+        return ['path M10: a number mistake of step 2 read after the last day answers']
     without = evaluate(decl, rows, parse_request({key: value for key, value in body.items() if key != 'searchBuilder'}))
     if answer.code == 'invalid_date' and without == Refusal('invalid_filter'):
         return ['path M10b: the last day answers before a refusal of step 4']
@@ -763,15 +781,19 @@ def shapes(body: dict[str, Any]) -> list[str]:
         return len(value) > 255 or any(control)
 
     reached: list[str] = []
-    if len(body['search'].get('multi_values') or []) > 256:
+    listed = body['search'].get('multi_values') or []
+    if len(listed) > 256:
         reached.append('shape: a list of more than 256 entries on the global search')
-    if any(bad(value) for value in body['search'].get('multi_values') or []):
+    if any(len(value) > 255 for value in listed):
+        reached.append('shape: an entry of more than 255 code points on a list on the global search')
+    if any(bad(value) for value in listed):
         reached.append('shape: a list on the global search holding a step-1 value')
     if any(not (leaf.get('condition') and leaf.get('origData')) and any(map(bad, leaf['value']))
            for leaf in criteria_of(body.get('searchBuilder', {}))):  # fmt: skip
         reached.append('shape: an unfinished criterion holding a step-1 value')
     for column in body['columns']:
-        if column['search']['regex'] and len(column['search']['value']) > 255:
+        value = column['search']['value']
+        if column['search']['regex'] and len(value) > 255 and categorical(value) is None:
             reached.append('shape: a regex over 255 code points that is no categorical filter')
         control = column['columnControl'].get('search', {})
         if control.get('logic') == 'contains' and len(control['value'].split()) > 16:
@@ -910,6 +932,20 @@ def tree_of(*criteria: tuple[str, str, list[str]]) -> dict[str, Any]:
 @example((three_rows(), DECLARED, request_of({'data': 's', 'search': {'value': 'a.' + 'x' * 256, 'regex': True}})))
 # A list on the global search is refused unread (PRD-F40): a control character in it is no `invalid_character`
 @example((three_rows(), DECLARED, request_of({'data': 's'}, search={'value': '', 'multi_values': ['a\x00']})))
+# An entry of 256 code points on the global list: PRD-F40 reads no entry, so it is no `value_too_long`
+@example((three_rows(), DECLARED, request_of({'data': 's'}, search={'value': '', 'multi_values': ['x' * 256]})))
+# An unfinished criterion (no condition) holding a control character: no condition reads it (PRD-F14, PRD-F15), and
+# it adds nothing (PRD-F30), so every row is answered
+@example(
+    (
+        three_rows(),
+        DECLARED,
+        request_of(
+            {'data': 's'},
+            searchBuilder={'logic': 'AND', 'criteria': [{'origData': 's', 'condition': '', 'value': ['a\x00']}]},
+        ),
+    )
+)
 # 600 entries on the global list: PRD-F40 reads none and PRD-F38's bounds do not count them, so the list is a step-4
 # refusal and the step-2 number mistake answers: `invalid_number` (PRD-E3)
 @example(

@@ -2,10 +2,11 @@
 `docs/PRD.md` and the statements of `spec/`, never from the library's code (issue #205).
 
 `evaluate(decl, rows, params)` gives the page's row keys in order with both counts (`Answer`), or the code of the
-user's mistake (`Refusal`). Where the requirements leave an answer open it must not guess: it raises a marked gap,
-reported in #205. No rule needs one today, since every gap met so far is decided; a gap found later is added back as
-a marked `SpecGap` exception. A request it was not written for (a number with a fraction, for one) raises
-`OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in `tests/test_reference_properties.py`.
+user's mistake (`Refusal`). Where the requirements leave an answer open it must not guess: it would raise a marked
+gap, reported in #205. No rule needs one today, since every gap met so far is decided; a gap found later is added back
+as a marked `SpecGap` exception. A request it was not written for (a number with a fraction, for one) raises
+`OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in
+`tests/test_reference_properties.py`.
 
 Every answer is the SQL one on SQLite: number and date columns are searched as their text (PRD-F23), case folds for
 ASCII letters only (PRD-F9), a stored `''` is empty on a string column (PRD-F26), and text orders by code point, which
@@ -236,7 +237,7 @@ def _searched(kind: Kind, column: str, text: str) -> Predicate | None:
 _META = frozenset('.*+?|()[]{}\\$^')
 
 
-def _categorical(pattern: str) -> list[str] | None:
+def categorical(pattern: str) -> list[str] | None:
     """The values of a categorical filter, unescaped, or None for any other regex (PRD-F18). PRD-F16: `abc`, `a|b`,
     `^a$` or `^(a|b)$`, a value holding no unescaped character of the metacharacter set; only escapes of PRD-F19's
     set are read. PRD-F17: an empty alternative stands for empty, and `^()$`, `^$` and `|` hold only that."""
@@ -487,7 +488,7 @@ def _plain(search: Search, key: str | None, found: Declared | None, reading: _Re
     if values:
         return _exact(kind, key, values, reading)
     if search.regex:
-        alternatives = _categorical(search.value)
+        alternatives = categorical(search.value)
         if alternatives is None:
             reading.refuse()
             return None
@@ -678,7 +679,7 @@ def _step_one_filters(
         values = plain.multi_values or []
         measured = [plain.value, *values]
         if plain.regex and plain.value:
-            measured = [*(_categorical(plain.value) or []), *values]
+            measured = [*(categorical(plain.value) or []), *values]
         texts = [] if plain.regex or kind == 'boolean' else [plain.value]
         yield [plain.value, *values], measured, texts
         control = column.columnControl.search
