@@ -21,11 +21,11 @@ and the versioning policy is in the README.
   most 38 digits in all ... shorten the number") for every condition, where such a number written with a point or an
   exponent was answered as a float before. A `Float` column is not refused. The request no longer fails in the driver
   for a number that is a decimal.
-- `invalid_number` is now also the answer for a number written with an exponent beyond what a decimal holds
-  (`1e9999999999999999999999`, or `1e-20000`, which has more than the 16,383 digits after the decimal point that
-  PostgreSQL's `numeric` takes), on every database; the negative ones were read as zero before. On PostgreSQL, `=
-  1e-400` on a `Numeric` column now finds no row, where it matched a row holding zero. On MySQL and MariaDB it still
-  does (see docs/databases.md).
+- `invalid_number` is now also the answer, on every database, for a number written with an exponent beyond what a
+  decimal holds (`1e9999999999999999999999`) and for one with more than 16,383 digits after the decimal point, the most
+  PostgreSQL's `numeric` takes (`1e-20000`); a negative exponent was read as zero before. On PostgreSQL, `= 1e-400` on a
+  `Numeric` column now finds no row, where it matched a row holding zero. On MySQL and MariaDB it still does (see
+  docs/databases.md).
 - A number with a fraction on an integer column (`= 8.0000000000000000001`) is compared as written on PostgreSQL,
   MySQL, MariaDB and SQL Server, where a float of it was the whole number 8.
 
