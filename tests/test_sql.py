@@ -2617,6 +2617,14 @@ def test_a_user_error_says_what_is_wrong_and_what_to_do(
     assert refused(worded.fetch_sync(request(*names, **body), session), code) == text
 
 
+@pytest.mark.parametrize('entry', ['a\x01', 'x' * 256], ids=['control-character', 'too-long'])
+def test_a_global_search_list_is_refused_without_its_entries_being_read(session: Session, entry: str):
+    """SPEC-F40.2: the list on the global search is a form PRD-F40 refuses, so it answers `invalid_filter` though its
+    entry holds a control character or is too long. Catches the entries of a refused global list being read first,
+    so that `invalid_character` or `value_too_long` of step 1 answers instead."""
+    refused(table.fetch_sync(request(*ALL, search={'value': '', 'multi_values': [entry]}), session))
+
+
 @pytest.mark.parametrize(
     ('column', 'condition', 'values', 'code'),
     [

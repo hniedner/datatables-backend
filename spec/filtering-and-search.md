@@ -444,6 +444,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `invalid_filter` (a value with a word, see `SPEC-F6.6`).
 - **SPEC-F40.1** [all] A global search with `multi_values` `["red"]` → error_code `invalid_filter`; with `[]` → rows
   1, 2, 3, 4.
+- **SPEC-F40.2** [all] A global search with `multi_values` holding one entry with the control character U+0001, or
+  one entry of 256 characters → error_code `invalid_filter`, not `invalid_character` or `value_too_long`: the form is
+  refused without its entries being read (`SPEC-E3.8`).
 
 ## Searchable, timezone text, booleans
 

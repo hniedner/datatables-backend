@@ -934,6 +934,30 @@ def test_the_global_search_covers_a_column_once_however_often_the_request_names_
     assert same
 
 
+def test_the_global_search_covers_a_column_named_twice_if_either_entry_is_searchable():
+    """SPEC-F38.8: `id` is marked not searchable, so `title` named twice is searched as when it is named once if
+    either of its entries is searchable, in either order; with both marked not searchable no column is left (PRD-F13)
+    and nothing is sent. Catches the first or the last entry of the name deciding alone."""
+
+    def named_twice(*searchable: bool) -> DTParams:
+        columns = [
+            {'data': name, 'name': '', 'searchable': flag, 'orderable': True, 'search': {'value': '', 'regex': False}}
+            for name, flag in (('id', False), *(('title', flag) for flag in searchable))
+        ]
+        return parse_request({'draw': 1, 'start': 0, 'length': 10, 'columns': columns, 'search': {'value': 'ann'}})
+
+    once = Client()
+    table.fetch_sync(request('id', 'title', flags={'id': {'searchable': False}}, search={'value': 'ann'}), once)
+    assert 'title' in json.dumps(query(once))
+    for searchable in [(True, False), (False, True)]:
+        twice = Client()
+        assert table.fetch_sync(named_twice(*searchable), twice).error is None
+        assert twice.searches == once.searches
+    neither = Client()
+    refused(table.fetch_sync(named_twice(False, False), neither))
+    assert neither.searches == neither.counts == []
+
+
 # -- sorting ---
 
 
@@ -2423,6 +2447,16 @@ def test_every_user_error_of_the_specs_has_its_code_on_opensearch_and_sends_noth
     (SPEC-E7.2). The text of each is asserted in tests/test_sql.py, once."""
     client = Client()
     assert refused(errors.fetch_sync(request(*names, **body), client), code)
+    assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize('entry', ['a\x01', 'x' * 256], ids=['control-character', 'too-long'])
+def test_a_global_search_list_is_refused_without_its_entries_being_read_on_opensearch(entry: str):
+    """SPEC-F40.2: the list on the global search is a form PRD-F40 refuses, so it answers `invalid_filter`, and sends
+    nothing, though its entry holds a control character or is too long. Catches the entries of a refused global list
+    being read first, so that `invalid_character` or `value_too_long` of step 1 answers instead."""
+    client = Client()
+    refused(errors.fetch_sync(request(*ERROR_NAMES, search={'value': '', 'multi_values': [entry]}), client))
     assert (client.searches, client.counts) == ([], [])
 
 
