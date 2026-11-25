@@ -11,8 +11,8 @@ first, then one applied in the other direction), paging past the end included; c
 and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
 PRD-E3. The rates are set so that about 60% of the requests are answered and each outcome and path below is reached
 about 30 times in 500 examples, averaged over seeds; one seed, such as the `ci` profile's, varies around that
-(`hypothesis --hypothesis-show-statistics` prints its events). A choice is drawn by `chance`, not by `seldom` of the
-parse properties: Hypothesis draws the first of a list of choices far more often than the others.
+(`hypothesis --hypothesis-show-statistics` prints its events). A choice is drawn by `chance` and `rarely` of
+`tests/conftest.py`: Hypothesis draws the first of a list of choices far more often than the others.
 
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
 F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
@@ -74,6 +74,8 @@ from datatables_backend import DTParams
 from datatables_backend import parse_request
 from datatables_backend.sqlalchemy import SQLTable
 
+from .conftest import chance
+from .conftest import rarely
 from .reference_evaluator import Answer
 from .reference_evaluator import Declared
 from .reference_evaluator import Kind
@@ -109,19 +111,6 @@ CELLS: dict[str, st.SearchStrategy[Any]] = {
     'd': st.none() | st.sampled_from(DATES),
     'b': st.none() | st.booleans(),
 }
-
-
-def chance(one_in: int) -> st.SearchStrategy[bool]:
-    """True about once in ``one_in`` draws. True stands in the middle: Hypothesis draws the first choice, its simplest,
-    far more often than the others (measured: the first of 16 integers in a quarter of the draws)."""
-    return st.sampled_from([False] * (one_in // 2) + [True] + [False] * (one_in - 1 - one_in // 2))
-
-
-def rarely[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], one_in: int) -> st.SearchStrategy[T]:
-    """`common`, and `rare` about once in `one_in` draws. (`seldom` of the parse properties weighs `one_of`'s
-    branches, which Hypothesis flattens when `common` is a `one_of` itself: measured, a rare branch one in 24 came
-    one in four.)"""
-    return chance(one_in).flatmap(lambda now: rare if now else common)
 
 
 @st.composite

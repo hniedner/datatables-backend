@@ -33,6 +33,7 @@ from datatables_backend.sqlalchemy import SQLTable
 from .conftest import ROWS
 from .conftest import metadata
 from .conftest import people
+from .conftest import rarely
 
 MARK = 'QXQ'
 STABLE_CODES = {
@@ -61,19 +62,10 @@ marked = st.text(alphabet='abcdefghijklmnopqrstuvwxyz', min_size=4, max_size=10)
 long_marked = marked.map(lambda text: text + 'x' * 256)
 
 
-def seldom[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], every: int = 16) -> st.SearchStrategy[T]:
-    """``common`` and, one time in ``every``, ``rare``. ``one_of`` weighs its branches alike, and one strategy repeated
-    is counted once, so ``common`` is mapped ``every - 1`` times; ``rare`` stands in the middle, since the first and
-    the last branch are drawn more than the others."""
-    branches = [common.map(lambda value: value) for _ in range(every - 1)]
-    branches.insert(every // 2, rare)
-    return st.one_of(*branches)
-
-
 def seldom_long(base: st.SearchStrategy[str]) -> st.SearchStrategy[str]:
     """``base`` mostly, a long marked value one time in sixteen: often enough to reach the refusal of a value too long,
     seldom enough that most requests still reach the query. A column search is pinned by an example instead."""
-    return seldom(base, long_marked)
+    return rarely(base, long_marked, 16)
 
 
 words = st.sampled_from(
@@ -183,7 +175,7 @@ def plausible(draw: st.DrawFn) -> dict[str, Any]:
     names = draw(st.lists(st.sampled_from(NAMES), min_size=1, max_size=7, unique=True))
     # Names the server never declared, marked: one request in sixteen. More would end most requests in a refusal of
     # the name
-    undeclared = draw(seldom(st.just([]), st.lists(marked, min_size=1, max_size=2, unique=True)))
+    undeclared = draw(rarely(st.just([]), st.lists(marked, min_size=1, max_size=2, unique=True), 16))
     columns = [
         {
             'data': name,
@@ -196,7 +188,7 @@ def plausible(draw: st.DrawFn) -> dict[str, Any]:
     ]
     leaf = st.fixed_dictionaries(
         {
-            'origData': seldom(st.sampled_from([*NAMES, 'born', 'seen']), marked),
+            'origData': rarely(st.sampled_from([*NAMES, 'born', 'seen']), marked, 16),
             'condition': st.sampled_from([*CONDITIONS, '=', '<', '>', 'between']),
             'type': st.sampled_from(['string', 'num', 'date', 'html']),
             'value': st.lists(words | marked, max_size=3),

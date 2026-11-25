@@ -11,6 +11,7 @@ from typing import Any
 
 from hypothesis import HealthCheck
 from hypothesis import settings
+from hypothesis import strategies as st
 from pydantic import BaseModel
 import pytest
 from sqlalchemy import Boolean
@@ -42,6 +43,19 @@ settings.register_profile(
 )
 settings.register_profile('explore', max_examples=5000, deadline=None, suppress_health_check=_SLOW)
 settings.load_profile(os.environ.get('HYPOTHESIS_PROFILE', 'ci'))
+
+
+def chance(one_in: int) -> st.SearchStrategy[bool]:
+    """True about once in ``one_in`` draws. True stands in the middle: Hypothesis draws the first choice, its simplest,
+    far more often than the others (measured: the first of 16 integers in a quarter of the draws)."""
+    return st.sampled_from([False] * (one_in // 2) + [True] + [False] * (one_in - 1 - one_in // 2))
+
+
+def rarely[T](common: st.SearchStrategy[T], rare: st.SearchStrategy[T], one_in: int) -> st.SearchStrategy[T]:
+    """``common``, and ``rare`` about once in ``one_in`` draws. Not ``one_of`` with ``common`` repeated: Hypothesis
+    flattens a ``one_of`` in a ``one_of``, so when ``common`` is one the rare branch's share grows (measured: one in 24
+    came one in four)."""
+    return chance(one_in).flatmap(lambda now: rare if now else common)
 
 
 def checked_database(url: str) -> str:
