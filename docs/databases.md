@@ -411,6 +411,25 @@ it goes away (PRD-D23).
   `docs/decisions/011-opensearch-number-kinds.md`).
 - **Requirement:** PRD-F25, PRD-E7, PRD-D23.
 
+### A `double` field keeps -0.0 apart from 0.0
+
+This is a rule of OpenSearch. The library sends `0` for a number the user writes as zero with a sign or a point
+(`-0.00`), as it sends it for `0`, so the rule shows only for a stored -0.0.
+
+- **What you see:** on a `double` or a `float` field, -0.0 and 0.0 are two values in a `term`, `terms` and `range`
+  query, and -0.0 sorts below 0.0: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does
+  `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`. A document holding -0.0 is found by no `=`, since the library sends
+  `0`; `< 0` and `<= 0` find it, `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0.
+- **Example:** a `double` field holding 0.0: `= -0.00` and `<= -0.00` find it (they found nothing while the library
+  sent -0.0); a `double` field holding -0.0: `= 0` finds nothing.
+- **How it is known:** MEASURED 2026-11-25 on OpenSearch 3.10.0 (Lucene 10.6.0) on a scratch index holding 0.0 and
+  -0.0 in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields;
+  `range` `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte`
+  -0.0 -0.0 and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find
+  it. Not measured on 2.19. Pinned by `tests/test_opensearch_live.py`
+  (`test_minus_zero_finds_a_zero_on_a_double_field`).
+- **Requirement:** PRD-F25.
+
 ### A boolean field is a boolean column only when it is declared boolean
 
 A column is a string column unless it is declared, because the library does not read the mapping (PRD-D8).

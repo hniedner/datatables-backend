@@ -331,6 +331,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
+- **SPEC-F25.15** [OS] `-0.00` is the number zero: SearchBuilder `=`, `>=` and `<` with `-0.00` send the body of `0`,
+  on a column without a kind and on a `long`. Given a document holding 0.0 in a `double` field: `=` and `<=` with
+  `-0.00` → that document.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
