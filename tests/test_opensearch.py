@@ -3111,13 +3111,19 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     assert client.searches[0]['query']['bool']['must'][0] == {'term': {'n': 2**64}}
 
 
-@pytest.mark.parametrize('kind', [None, 'long'])
-@pytest.mark.parametrize('condition', ['=', '>=', '<'])
-def test_minus_zero_sends_the_body_of_zero(kind: NumberKind | None, condition: str):
+@pytest.mark.parametrize(
+    ('kind', 'path'),
+    [
+        *((kind, path) for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
+        (None, 'multi-values'),  # a `terms` list, built apart from a bound or a `term`
+    ],
+)
+def test_minus_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str):
     """SPEC-F25.15: `-0.00` is the number zero, so it sends what `0` sends, on a column without a kind (a `double`
-    field) and on a `long`. The bodies are compared as JSON, since Python's -0.0 equals 0: a `double` field keeps -0.0
-    apart from 0.0 in a `term` and a `range`, which the live test pins."""
-    zero, minus_zero = (asked(kind, **criterion('n', condition, text))[1].searches for text in ('0', '-0.00'))
+    field) and on a `long`, in a bound, an equality and a `multi_values` list. The bodies are compared as JSON, since
+    Python's -0.0 equals 0: a `double` field keeps -0.0 apart from 0.0 in a `term` and a `range`, which the live test
+    pins."""
+    zero, minus_zero = (asked(kind, **PATHS[path](text))[1].searches for text in ('0', '-0.00'))
     assert len(zero) == 1
     assert json.dumps(minus_zero) == json.dumps(zero)
 
