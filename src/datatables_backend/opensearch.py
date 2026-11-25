@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
+from decimal import Decimal
 import json
 import logging
 from typing import Any
@@ -513,14 +514,14 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
         case Range():
             bounds: dict[str, Any] = {}
             if node.lower is not None:
-                bounds['gte' if node.lower.included else 'gt'] = node.lower.value
+                bounds['gte' if node.lower.included else 'gt'] = _json(node.lower.value)
             if node.upper is not None:
-                bounds['lte' if node.upper.included else 'lt'] = node.upper.value
+                bounds['lte' if node.upper.included else 'lt'] = _json(node.upper.value)
             if node.type == 'date':  # days, in the one format every date field reads
                 bounds = {**{key: str(day) for key, day in bounds.items()}, 'format': 'strict_date'}  # ISO days
             return {'range': {field: bounds}}
         case Equals() if node.type != 'string':
-            return {'term': {field: node.value}}
+            return {'term': {field: _json(node.value)}}
         case Equals():  # the plan lets no analysed-only text through to a match that needs the whole string (PRD-D19)
             return _term(column, cast(str, _keyword(column)), str(node.value))
         case Part() if node.where == 'any':
@@ -537,6 +538,12 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             return _one_of(node)
 
 
+def _json(value: Any) -> Any:
+    """``value`` as the request body carries it: a number with a point or an exponent is a float, which is what
+    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1)."""
+    return float(value) if isinstance(value, Decimal) else value
+
+
 def _one_of(node: OneOf) -> dict[str, Any]:
     """A list of exact values, and the documents without the field where the list holds an empty entry (PRD-F17,
     PRD-F20), which is never one of the values sent."""
@@ -550,7 +557,7 @@ def _one_of(node: OneOf) -> dict[str, Any]:
     if field is not None and node.type == 'string' and _folds(column):
         # A terms query takes no case_insensitive, so a list of strings is one term query for each value
         return _any([*(_term(column, field, str(value)) for value in node.values), *missing])
-    clauses = [*([{'terms': {field: list(node.values)}}] if node.values else []), *missing]
+    clauses = [*([{'terms': {field: [_json(value) for value in node.values]}}] if node.values else []), *missing]
     return clauses[0] if len(clauses) == 1 else _any(clauses)
 
 

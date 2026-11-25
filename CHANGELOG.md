@@ -10,6 +10,27 @@ and the versioning policy is in the README.
 - A number filter on a `Numeric` column through `fetch` on PostgreSQL with asyncpg raised `numeric field overflow` when
   the number had more digits than the column declares (31 nines on a `Numeric(32, 2)`); it
   now answers, as the sync drivers did.
+- A number written with a point or an exponent (`12345678901234567.89`, `3.1e-1`) is now compared exactly with a
+  `Numeric` column on PostgreSQL, MySQL, MariaDB and SQL Server. It went as a float before, so `=` on a column holding
+  `12345678901234567.89`, `...67.90` and `...68.00` found all three rows, and a filter on a number of 17 or more digits
+  could match a neighbour or miss the row. A patch release may correct an answer that was wrong, and this is one: a
+  filter that matched a neighbour now matches the number asked for. SQLite is unchanged, since it stores a `Numeric` as
+  a float or an integer; a `Float` column and OpenSearch still compare as floats.
+- On SQL Server, a number of more than 38 digits in all, before and after the decimal point, that is compared with a
+  `Numeric` column (or with an integer column, for a number with a fraction) is now refused with `invalid_number` ("at
+  most 38 digits in all ... shorten the number") for every condition, where such a number written with a point or an
+  exponent was answered as a float before. A `Float` column is not refused. The request no longer fails in the driver
+  for a number that is a decimal.
+- `invalid_number` is now also the answer, on every database, for a number written with an exponent beyond what a
+  decimal holds (`1e9999999999999999999999`) and for one with more than 16,383 digits after the decimal point, the most
+  PostgreSQL's `numeric` takes (`1e-20000`); a negative exponent was read as zero before. On PostgreSQL, `= 1e-400` on a
+  `Numeric` column now finds no row, where it matched a row holding zero. On MySQL and MariaDB it still does (see
+  docs/databases.md).
+- On PostgreSQL with psycopg 3 or asyncpg, a filter with a fraction on an integer column of a converting type (a
+  SQLAlchemy `TypeDecorator` over an integer) was rounded to a whole number, so `> 7.5` missed a row holding 8; it is
+  now compared as the number (as a float, without the type's conversion).
+- A number with a fraction on an integer column (`= 8.0000000000000000001`) is compared as written on PostgreSQL,
+  MySQL, MariaDB and SQL Server, where a float of it was the whole number 8.
 
 ## [0.1.1] - 2026-11-24
 

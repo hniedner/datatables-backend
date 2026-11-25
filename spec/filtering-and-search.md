@@ -304,6 +304,18 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.10** [all] On `price`, an integer column, given a row whose `price` is 8: `>` `7.5` finds it, `<` `7.5`
   does not, `=` `8.0` finds it, `=` `7.5` finds nothing, `between` `7.5` and `8.5` finds it: a number with a fraction
   is compared as that number, not cut to a whole one.
+- **SPEC-F25.11** [SQL] With `n`, a `Numeric(20, 2)` column, given rows 12345678901234567.89, 12345678901234567.90 and
+  12345678901234568.00: `=` `12345678901234567.89` → the first row only, and `<` `12345678901234567.90` → the first
+  row and every row below it, through `fetch` and `fetch_sync`; `=` `0.305` → no row. On SQLite, which stores the
+  column as a float or an integer, the three rows are one number and are found together (PRD section 5).
+- **SPEC-F25.12** [SQL] With the same `n`: a number of 38 digits in all (before and after the point, a fraction's
+  trailing zeros not counted) is answered on every database. [SQL Server] A number of 39 or more digits → error_code
+  `invalid_number` for every condition, never the driver's own error.
+- **SPEC-F25.13** [SQLite] With `n`, a `TypeDecorator` over `Numeric` that stores hundredths (1.5 as 150), given rows
+  1.5 and 2: `=` `1.5` → the first row, `=` `2` and `=` `2.0` → the second, `=` `3.5` → none: the number goes through
+  the column's own type.
+- **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
+  `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a

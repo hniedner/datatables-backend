@@ -130,12 +130,15 @@ or an OpenSearch setting has an entry below.
 
 ### A decimal holds 38 digits at most
 
-- **What you see:** a number of more than 38 digits before the decimal point on a `Numeric` column is answered
-  with `invalid_number`, whatever precision the column declares. No other database bounds such a column.
-- **Example:** `=` with a whole number of 39 digits, or `1e39`, on a `Numeric` column: `invalid_number` on SQL
-  Server, no rows on PostgreSQL, MySQL and SQLite.
-- **How it is known:** MEASURED 2026-11-22 on SQL Server 2022 with Microsoft's ODBC Driver 18, which refuses to
-  send a longer number (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
+- **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
+  zeros not counted), on a `Numeric` column is answered with `invalid_number`, whatever precision the column declares.
+  No other database bounds such a column.
+- **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
+  `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
+- **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022
+  with Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
+  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`,
+  `docs/decisions/010-decimal-numbers.md`); the boundary of 38 is pinned by `tests/test_sql.py`.
 - **Requirement:** PRD-F25.
 
 ### A float's search text is written by `FORMAT`, which costs about four times a cast
@@ -276,18 +279,34 @@ or an OpenSearch setting has an entry below.
   `tests/test_sql.py` (`test_a_number_as_the_table_shows_it_finds_its_row`), which every SQL job of CI runs.
 - **Requirement:** PRD-F23.
 
-### A number written with a point or an exponent is compared as a floating-point number
+### `= 1e-400` finds a row holding zero on MySQL and MariaDB
 
-This is a limit of the library, not a rule of the databases: the library reads such a number as a floating-point
-number before any database sees it. Issue #56 holds the fix, so it may change.
+This is a limit of the databases, not of the library: the library sends the number exactly.
 
-- **What you see:** on a `Numeric` column such a number is exact to about 15 significant digits only, so `=` can
-  also match a neighbouring value and `between` can include or leave out a value at its bounds. A whole number
-  is compared exactly (on SQLite as its entry says).
-- **Example:** a `Numeric(20, 2)` column holding 12345678901234567.89: `=` 12345678901234567.89 can also find a
-  row holding 12345678901234567.90.
-- **How it is known:** read in the code (a number with a point or an exponent is a Python `float` before any
-  backend sees it); not run on a server.
+- **What you see:** a number with more digits after the decimal point than a MySQL or MariaDB `DECIMAL` holds (30)
+  is compared as a floating-point number there (INFERRED), so a number such as `1e-400` equals zero and `=` finds a
+  row holding 0.00 on a `Numeric` column. PostgreSQL answers exactly (no row), and SQL Server refuses the number (more
+  than 38 digits). On SQLite, on a `Float` column and on OpenSearch the number is a float, which is zero there too.
+- **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
+- **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and
+  MariaDB 12.3.3 (`docs/decisions/010-decimal-numbers.md`); the rule is INFERRED from MySQL's manual, which gives a
+  `DECIMAL` at most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>,
+  fetched 2026-11-24).
+- **Requirement:** PRD-F25.
+
+### A fraction on a `TypeDecorator` over an integer is compared as a float
+
+This is a limit of the library: such a type converts what it is given, and a number with a fraction has no whole
+number to give it.
+
+- **What you see:** a number with a fraction (`> 7.5`) on a column whose SQLAlchemy type is a `TypeDecorator` over an
+  integer is compared as a float, without the decorator's conversion. Bound as the decorator's type, psycopg 3 and
+  asyncpg would cast it to the impl's `INTEGER`, which rounds it (`> 7.5` would miss 8).
+- **Example:** a decorator over `Integer` holding 8: `> 7.5` finds it, `= 7.5` finds nothing.
+- **How it is known:** RUN 2026-11-24 as a compile: psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg
+  `col > $1::INTEGER` for the decorator's own bind, and no cast for a float bound as `Float`; the rounding of
+  PostgreSQL's cast is INFERRED, and CI's psycopg 3 leg shows it (`tests/test_sql.py`,
+  `test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float`).
 - **Requirement:** PRD-F25.
 
 ### A shared `TotalCache` cannot tell two scopes apart that the session sets

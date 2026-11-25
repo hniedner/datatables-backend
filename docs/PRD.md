@@ -762,15 +762,19 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
 integer range. A number with a fraction is compared as that number against an integer column (`> 7.5` finds 8, `= 7.5`
 finds nothing), never cut to a whole one. An unsigned MySQL integer column is bounded by its unsigned range. On SQL
-Server a number with more than 38 digits before the decimal point is out of range on a `Numeric` column, whatever
-precision the column declares (MEASURED 2026-11-22: its driver refuses a longer number); no other database bounds a
-`Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a whole number
-outside the signed 64-bit range is compared as the column compares: exactly on a `Numeric` column (see section 5 for
-SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a type. A number
-is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in
-ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
-(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII,
-a digit separator (`1_000`, `1,000`) and a second sign.
+Server a number with more than 38 digits in all, before and after the decimal point (a fraction's trailing zeros not
+counted), is out of range on a `Numeric` column, whatever precision the column declares (MEASURED 2026-11-22 for a
+whole number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary of 38 is pinned by the
+tests, not measured); no other database bounds a `Numeric` column, and a declared precision bounds
+nothing. On a SQL column that is not an integer, a number written with a decimal point or an exponent, and a whole
+number outside the signed 64-bit range, is compared as the column compares: exactly on a `Numeric` column (see
+section 5 for SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a
+type. A number is finite when a floating-point number holds it, so `1e400` is refused, and so is an exponent beyond
+what a decimal holds or of more than 16,383 digits after the point (PostgreSQL's limit). A number is a value like any
+other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII: an optional
+sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space
+around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a digit separator
+(`1_000`, `1,000`) and a second sign.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
@@ -1264,7 +1268,7 @@ is not counted, and a request over the budget only through such a part is answer
 `invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or
 number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and
 `invalid_number` for a number its SQL column does not take (PRD-F25: outside an integer's range, signed or unsigned, or
-of more than 38 digits before the decimal point on a `Numeric` column on SQL Server); (4) every other filter error, a
+of more than 38 digits in all on a `Numeric` column on SQL Server); (4) every other filter error, a
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
 
@@ -1825,15 +1829,13 @@ where a database decides. Each difference is stated here; every other answer is 
   are in docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md; issue #47 holds the fix.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F25, PRD-E7
-- On SQLite a whole number outside the signed 64-bit range is not compared exactly with a `Numeric` column: SQLAlchemy
-  binds a decimal as a floating-point number there, since SQLite stores no exact decimal, so the number can match a
-  neighbouring value. PostgreSQL, MySQL and SQL Server compare it exactly (MEASURED 2026-11-22).
-  - **Between:** SQLite and PostgreSQL, MySQL, SQL Server
-  - **Requirement:** PRD-F25
-- A number written with a decimal point or an exponent is compared with a SQL `Numeric` column as a floating-point
-  number, so it is exact to about 15 significant digits only, a limit of this library, not of the databases; a whole
-  number is compared exactly (on SQLite as the row above says). Issue #56 holds the fix.
-  - **Between:** Numbers with a point or an exponent, and whole numbers
+- On SQLite a number is not compared exactly with a `Numeric` column beyond about 15 significant digits: SQLite stores
+  the column as an integer or a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is stored as
+  12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there, so the number can match a
+  neighbouring value. PostgreSQL, MySQL, MariaDB and SQL Server compare it exactly (MEASURED 2026-11-24,
+  `docs/decisions/010-decimal-numbers.md`), MySQL and MariaDB except a fraction of more than 30 digits
+  (docs/databases.md).
+  - **Between:** SQLite and PostgreSQL, MySQL, MariaDB, SQL Server
   - **Requirement:** PRD-F25
 - On SQL Server, on MariaDB with its default collation (`utf8mb4_uca1400_ai_ci`) and on MySQL with a PAD SPACE
   collation (such as `utf8mb4_general_ci` or `utf8mb4_unicode_ci`), an exact match ignores trailing spaces, as the
