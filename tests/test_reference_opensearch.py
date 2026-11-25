@@ -11,7 +11,10 @@ The index `dtb-test-docs-oracle` is this module's own: deleted first and at the 
 columns as an adopter would map them: `id` and `n` `long`, declared `IndexColumn(type='number', number='long')`, so a
 number outside 64 bits is refused before the query as on a SQL `BigInteger` (PRD-D23, step 3 of PRD-E3); `s` and `t`
 `keyword`, declared `IndexColumn(text='keyword')`; `d` a `date` of `strict_date`, declared `type='date'`; `b`
-`boolean`, declared `type='boolean'`; the key is `id` (PRD-D11). A NULL cell is a field the document does not hold
+`boolean`, declared `type='boolean'`; `m` a `double`, declared `type='number'` with no kind, whose documents hold the
+cells of decision 010 written as floating-point numbers, so the evaluator compares them as doubles (`numeric='double'`,
+#217; decision 010 did not measure OpenSearch's parsing of a number, so this leg is that measurement); the key is `id`
+(PRD-D11). A NULL cell is a field the document does not hold
 (PRD-F26), so a stored `''` is a value there. Each example replaces the documents with one `bulk` request that deletes
 those of the example before and indexes its own, and refreshes the index.
 
@@ -30,6 +33,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from hypothesis import event
@@ -68,6 +72,7 @@ MAPPING = {
         'n': {'type': 'long'},
         'd': {'type': 'date', 'format': 'strict_date'},
         'b': {'type': 'boolean'},
+        'm': {'type': 'double'},
     }
 }
 #: The examples of the property on this leg under the `ci` profile
@@ -94,7 +99,11 @@ def load(leg: Leg, rows: list[dict[str, Any]]) -> None:
     actions: list[dict[str, Any]] = [{'delete': {'_index': INDEX, '_id': str(key)}} for key in leg.loaded - keys]
     for row in rows:
         document = {
-            name: value.isoformat() if isinstance(value, date) else value
+            name: value.isoformat()
+            if isinstance(value, date)
+            else float(value)
+            if isinstance(value, Decimal)
+            else value
             for name, value in row.items()
             if value is not None
         }
@@ -155,6 +164,8 @@ def table_of(decl: tuple[Declared, ...]) -> SearchTable:
             columns.append(IndexColumn(name, text='keyword', searchable=searchable, orderable=orderable))
         elif kind == 'number':
             columns.append(IndexColumn(name, type='number', number='long', searchable=searchable, orderable=orderable))
+        elif kind == 'decimal':  # a `double` field, declared with no kind (PRD-D23)
+            columns.append(Column(name, type='number', searchable=searchable, orderable=orderable))
         else:
             columns.append(Column(name, type=kind, searchable=searchable, orderable=orderable))
     return SearchTable(INDEX, columns, unique_key='id')

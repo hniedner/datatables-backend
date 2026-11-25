@@ -1,11 +1,11 @@
 """A reference evaluator: the answer a request should get, computed over rows held in memory from the requirements of
 `docs/PRD.md` and the statements of `spec/`, never from the library's code (issue #205).
 
-`evaluate(decl, rows, params)` gives the page's row keys in order with both counts (`Answer`), or the code of the
-user's mistake (`Refusal`). Where the requirements leave an answer open it must not guess: it would raise a marked
-gap, reported in #205. No rule needs one today, since every gap met so far is decided; a gap found later is added back
-as a marked `SpecGap` exception. A request it was not written for (a number with a fraction, for one) raises
-`OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in
+`evaluate(decl, rows, params)` gives the page's row keys in order with both counts (`Answer`), or the code of the user's
+mistake (`Refusal`). Where the requirements leave an answer open it must not guess: it would raise a marked gap,
+reported in #205. No rule needs one today, since every gap met so far is decided; a gap found later is added back as a
+marked `SpecGap` exception. A request it was not written for (a number with a fraction on an integer column, for one)
+raises `OutOfScope`. It is test code: nothing in `src` imports it. What it covers, and what it leaves out, is listed in
 `tests/test_reference_properties.py`.
 
 By default every answer is the SQL one on SQLite: number and date columns are searched as their text (PRD-F23), case
@@ -15,7 +15,9 @@ what another backend reads differently, as properties with their PRD clauses; a 
 beyond ASCII is not among them: the evaluator's text is ASCII.
 
 A declaration is a tuple of `(name, type, searchable, orderable)`; the first column is the table's unique key, the
-tie-breaker of PRD-O3, and every row holds every declared name.
+tie-breaker of PRD-O3, and every row holds every declared name. The type `number` is an SQL `BigInteger` (whole
+numbers only); `decimal` is a number column the evaluator alone names, an exact `Numeric` on SQL whose cells are
+`Decimal`s (#217), which a test declares to the library as `type='number'`.
 """
 
 from collections.abc import Callable
@@ -25,6 +27,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from datetime import timedelta
+from decimal import Decimal
+from decimal import InvalidOperation
 import re
 import string
 from typing import Any
@@ -37,7 +41,7 @@ from datatables_backend import Search
 from datatables_backend import SearchCriterion
 from datatables_backend import SearchGroup
 
-type Kind = Literal['string', 'number', 'date', 'boolean']
+type Kind = Literal['string', 'number', 'decimal', 'date', 'boolean']
 type Declared = tuple[str, Kind, bool, bool]
 type Row = Mapping[str, Any]
 type Predicate = Callable[[Row], bool]
@@ -64,6 +68,28 @@ def code_points(text: str) -> str:
     return text
 
 
+def _stored_on_sqlite(value: Decimal) -> int | float:
+    """PRD section 5 (`docs/databases.md`, "A `Numeric` column is not compared exactly"): SQLite stores a `Numeric` as a
+    floating-point number, and as an integer when that number is whole and fits 64 bits (its NUMERIC affinity), so
+    12345678901234567.89 is stored as 12345678901234568."""
+    number = float(value)
+    return int(number) if number.is_integer() and -(2**63) <= number < 2**63 else number
+
+
+def sqlite_text(value: Decimal) -> str:
+    """PRD-F23 on SQLite: a decimal's search text is the text of what SQLite stores (`_stored_on_sqlite`), an integer
+    as its digits and a floating-point number with 15 significant digits, so 0.30 reads `0.3` and 0.00 reads `0`
+    (`docs/decisions/006-number-search-text.md`)."""
+    stored = _stored_on_sqlite(value)
+    return str(stored) if isinstance(stored, int) else format(stored, '.15g')
+
+
+def fixed_scale(value: Decimal) -> str:
+    """PRD-F23 and PRD section 5 on PostgreSQL, MySQL, MariaDB and SQL Server: a `Numeric(20, 2)` keeps its scale, so
+    0.3 reads `0.30` and 0 reads `0.00` (`docs/decisions/006-number-search-text.md`)."""
+    return f'{value:.2f}'
+
+
 @dataclass(frozen=True)
 class Engine:
     """What the requirements leave to a backend, as properties: every rule reads a flag, never an engine's name. The
@@ -85,6 +111,17 @@ class Engine:
     #: unique key then breaks the tie (PRD-O3). None: the order is not known, and ordering by text raises
     #: `OutOfScope`.
     order_key: Callable[[str], Any] | None = code_points
+    #: PRD-F25 and PRD section 5, how a number is compared with a `decimal` column: `exact`, a decimal comparison
+    #: (PostgreSQL, MySQL, MariaDB, SQL Server, `docs/decisions/010-decimal-numbers.md`); `sqlite`, the cell as SQLite
+    #: stores it (`_stored_on_sqlite`) and the number as an integer when it is whole and fits 64 bits, else as a
+    #: floating-point number, compared as SQLite compares an integer with a floating-point number, exactly; `double`,
+    #: both as floating-point numbers (OpenSearch, a `double` field).
+    numeric: Literal['exact', 'sqlite', 'double'] = 'sqlite'
+    #: PRD-F25, PRD-E3: on SQL Server a number of more than this many digits in all, a fraction's trailing zeros and
+    #: the zero before the point of a number below one not counted, is the column's own step-3 mistake; None elsewhere.
+    decimal_digits: int | None = None
+    #: PRD-F23: a decimal cell's search text, the database's own spelling; each leg measures it and passes it here.
+    decimal_text: Callable[[Decimal], str] = sqlite_text
 
 
 SQLITE = Engine()
@@ -98,7 +135,8 @@ class _Refused(Exception):
     """A mistake found while a value is read: its step in PRD-E3's order and its code. Step 3 is split as PRD-E3 says:
     the maximum date of PRD-F24 as a bound, or a number with more digits after the point than PRD-F25 allows, is 3; a
     number the column's own type does not take (an SQL integer column's range, PRD-F25) is 3.5, after every mistake of
-    3 in the request. (Numbers with a fraction are out of scope, so only the maximum date reaches 3 here.)"""
+    3 in the request. A number of more than 16,383 digits after the point reaches 3 on a `decimal` column; more than 38
+    digits in all on SQL Server reaches 3.5 there."""
 
     def __init__(self, step: float, code: str) -> None:
         super().__init__(code)
@@ -123,7 +161,8 @@ def _number(text: str) -> int:
     64-bit range of a `BigInteger` is a mistake of the column's own type, in step 3 after the maximum date of PRD-F24
     as a bound and a number with more digits after the point than PRD-F25 allows (PRD-E3). Every number column is read
     as a BigInteger: the generator sends a number that large only to one, so the narrower range of an Integer column is
-    not modelled. A number with a fraction or an exponent is out of scope."""
+    not modelled. A number that is not finite is one the column cannot read, a mistake of step 2 (the reviewer's
+    ruling for #217); any other number with a fraction or an exponent is out of scope on this type."""
     written = text.strip()
     if _WHOLE.fullmatch(written):
         number = int(written)
@@ -131,8 +170,53 @@ def _number(text: str) -> int:
             raise _Refused(3.5, 'invalid_number')
         return number
     if _NUMBER.fullmatch(written):
-        raise OutOfScope('a number with a fraction or an exponent')
+        _finite(written)
+        raise OutOfScope('a number with a fraction or an exponent on an integer column')
     raise _Refused(2, 'invalid_number')
+
+
+def _finite(written: str) -> None:
+    """PRD-F25: a number is finite when a floating-point number holds it, so `1e400` is refused, at step 2 (the
+    reviewer's ruling for #217: a value its column cannot read)."""
+    if float(written) in (float('inf'), float('-inf')):
+        raise _Refused(2, 'invalid_number')
+
+
+#: PRD-F25: the most digits after the point a number may have (PostgreSQL's limit)
+_FRACTION_DIGITS = 16383
+
+
+def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
+    """PRD-F25 on a `decimal` column: the spelling of `_number`; a whole number written without a point or an exponent
+    is an `int` of any size, any other number a `Decimal` that keeps every digit written, its fraction's trailing zeros
+    dropped. Not finite: step 2. More than 16,383 digits after the point: a limit of every column, step 3 (PRD-E3).
+    More than ``engine.decimal_digits`` digits in all (SQL Server's 38; a fraction's trailing zeros and the zero before
+    the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). An exponent beyond what
+    a `Decimal` holds is out of scope (the generator does not send one)."""
+
+    def read(text: str) -> int | Decimal:
+        written = text.strip()
+        if not _NUMBER.fullmatch(written):
+            raise _Refused(2, 'invalid_number')
+        _finite(written)
+        try:
+            sign, digits, exponent = Decimal(written).as_tuple()
+        except InvalidOperation:
+            raise OutOfScope('a number a Decimal cannot read') from None
+        assert isinstance(exponent, int)
+        while exponent < 0 and len(digits) > 1 and digits[-1] == 0:  # a fraction's trailing zeros dropped, no rounding
+            digits, exponent = digits[:-1], exponent + 1
+        number = Decimal(0) if not any(digits) else Decimal((sign, digits, exponent))
+        fraction = max(0, -exponent) if any(digits) else 0
+        if fraction > _FRACTION_DIGITS:
+            raise _Refused(3, 'invalid_number')
+        if engine.decimal_digits is not None:
+            whole = abs(int(number))
+            if len(str(whole)) * (whole != 0) + fraction > engine.decimal_digits:
+                raise _Refused(3.5, 'invalid_number')
+        return int(written) if _WHOLE.fullmatch(written) else number
+
+    return read
 
 
 def _day(text: str) -> date:
@@ -199,13 +283,32 @@ def _fold(text: str) -> str:
     return text.translate(_ASCII_LOWER)
 
 
-def _text(kind: Kind, value: Any) -> str | None:
-    """PRD-F23: the text a SQL search reads, a whole number as its digits and a day as `YYYY-MM-DD`."""
+def _text(kind: Kind, value: Any, engine: Engine) -> str | None:
+    """PRD-F23: the text a SQL search reads, a whole number as its digits, a decimal as the database spells it and a
+    day as `YYYY-MM-DD`."""
     if value is None:
         return None
     if kind == 'date':
         return value.isoformat()
+    if kind == 'decimal':
+        return engine.decimal_text(value)
     return str(value)
+
+
+def _as_cell(kind: Kind, value: Any, engine: Engine) -> Any:
+    """A cell as the engine compares and orders it: a `decimal` one as `Engine.numeric` says, any other as it is."""
+    if kind != 'decimal' or value is None or engine.numeric == 'exact':
+        return value
+    return _stored_on_sqlite(value) if engine.numeric == 'sqlite' else float(value)
+
+
+def _as_operand(kind: Kind, value: Any, engine: Engine) -> Any:
+    """A read number as the engine binds it against a `decimal` column (`Engine.numeric`); any other value as read."""
+    if kind != 'decimal' or engine.numeric == 'exact':
+        return value
+    if engine.numeric == 'sqlite' and isinstance(value, int) and -(2**63) <= value < 2**63:
+        return value
+    return float(value)
 
 
 def _empty(kind: Kind, value: Any, engine: Engine) -> bool:
@@ -257,7 +360,7 @@ def words(text: str) -> tuple[list[str], list[str]]:
     return positive, negated
 
 
-def _searched(kind: Kind, column: str, text: str) -> Predicate | None:
+def _searched(kind: Kind, column: str, text: str, engine: Engine) -> Predicate | None:
     """PRD-F2: every word must be found in this one column, and no negated word (PRD-F5: NULL holds no word). PRD-F11:
     a word matches as a substring, wildcards as text. None when the text holds no word (PRD-F6)."""
     positive, negated = words(text)
@@ -266,7 +369,7 @@ def _searched(kind: Kind, column: str, text: str) -> Predicate | None:
     wanted, unwanted = [_fold(word) for word in positive], [_fold(word) for word in negated]
 
     def matches(row: Row) -> bool:
-        cell = _text(kind, row[column])
+        cell = _text(kind, row[column], engine)
         if cell is None:
             return not wanted
         folded = _fold(cell)
@@ -283,9 +386,12 @@ def _typed(kind: Kind, column: str, text: str, reading: '_Reading') -> Predicate
     positive, negated = words(text)
     if not positive and not negated:
         return None
-    if kind == 'number':
-        number = reading.read(_number, text)
-        return None if number is _NO_VALUE else lambda row: row[column] == number
+    if kind in ('number', 'decimal'):
+        number = reading.read(_reader(kind, '=', reading.engine), text)
+        if number is _NO_VALUE:
+            return None
+        operand = _as_operand(kind, number, reading.engine)
+        return lambda row: row[column] is not None and _as_cell(kind, row[column], reading.engine) == operand
     span = reading.read(_span, text)
     if span is _NO_VALUE:
         return None
@@ -351,6 +457,7 @@ _NUMBER_CONDITIONS = frozenset(['=', '!=', '<', '<=', '>', '>=', 'between', '!be
 _CONDITIONS: dict[Kind, frozenset[str]] = {
     'string': _STRING_CONDITIONS,
     'number': _NUMBER_CONDITIONS,
+    'decimal': _NUMBER_CONDITIONS,
     'date': _NUMBER_CONDITIONS | {'contains', '!contains'},
     'boolean': frozenset(['=', '!=', 'null', '!null']),
 }
@@ -361,9 +468,11 @@ def _arity(condition: str) -> int:
     return 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
 
 
-def _reader(kind: Kind, condition: str) -> Callable[[str], Any]:
+def _reader(kind: Kind, condition: str, engine: Engine) -> Callable[[str], Any]:
     if kind == 'number':
         return _number
+    if kind == 'decimal':
+        return _decimal_reader(engine)
     if kind == 'date':
         return _span if condition in ('contains', '!contains') else _bound
     if kind == 'boolean':
@@ -406,7 +515,7 @@ def _compared(kind: Kind, column: str, condition: str, values: Sequence[Any], en
         cell = row[column]
         if cell is None:
             return negated
-        return test(cell) != negated
+        return test(_as_cell(kind, cell, engine)) != negated
 
     return matches
 
@@ -463,9 +572,9 @@ def _exact(kind: Kind, column: str, values: Sequence[str], reading: _Reading) ->
         elif kind == 'string':
             wanted.append(_exactly(value, engine))
         else:
-            read = reading.read(_reader(kind, '='), value)
+            read = reading.read(_reader(kind, '=', engine), value)
             failed = failed or read is _NO_VALUE
-            wanted.append(read)
+            wanted.append(read if read is _NO_VALUE else _as_operand(kind, read, engine))
     if failed:
         return None
 
@@ -475,7 +584,7 @@ def _exact(kind: Kind, column: str, values: Sequence[str], reading: _Reading) ->
             return True
         if cell is None:
             return False
-        return (_exactly(cell, engine) if kind == 'string' else cell) in wanted
+        return (_exactly(cell, engine) if kind == 'string' else _as_cell(kind, cell, engine)) in wanted
 
     return matches
 
@@ -510,7 +619,7 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
     flags: dict[str, list[bool]] = {}
     for column in params.columns:
         key = _key(column, declared)
-        skipped = ('boolean', 'number', 'date') if reading.engine.typed_search else ('boolean',)
+        skipped = ('boolean', 'number', 'decimal', 'date') if reading.engine.typed_search else ('boolean',)
         if key is not None and key in declared and declared[key][2] and declared[key][1] not in skipped:
             flags.setdefault(key, []).append(column.searchable)
     columns = [key for key, marks in flags.items() if any(marks)]
@@ -526,7 +635,8 @@ def _global(params: DTParams, declared: Mapping[str, Declared], reading: _Readin
         return None
 
     def matches(row: Row) -> bool:
-        texts = [_fold(text) for key in columns if (text := _text(declared[key][1], row[key])) is not None]
+        texts = [_fold(text) for key in columns
+                 if (text := _text(declared[key][1], row[key], reading.engine)) is not None]  # fmt: skip
         found = all(any(word in text for text in texts) for word in wanted)
         return found and not any(word in text for word in unwanted for text in texts)
 
@@ -570,9 +680,9 @@ def _column_searched(kind: Kind, column: str, text: str, reading: _Reading) -> P
     of the column's text (PRD-F23)."""
     if kind == 'boolean':
         return _boolean_searched(column, text, reading)
-    if reading.engine.typed_search and kind in ('number', 'date'):
+    if reading.engine.typed_search and kind in ('number', 'decimal', 'date'):
         return _typed(kind, column, text, reading)
-    return _searched(kind, column, text)
+    return _searched(kind, column, text, reading.engine)
 
 
 #: PRD-F45: the SearchBuilder condition each ColumnControl logic is read as; `contains` is a column search
@@ -595,9 +705,10 @@ def _condition(kind: Kind, column: str, condition: str, values: Sequence[str], r
     """A condition that fits its column, with the values it reads, none of them empty: each value is read (PRD-F21,
     PRD-F22, PRD-F25, PRD-F43). PRD-F27: the two values of `between` and `!between` are a range in either order,
     compared as read (numbers as numbers, dates as days)."""
-    read = [reading.read(_reader(kind, condition), value) for value in values]
-    if _NO_VALUE in read:
+    read = [reading.read(_reader(kind, condition, reading.engine), value) for value in values]
+    if any(value is _NO_VALUE for value in read):
         return None
+    read = [_as_operand(kind, value, reading.engine) for value in read]
     if condition in ('between', '!between'):
         read = sorted(read)
     return _compared(kind, column, condition, read, reading.engine)
@@ -664,7 +775,7 @@ def _criterion(criterion: SearchCriterion, declared: Mapping[str, Declared], rea
     if surplus:
         for value in taken:
             if value:
-                reading.read(_reader(found[1], condition), value)
+                reading.read(_reader(found[1], condition, reading.engine), value)
         reading.refuse()
         return None
     if missing:
@@ -711,9 +822,12 @@ def _ordering(params: DTParams, declared: Mapping[str, Declared], reading: _Read
     return applied
 
 
-def _sorted(rows: Sequence[Row], applied: list[tuple[str, bool]], unique: str, engine: Engine) -> list[Row]:
+def _sorted(
+    rows: Sequence[Row], applied: list[tuple[str, bool]], declared: Mapping[str, Declared], unique: str, engine: Engine
+) -> list[Row]:
     """PRD-O8: the first applied entry is primary. PRD-O2: NULL is the lowest value, false before true. PRD-O6: text in
-    the database's collation, the engine's sort key (code-point order on SQLite). PRD-O3, PRD-O4: the unique key breaks
+    the database's collation, the engine's sort key (code-point order on SQLite). A decimal orders as the engine
+    compares it (`Engine.numeric`): on SQLite 12345678901234567.89 and .90 tie. PRD-O3, PRD-O4: the unique key breaks
     ties, equal sort keys included, in the first applied entry's direction, ascending when none is applied."""
 
     def key(value: Any) -> Any:
@@ -726,7 +840,12 @@ def _sorted(rows: Sequence[Row], applied: list[tuple[str, bool]], unique: str, e
     first_descending = applied[0][1] if applied else False
     ordered = sorted(rows, key=lambda row: row[unique], reverse=first_descending)
     for name, descending in reversed(applied):
-        ordered.sort(key=lambda row: (0, 0) if row[name] is None else (1, key(row[name])), reverse=descending)
+        kind: Kind = declared[name][1]
+
+        def sort_key(row: Row, name: str = name, kind: Kind = kind) -> Any:
+            return (0, 0) if row[name] is None else (1, key(_as_cell(kind, row[name], engine)))
+
+        ordered.sort(key=sort_key, reverse=descending)
     return ordered
 
 
@@ -759,7 +878,7 @@ def _step_one_filters(
     for column in params.columns:
         key = _key(column, declared)
         kind = declared[key][1] if key is not None and key in declared else 'string'
-        one_value = ('boolean', 'number', 'date') if engine.typed_search else ('boolean',)
+        one_value = ('boolean', 'number', 'decimal', 'date') if engine.typed_search else ('boolean',)
         plain = column.search
         values = plain.multi_values or []
         measured = [plain.value, *values]
@@ -825,5 +944,5 @@ def evaluate(
         return Refusal(min(reading.mistakes, key=lambda mistake: mistake[:2])[2])
     kept = [clause for clause in clauses if clause is not None]
     matched = [row for row in rows if all(clause(row) for clause in kept)]
-    page = _sorted(matched, applied, decl[0][0], engine)[params.start : params.start + params.length]
+    page = _sorted(matched, applied, declared, decl[0][0], engine)[params.start : params.start + params.length]
     return Answer(tuple(row[decl[0][0]] for row in page), len(rows), len(matched))
