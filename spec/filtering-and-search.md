@@ -508,3 +508,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   whose rows the live module pins, the missing value left out (`test_searchbuilder_conditions` on `pages`).
 - **SPEC-F45.14** [SQL] `greater` `abc` on `price` → `invalid_number`; `greater` on a text column → `invalid_filter`.
 - **SPEC-F45.15** [SQL] `notEqual` `7` on `price` → rows 2, 3, 4: the row with no price passes (PRD-F37).
+- **SPEC-F45.16** [all] `greater`, `greaterOrEqual`, `less` and `lessOrEqual` with `type` `text` on `made` answer as
+  SearchBuilder `>`, `>=`, `<` and `<=` on it, compared as days: `greater` `2024-03-05` → rows 2; `greaterOrEqual` →
+  1, 2; `less` → 4; `lessOrEqual` → 1, 4. Row 3, with no date, is in none. On OS each sends the body of that
+  condition, whose rows the live module pins (`test_searchbuilder_conditions` on `created`). On `name` (string) each
+  → `invalid_filter`, as `SPEC-F27.1`.

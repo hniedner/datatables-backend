@@ -1318,6 +1318,11 @@ of more than 38 digits in all on a `Numeric` column on SQL Server); (4) every ot
 boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is
 `page_out_of_range`, since it needs a valid count.
 
+Within each of steps 2 to 4, the first mistake is the one found first in step 1's read order: the global search, then
+the column searches in the request's order (within one column the plain search, then the ColumnControl search, then
+the ColumnControl list), then the SearchBuilder tree's criteria in document order. A refused order entry (PRD-O1,
+PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request is answered before it.
+
 - **Reason:** One code per kind of mistake, decidable when a request holds several.
 - **Priority:** must
 

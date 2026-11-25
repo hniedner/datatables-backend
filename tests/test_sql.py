@@ -3174,6 +3174,36 @@ def test_text_or_a_tree_over_the_bounds_comes_before_a_date_or_number_mistake(se
     refused(table.fetch_sync(params, session), code)
 
 
+def test_within_one_step_the_mistake_read_first_is_answered(session: Session):
+    """SPEC-E3.10: two mistakes of step 2 are answered in step 1's read order, the request's column order and then the
+    tree. Catches an answer that prefers one code (a number before a date, or the reverse), that follows the declared
+    column order instead of the request's, or that reads the tree before the column searches."""
+    both = {'age': {'multi_values': ['abc']}, 'born': {'multi_values': ['2024-13-01']}}
+    refused(table.fetch_sync(request(*ALL, column_search=both), session), 'invalid_number')
+    born_first = ('id', 'name', 'email', 'born', 'age', 'seen', 'team')
+    refused(table.fetch_sync(request(*born_first, column_search=both), session), 'invalid_date')
+    params = request(*ALL, column_search={'born': both['born']}, **criterion('age', '=', 'abc'))
+    refused(table.fetch_sync(params, session), 'invalid_date')
+
+
+def test_a_refused_order_entry_comes_after_a_number_mistake(session: Session):
+    """SPEC-E3.11: `team` is declared unorderable, so the order on it is refused, at step 4; a number mistake of step 2
+    in the tree is answered before it, though the order entry is read first. Catches an order refusal answered as soon
+    as it is found."""
+    order = [{'column': ALL.index('team'), 'dir': 'asc'}]
+    refused(table.fetch_sync(request(*ALL, order=order), session))
+    refused(table.fetch_sync(request(*ALL, order=order, **criterion('age', '=', 'abc')), session), 'invalid_number')
+
+
+def test_a_filter_on_an_unsearchable_column_is_refused_without_its_value_being_read(session: Session):
+    """SPEC-E3.12: the server declared `age` unsearchable, so a filter on it is `invalid_filter`, whatever its value.
+    Catches a value read as a number before the column's refusal, which would answer `invalid_number`."""
+    closed = SQLTable(people, [Column('id'), Column('age', searchable=False)])
+    refused(closed.fetch_sync(request('id', 'age', **criterion('age', '=', 'abc')), session))
+    params = request('id', 'age', column_search={'age': {'multi_values': ['abc']}})
+    refused(closed.fetch_sync(params, session))
+
+
 @pytest.mark.parametrize(
     ('tree', 'answered'),
     [
@@ -4653,3 +4683,15 @@ def test_columncontrol_number_logics_follow_the_number_rules_and_the_type(sessio
 def test_columncontrol_not_equal_lets_a_null_through(session: Session):
     """SPEC-F45.15: `notEqual` is `!=`, which keeps the row with no value (PRD-F37), on a number as on text."""
     assert _found(flags=columncontrol('age', 'notEqual', '31'), session=session) == [2, 3, 5]
+
+
+@pytest.mark.parametrize(
+    ('logic', 'expected'),
+    [('greater', [4]), ('greaterOrEqual', [1, 4]), ('less', [2, 5]), ('lessOrEqual', [1, 2, 5])],
+)
+def test_columncontrol_comparisons_on_a_date_compare_days(session: Session, logic: str, expected: list[int]):
+    """SPEC-F45.16: sent with `type` `text`, the four answer as `>`, `>=`, `<` and `<=` on the date column, compared
+    as days; row 1 holds the day itself, and row 3, with no date, is in none. On text they are refused (PRD-F27).
+    Catches the four refused, dropped or read as numbers on a date column, and the bound day put on the wrong side."""
+    assert _found(flags=columncontrol('born', logic, '1994-03-01'), session=session) == expected
+    assert _refusal(flags=columncontrol('team', logic, 'red'), session=session) == 'invalid_filter'

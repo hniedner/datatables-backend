@@ -301,6 +301,16 @@ def test_a_mistake_found_while_the_body_is_built_waits_for_an_earlier_step_of_th
     refused(searched.fetch_sync(params, Client()), expected)
 
 
+def test_a_mistake_found_while_the_body_is_built_comes_first_when_it_is_read_first():
+    """SPEC-E3.10: the column search `abc` on `pages` is found only while the body is built, and the list on `created`
+    by the plan; both are of step 2, and `pages` is read first. Catches the plan's mistake answered before an earlier
+    one of the same step that the build finds."""
+    searches = {'pages': {'value': 'abc'}, 'created': {'multi_values': ['2024-13-01']}}
+    client = Client()
+    refused(table.fetch_sync(request(*NAMES, column_search=searches), client), 'invalid_number')
+    assert (client.searches, client.counts) == ([], [])
+
+
 # -- the counts before a refusal, and the empty page past the end (PRD-C3, PRD-C9, PRD-C11, PRD-C12) ---
 
 EVERYTHING = {'query': {'match_all': {}}}
@@ -2769,6 +2779,10 @@ def _clauses(**body: Any) -> list[dict[str, Any]]:
         ('pages', 'less', '12', criterion('pages', '<', '12')),
         ('pages', 'lessOrEqual', '12', criterion('pages', '<=', '12')),
         ('created', 'equal', '2026-07-15', criterion('created', '=', '2026-07-15')),
+        ('created', 'greater', '2026-07-15', criterion('created', '>', '2026-07-15')),
+        ('created', 'greaterOrEqual', '2026-07-15', criterion('created', '>=', '2026-07-15')),
+        ('created', 'less', '2026-07-15', criterion('created', '<', '2026-07-15')),
+        ('created', 'lessOrEqual', '2026-07-15', criterion('created', '<=', '2026-07-15')),
         ('title', 'contains', 'red fox', {'column_search': {'title': {'value': 'red fox'}}}),
         ('pages', 'contains', '12', {'column_search': {'pages': {'value': '12'}}}),
         ('created', 'contains', '2026-07', {'column_search': {'created': {'value': '2026-07'}}}),
@@ -2777,8 +2791,9 @@ def _clauses(**body: Any) -> list[dict[str, Any]]:
 def test_columncontrol_sends_what_the_equivalent_condition_or_column_search_sends(
     column: str, logic: str, value: str, equivalent: dict[str, Any]
 ):
-    """SPEC-F45.2, SPEC-F45.3, SPEC-F45.4, SPEC-F45.13: each logic is answered with the query of the SearchBuilder
-    condition it names, and `contains` with that of a column search, on a column of text, of numbers and of days."""
+    """SPEC-F45.2, SPEC-F45.3, SPEC-F45.4, SPEC-F45.13, SPEC-F45.16: each logic is answered with the query of the
+    SearchBuilder condition it names, and `contains` with that of a column search, on a column of text, of numbers and
+    of days."""
     expected = _clauses(**equivalent)
     assert expected != []
     assert _clauses(flags=columncontrol(column, logic, value)) == expected

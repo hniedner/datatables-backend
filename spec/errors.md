@@ -42,6 +42,17 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   `abc` on `id` → `request_too_large` (961 conditions, step 1, before the number mistake of step 2); `=` `abc` on `id`
   alone → `invalid_number` (the part with a mistake is not counted, so 960); `=` `1` on `id` and a column search of
   256 characters on `e0` → `value_too_long` (the budget is the last mistake of step 1).
+- **SPEC-E3.10** [all] Within step 2 the first mistake in step 1's read order is answered: `multi_values` `["abc"]` on
+  `price` and `multi_values` `["2024-13-01"]` on `made`, in the base request's column order → `invalid_number`; with
+  `made` sent before `price` → `invalid_date`; `multi_values` `["2024-13-01"]` on `made` and SearchBuilder `=` `abc`
+  on `price` → `invalid_date` (the column searches before the tree). [OS] A column search `abc` on `price`, a mistake
+  found while the body is built (`SPEC-E3.6`), and `multi_values` `["2024-13-01"]` on `made` → `invalid_number`.
+- **SPEC-E3.11** [all] An order entry on `secret` (server-unorderable), marked `orderable: true`, alone →
+  `invalid_filter`; beside SearchBuilder `=` `abc` on `price` → `invalid_number`: a refused order entry is a mistake
+  of step 4, so the number mistake of step 2 is answered, though the order entry is read first.
+- **SPEC-E3.12** [all] With `price` declared unsearchable: SearchBuilder `=` `abc` on `price`, and `multi_values`
+  `["abc"]` on it → `invalid_filter`, not `invalid_number`: the refusal of the column is reported without its value
+  being read (`SPEC-E3.8`).
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value. A limit
   the server holds (an integer column's bounds, the result window, the year 9999 of the last day there is) is the
