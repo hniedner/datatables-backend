@@ -506,7 +506,9 @@ def _number(
     if isinstance(sql_type, Integer):
         if _fraction(value):  # no integer equals it: an exact decimal compares as it is, a converting type's as a float
             if isinstance(column.type, TypeDecorator):
-                return float(value)
+                # Bound as a float of its own: as the decorator's type, psycopg 3 and asyncpg would cast it to the
+                # impl's INTEGER, which rounds 7.5 to 8
+                return literal(float(value), Float())
             return _decimal(column, value, needed, declared, dialect)
         number = int(value)  # 8.0 is the whole number 8
         bits = 16 if isinstance(sql_type, SmallInteger) else 64 if isinstance(sql_type, BigInteger) else 32

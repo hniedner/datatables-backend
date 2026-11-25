@@ -2757,11 +2757,13 @@ class Compiling:
         self.dialect = dialect
         self.decimals: list[Decimal] = []
         self.types: list[Any] = []
+        self.statements: list[str] = []
 
     def execute(self, statement: Any) -> Any:
         compiled = statement.compile(dialect=self.dialect, compile_kwargs={'render_postcompile': True})
         binds = [bind for bind in compiled.binds.values() if isinstance(bind.value, Decimal)]
         self.decimals += [bind.value for bind in binds]
+        self.statements.append(str(compiled))
         self.types += [bind.type for bind in binds]
         return self
 
@@ -2891,6 +2893,20 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
     table = SQLTable(numbers, [Column('id'), Column('i')])
     assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), session)) == [1]
     assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', '7.5')), session)) == []
+
+
+@pytest.mark.parametrize('dialect', [postgresql.psycopg.dialect, postgresql.asyncpg.dialect])
+def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(dialect: Callable[[], Dialect]):
+    """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and
+    PostgreSQL's `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test
+    passes there). The fraction is bound as a float instead, so no `INTEGER` is rendered. RUN as a compile; the
+    rounding of the cast is INFERRED."""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Counted))
+    source: Any = Compiling(dialect())
+    SQLTable(numbers, [Column('id'), Column('i')]).fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), source)
+    conditions = [text.split('WHERE')[1].split('ORDER BY')[0] for text in source.statements if 'WHERE' in text]
+    assert conditions  # the page's own LIMIT and OFFSET are cast, and are no part of the condition
+    assert not any('INTEGER' in condition for condition in conditions)
 
 
 def test_an_exponent_of_more_than_16383_digits_after_the_point_is_refused():

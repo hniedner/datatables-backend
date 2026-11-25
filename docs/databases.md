@@ -294,6 +294,21 @@ This is a limit of the databases, not of the library: the library sends the numb
   fetched 2026-11-24).
 - **Requirement:** PRD-F25.
 
+### A fraction on a `TypeDecorator` over an integer is compared as a float
+
+This is a limit of the library: such a type converts what it is given, and a number with a fraction has no whole
+number to give it.
+
+- **What you see:** a number with a fraction (`> 7.5`) on a column whose SQLAlchemy type is a `TypeDecorator` over an
+  integer is compared as a float, without the decorator's conversion. Bound as the decorator's type, psycopg 3 and
+  asyncpg would cast it to the impl's `INTEGER`, which rounds it (`> 7.5` would miss 8).
+- **Example:** a decorator over `Integer` holding 8: `> 7.5` finds it, `= 7.5` finds nothing.
+- **How it is known:** RUN 2026-11-24 as a compile: psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg
+  `col > $1::INTEGER` for the decorator's own bind, and no cast for a float bound as `Float`; the rounding of
+  PostgreSQL's cast is INFERRED, and CI's psycopg 3 leg shows it (`tests/test_sql.py`,
+  `test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float`).
+- **Requirement:** PRD-F25.
+
 ### A shared `TotalCache` cannot tell two scopes apart that the session sets
 
 This is a limit of the library, not a rule of the databases: the cache keeps a total under the database's URL and

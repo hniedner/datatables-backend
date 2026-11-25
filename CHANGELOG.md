@@ -26,6 +26,9 @@ and the versioning policy is in the README.
   PostgreSQL's `numeric` takes (`1e-20000`); a negative exponent was read as zero before. On PostgreSQL, `= 1e-400` on a
   `Numeric` column now finds no row, where it matched a row holding zero. On MySQL and MariaDB it still does (see
   docs/databases.md).
+- On PostgreSQL with psycopg 3 or asyncpg, a filter with a fraction on an integer column of a converting type (a
+  SQLAlchemy `TypeDecorator` over an integer) was rounded to a whole number, so `> 7.5` missed a row holding 8; it is
+  now compared as the number (as a float, without the type's conversion).
 - A number with a fraction on an integer column (`= 8.0000000000000000001`) is compared as written on PostgreSQL,
   MySQL, MariaDB and SQL Server, where a float of it was the whole number 8.
 
