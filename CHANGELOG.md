@@ -18,6 +18,10 @@ and the versioning policy is in the README.
   with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
   with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
   refused with `invalid_character`.
+- On OpenSearch, a number written as zero with a sign, such as `-0.00`, is sent as `0`, as `0` is. On a document
+  holding 0.0 in a `double` or `float` field, the library sent -0.0, which such a field keeps apart from 0.0: so
+  SearchBuilder `=` and `<=` with `-0.00`, a column search of `-0.00` and a list entry of `-0.00` missed the document,
+  and `>` and `!=` with `-0.00` wrongly found it. Each now answers as for `0`.
 
 ## [0.1.3] - 2026-11-25
 

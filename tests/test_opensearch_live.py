@@ -75,6 +75,7 @@ MAPPING = {
         'n_float': {'type': 'float'},
         'n_half': {'type': 'half_float'},
         'n_scaled': {'type': 'scaled_float', 'scaling_factor': 100},
+        'n_double': {'type': 'double'},  # which keeps -0.0 apart from 0.0; b2 holds 0.0
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
         # A whole string the server folds to ASCII and to small letters; declared only by the table `folded` below
         'folded': {'type': 'keyword', 'normalizer': 'to_ascii'},
@@ -111,7 +112,7 @@ DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
      'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED, 'folded': 'a*b'},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b'},
+     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b', 'n_double': 0.0},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b',
      'n_unsigned': 2**64 - 1, 'n_scaled': (2**63 - 1) / 100},  # the largest of each, for the two silent answers below
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
@@ -873,6 +874,14 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
     assert numbers_in('n_float', 'float').fetch_sync(params, client).error_code == 'invalid_number'
     with pytest.raises(RequestError):
         numbers_in('n_float', None).fetch_sync(params, client)
+
+
+@pytest.mark.parametrize('condition', ['=', '<='])
+def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition: str):
+    """SPEC-F25.15 on a real server: b2 holds 0.0 in a `double` field, which keeps -0.0 apart from 0.0 in a `term` and
+    a `range` (docs/databases.md), so `= -0.00` and `<= -0.00` found nothing while the library sent -0.0."""
+    params = request('id', 'n', **criterion('n', condition, '-0.00'))
+    assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
