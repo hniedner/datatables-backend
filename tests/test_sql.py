@@ -2605,6 +2605,18 @@ def test_a_numeric_column_is_not_bounded_by_its_declared_precision(session: Sess
     assert ids(wide(session).fetch_sync(params, session)) == [1]
 
 
+async def test_a_numeric_column_is_not_bounded_by_its_declared_precision_through_the_async_fetch_too(
+    session: Session, async_session: AsyncSession
+):
+    """SPEC-F25.5: the same question, asked through `fetch`. asyncpg casts a `Decimal` compared with a column to the
+    column's own `NUMERIC(32, 2)`, so a number of 31 digits overflowed it and the request raised
+    `numeric field overflow` there, while the sync drivers answered."""
+    numbers = wide(session)
+    session.commit()
+    params = request(*WIDE, **criterion('exact', '<', '9' * 31))
+    assert ids(await numbers.fetch(params, async_session)) == [1]
+
+
 @pytest.mark.parametrize(
     ('value', 'text'),
     [
