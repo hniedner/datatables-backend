@@ -58,6 +58,9 @@ The examples live in `EXAMPLES`, one home: the smallest case of each mutant and 
 them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
 (step 2) in a criterion, a categorical filter and a list, which the random draw reaches on the last two only after
 about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5).
+Two more on `m` pin what a server leg found or caught: `-0.00` as zero in `=` and in a range (a defect the OpenSearch
+leg found), and a list of two numbers, which MariaDB compares as doubles when they are bound as text (a mutant only
+`explore` caught on the servers).
 `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 declaration, which `tests/test_reference_opensearch.py` imports; one the shared plan refuses alike on every backend
 (`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals) is left out.
@@ -1642,6 +1645,21 @@ EXAMPLES |= {
         {'data': 'm', 'search': {'value': '^(1e400)$', 'regex': True}})),
     'decimal not finite in a list': (three_rows(), DECLARED, request_of(
         {'data': 'm', 'search': {'value': '', 'regex': False, 'multi_values': ['1e400']}})),
+    # PRD-F25: `-0.00` is the number zero, so `=` finds row 1 (0.00) on every backend, and so do `>=` and `<=` as a
+    # range. Found by this property on OpenSearch, whose `double` field kept -0.0 apart from 0.0; the OpenSearch leg
+    # stays red on these two until the fix of branch fix/opensearch-negative-zero is in
+    'decimal negative zero': (rows_of('m', DECIMALS[5], DECIMALS[3], DECIMALS[0]), DECLARED,
+                              request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['-0.00'])))),
+    'decimal negative zero bounds': (rows_of('m', DECIMALS[5], DECIMALS[3], DECIMALS[0]), DECLARED,
+                                     request_of({'data': 'm'}, searchBuilder=tree_of(
+                                         ('m', '>=', ['-0.00']), ('m', '<=', ['-0.00'])))),
+    # PRD-F20, PRD-F25: a list of two numbers matches each exactly where a decimal is compared exactly: row 1 only
+    # (0.30000000000000001 is no value of the column); rows 1 and 4 on SQLite and as doubles, where 12345678901234567.89
+    # and .90 are one number. MariaDB compares a column with an IN list of two or more text constants as doubles, so a
+    # number bound as text finds row 4 there too
+    'decimal list of two': (rows_of('m', DECIMALS[0], None, None, DECIMALS[1]), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '', 'regex': False,
+                                 'multi_values': ['12345678901234567.89', '0.30000000000000001']}})),
 }  # fmt: skip
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 #: declaration, which OpenSearch's leg pins as well; one the shared plan refuses alike on every backend is left out
@@ -1649,7 +1667,8 @@ TYPED_EXAMPLES = [
     EXAMPLES[name]
     for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',
                  'skipped first order', 'backslash', 'pad space', 'date text', 'decimal equal',
-                 'decimal finer than the column', 'decimal whole neighbour', 'decimal spelling', 'decimal order')
+                 'decimal finer than the column', 'decimal whole neighbour', 'decimal spelling', 'decimal order',
+                 'decimal negative zero', 'decimal negative zero bounds', 'decimal list of two')
 ]  # fmt: skip
 
 
