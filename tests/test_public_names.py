@@ -27,7 +27,7 @@ APPROVED = {
         'MAX_PAGE_LENGTH',
     },
     'datatables_backend.sqlalchemy': {'SQLTable'},
-    'datatables_backend.opensearch': {'SearchTable', 'IndexColumn', 'TextKind', 'partial_answer'},
+    'datatables_backend.opensearch': {'SearchTable', 'IndexColumn', 'TextKind', 'NumberKind', 'partial_answer'},
     'datatables_backend.fastapi': {'DataTablesParams', 'parse_datatables_request'},
 }
 

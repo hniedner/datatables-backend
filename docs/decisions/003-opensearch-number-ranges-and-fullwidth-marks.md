@@ -31,9 +31,9 @@ nearest float does not help, since a `long` field refuses that too. The library 
 so it cannot know the range. The refusal reaches the application as the client's `RequestError`, a server failure,
 where PRD-E7 wants a user's mistake answered with `invalid_number` before the query.
 
-What follows from it: PRD section 5 states the limit, the live test
-`test_a_number_outside_the_range_of_its_field_is_the_users_mistake` pins it as a strict xfail, and issue #47 holds
-the fix (a column that declares its number kind is one option).
+What follows from it: PRD section 5 states the limit. The fix is a column that declares its number kind (PRD-D23,
+issue #47); the measurement behind it, with the kinds `byte`, `short`, `float`, `half_float` and `scaled_float` this
+one did not cover, is [011](011-opensearch-number-kinds.md).
 
 ## Fullwidth marks on a normalized keyword field
 
