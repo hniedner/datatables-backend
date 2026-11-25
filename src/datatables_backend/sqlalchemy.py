@@ -76,7 +76,14 @@ from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
 from ._plan import refused
-from .cache import TotalCache
+from .cache import AsyncTotalStore
+from .cache import TotalStore
+from .cache import key_digest
+from .cache import read_total
+from .cache import read_total_async
+from .cache import require_sync_store
+from .cache import write_total
+from .cache import write_total_async
 from .columns import Column
 from .columns import ColumnType
 from .opensearch import IndexColumn  # loads no OpenSearch client library
@@ -124,7 +131,8 @@ class SQLTable:
         base_filter: The rows the table shows at all; it applies to ``recordsTotal`` too. For a filter that differs
             per request, such as a user's rows, pass ``scope`` to ``fetch`` instead.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
-        total_cache: Caches ``recordsTotal`` (one ``COUNT(*)`` per TTL instead of per draw).
+        total_cache: Keeps ``recordsTotal`` (one ``COUNT(*)`` per TTL instead of per draw): a ``TotalCache``, or any
+            ``TotalStore`` (``AsyncTotalStore`` for ``fetch`` only), PRD-C18.
     """
 
     def __init__(
@@ -135,7 +143,7 @@ class SQLTable:
         unique_key: str | Sequence[str] | None = None,
         base_filter: ColumnElement[bool] | None = None,
         rows: RowHooks | None = None,
-        total_cache: TotalCache | None = None,
+        total_cache: TotalStore | AsyncTotalStore | None = None,
     ) -> None:
         self.source = source
         self.columns = tuple(columns)
@@ -192,7 +200,13 @@ class SQLTable:
     def fetch_sync(
         self, params: DTParams, source: _SyncSource, *, scope: ColumnElement[bool] | None = None
     ) -> DTResponse:
-        """``fetch`` for a ``Session`` or ``Connection``, with the same ``scope``."""
+        """``fetch`` for a ``Session`` or ``Connection``, with the same ``scope``.
+
+        Raises:
+            TypeError: the table's ``total_cache`` is an ``AsyncTotalStore``, which only ``fetch`` can await.
+        """
+        if self.total_cache is not None:
+            require_sync_store(self.total_cache)
         try:
             statements = self._statements(params, _dialect(source), scope)
         except InvalidFilter as found:
@@ -369,24 +383,26 @@ class SQLTable:
         bind = _bind(source)
         compiled = total.compile(dialect=bind.dialect)
         values = sorted(compiled.params.items(), key=lambda item: item[0])
-        return f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values!r}'
+        return key_digest(f'{bind.engine.url.render_as_string(hide_password=True)} {compiled} {values!r}')
 
     async def _total(self, source: _AsyncSource, statements: _Statements) -> int:
-        key = self._total_key(source, statements.total) if self.total_cache else ''
-        if self.total_cache and (cached := self.total_cache.get(key)) is not None:
+        store = self.total_cache
+        key = self._total_key(source, statements.total) if store is not None else ''
+        if store is not None and (cached := await read_total_async(store, key)) is not None:
             return cached
         count = (await source.execute(statements.total)).scalar_one()
-        if self.total_cache:
-            self.total_cache.put(key, count)
+        if store is not None:
+            await write_total_async(store, key, count)
         return count
 
     def _total_sync(self, source: _SyncSource, statements: _Statements) -> int:
-        key = self._total_key(source, statements.total) if self.total_cache else ''
-        if self.total_cache and (cached := self.total_cache.get(key)) is not None:
+        store = self.total_cache
+        key = self._total_key(source, statements.total) if store is not None else ''
+        if store is not None and (cached := read_total(store, key)) is not None:
             return cached
         count = source.execute(statements.total).scalar_one()
-        if self.total_cache:
-            self.total_cache.put(key, count)
+        if store is not None:
+            write_total(store, key, count)
         return count
 
     def _response(self, params: DTParams, total: int, filtered: int, rows: Sequence[Mapping[Any, Any]]) -> DTResponse:

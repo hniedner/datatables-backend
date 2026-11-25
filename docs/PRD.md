@@ -1188,8 +1188,9 @@ point-in-time is held.
 `recordsTotal` can be cached by a caller-supplied TTL cache that holds at most a set number of totals, the oldest
 dropped first.
 
-The bound defaults to 10,000 totals, about 2.6 MB. A deployment with more distinct scopes active within one TTL raises
-it, or most of its requests count. A bound below 1 is refused when the cache is built.
+This is `TotalCache`; a store the application supplies sets its own bound (PRD-C18). The bound defaults to 10,000
+totals, about 2.6 MB. A deployment with more distinct scopes active within one TTL raises it, or most of its requests
+count. A bound below 1 is refused when the cache is built.
 
 - **Reason:** An unfiltered count of a large table is costly; the bound keeps a scope per user or tenant from growing
   the cache without limit. The oldest total is also the one nearest its expiry, and a read changes nothing, so the rule
@@ -1213,6 +1214,10 @@ promise: nothing may rely on it.
 A cached total ends by its TTL, by an explicit call, or by being the oldest when the cache is full; the library
 registers no global hooks on engines or pools.
 
+A store the application supplies (PRD-C18) decides itself when a total ends; the library still registers no global
+hooks, so an application that must show a write at once gives the table a store of its own and empties it after the
+write.
+
 - **Reason:** Global hooks would surprise an app.
 - **Priority:** must
 
@@ -1231,6 +1236,25 @@ expression column add conditions of their own, which the budget does not count.
   expression depth. The number is measured, not computed (`docs/decisions/005-the-largest-request-the-bounds-allow.md`),
   and the table above is what it allows of a wide table's global search, which costs words times columns.
 - **Priority:** must
+
+#### PRD-C18
+
+The total cache is any object with `get` and `put`; `TotalCache` is the in-process one.
+
+The table is given the object as `total_cache`: a `TotalStore` (sync methods) or an `AsyncTotalStore` (coroutine
+methods, for `fetch`). `fetch_sync` refuses an async store with a `TypeError` that names the fix: before anything is
+queried when `get` or `put` is a coroutine function, at the first store call when a plain method returns an awaitable.
+An exception from the store propagates, so the request fails.
+
+The library hands the store a key that is an opaque SHA-256 digest of what PRD-C15 names, never a bound value. The key
+is stable across processes for bound values whose `repr` (SQL) or `str` (OpenSearch) is deterministic, and may change
+between releases, which gives a miss and never a wrong total. A store is in use because it was given, not because it
+is truthy. The protocol has no `clear`: an application that needs fresher totals than a TTL gives, owns its store and
+empties it itself.
+
+- **Reason:** An application that runs several processes, or has a cache of its own, can share totals without the
+  library choosing the store; the digest keeps personal data in a bound value out of it.
+- **Priority:** should
 
 ### 4.6 Errors (E)
 
@@ -1975,7 +1999,7 @@ first release is published as version 0.1.0.
 | R5 logging | PRD-E10, E11, E12 |
 | R6 SQL counts, paging, columns | PRD-C1, C2, C4, C5, C6 |
 | R6 OpenSearch counts | PRD-C7, C8, C9 |
-| R6 total cache | PRD-C14, C15, C16 |
+| R6 total cache | PRD-C14, C15, C16, C18 |
 | R6 SQL Server parameter limit | PRD-C17 (SQLite JSON binding dropped; the bounds of PRD-F38 alone did not keep within it, so PRD-C17 became a budget) |
 | R7 rows and response | PRD-R1 to R6 |
 | R8 API shape | PRD-A1 to A10 (A9 changed) |

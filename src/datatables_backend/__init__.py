@@ -7,7 +7,9 @@ imported; ``[opensearch]`` installs one) and ``datatables_backend.fastapi`` (``[
 
 __version__ = '0.1.2'
 
+from .cache import AsyncTotalStore
 from .cache import TotalCache
+from .cache import TotalStore
 from .columns import Column
 from .columns import ColumnType
 from .protocol import MAX_PAGE_LENGTH
@@ -27,6 +29,7 @@ from .rows import RowHooks
 
 __all__ = [
     'MAX_PAGE_LENGTH',
+    'AsyncTotalStore',
     'Column',
     'ColumnType',
     'DTColumn',
@@ -42,5 +45,6 @@ __all__ = [
     'SearchCriterion',
     'SearchGroup',
     'TotalCache',
+    'TotalStore',
     'parse_request',
 ]

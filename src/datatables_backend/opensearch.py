@@ -43,7 +43,14 @@ from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
 from ._plan import refused
-from .cache import TotalCache
+from .cache import AsyncTotalStore
+from .cache import TotalStore
+from .cache import key_digest
+from .cache import read_total
+from .cache import read_total_async
+from .cache import require_sync_store
+from .cache import write_total
+from .cache import write_total_async
 from .columns import Column
 from .columns import ColumnType
 from .protocol import DTParams
@@ -122,7 +129,8 @@ class SearchTable:
         base_filter: A query that limits the documents the table shows at all; it applies to ``recordsTotal`` too. For
             a filter that differs per request, such as a user's documents, pass ``scope`` to ``fetch`` instead.
         rows: Hooks that shape each row and add ``DT_RowId`` / ``DT_RowData``.
-        total_cache: Caches ``recordsTotal`` for requests that filter. One cache per cluster.
+        total_cache: Keeps ``recordsTotal`` for requests that filter: a ``TotalCache``, or any ``TotalStore``
+            (``AsyncTotalStore`` for ``fetch`` only), PRD-C18. One store per cluster.
         max_result_window: The index's ``max_result_window``. A page beyond it that ends within that many rows of
             the last row is read by a reversed sort after the counts (PRD-C10); any other is refused with the real
             counts, or answered empty when ``start`` is past the last row.
@@ -136,7 +144,7 @@ class SearchTable:
         unique_key: str | Sequence[str] | None = None,
         base_filter: Mapping[str, Any] | None = None,
         rows: RowHooks | None = None,
-        total_cache: TotalCache | None = None,
+        total_cache: TotalStore | AsyncTotalStore | None = None,
         max_result_window: int = _MAX_RESULT_WINDOW,
     ) -> None:
         self.index = index
@@ -191,10 +199,10 @@ class SearchTable:
             return refused(params, found)
         if request.beyond is not None:
             filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
-            total = self._cached_total(request, filtered)
+            total = await self._cached_total_async(request, filtered)
             if total is None:
                 total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-                self._remember(total, request.key)
+                await self._remember_async(total, request.key)
             if (page := self._reversed_page(params, request, filtered)) is None:
                 return self._past_the_window(params, request.beyond, total, filtered)
             answer = await client.search(index=self.index, body=page)
@@ -204,16 +212,22 @@ class SearchTable:
         filtered = self._filtered(answer)
         if _lower_bound(answer):
             filtered = self._count(await client.count(index=self.index, body=request.filtered_count))
-        total = self._cached_total(request, filtered)
+        total = await self._cached_total_async(request, filtered)
         if total is None:
             total = self._count(await client.count(index=self.index, body=cast(dict[str, Any], request.count)))
-            self._remember(total, request.key)
+            await self._remember_async(total, request.key)
         return self._response(params, answer, total, filtered)
 
     def fetch_sync(
         self, params: DTParams, client: _SyncClient, *, scope: Mapping[str, Any] | None = None
     ) -> DTResponse:
-        """``fetch`` with a sync client (``OpenSearch``), with the same ``scope``."""
+        """``fetch`` with a sync client (``OpenSearch``), with the same ``scope``.
+
+        Raises:
+            TypeError: the table's ``total_cache`` is an ``AsyncTotalStore``, which only ``fetch`` can await.
+        """
+        if self.total_cache is not None:
+            require_sync_store(self.total_cache)
         try:
             request = self._request(params, scope)
         except InvalidFilter as found:
@@ -280,7 +294,11 @@ class SearchTable:
         search['sort'] = _sort(request, self.unique_key)
         count = {'query': {'bool': {'must': limits}} if limits else {'match_all': {}}}
         flipped = _sort(request, self.unique_key, flip=True) if beyond else []
-        key = f'{self.index} {json.dumps(limits, sort_keys=True, default=str)}' if self.total_cache else ''
+        key = (
+            key_digest(f'{self.index} {json.dumps(limits, sort_keys=True, default=str)}')
+            if self.total_cache is not None
+            else ''
+        )
         return _Request(search, count if request.filtered else None, beyond, flipped, key)
 
     # -- running ----------------------------------------------------------------------------------------------------
@@ -293,15 +311,26 @@ class SearchTable:
         return int(total['value'] if isinstance(total, Mapping) else total)
 
     def _cached_total(self, request: _Request, filtered: int) -> int | None:
-        """The total without asking again: the search's own count when the request filters nothing, else the cache."""
+        """The total without asking again: the search's own count when the request filters nothing, else the store."""
         if request.count is None:
             self._remember(filtered, request.key)
             return filtered
-        return self.total_cache.get(request.key) if self.total_cache else None
+        return read_total(self.total_cache, request.key) if self.total_cache is not None else None
 
     def _remember(self, total: int, key: str) -> None:
-        if self.total_cache:
-            self.total_cache.put(key, total)
+        if self.total_cache is not None:
+            write_total(self.total_cache, key, total)
+
+    async def _cached_total_async(self, request: _Request, filtered: int) -> int | None:
+        """``_cached_total`` for ``fetch``, which awaits an async store."""
+        if request.count is None:
+            await self._remember_async(filtered, request.key)
+            return filtered
+        return await read_total_async(self.total_cache, request.key) if self.total_cache is not None else None
+
+    async def _remember_async(self, total: int, key: str) -> None:
+        if self.total_cache is not None:
+            await write_total_async(self.total_cache, key, total)
 
     def _count(self, answer: Mapping[str, Any]) -> int:
         if partial_answer(answer, index=self.index):

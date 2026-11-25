@@ -24,13 +24,47 @@ users = SQLTable(users_table, columns, total_cache=cache)
   security, a role, a schema search path, the current database), OpenSearch's document-level security, or a second
   cluster with the same index name.
   [databases.md](databases.md#a-shared-totalcache-cannot-tell-two-scopes-apart-that-the-session-sets) has the case.
-- A bound value enters the key by its `repr`, which must not change between requests.
+- A bound value enters the key by its `repr`, which must not change between requests. A store is handed only a
+  SHA-256 digest of the key, never a bound value.
 - The cache holds at most `max_entries` totals (10,000 by default, about 2.6 MB; PRD-C14). When it is full, the total
   stored longest ago is dropped, and a read changes nothing. With more distinct totals inside one `ttl` than that, most
   requests count again, so set `max_entries` to at least the number of tables, tenants or users that each have their own
   total.
 
 Source: the docstring of `TotalCache`; decision [008](decisions/008-total-cache-eviction.md).
+
+### A store of your own
+
+`total_cache=` takes any object with `get(key) -> int | None` and `put(key, total)` (a `TotalStore`; PRD-C18), so the
+totals can live in Redis or another cache that several processes share. With coroutine methods it is an
+`AsyncTotalStore`, for `fetch`; `fetch_sync` raises a `TypeError` for one: before it queries anything when `get` or
+`put` is a coroutine function, at the first store call when a plain method returns an awaitable.
+
+```python
+class RedisTotals:  # an AsyncTotalStore; `redis` is a redis.asyncio.Redis client
+    async def get(self, key: str) -> int | None:
+        value = await redis.get(f'dtb:{key}')  # bytes, or None; int(b'12') works
+        return None if value is None else int(value)
+
+    async def put(self, key: str, total: int) -> None:
+        await redis.set(f'dtb:{key}', total, ex=60)  # the store decides when a total ends
+
+
+users = SQLTable(users_table, columns, total_cache=RedisTotals())
+```
+
+With the sync client (`redis.Redis`), the same methods without `async` and `await` make a `TotalStore` for `fetch_sync`.
+
+- The key is an opaque string: a SHA-256 digest, stable across processes for bound values whose `repr` (SQL) or `str`
+  (OpenSearch) is deterministic, and it may change between releases of this library, which gives a miss and never a
+  wrong total. Keep it as it is.
+- Under `fetch` a sync store runs inline and blocks the event loop on every draw, so give `fetch` an `AsyncTotalStore`.
+- An exception from the store propagates and the request fails (Redis is down, say). To count again instead, catch it
+  inside the store and return `None` from `get`.
+- The protocol has no `clear`. An application that must show a write at once gives the table a store of its own and
+  empties that store after the write.
+- The scope caveat above applies, and a store that several processes share widens it: rows scoped by session state
+  share a total across every process that uses the store, so give each such scope a store of its own.
 
 ## Row hooks
 

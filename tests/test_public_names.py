@@ -12,6 +12,8 @@ APPROVED = {
         'parse_request',
         'RowHooks',
         'TotalCache',
+        'TotalStore',
+        'AsyncTotalStore',
         'SchemaError',
         'MalformedRequest',
         'PartialResultError',
