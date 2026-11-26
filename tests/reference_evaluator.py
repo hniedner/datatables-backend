@@ -16,8 +16,8 @@ beyond ASCII is not among them: the evaluator's text is ASCII.
 
 A declaration is a tuple of `(name, type, searchable, orderable)`; the first column is the table's unique key, the
 tie-breaker of PRD-O3, and every row holds every declared name. The type `number` is an SQL `BigInteger` (whole
-numbers only); `decimal` is a number column the evaluator alone names, an exact `Numeric` on SQL whose cells are
-`Decimal`s (#217), which a test declares to the library as `type='number'`.
+numbers only); `decimal` is a number column the evaluator alone names, a `Numeric` column on SQL (a `double` field on
+OpenSearch) whose cells are `Decimal`s (#217), which a test declares to the library as `type='number'`.
 """
 
 from collections.abc import Callable
@@ -69,17 +69,19 @@ def code_points(text: str) -> str:
 
 
 def _stored_on_sqlite(value: Decimal) -> int | float:
-    """PRD section 5 (`docs/databases.md`, "A `Numeric` column is not compared exactly"): SQLite stores a `Numeric` as a
-    floating-point number, and as an integer when that number is whole and fits 64 bits (its NUMERIC affinity), so
-    12345678901234567.89 is stored as 12345678901234568."""
+    """PRD section 5 (`docs/databases.md`, "A `Numeric` column is not compared exactly"; the integer storage is in
+    `docs/decisions/010-decimal-numbers.md`): SQLite stores a `Numeric` as a floating-point number, and as an integer
+    when that number is whole and fits 64 bits (its NUMERIC affinity), so 12345678901234567.89 is stored as
+    12345678901234568."""
     number = float(value)
     return int(number) if number.is_integer() and -(2**63) <= number < 2**63 else number
 
 
 def sqlite_text(value: Decimal) -> str:
     """PRD-F23 on SQLite: a decimal's search text is the text of what SQLite stores (`_stored_on_sqlite`), an integer
-    as its digits and a floating-point number with every significant digit, the shortest text that reads back as the
-    same number (`repr`), so 0.30 reads `0.3` and 0.00 reads `0` (`docs/decisions/006-number-search-text.md`)."""
+    as its digits and a floating-point number with every significant digit, so 0.30 reads `0.3` and 0.00 reads `0`
+    (`docs/decisions/006-number-search-text.md`). `repr` is that text for the values of `m`, none of which needs an
+    exponent (SQLite writes `1.0e+20` where `repr` writes `1e+20`); each leg measures the text and asserts it."""
     stored = _stored_on_sqlite(value)
     return str(stored) if isinstance(stored, int) else repr(stored)
 
@@ -114,8 +116,8 @@ class Engine:
     #: PRD-F25 and PRD section 5, how a number is compared with a `decimal` column: `exact`, a decimal comparison
     #: (PostgreSQL, MySQL, MariaDB, SQL Server, `docs/decisions/010-decimal-numbers.md`); `sqlite`, the cell as SQLite
     #: stores it (`_stored_on_sqlite`) and the number as an integer when it is written as a whole number (no
-    #: point, no exponent) and fits 64 bits, else as a floating-point number, compared as SQLite compares an integer with a floating-point number, exactly; `double`,
-    #: both as floating-point numbers (OpenSearch, a `double` field).
+    #: point, no exponent) and fits 64 bits, else as a floating-point number, compared as SQLite compares an integer
+    #: with a floating-point number, exactly; `double`, both as floating-point numbers (OpenSearch, a `double` field).
     numeric: Literal['exact', 'sqlite', 'double'] = 'sqlite'
     #: PRD-F25, PRD-E3: on SQL Server a number of more than this many digits in all, a fraction's trailing zeros and
     #: the zero before the point of a number below one not counted, is the column's own step-3 mistake; None elsewhere.
@@ -193,7 +195,7 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
     More than ``engine.decimal_digits`` digits in all (SQL Server's 38; a fraction's trailing zeros and the zero before
     the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). An exponent beyond what
     a `Decimal` holds is out of scope (the generator does not send one), and so is a number whose written exponent
-    passes the 16,383 limit while its fraction without trailing zeros does not, or the reverse: PRD-F25 does not say
+    passes the 16,383 limit while its fraction without trailing zeros does not (zero included): PRD-F25 does not say
     which way they count."""
 
     def read(text: str) -> int | Decimal:
@@ -212,7 +214,7 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
         number = Decimal(0) if not any(digits) else Decimal((sign, digits, exponent))
         fraction = max(0, -exponent) if any(digits) else 0
         if (written_exponent < -_FRACTION_DIGITS) != (fraction > _FRACTION_DIGITS):
-            raise OutOfScope('trailing zeros or zero beyond the 16,383th digit: PRD-F25 does not say how they count')
+            raise OutOfScope('trailing zeros or zero beyond the 16,383rd digit: PRD-F25 does not say how they count')
         if fraction > _FRACTION_DIGITS:
             raise _Refused(3, 'invalid_number')
         if engine.decimal_digits is not None:
@@ -832,7 +834,7 @@ def _sorted(
 ) -> list[Row]:
     """PRD-O8: the first applied entry is primary. PRD-O2: NULL is the lowest value, false before true. PRD-O6: text in
     the database's collation, the engine's sort key (code-point order on SQLite). A decimal orders as the engine
-    compares it (`Engine.numeric`): on SQLite 12345678901234567.89 and .90 tie. PRD-O3, PRD-O4: the unique key breaks
+    compares it (`Engine.numeric`): on SQLite and as doubles 12345678901234567.89, .90 and 12345678901234568.00 tie. PRD-O3, PRD-O4: the unique key breaks
     ties, equal sort keys included, in the first applied entry's direction, ascending when none is applied."""
 
     def key(value: Any) -> Any:

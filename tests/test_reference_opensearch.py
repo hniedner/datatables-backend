@@ -14,8 +14,8 @@ number outside 64 bits is refused before the query as on a SQL `BigInteger` (PRD
 `boolean`, declared `type='boolean'`; `m` a `double`, declared `type='number'` with no kind, whose documents hold the
 cells of decision 010 written as floating-point numbers, so the evaluator compares them as doubles (`numeric='double'`,
 #217; decision 010 did not measure OpenSearch's parsing of a number, so this leg is that measurement); the key is `id`
-(PRD-D11). A NULL cell is a field the document does not hold
-(PRD-F26), so a stored `''` is a value there. Each example replaces the documents with one `bulk` request that deletes
+(PRD-D11). A NULL cell is a field the document does not hold (PRD-F26), so a stored `''` is a value there. Each
+example replaces the documents with one `bulk` request that deletes
 those of the example before and indexes its own, and refreshes the index.
 
 PRD-O6, the order of text: a `keyword` field orders as OpenSearch itself sorts it. The leg measures it once, with a

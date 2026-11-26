@@ -102,6 +102,19 @@ or an OpenSearch setting has an entry below.
   CI's `mariadb` job); a `mysql+` URL against a MariaDB server: READ in SQLAlchemy's `_mariadb_shim`, not run.
 - **Requirement:** PRD-Q2.
 
+### A list of two or more text constants is compared with a `DECIMAL` column as doubles
+
+- **What you see:** `IN ('12345678901234567.89', '0.30')` over a `DECIMAL` column compares each entry as a double, so
+  it finds a row holding 12345678901234567.90 too, while `= '12345678901234567.89'` with one text constant compares
+  exactly. The library binds a number as a `Decimal`, never as text, so a list of numbers is exact on MariaDB as it is
+  elsewhere.
+- **Example:** rows 12345678901234567.89 and 12345678901234567.90, a `multi_values` list of `12345678901234567.89`
+  and `0.30000000000000001`: the first row only. A number bound as text would also find the second.
+- **How it is known:** MEASURED 2026-11-25 on MariaDB 12.3.3, by the reference property of
+  `tests/test_reference_properties.py` against a mutant that bound the number as text (the example `decimal list of
+  two`). Not measured on MySQL.
+- **Requirement:** PRD-F20, PRD-F25.
+
 ## SQL Server
 
 ### An exact match ignores trailing spaces
@@ -131,7 +144,8 @@ or an OpenSearch setting has an entry below.
 ### A decimal holds 38 digits at most
 
 - **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
-  zeros not counted), on a `Numeric` column is answered with `invalid_number`, whatever precision the column declares.
+  zeros not counted, nor a leading zero such as the one before the point of a number below one), on a `Numeric`
+  column is answered with `invalid_number`, whatever precision the column declares.
   No other database bounds such a column.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
   `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
