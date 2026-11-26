@@ -112,7 +112,8 @@ DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
      'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED, 'folded': 'a*b'},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b', 'n_double': 0.0},
+     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b', 'n_double': 0.0,
+     'n_float': 0.0, 'n_half': 0.0},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b',
      'n_unsigned': 2**64 - 1, 'n_scaled': (2**63 - 1) / 100},  # the largest of each, for the two silent answers below
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
@@ -884,6 +885,21 @@ def test_a_number_whose_double_is_zero_finds_a_zero_on_a_double_field(client: Op
     `-1e-400`, a negative number whose double is -0.0."""
     params = request('id', 'n', **criterion('n', condition, text))
     assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
+
+
+@pytest.mark.parametrize(
+    ('field', 'kind', 'text'), [('n_float', 'float', '-1e-50'), ('n_half', 'half_float', '-1e-10')]
+)
+@pytest.mark.parametrize('condition', ['=', '<='])
+def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
+    client: OpenSearch, condition: str, field: str, kind: NumberKind, text: str
+):
+    """SPEC-F25.15 on a real server, a LEAD to measure: b2 holds 0.0 in a `float` and a `half_float` field, and
+    `-1e-50` is no zero as a double but rounds to -0.0 as a 32-bit float, `-1e-10` as a 16-bit one. If the field reads
+    the number sent as -0.0 and keeps it apart from 0.0, `=` and `<=` find nothing; red means the library must send
+    `0` for a number that rounds to zero in the field's own kind."""
+    params = request('id', 'n', **criterion('n', condition, text))
+    assert ids(numbers_in(field, kind).fetch_sync(params, client)) == ['b2']
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
