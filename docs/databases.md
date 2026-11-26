@@ -144,7 +144,7 @@ or an OpenSearch setting has an entry below.
 ### A decimal holds 38 digits at most
 
 - **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
-  zeros not counted, nor a leading zero such as the one before the point of a number below one), on a `Numeric`
+  zeros not counted, nor a leading zero, the zero before the point of a number below one for one), on a `Numeric`
   column is answered with `invalid_number`, whatever precision the column declares.
   No other database bounds such a column.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
