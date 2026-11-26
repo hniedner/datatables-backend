@@ -7,9 +7,11 @@ and the versioning policy is in the README.
 
 ### Fixed
 
-- On OpenSearch, a negative number too small for a double (`-1e-400`) is sent as zero, as `-0.00` is, so that on a
-  `double` field it finds a document holding 0.0. Before, it was sent as -0.0, which a `double` field keeps apart from
-  0.0, so `= -1e-400` and `<= -1e-400` found nothing there.
+- On OpenSearch, a number too close to zero for a double, such as `-1e-400`, is sent as `0`, as `-0.00` is. Before, a
+  negative one was sent as -0.0, which a `double` or `float` field keeps apart from 0.0: so on a document holding 0.0
+  there, SearchBuilder `=` and `<=` with `-1e-400`, a column search of it and a list entry of it missed the document,
+  while `>` and `!=` found it. Each now answers as for `0`, so `>` and `!=` with `-1e-400` no longer find a document
+  holding 0.0.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken

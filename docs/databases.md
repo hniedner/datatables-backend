@@ -413,26 +413,30 @@ it goes away (PRD-D23).
 
 ### A `double` field keeps -0.0 apart from 0.0
 
-This is a rule of OpenSearch. The library sends `0` for every number whose double is zero: one the user writes as zero
-with a sign or a point (`-0.00`), as it sends it for `0`, and one too small for a double (`-1e-400`, `-2e-324`, which
+This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for every number whose double is zero: one the
+user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324`
 round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above).
 
 - **What you see:** on a `double` or a `float` field, -0.0 and 0.0 are two values in a `term`, `terms` and `range`
   query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does
-  `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`. So a body sent with -0.0 finds nothing on a document holding 0.0,
-  and one sent with 0.0 finds it. A document holding -0.0 is found by a body of -0.0, which the library never sends,
-  and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0.
-  That -0.0 sorts below 0.0 is INFERRED from the range results, not measured as an order.
+  `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0 is found by
+  a body of -0.0, which the library never sends, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it,
+  `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0. That -0.0 sorts below 0.0 is INFERRED from the range
+  results, not measured as an order. Sending `0` also changes `>`, `>=` and `!=` with `-1e-400`, which now answer as
+  for `0`: `>` and `!=` no longer find a document holding 0.0, and `>=` no longer finds one holding -0.0.
 - **Example:** a `double` field holding 0.0: `= -0.00`, `<= -0.00`, `= -1e-400` and `<= -1e-400` find it (they found
-  nothing while the library sent -0.0, and `> -0.00` and `!= -0.00` found it); a `double` field holding -0.0: `= 0` finds nothing.
+  nothing while the library sent -0.0, and `>` and `!=` with either found it, which they no longer do for
+  `-1e-400`); a `double` field holding -0.0: `= 0` finds nothing.
 - **How it is known:** MEASURED 2026-11-25 on OpenSearch 3.10.0 (Lucene 10.6.0) on a scratch index holding 0.0 and
   -0.0 in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields;
   `range` `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte`
   -0.0 -0.0 and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find
-  it. RUN 2026-11-25 on 2.19.7: `= -1e-400` and `<= -1e-400` miss a 0.0 on a `double` field, and `= -1e-400` finds a
-  stored -0.0; `tests/test_opensearch_live.py` (`test_minus_zero_finds_a_zero_on_a_double_field`) fails for `=` and
-  `<=` without the library's zero and passes with it, for `-0.00`; its `-1e-400` rows are the case RUN above, not run
-  live with the fix. CI's `opensearch` job runs that test on 3.10 and 2.19.
+  it. RUN 2026-11-25 on 2.19.7, before the library sent `0` for it: `= -1e-400` and `<= -1e-400` missed a 0.0 on a
+  `double` field, and `= -1e-400` found a stored -0.0. `tests/test_opensearch_live.py`
+  (`test_a_number_whose_double_is_zero_finds_a_zero_on_a_double_field`) fails for `=` and `<=` without the library's
+  zero and passes with it, for `-0.00`; the result with the fix for `-1e-400`, and for `>`, `>=` and `!=`, is INFERRED
+  from the `term` and `range` measurements above, and that test's `-1e-400` rows have not run live with it. CI's
+  `opensearch` job runs that test on 3.10 and 2.19.
 - **Requirement:** PRD-F25.
 
 ### A boolean field is a boolean column only when it is declared boolean

@@ -333,7 +333,8 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
-  `7` on the column without a kind; `-1e-400`, a number whose double is -0.0, sends it too, and so does `1e-400`.
+  `7` on the column without a kind; `-1e-400`, a number whose double is -0.0, sends the body of `0` too, and so does
+  `1e-400`.
   With `n` over a `double` field, given a document holding 0.0: `=` and `<=` with `-0.00` or `-1e-400` → that
   document.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.

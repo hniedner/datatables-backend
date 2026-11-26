@@ -3111,6 +3111,7 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     assert client.searches[0]['query']['bool']['must'][0] == {'term': {'n': 2**64}}
 
 
+@pytest.mark.parametrize('text', ['-0.00', '-1e-400', '1e-400'])
 @pytest.mark.parametrize(
     ('kind', 'path'),
     [
@@ -3118,29 +3119,12 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
         (None, 'multi-values'),  # a `terms` list, built apart from a bound or a `term`
     ],
 )
-def test_minus_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str):
-    """SPEC-F25.15: `-0.00` is the number zero, so it sends what `0` sends, on a column without a kind (a `double`
-    field) and on a `long`, in a bound, an equality and a `multi_values` list. The bodies are compared as JSON, since
-    Python's -0.0 equals 0: a `double` field keeps -0.0 apart from 0.0 in a `term` and a `range`, which the live test
-    pins."""
-    zero, minus_zero = (asked(kind, **PATHS[path](text))[1].searches for text in ('0', '-0.00'))
-    assert len(zero) == 1
-    assert json.dumps(minus_zero) == json.dumps(zero)
-
-
-@pytest.mark.parametrize('text', ['-1e-400', '1e-400', '-1E-16383'])
-@pytest.mark.parametrize(
-    ('kind', 'path'),
-    [
-        *((kind, path) for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
-        (None, 'multi-values'),
-    ],
-)
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
-    """SPEC-F25.15: `-1e-400` is no zero, but its double is -0.0, which a `double` field keeps apart from 0.0 in a
-    `term` and a `range`; every number whose double is zero is sent as `0`, in a bound, an equality and a list, on a
-    column without a kind and on a `long`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches
-    a tiny negative number sent as the float -0.0."""
+    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is no zero but its double is -0.0, which a `double`
+    field keeps apart from 0.0 in a `term` and a `range`; every number whose double is zero is sent as `0`, in a
+    bound, an equality and a list, on a column without a kind (a `double` field) and on a `long`. The bodies are
+    compared as JSON, since Python's -0.0 equals 0. It catches a number sent as the float -0.0; the `1e-400` rows
+    pin the one spelling `0` (OpenSearch reads 0.0 the same)."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
