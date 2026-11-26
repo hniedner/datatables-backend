@@ -3059,9 +3059,9 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
     session: Session, value: str, sql_server_answers: bool
 ):
     """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `10e-16384` are one number and zero is another with no fraction, all
-    within the limit, so each is answered on every database, with the zeros of the fraction left out before it is
-    bound (PostgreSQL's own limit is 16383 digits). SQL Server's 38 digits refuse the first three, as SPEC-F25.12
-    says. It catches the limit read from the exponent as written, which refuses `1.0e-16383` and zero."""
+    within the limit, so each is answered on every database but SQL Server, whose 38 digits refuse the first three
+    (SPEC-F25.12). `1e-16383` is the control, already answered; its live send also shows that the database takes a
+    fraction of 16383 digits. It catches the limit read from the exponent as written, which refuses the others."""
     response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
     if session.get_bind().dialect.name == 'mssql' and not sql_server_answers:
         refused(response, 'invalid_number')
@@ -3071,11 +3071,12 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
 
 @pytest.mark.parametrize(
     ('value', 'sent'),
-    [('1.0e-16383', '1E-16383'), ('10e-16384', '1E-16383'), ('0.0e-16384', '0'), ('1e-16383', '1E-16383')],
+    [('1.0e-16383', '1E-16383'), ('10e-16384', '1E-16383'), ('0.0e-16384', '0'), ('-1.0e-16383', '-1E-16383')],
 )
-def test_a_number_at_the_16383_digit_limit_is_bound_without_the_zeros_of_its_fraction(value: str, sent: str):
-    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383` (never rounded) and zero as `0`, so the driver never
-    sees a fraction of 16384 digits. It catches the number bound as written."""
+def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_digits(value: str, sent: str):
+    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383`, never rounded, zero as `0` and a negative number with
+    its sign, so the driver never sees a fraction of 16384 digits. It catches a sign lost while the zeros are dropped,
+    which makes `< -1.0e-16383` include the rows holding 0 (the trim itself is shown by the live test above)."""
     exact = SQLTable(
         Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
         [Column('id'), Column('n')],
@@ -3085,7 +3086,7 @@ def test_a_number_at_the_16383_digit_limit_is_bound_without_the_zeros_of_its_fra
     assert {str(bound) for bound in source.decimals} == {sent}  # each statement of the page binds it
 
 
-@pytest.mark.parametrize('value', ['1e-16384', '1.0e-16384', '10e-16385'])
+@pytest.mark.parametrize('value', ['1.0e-16384', '10e-16385', '-1.0e-16384'])
 def test_a_number_of_more_than_16383_digits_is_refused_however_it_is_written(session: Session, value: str):
     """SPEC-F25.16: the same number past the limit is `invalid_number` whatever its spelling, never the driver's
     error."""

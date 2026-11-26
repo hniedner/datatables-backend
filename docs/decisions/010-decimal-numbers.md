@@ -50,9 +50,11 @@ SPEC-F25.12 pin.
 - `parse_number` returns an `int` for a whole number written without a point or an exponent, as before, and a
   `Decimal` otherwise, which keeps every digit written. A number is finite when a float holds it, so `1e400` is
   still `invalid_number`; an exponent beyond what a `Decimal` holds is `invalid_number` too (it was read as zero when
-  negative). So is an exponent of more than 16,383 digits after the point, the most PostgreSQL's `numeric` takes
-  (its manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED 2026-11-24), which
-  would otherwise reach the database as a driver error.
+  negative). So is a number of more than 16,383 digits after the point, the most PostgreSQL's `numeric` takes (its
+  manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED 2026-11-24), which would
+  otherwise reach the database as a driver error. The limit is of the value, not of how it is written: a fraction's
+  trailing zeros are not counted and zero has none, so `1.0e-16383` is answered like `1e-16383`, and `parse_number`
+  returns it without those zeros (a number within the limit is returned as written).
 - An exact `Numeric` column gets a `Decimal` typed `Numeric()`, a fraction's trailing zeros removed (and zero as
   zero), so that SQL Server's count of 38 digits does not depend on how many zeros were typed and every database gets
   the same number. An exponent is left as written: a `Decimal` of `1.5e3` answered on SQL Server (RUN, sync and async),

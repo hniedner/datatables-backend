@@ -76,6 +76,7 @@ from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
 from ._plan import refused
+from ._plan import without_trailing_zeros
 from .cache import AsyncTotalStore
 from .cache import TotalStore
 from .cache import key_digest
@@ -551,7 +552,7 @@ def _decimal(
     integer), any other as a ``Decimal`` with every digit written. SQL Server refuses a number of more than 38 digits
     in all, which is the user's mistake here (``_number``)."""
     if isinstance(value, Decimal):
-        value = _without_trailing_zeros(value)
+        value = without_trailing_zeros(value)
     if dialect.name == 'mssql' and _digits(value) > _MSSQL_DECIMAL_DIGITS:
         raise mistake(
             'datatables_number_out_of_range',
@@ -566,20 +567,6 @@ def _decimal(
     # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
     # NUMERIC(p, s), and a number with more digits than that overflowed it
     return literal(Decimal(value), Numeric())
-
-
-def _without_trailing_zeros(value: Decimal) -> Decimal:
-    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and zero is
-    zero. The count of SQL Server's 38 digits needs it (a number is no longer for the zeros it is written with), and
-    every database then gets the same number. A whole number stays as written: ``1E+2`` is not turned into ``100``,
-    nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would), which changes nothing for a database."""
-    sign, digits, point = value.as_tuple()
-    exponent = int(point)  # a finite number's
-    if not any(digits):  # zero has no digits to keep, however long its fraction is written
-        return Decimal(0)
-    while exponent < 0 and len(digits) > 1 and digits[-1] == 0:
-        digits, exponent = digits[:-1], exponent + 1
-    return Decimal((sign, digits, exponent))
 
 
 def _digits(value: int | Decimal) -> int:
