@@ -877,13 +877,12 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
         numbers_in('n_float', None).fetch_sync(params, client)
 
 
-@pytest.mark.parametrize('text', ['-0.00', '-1e-400'])
 @pytest.mark.parametrize('condition', ['=', '<='])
-def test_a_number_whose_double_is_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition: str, text: str):
+def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition: str):
     """SPEC-F25.15 on a real server: b2 holds 0.0 in a `double` field, which keeps -0.0 apart from 0.0 in a `term` and
-    a `range` (docs/databases.md), so `= -0.00` and `<= -0.00` found nothing while the library sent -0.0, and so did
-    `-1e-400`, a negative number whose double is -0.0."""
-    params = request('id', 'n', **criterion('n', condition, text))
+    a `range` (docs/databases.md), so `= -0.00` and `<= -0.00` found nothing while the library sent -0.0. `-1e-400`
+    sends the same body as `-0.00` (the recording test), so this run shows its result too."""
+    params = request('id', 'n', **criterion('n', condition, '-0.00'))
     assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
 
 
