@@ -187,8 +187,8 @@ _SPLIT = re.compile(r'!?["\u201C][^"\u201D]+["\u201D]|[^ ]+')
 # How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
 #: The most digits after the decimal point a database takes in a number: PostgreSQL's `numeric` (its manual, Table 8.2,
-#: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a longer exponent is the user's
-#: mistake, never the driver's error
+#: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a number with more, a fraction's
+#: trailing zeros not counted, is the user's mistake, never the driver's error
 _MAX_FRACTION_DIGITS = 16383
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
 _DAY = re.compile(
@@ -956,7 +956,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 
 def without_trailing_zeros(value: Decimal) -> Decimal:
     """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and any
-    zero, ``-0.00`` included, is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the
+    zero is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the
     number, not its spelling, so each needs it, and every database then gets the same number. A whole number stays
     as written: ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which
     also rounds to the context's 28 digits), which changes nothing for a database."""

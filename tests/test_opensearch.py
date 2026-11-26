@@ -3181,6 +3181,7 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
         ('10e-16384', True),
         ('0e-16384', True),
         ('0.0e-16384', True),
+        ('1e-16384', False),
         ('1.0e-16384', False),
         ('10e-16385', False),
         ('-1.0e-16384', False),
