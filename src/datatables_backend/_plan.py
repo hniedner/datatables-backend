@@ -938,6 +938,12 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
         raise number_unreadable(column, listed=listed) from None
     if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
+    return _within_the_fraction_limit(number, column, listed=listed)
+
+
+def _within_the_fraction_limit(number: Decimal, column: Column, *, listed: bool) -> Decimal:
+    """``number`` when it has at most 16,383 digits after the point, its fraction's trailing zeros not counted (then
+    without them, as ``parse_number`` says), else the user's mistake."""
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
         number = without_trailing_zeros(number)  # the limit is of the value, not of how it is written
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
