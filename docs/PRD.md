@@ -785,10 +785,10 @@ A number is parsed and bounded: a non-finite or non-numeric value is refused, an
 integer range. A number with a fraction is compared as that number against an integer column (`> 7.5` finds 8, `= 7.5`
 finds nothing), never cut to a whole one. An unsigned MySQL integer column is bounded by its unsigned range. On SQL
 Server a number with more than 38 digits in all, before and after the decimal point (a fraction's trailing zeros not
-counted), is out of range on a `Numeric` column, whatever precision the column declares (MEASURED 2026-11-22 for a
-whole number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary of 38 is pinned by the
-tests, not measured); no other database bounds a `Numeric` column, and a declared precision bounds
-nothing. The zero before the point of a number below one is not one of those 38 digits.
+counted, nor the zero before the point of a number below one), is out of range on a `Numeric` column, whatever
+precision the column declares (MEASURED 2026-11-22 for a whole number and 2026-11-24 for a fraction: its driver
+refuses a longer number; the boundary of 38 is pinned by the tests, not measured); no other database bounds a
+`Numeric` column, and a declared precision bounds nothing.
 On a SQL column that is not an integer, a number written with a decimal point or an exponent, and a whole
 number outside the signed 64-bit range, is compared as the column compares: exactly on a `Numeric` column (see
 section 5 for SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a
