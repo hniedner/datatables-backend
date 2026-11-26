@@ -24,8 +24,8 @@ the evaluator's sort key.
 PRD-F23, a decimal's search text, is the database's own spelling. Each leg measures it once: the values of `DECIMALS`,
 stored in `m`, read back by the dialect's own `CAST(m AS ...)` written in raw SQL (`measured_decimal_text`, never the
 library's expression), and asserts it against the documented spelling (`DECIMAL_TEXT`: fixed scale on PostgreSQL,
-MySQL, MariaDB and SQL Server, `0.30`; SQLite's text of what it stores, `0.3`, `0` and `12345678901234568` for the
-first three; PRD section 5, `docs/databases.md`). A mismatch is a finding to report, not to model. The measured text is
+MySQL, MariaDB and SQL Server, `0.30`; SQLite's text of what it stores, `0.3` for 0.30, `0` for 0.00 and
+`12345678901234568` for each of the first three; PRD section 5, `docs/databases.md`). A mismatch is a finding to report, not to model. The measured text is
 the evaluator's.
 
 The table: `dtb_test_tags`, which the SQL tests own: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger),
@@ -42,12 +42,12 @@ and paths are reached at least about 30 times in 500 examples; one seed varies a
 test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
 --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
 drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 3%, M5b 2%, M6 1%, M7 2%
-(`between`) and 1% (`!between`), M10 4% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
+(`between`) and 1% (`!between`), M10 3% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
 `compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
 that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text only 1% (1%), PAD SPACE changing the
-answer 1% (3%), 2^63 on `n` as the only mistake 2% (2%), a column search by date text that finds a row and leaves out
+answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date text that finds a row and leaves out
 another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores it changes the answer 5% (0.5%), the
-spelling of PRD-F23 changes it 4% (1%), and SQL Server's 38 digits change it 0.2% (1%; carried by two examples). A rate
+spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; carried by two examples). A rate
 moves by several points from one seed to the next, and each of these paths also has its example. `n` holds 2^53 and
 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen
 `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row holding one in
@@ -58,12 +58,13 @@ The examples live in `EXAMPLES`, one home: the smallest case of each mutant and 
 them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
 (step 2) in a criterion, a categorical filter and a list, which the random draw reaches on the last two only after
 about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5).
-Two more on `m` pin what a server leg found or caught: `-0.00` as zero in `=` and in a range (a defect the OpenSearch
+Three more on `m` pin what a server leg found or caught: `-0.00` as zero in `=` and in a range (a defect the OpenSearch
 leg found), and a list of two numbers, which MariaDB compares as doubles when they are bound as text (a mutant only
 `explore` caught on the servers).
 `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
-declaration, which `tests/test_reference_opensearch.py` imports; one the shared plan refuses alike on every backend
-(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals) is left out.
+declaration, which `tests/test_reference_opensearch.py` imports; one the shared plan answers alike on every backend
+(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 38 digits, whose bound is SQL Server's
+only) is left out.
 
 Rare cases, and what carries each:
 - a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
@@ -667,8 +668,8 @@ def decimal(
 ) -> None:
     """Rows that hold two of the three numbers a float cannot tell apart and 0.30, and a filter on `m` whose answer
     hangs on how a number is compared with a `Numeric` or how a decimal is spelled: a criterion, a list or
-    ColumnControl's comparison with a number of `DECIMAL_OPERANDS` (mostly one of the first five, seldom one of
-    `DECIMAL_BOUNDS`), or a column or global search with a word of `DECIMAL_WORDS`."""
+    ColumnControl's comparison with a number of `DECIMAL_OPERANDS` (half the time one of the first five, one in four
+    one of the others and one in four one of `DECIMAL_BOUNDS`), or a column or global search with a word of `DECIMAL_WORDS`."""
     if 'm' not in present:  # the request names `m` last, after the columns its order entries point at
         present['m'] = len(columns)
         columns.append({'data': 'm', 'name': '', 'searchable': True, 'orderable': orderable,
@@ -679,7 +680,7 @@ def decimal(
     draw(st.sampled_from(rows))['m'] = DECIMALS[0]
     draw(st.sampled_from(rows))['m'] = draw(st.sampled_from(DECIMALS[1:3]))
     draw(st.sampled_from(rows))['m'] = DECIMALS[3]
-    # mostly one of the first five, which an exact comparison and SQLite's tell apart over the rows set above
+    # half the time one of the first five, which an exact comparison and SQLite's tell apart over the rows set above
     common = rarely(st.sampled_from(DECIMAL_OPERANDS[:5]), st.sampled_from(DECIMAL_OPERANDS[5:]), 3)
     operand = rarely(common, st.sampled_from(DECIMAL_BOUNDS), 4)
     form = draw(st.sampled_from(['criterion', 'column', 'global', 'criterion', 'list', 'column', 'control']))
@@ -851,8 +852,8 @@ def engine_for(
     - `numeric` (PRD-F25, PRD section 5, `docs/decisions/010-decimal-numbers.md`): `exact` on PostgreSQL, MySQL,
       MariaDB and SQL Server; `sqlite` on SQLite; `double` on OpenSearch, whose `m` is a `double` field.
     - `decimal_digits` (PRD-F25, PRD-E3): 38 on SQL Server, no bound elsewhere.
-    - `decimal_text` (PRD-F23, PRD section 5): the leg's measured spelling, passed as ``decimal_text``; by default the
-      dialect's documented one (`DECIMAL_TEXT`).
+    - `decimal_text` (PRD-F23, PRD section 5): the leg's measured spelling, passed as ``decimal_text``; on a SQL
+      dialect, by default its documented one (`DECIMAL_TEXT`).
     A leg that measured PAD SPACE passes it as ``pad_space``, which then wins over the dialect's documented one."""
     if dialect not in PAD_SPACE:
         raise ValueError(f'no reading of the backend {dialect}')
@@ -1661,7 +1662,8 @@ EXAMPLES |= {
                                  'multi_values': ['12345678901234567.89', '0.30000000000000001']}})),
 }  # fmt: skip
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
-#: declaration, which OpenSearch's leg pins as well; one the shared plan refuses alike on every backend is left out
+#: declaration, which OpenSearch's leg pins as well; one the shared plan answers alike on every backend (`%` alone over
+#: number text, the decimal refusals, `0.` and 38 digits, whose bound is SQL Server's only) is left out
 TYPED_EXAMPLES = [
     EXAMPLES[name]
     for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',

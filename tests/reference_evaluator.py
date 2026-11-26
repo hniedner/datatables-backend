@@ -78,10 +78,10 @@ def _stored_on_sqlite(value: Decimal) -> int | float:
 
 def sqlite_text(value: Decimal) -> str:
     """PRD-F23 on SQLite: a decimal's search text is the text of what SQLite stores (`_stored_on_sqlite`), an integer
-    as its digits and a floating-point number with 15 significant digits, so 0.30 reads `0.3` and 0.00 reads `0`
-    (`docs/decisions/006-number-search-text.md`)."""
+    as its digits and a floating-point number with every significant digit, the shortest text that reads back as the
+    same number (`repr`), so 0.30 reads `0.3` and 0.00 reads `0` (`docs/decisions/006-number-search-text.md`)."""
     stored = _stored_on_sqlite(value)
-    return str(stored) if isinstance(stored, int) else format(stored, '.15g')
+    return str(stored) if isinstance(stored, int) else repr(stored)
 
 
 def fixed_scale(value: Decimal) -> str:
@@ -113,8 +113,8 @@ class Engine:
     order_key: Callable[[str], Any] | None = code_points
     #: PRD-F25 and PRD section 5, how a number is compared with a `decimal` column: `exact`, a decimal comparison
     #: (PostgreSQL, MySQL, MariaDB, SQL Server, `docs/decisions/010-decimal-numbers.md`); `sqlite`, the cell as SQLite
-    #: stores it (`_stored_on_sqlite`) and the number as an integer when it is whole and fits 64 bits, else as a
-    #: floating-point number, compared as SQLite compares an integer with a floating-point number, exactly; `double`,
+    #: stores it (`_stored_on_sqlite`) and the number as an integer when it is written as a whole number (no
+    #: point, no exponent) and fits 64 bits, else as a floating-point number, compared as SQLite compares an integer with a floating-point number, exactly; `double`,
     #: both as floating-point numbers (OpenSearch, a `double` field).
     numeric: Literal['exact', 'sqlite', 'double'] = 'sqlite'
     #: PRD-F25, PRD-E3: on SQL Server a number of more than this many digits in all, a fraction's trailing zeros and
@@ -192,7 +192,9 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
     dropped. Not finite: step 2. More than 16,383 digits after the point: a limit of every column, step 3 (PRD-E3).
     More than ``engine.decimal_digits`` digits in all (SQL Server's 38; a fraction's trailing zeros and the zero before
     the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). An exponent beyond what
-    a `Decimal` holds is out of scope (the generator does not send one)."""
+    a `Decimal` holds is out of scope (the generator does not send one), and so is a number whose written exponent
+    passes the 16,383 limit while its fraction without trailing zeros does not, or the reverse: PRD-F25 does not say
+    which way they count."""
 
     def read(text: str) -> int | Decimal:
         written = text.strip()
@@ -204,10 +206,13 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
         except InvalidOperation:
             raise OutOfScope('a number a Decimal cannot read') from None
         assert isinstance(exponent, int)
+        written_exponent = exponent
         while exponent < 0 and len(digits) > 1 and digits[-1] == 0:  # a fraction's trailing zeros dropped, no rounding
             digits, exponent = digits[:-1], exponent + 1
         number = Decimal(0) if not any(digits) else Decimal((sign, digits, exponent))
         fraction = max(0, -exponent) if any(digits) else 0
+        if (written_exponent < -_FRACTION_DIGITS) != (fraction > _FRACTION_DIGITS):
+            raise OutOfScope('trailing zeros or zero beyond the 16,383th digit: PRD-F25 does not say how they count')
         if fraction > _FRACTION_DIGITS:
             raise _Refused(3, 'invalid_number')
         if engine.decimal_digits is not None:
