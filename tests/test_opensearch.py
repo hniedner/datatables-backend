@@ -3111,20 +3111,25 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     assert client.searches[0]['query']['bool']['must'][0] == {'term': {'n': 2**64}}
 
 
-@pytest.mark.parametrize('text', ['-0.00', '-1e-400', '1e-400'])
 @pytest.mark.parametrize(
-    ('kind', 'path'),
+    ('kind', 'path', 'text'),
     [
-        *((kind, path) for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
-        (None, 'multi-values'),  # a `terms` list, built apart from a bound or a `term`
+        *((kind, path, '-0.00') for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
+        (None, 'multi-values', '-0.00'),  # a `terms` list, built apart from a bound or a `term`
+        # a number too close to zero is read before the kind, so a column without a kind carries it on every path
+        *(
+            (None, path, text)
+            for text in ('-1e-400', '1e-400')
+            for path in ('equals', 'not-equals', 'less', 'greater-or-equal', 'between', 'multi-values')
+        ),
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
-    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is no zero but its double is -0.0, which a `double`
+    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
     field keeps apart from 0.0 in a `term` and a `range`; every number whose double is zero is sent as `0`, in a
-    bound, an equality and a list, on a column without a kind (a `double` field) and on a `long`. The bodies are
-    compared as JSON, since Python's -0.0 equals 0. It catches a number sent as the float -0.0; the `1e-400` rows
-    pin the one spelling `0` (OpenSearch reads 0.0 the same)."""
+    bound, an equality, an inequality and a list, on a column without a kind (a `double` field); `-0.00` also on a
+    `long`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches a number sent as the float
+    -0.0; the `1e-400` rows pin the one spelling `0` (OpenSearch reads 0.0 the same)."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
