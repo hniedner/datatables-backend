@@ -335,14 +335,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. With `n` over a `double` field, given a document holding 0.0: `=` and `<=`
   with `-0.00` → that document.
-- **SPEC-F25.16** [all] The limit of 16383 digits after the point is of the value, not of how it is written: `=`
-  `1e-16383`, `1.0e-16383`, `10e-16384`, `0e-16384` and `0.0e-16384` are answered (a fraction's trailing zeros are not
-  counted and zero has none), and `1e-16384`, `1.0e-16384`, `10e-16385` and `-1.0e-16384` → error_code
-  `invalid_number` (the plain spellings `1e-16383` and `1e-16384` are those of `SPEC-F25.14`, here as the control for
-  the others). [SQL Server] The first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`);
-  `0e-16384` and `0.0e-16384` are answered. [PostgreSQL] The
-  number reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is
-  bound as `-1E-16383`.
+- **SPEC-F25.16** [all] With `n`, a `Numeric` column: the limit of 16383 digits after the point is of the value, not
+  of how it is written: `=` `1e-16383`, `1.0e-16383`, `10e-16384`, `0e-16384` and `0.0e-16384` are answered (a
+  fraction's trailing zeros are not counted and zero has no fraction), and `1e-16384`, `1.0e-16384`, `10e-16385` and
+  `-1.0e-16384` → error_code `invalid_number` (the plain spellings `1e-16383` and `1e-16384` are those of
+  `SPEC-F25.14`, here as the control for the others). [SQL Server] The first three → error_code `invalid_number`, by
+  its 38 digits (`SPEC-F25.12`); `0e-16384` and `0.0e-16384` are answered. [PostgreSQL] The number reaches the
+  database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound as `-1E-16383`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
