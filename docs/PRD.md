@@ -792,7 +792,8 @@ nothing. On a SQL column that is not an integer, a number written with a decimal
 number outside the signed 64-bit range, is compared as the column compares: exactly on a `Numeric` column (see
 section 5 for SQLite), and as the nearest floating-point number on a `Float` column and on an expression without a
 type. A number is finite when a floating-point number holds it, so `1e400` is refused, and so is an exponent beyond
-what a decimal holds or of more than 16,383 digits after the point (PostgreSQL's limit). A number is a value like any
+what a decimal holds or of more than 16,383 digits after the point, a fraction's trailing zeros not counted and zero having none
+(PostgreSQL's limit). A number is a value like any
 other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII: an optional
 sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space
 around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a digit separator

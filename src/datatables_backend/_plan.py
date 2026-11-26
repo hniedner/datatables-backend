@@ -921,7 +921,9 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which
     is also what decides whether a backend that compares as a float can take it, and has at most 16,383 digits after
-    the decimal point (``1e-20000`` is refused, the most PostgreSQL's ``numeric`` takes)."""
+    the decimal point (``1e-20000`` is refused, the most PostgreSQL's ``numeric`` takes). The limit is of the value:
+    a fraction's trailing zeros are not counted and zero has no fraction, so ``1.0e-16383`` and ``0e-16384`` are
+    answered, with their zeros dropped (a number within the limit is returned as written)."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
@@ -934,6 +936,8 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
+        number = _without_trailing_zeros(number)  # the limit is of the value, not of how it is written
+    if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
         needed = (
             f'Each value in the filter on "{column.name}" must be a number'
             if listed
@@ -945,6 +949,18 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
             column,
         )
     return number
+
+
+def _without_trailing_zeros(number: Decimal) -> Decimal:
+    """``number`` without its fraction's trailing zeros, zero as ``Decimal(0)``, every other digit kept (never
+    rounded: ``Decimal.normalize`` rounds to the context's 28 digits)."""
+    sign, digits, exponent = number.as_tuple()
+    exponent = int(exponent)
+    if not any(digits):
+        return Decimal(0)
+    while exponent < 0 and digits[-1] == 0:
+        digits, exponent = digits[:-1], exponent + 1
+    return Decimal((sign, digits, exponent))
 
 
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:

@@ -3051,6 +3051,48 @@ def test_an_exponent_of_more_than_16383_digits_after_the_point_is_refused():
     assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', '1e-16383')), taken).error is None
 
 
+@pytest.mark.parametrize(
+    ('value', 'sql_server_answers'),
+    [('1e-16383', False), ('1.0e-16383', False), ('10e-16384', False), ('0e-16384', True), ('0.0e-16384', True)],
+)
+def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
+    session: Session, value: str, sql_server_answers: bool
+):
+    """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `10e-16384` are one number and zero is another with no fraction, all
+    within the limit, so each is answered on every database, with the zeros of the fraction left out before it is
+    bound (PostgreSQL's own limit is 16383 digits). SQL Server's 38 digits refuse the first three, as SPEC-F25.12
+    says. It catches the limit read from the exponent as written, which refuses `1.0e-16383` and zero."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
+    if session.get_bind().dialect.name == 'mssql' and not sql_server_answers:
+        refused(response, 'invalid_number')
+    else:
+        assert response.error is None
+
+
+@pytest.mark.parametrize(
+    ('value', 'sent'),
+    [('1.0e-16383', '1E-16383'), ('10e-16384', '1E-16383'), ('0.0e-16384', '0'), ('1e-16383', '1E-16383')],
+)
+def test_a_number_at_the_16383_digit_limit_is_bound_without_the_zeros_of_its_fraction(value: str, sent: str):
+    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383` (never rounded) and zero as `0`, so the driver never
+    sees a fraction of 16384 digits. It catches the number bound as written."""
+    exact = SQLTable(
+        Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
+        [Column('id'), Column('n')],
+    )
+    source: Any = Compiling(postgresql.dialect())
+    assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', value)), source).error is None
+    assert {str(bound) for bound in source.decimals} == {sent}  # each statement of the page binds it
+
+
+@pytest.mark.parametrize('value', ['1e-16384', '1.0e-16384', '10e-16385'])
+def test_a_number_of_more_than_16383_digits_is_refused_however_it_is_written(session: Session, value: str):
+    """SPEC-F25.16: the same number past the limit is `invalid_number` whatever its spelling, never the driver's
+    error."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
+    refused(response, 'invalid_number')
+
+
 @pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])
 def test_a_number_no_float_holds_is_refused_on_every_number_column(session: Session, column: str):
     """SPEC-F25.1: `1e400` is written as a number, and no column holds infinity, which a float of it would be. The
