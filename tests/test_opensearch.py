@@ -3128,6 +3128,24 @@ def test_minus_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str):
     assert json.dumps(minus_zero) == json.dumps(zero)
 
 
+@pytest.mark.parametrize('text', ['-1e-400', '1e-400', '-1E-16383'])
+@pytest.mark.parametrize(
+    ('kind', 'path'),
+    [
+        *((kind, path) for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
+        (None, 'multi-values'),
+    ],
+)
+def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
+    """SPEC-F25.15: `-1e-400` is no zero, but its double is -0.0, which a `double` field keeps apart from 0.0 in a
+    `term` and a `range`; every number whose double is zero is sent as `0`, in a bound, an equality and a list, on a
+    column without a kind and on a `long`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches
+    a tiny negative number sent as the float -0.0."""
+    zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
+    assert len(zero) == 1
+    assert json.dumps(tiny) == json.dumps(zero)
+
+
 def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():
     """SPEC-D23.7: a number the plan reads holds at most 255 characters, so a double holds it; `1e400` is no finite
     double. Every number column has the floor, with or without a kind."""
