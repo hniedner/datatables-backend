@@ -639,8 +639,11 @@ def _number(column: Column, value: Any) -> Any:
 
 def _json(value: Any) -> Any:
     """``value`` as the request body carries it: a number with a point or an exponent is a float, which is what
-    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1)."""
-    return float(value) if isinstance(value, Decimal) else value
+    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1). A zero is ``0``, as ``0`` is sent:
+    ``-0.00`` would be the float -0.0, which a ``double`` field keeps apart from 0.0 (PRD-F25, docs/databases.md)."""
+    if not isinstance(value, Decimal):
+        return value
+    return 0 if value.is_zero() else float(value)
 
 
 def _one_of(node: OneOf) -> dict[str, Any]:

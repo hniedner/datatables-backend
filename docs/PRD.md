@@ -798,6 +798,7 @@ other (PRD-F14), so one of more than 255 characters is `value_too_long`. A numbe
 sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white space
 around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a digit separator
 (`1_000`, `1,000`) and a second sign.
+A zero written with a sign (`-0.00`) is the number zero.
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
