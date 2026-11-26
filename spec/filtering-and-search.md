@@ -334,8 +334,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. `-1e-400`, a number whose double is -0.0, and `1e-400` send the body of `0` on
-  the column without a kind in `=`, `<` and a `multi_values` list. With `n` over a `double` field, given a document
-  holding 0.0: `=` and `<=` with `-0.00` → that document, and with `-1e-400` too, as it sends the same body.
+  the column without a kind in `=`, `<` and a `multi_values` list; on a column declared `float` or `half_float`, so do
+  `-1e-50` and `1e-50` (`-1e-10` and `1e-10`), which round to zero in that kind, while `-1e-30` (`-1e-5`) goes as the
+  number it is. With `n` over a `double` field, given a document holding 0.0: `=` and `<=` with `-0.00` → that
+  document, and with `-1e-400` too, as it sends the same body; over a `float` field with `-1e-50` and a `half_float`
+  one with `-1e-10`, the same.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a

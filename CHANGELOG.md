@@ -12,7 +12,9 @@ and the versioning policy is in the README.
   there, SearchBuilder `=` and `<=` with `-1e-400`, a column search of it and a list entry of it missed the document,
   while `>` and `!=` found it. Each now answers as for `0`, so `>` and `!=` with `-1e-400` no longer find a document
   holding 0.0. On a document holding -0.0, `=`, `>=`, a column search and a list entry with `-1e-400` no longer find
-  it, and `<` and `!=` now do; `between` and `!between` with it as a bound answer as for `0` too.
+  it, and `<` and `!=` now do; `between` and `!between` with it as a bound answer as for `0` too. The same holds on a
+  field declared `float` or `half_float` for a number that rounds to zero in that format (`-1e-50`, `-1e-10`): it was
+  sent as -0.0 and missed a document holding 0.0.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken

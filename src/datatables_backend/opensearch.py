@@ -619,13 +619,28 @@ def _accepted(kind: str, sent: int | float) -> bool:
     return low <= sent <= high  # exact: Python compares an int and a float without rounding either
 
 
+def _rounds_to_zero(kind: str, sent: int | float) -> bool:
+    """Whether ``sent`` is zero, or -0.0, once rounded to the format of a float field of ``kind``: ``-1e-50`` is no
+    zero as a double but is -0.0 as a ``float``, ``-1e-10`` as a ``half_float``. A number too large for the format is
+    no zero (``struct.pack`` raises ``OverflowError``, as in ``_accepted``)."""
+    try:
+        packed = struct.pack(_FLOAT_FORMATS[kind], float(sent))
+    except OverflowError:
+        return False
+    return struct.unpack(_FLOAT_FORMATS[kind], packed)[0] == 0
+
+
 def _number(column: Column, value: Any) -> Any:
     """``value`` as the request body carries it (``_json``), checked against the field type the column declares: a
     number OpenSearch refuses for it is the user's mistake, answered before the query (PRD-D23). The check is on what is
     sent: a number with a point goes as a float, which may round to the edge."""
     sent = _json(value)
     kind = column.number if isinstance(column, IndexColumn) else None
-    if kind is None or not isinstance(sent, int | float) or _accepted(kind, sent):
+    if kind is None or not isinstance(sent, int | float):
+        return sent
+    if kind in _FLOAT_FORMATS and _rounds_to_zero(kind, sent):
+        return 0  # a `float` or `half_float` field keeps -0.0 apart from 0.0 as a `double` does
+    if _accepted(kind, sent):
         return sent
     low, high = _NUMBER_BOUNDS[kind]
     article = 'an' if kind in _AN else 'a'
