@@ -411,18 +411,21 @@ it goes away (PRD-D23).
   `docs/decisions/011-opensearch-number-kinds.md`).
 - **Requirement:** PRD-F25, PRD-E7, PRD-D23.
 
-### A `double` field keeps -0.0 apart from 0.0
+### A `double`, `float` or `half_float` field keeps -0.0 apart from 0.0
 
 This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for every number whose double is zero: one the
 user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324`
-round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). On a field
-declared `float` or `half_float` (`IndexColumn(number=...)`) it sends `0` for a number that rounds to zero in that
-format too (`-1e-50` on a `float` field, `-1e-10` on a `half_float` one, which are no zero as a double).
+round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). On a
+column declared `float` or `half_float` (`IndexColumn(number=...)`) it sends `0` for a number that rounds to zero in
+that format too (`-1e-50` on a `float` column, `-1e-10` on a `half_float` one, which are no zero as a double). A column
+over such a field that declares no kind still sends the number, which the field reads as -0.0, so `= -1e-50` there
+misses a document holding 0.0: the library does not read the mapping.
 
-- **What you see:** on a `double` or a `float` field, -0.0 and 0.0 are two values in a `term`, `terms` and `range`
-  query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does
-  `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0 is found by
-  a body of -0.0, which the library never sends, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it,
+- **What you see:** on a `double` or a `float` field (and on a `half_float` one, RUN by CI below), -0.0 and 0.0 are
+  two values in a `term`, `terms` and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and
+  neither does `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0
+  is found by a body of -0.0, which the library sends for no number a user writes, and not by `= 0`, `= -0.00` or
+  `= -1e-400`; `< 0` and `<= 0` find it,
   `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0. That -0.0 sorts below 0.0 is INFERRED from the range
   results, not measured as an order. Sending `0` also changes what `-1e-400` finds: `=`, a column search and a list
   entry no longer find a document holding -0.0, and `<`, `>`, `>=`, `!=`, `between` and `!between` now answer as for
@@ -438,14 +441,14 @@ format too (`-1e-50` on a `float` field, `-1e-10` on a `half_float` one, which a
   it. RUN 2026-11-25 on 2.19.7, before the library sent `0` for `-1e-400`: `= -1e-400` and `<= -1e-400` missed a 0.0
   on a `double` field, and `= -1e-400` found a stored -0.0. `tests/test_opensearch_live.py`
   (`test_minus_zero_finds_a_zero_on_a_double_field`) fails for `=` and `<=` without the library's zero and passes with
-  it, for `-0.00`; `-1e-400` now sends the same body (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`), so
-  its result follows from that run. The results for `<`, `>`, `>=`, `!=`, `between` and `!between` are INFERRED from
-  the `term` and `range` measurements above. CI's `opensearch` job runs the live test on 3.10 and 2.19. RUN 2026-11-26
-  by CI on 3.10.0 and 2.19.7, before the library sent `0` for them: `= -1e-50` and `<= -1e-50` on a `float` field and
-  `= -1e-10` and `<= -1e-10` on a `half_float` field, each against a document holding 0.0, found nothing
-  (`test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero`, then red); that the library now sends `0` for
-  them is shown by `test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero`, and the same live test
-  going green is INFERRED until CI runs it.
+  it, for `-0.00`; `-1e-400` now sends the same body for `=`
+  (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`), so its result follows from that run, and for `<=` that is INFERRED from the shared code. The results for `<`, `>`,
+  `>=`, `!=`, `between` and `!between` are INFERRED from the `term` and `range` measurements above. CI's `opensearch`
+  job runs both live tests on 3.10 and 2.19. RUN by CI
+  (2026-11-26 UTC) on 3.10.0 and 2.19.7: before the library sent `0` for them, `= -1e-50` and `<= -1e-50` on a `float`
+  field and `= -1e-10` and `<= -1e-10` on a `half_float` field, each against a document holding 0.0, found nothing
+  (`test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero`, then red); with the library sending `0` for them
+  (`test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero`) the same live test passed on both.
 - **Requirement:** PRD-F25.
 
 ### A boolean field is a boolean column only when it is declared boolean

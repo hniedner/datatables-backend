@@ -72,10 +72,11 @@ MAPPING = {
         'n_short': {'type': 'short'},
         'n_long': {'type': 'long'},
         'n_unsigned': {'type': 'unsigned_long'},
+        # `n_float`, `n_half` and `n_double` keep -0.0 apart from 0.0; b2 holds 0.0 in each
         'n_float': {'type': 'float'},
         'n_half': {'type': 'half_float'},
         'n_scaled': {'type': 'scaled_float', 'scaling_factor': 100},
-        'n_double': {'type': 'double'},  # which keeps -0.0 apart from 0.0; b2 holds 0.0
+        'n_double': {'type': 'double'},
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
         # A whole string the server folds to ASCII and to small letters; declared only by the table `folded` below
         'folded': {'type': 'keyword', 'normalizer': 'to_ascii'},
@@ -893,10 +894,10 @@ def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition
 def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
     client: OpenSearch, condition: str, field: str, kind: NumberKind, text: str
 ):
-    """SPEC-F25.15 on a real server, a LEAD to measure: b2 holds 0.0 in a `float` and a `half_float` field, and
-    `-1e-50` is no zero as a double but rounds to -0.0 as a 32-bit float, `-1e-10` as a 16-bit one. If the field reads
-    the number sent as -0.0 and keeps it apart from 0.0, `=` and `<=` find nothing; red means the library must send
-    `0` for a number that rounds to zero in the field's own kind."""
+    """SPEC-F25.15 on a real server: b2 holds 0.0 in a `float` and a `half_float` field, and `-1e-50` is no zero as a
+    double but rounds to -0.0 as a 32-bit float, `-1e-10` as a 16-bit one. Sent as the double, the field read it as
+    -0.0 and kept it apart from 0.0, so `=` and `<=` found nothing (CI, before the fix); the library sends `0` for a
+    number that rounds to zero in the field's own kind, which finds b2."""
     params = request('id', 'n', **criterion('n', condition, text))
     assert ids(numbers_in(field, kind).fetch_sync(params, client)) == ['b2']
 

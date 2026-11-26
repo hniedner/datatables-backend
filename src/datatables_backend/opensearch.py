@@ -622,7 +622,7 @@ def _accepted(kind: str, sent: int | float) -> bool:
 def _rounds_to_zero(kind: str, sent: int | float) -> bool:
     """Whether ``sent`` is zero, or -0.0, once rounded to the format of a float field of ``kind``: ``-1e-50`` is no
     zero as a double but is -0.0 as a ``float``, ``-1e-10`` as a ``half_float``. A number too large for the format is
-    no zero (``struct.pack`` raises ``OverflowError``, as in ``_accepted``)."""
+    no zero (``float`` or ``struct.pack`` raises ``OverflowError``, as in ``_accepted``)."""
     try:
         packed = struct.pack(_FLOAT_FORMATS[kind], float(sent))
     except OverflowError:
@@ -633,7 +633,8 @@ def _rounds_to_zero(kind: str, sent: int | float) -> bool:
 def _number(column: Column, value: Any) -> Any:
     """``value`` as the request body carries it (``_json``), checked against the field type the column declares: a
     number OpenSearch refuses for it is the user's mistake, answered before the query (PRD-D23). The check is on what is
-    sent: a number with a point goes as a float, which may round to the edge."""
+    sent: a number with a point goes as a float, which may round to the edge. On a ``float`` or ``half_float`` column a
+    number that rounds to zero in that format is sent as ``0``."""
     sent = _json(value)
     kind = column.number if isinstance(column, IndexColumn) else None
     if kind is None or not isinstance(sent, int | float):
