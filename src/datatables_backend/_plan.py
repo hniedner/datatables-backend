@@ -942,8 +942,9 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 
 
 def _within_the_fraction_limit(number: Decimal, column: Column, *, listed: bool) -> Decimal:
-    """``number`` when it has at most 16,383 digits after the point, its fraction's trailing zeros not counted (then
-    without them, as ``parse_number`` says), else the user's mistake."""
+    """``number``, without its fraction's trailing zeros when it is written with more than 16,383 digits after the
+    point, if that brings it within the limit (as ``parse_number`` says: no backend can tell, each drops the zeros
+    again or sends a float); else the user's mistake."""
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
         number = without_trailing_zeros(number)  # the limit is of the value, not of how it is written
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:

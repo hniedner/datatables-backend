@@ -131,7 +131,8 @@ or an OpenSearch setting has an entry below.
 ### A decimal holds 38 digits at most
 
 - **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
-  zeros not counted), on a `Numeric` column is answered with `invalid_number`, whatever precision the column declares.
+  zeros not counted), on a `Numeric` column, or with a fraction on an integer column (not through a `TypeDecorator`,
+  whose number goes as the nearest float), is answered with `invalid_number`, whatever precision the column declares.
   No other database bounds such a column.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
   `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
