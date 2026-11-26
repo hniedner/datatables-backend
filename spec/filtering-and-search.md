@@ -338,7 +338,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.16** [all] The limit of 16383 digits after the point is of the value, not of how it is written: `=`
   `1e-16383`, `1.0e-16383`, `10e-16384`, `0e-16384` and `0.0e-16384` are answered (a fraction's trailing zeros are not
   counted and zero has none), and `1e-16384`, `1.0e-16384`, `10e-16385` and `-1.0e-16384` → error_code
-  `invalid_number`. [SQL Server] The first three are refused by its 38 digits (`SPEC-F25.12`). [PostgreSQL] The
+  `invalid_number` (the plain spellings `1e-16383` and `1e-16384` are those of `SPEC-F25.14`, here as the control for
+  the others). [SQL Server] The first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`);
+  `0e-16384` and `0.0e-16384` are answered. [PostgreSQL] The
   number reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is
   bound as `-1E-16383`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.

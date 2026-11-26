@@ -54,7 +54,8 @@ SPEC-F25.12 pin.
   manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED 2026-11-24), which would
   otherwise reach the database as a driver error. The limit is of the value, not of how it is written: a fraction's
   trailing zeros are not counted and zero has none, so `1.0e-16383` is answered like `1e-16383`, and `parse_number`
-  returns it without those zeros (a number within the limit is returned as written).
+  returns it without those zeros (a number within the limit is returned as written, which no backend can tell: each
+  drops the zeros again or sends a float).
 - An exact `Numeric` column gets a `Decimal` typed `Numeric()`, a fraction's trailing zeros removed (and zero as
   zero), so that SQL Server's count of 38 digits does not depend on how many zeros were typed and every database gets
   the same number. An exponent is left as written: a `Decimal` of `1.5e3` answered on SQL Server (RUN, sync and async),

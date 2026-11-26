@@ -914,8 +914,8 @@ def _positive(
 
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | Decimal:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point, else a ``Decimal``, which keeps every significant digit written. ``listed`` says the text is one of several
-    values (a list, or the two of a ``between``), where the reason must not ask for one number.
+    point or an exponent, else a ``Decimal``, which keeps every digit written. ``listed`` says the text is one of
+    several values (a list, or the two of a ``between``), where the reason must not ask for one number.
 
     A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
@@ -923,8 +923,9 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     is also what decides whether a backend that compares as a float can take it, and has at most 16,383 digits after
     the decimal point (16,383 is the most PostgreSQL's ``numeric`` takes, so ``1e-20000`` is refused). The limit is of
     the value: a fraction's trailing zeros are not counted and zero has no fraction, so ``1.0e-16383`` and
-    ``0e-16384`` are answered, with their zeros dropped (a number within the limit is returned as written). An
-    exponent beyond what a ``Decimal`` holds is refused, zero included."""
+    ``0e-16384`` are answered, with their zeros dropped (a number within the limit is returned as written, which no
+    backend can tell: each drops the zeros again or sends a float). An exponent beyond what a ``Decimal`` holds is
+    refused, zero included."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
@@ -953,11 +954,11 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 
 
 def without_trailing_zeros(value: Decimal) -> Decimal:
-    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and zero is
-    zero. The 16,383 digits after the point and SQL Server's 38 digits both count the number, not its spelling, so each
-    needs it, and every database then gets the same number. A whole number stays as written: ``1E+2`` is not turned
-    into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which also rounds to the context's 28
-    digits), which changes nothing for a database."""
+    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and any
+    zero, ``-0.00`` included, is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the
+    number, not its spelling, so each needs it, and every database then gets the same number. A whole number stays
+    as written: ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which
+    also rounds to the context's 28 digits), which changes nothing for a database."""
     sign, digits, point = value.as_tuple()
     exponent = int(point)  # a finite number's
     if not any(digits):  # zero has no digits to keep, however long its fraction is written

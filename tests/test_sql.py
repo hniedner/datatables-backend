@@ -3034,8 +3034,8 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
     assert not any('INTEGER' in condition for condition in conditions)
 
 
-def test_an_exponent_of_more_than_16383_digits_after_the_point_is_refused():
-    """SPEC-F25.14: 1e-16383 is the smallest number PostgreSQL's `numeric` takes (its manual, Table 8.2, fetched
+def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
+    """SPEC-F25.14: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2, fetched
     2026-11-24), so a longer one is `invalid_number`, never the driver's error; it was a float that read as zero."""
     for dialect in (postgresql.dialect, mssql.dialect):
         source: Any = Compiling(dialect())
@@ -3060,7 +3060,7 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
 ):
     """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `10e-16384` are one number and zero is another with no fraction, all
     within the limit, so each is answered on every database but SQL Server, whose 38 digits refuse the first three
-    (SPEC-F25.12). `1e-16383` is the control, already answered; its live send also shows that the database takes a
+    (SPEC-F25.12). `1e-16383`, the plain spelling, is the control; its live send also shows that the database takes a
     fraction of 16383 digits. It catches the limit read from the exponent as written, which refuses the others."""
     response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
     if session.get_bind().dialect.name == 'mssql' and not sql_server_answers:
@@ -3071,12 +3071,20 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
 
 @pytest.mark.parametrize(
     ('value', 'sent'),
-    [('1.0e-16383', '1E-16383'), ('10e-16384', '1E-16383'), ('0.0e-16384', '0'), ('-1.0e-16383', '-1E-16383')],
+    [
+        ('1.0e-16383', '1E-16383'),
+        ('10e-16384', '1E-16383'),
+        ('0.0e-16384', '0'),
+        ('-1.0e-16383', '-1E-16383'),
+        # 31 significant digits, three zeros of them written: `Decimal.normalize` would round them to 28
+        ('1234567890123456789012345678901000e-16386', '1.234567890123456789012345678901E-16353'),
+    ],
 )
 def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_digits(value: str, sent: str):
-    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383`, never rounded, zero as `0` and a negative number with
-    its sign, so the driver never sees a fraction of 16384 digits. It catches a sign lost while the zeros are dropped,
-    which makes `< -1.0e-16383` include the rows holding 0 (the trim itself is shown by the live test above)."""
+    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383`, zero as `0`, a negative number with its sign and one
+    of 31 significant digits with all of them, so the driver never sees a fraction of 16384 digits. It catches a sign
+    lost while the zeros are dropped, which makes `< -1.0e-16383` include the rows holding 0, and digits rounded away
+    by `Decimal.normalize`."""
     exact = SQLTable(
         Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
         [Column('id'), Column('n')],
@@ -3084,14 +3092,6 @@ def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_
     source: Any = Compiling(postgresql.dialect())
     assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', value)), source).error is None
     assert {str(bound) for bound in source.decimals} == {sent}  # each statement of the page binds it
-
-
-@pytest.mark.parametrize('value', ['1.0e-16384', '10e-16385', '-1.0e-16384'])
-def test_a_number_of_more_than_16383_digits_is_refused_however_it_is_written(session: Session, value: str):
-    """SPEC-F25.16: the same number past the limit is `invalid_number` whatever its spelling, never the driver's
-    error."""
-    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
-    refused(response, 'invalid_number')
 
 
 @pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])
