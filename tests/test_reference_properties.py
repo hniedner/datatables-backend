@@ -1630,7 +1630,7 @@ EXAMPLES |= {
     # `0.` and 38 digits is within SQL Server's 38, since the zero before the point is not counted: row 6 (0.00)
     'decimal 38 digits': (rows_of('m', *DECIMALS), DECLARED,
                           request_of({'data': 'm'}, searchBuilder=tree_of(('m', '<', ['0.' + '1' * 38])))),
-    # Not finite (step 2) after the last day (step 3): `invalid_number` (the reviewer's ruling for #217)
+    # Not finite (step 2) after the last day (step 3): `invalid_number` (PRD-E3)
     'decimal not finite': (rows_of('m', *DECIMALS), DECLARED,
                            request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
                                ('d', '<', [LAST]), ('m', '=', ['1e400'])))),
@@ -1646,8 +1646,7 @@ EXAMPLES |= {
     'decimal not finite in a list': (three_rows(), DECLARED, request_of(
         {'data': 'm', 'search': {'value': '', 'regex': False, 'multi_values': ['1e400']}})),
     # PRD-F25: `-0.00` is the number zero, so `=` finds row 1 (0.00) on every backend, and so do `>=` and `<=` as a
-    # range. Found by this property on OpenSearch, whose `double` field kept -0.0 apart from 0.0; the OpenSearch leg
-    # stays red on these two until the fix of branch fix/opensearch-negative-zero is in
+    # range. Found by this property on OpenSearch, whose `double` field kept -0.0 apart from 0.0 (fixed in #219)
     'decimal negative zero': (rows_of('m', DECIMALS[5], DECIMALS[3], DECIMALS[0]), DECLARED,
                               request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['-0.00'])))),
     'decimal negative zero bounds': (rows_of('m', DECIMALS[5], DECIMALS[3], DECIMALS[0]), DECLARED,
@@ -1655,8 +1654,8 @@ EXAMPLES |= {
                                          ('m', '>=', ['-0.00']), ('m', '<=', ['-0.00'])))),
     # PRD-F20, PRD-F25: a list of two numbers matches each exactly where a decimal is compared exactly: row 1 only
     # (0.30000000000000001 is no value of the column); rows 1 and 4 on SQLite and as doubles, where 12345678901234567.89
-    # and .90 are one number. MariaDB compares a column with an IN list of two or more text constants as doubles, so a
-    # number bound as text finds row 4 there too
+    # and .90 are one number. Catches a number bound as text: measured on MariaDB 12.3.3, an IN list of two or more text
+    # constants is compared as doubles there, so it would find row 4 too
     'decimal list of two': (rows_of('m', DECIMALS[0], None, None, DECIMALS[1]), DECLARED, request_of(
         {'data': 'm', 'search': {'value': '', 'regex': False,
                                  'multi_values': ['12345678901234567.89', '0.30000000000000001']}})),

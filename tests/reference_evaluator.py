@@ -161,8 +161,8 @@ def _number(text: str) -> int:
     64-bit range of a `BigInteger` is a mistake of the column's own type, in step 3 after the maximum date of PRD-F24
     as a bound and a number with more digits after the point than PRD-F25 allows (PRD-E3). Every number column is read
     as a BigInteger: the generator sends a number that large only to one, so the narrower range of an Integer column is
-    not modelled. A number that is not finite is one the column cannot read, a mistake of step 2 (the reviewer's
-    ruling for #217); any other number with a fraction or an exponent is out of scope on this type."""
+    not modelled. A number that is not finite is one the column cannot read, a mistake of step 2 (PRD-E3);
+    any other number with a fraction or an exponent is out of scope on this type."""
     written = text.strip()
     if _WHOLE.fullmatch(written):
         number = int(written)
@@ -176,8 +176,8 @@ def _number(text: str) -> int:
 
 
 def _finite(written: str) -> None:
-    """PRD-F25: a number is finite when a floating-point number holds it, so `1e400` is refused, at step 2 (the
-    reviewer's ruling for #217: a value its column cannot read)."""
+    """PRD-F25: a number is finite when a floating-point number holds it, so `1e400` is refused, at step 2
+    (PRD-E3: a value its column cannot read)."""
     if float(written) in (float('inf'), float('-inf')):
         raise _Refused(2, 'invalid_number')
 
