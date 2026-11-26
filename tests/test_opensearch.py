@@ -3185,12 +3185,15 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
         ('1.0e-16384', False),
         ('10e-16385', False),
         ('-1.0e-16384', False),
+        ('1.5e-16383', False),
+        ('11e-16384', False),
     ],
 )
 def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(value: str, answered: bool):
     """SPEC-F25.16: a number of at most 16383 digits after the point (zero has none) is answered however it is
-    written, one of 16384 is `invalid_number`, as on SQL. Catches the limit read from the exponent as written, which
-    refuses `1.0e-16383`."""
+    written, one of 16384 is `invalid_number`. Catches the limit read from the exponent as written, which refuses
+    `1.0e-16383`, and from the size of the number, which answers `1.5e-16383` and `11e-16384` (their last digit is past
+    the limit though their first is not)."""
     searched = SearchTable('docs', [Column('n', type='number')], unique_key='n')
     response = searched.fetch_sync(request('n', **criterion('n', '=', value)), Client())
     if answered:

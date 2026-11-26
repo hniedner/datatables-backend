@@ -2970,10 +2970,12 @@ def test_a_fraction_on_an_integer_column_is_compared_as_the_number_written(diale
 
 
 def test_a_fraction_of_more_than_38_digits_on_an_integer_column_is_refused_on_sql_server():
-    """SPEC-F25.12: the count of SQL Server's digits holds on an integer column too, for a fraction it compares."""
-    source: Any = Compiling(mssql.dialect())
-    response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', '8.' + '1' * 38)), source)
-    assert 'at most 38 digits in all' in refused(response, 'invalid_number')
+    """SPEC-F25.12, SPEC-F25.14: the count of SQL Server's digits holds on an integer column too, for a fraction it
+    compares, `1e-16383` included (16383 digits after the point)."""
+    for value in ('8.' + '1' * 38, '1e-16383'):
+        source: Any = Compiling(mssql.dialect())
+        response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', value)), source)
+        assert 'at most 38 digits in all' in refused(response, 'invalid_number')
 
 
 class Hundredths(TypeDecorator[Decimal]):
@@ -3038,13 +3040,15 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     """SPEC-F25.14: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2,
     fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's error; it was
     a float that read as zero. `1e-16383` is answered on every database but SQL Server, as the live test of
-    SPEC-F25.16 shows."""
+    SPEC-F25.16 shows. `1.5e-16383` and `11e-16384` have a digit past the limit though their first digit is not: it
+    catches the limit read from the size of the number instead of from its last digit."""
     for dialect in (postgresql.dialect, mssql.dialect):
-        source: Any = Compiling(dialect())
-        assert refused(
-            integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16384')), source),
-            'invalid_number',
-        ).endswith('with at most 16383 digits after the decimal point.')
+        for value in ('1e-16384', '1.5e-16383', '11e-16384'):
+            source: Any = Compiling(dialect())
+            assert refused(
+                integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source),
+                'invalid_number',
+            ).endswith('with at most 16383 digits after the decimal point.')
 
 
 @pytest.mark.parametrize(

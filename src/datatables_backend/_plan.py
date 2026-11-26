@@ -956,10 +956,10 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 
 def without_trailing_zeros(value: Decimal) -> Decimal:
     """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and any
-    zero is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the
-    number, not its spelling, so each needs it, and every database then gets the same number. A whole number stays
-    as written: ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which
-    also rounds to the context's 28 digits), which changes nothing for a database."""
+    zero is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the number, not its
+    spelling, so each needs it, and every database then gets the same number. A whole number stays as written:
+    ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which also rounds
+    to the context's 28 digits), which changes nothing for a database."""
     sign, digits, point = value.as_tuple()
     exponent = int(point)  # a finite number's
     if not any(digits):  # zero has no digits to keep, however long its fraction is written

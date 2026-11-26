@@ -325,23 +325,25 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   column as a float or an integer, the three rows are one number and are found together (PRD section 5).
 - **SPEC-F25.12** [SQL] With the same `n`: a number of 38 digits in all (before and after the point, a fraction's
   trailing zeros not counted) is answered on every database. [SQL Server] A number of 39 or more digits → error_code
-  `invalid_number` for every condition, never the driver's own error.
+  `invalid_number` for every condition, never the driver's own error; so is a fraction of 39 or more digits in all
+  (`8.` followed by 38) on `i`, an integer column that compares it exactly.
 - **SPEC-F25.13** [SQLite] With `n`, a `TypeDecorator` over `Numeric` that stores hundredths (1.5 as 150), given rows
   1.5 and 2: `=` `1.5` → the first row, `=` `2` and `=` `2.0` → the second, `=` `3.5` → none: the number goes through
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered,
-  except on SQL Server, whose 38 digits refuse it on a `Numeric` column and on an integer column (`SPEC-F25.12`,
-  `SPEC-F25.16`).
+  except on SQL Server, whose 38 digits refuse it on a `Numeric` column and on an integer column that compares a
+  fraction exactly, not through a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`).
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. With `n` over a `double` field, given a document holding 0.0: `=` and `<=`
   with `-0.00` → that document.
 - **SPEC-F25.16** [all] With `n`, a number column (a `Numeric` on SQL; on OpenSearch a number column, which gets a
-  float): the limit of 16383 digits after the point is of the value, not of how it is written: `=` `1e-16383`,
-  `1.0e-16383`, `10e-16384`, `0e-16384` and `0.0e-16384` are answered (a fraction's trailing zeros are not counted and
-  zero has no fraction), and `1e-16384`, `1.0e-16384`, `10e-16385` and `-1.0e-16384` → error_code `invalid_number`
-  (the plain spellings `1e-16383` and `1e-16384` are those of `SPEC-F25.14`, here as the control for the others).
+  float, or `0` for zero): the limit of 16383 digits after the point is of the value, not of how it is written: `=`
+  `1e-16383`, `1.0e-16383`, `10e-16384`, `0e-16384` and `0.0e-16384` are answered (a fraction's trailing zeros are not
+  counted and zero has no fraction), and `1e-16384`, `1.0e-16384`, `10e-16385`, `-1.0e-16384`, `1.5e-16383` and
+  `11e-16384` → error_code `invalid_number` (the last digit is past the limit, whatever the first; the plain spellings
+  `1e-16383` and `1e-16384` are those of `SPEC-F25.14`, here as the control for the others).
   [SQL Server] The first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` and
   `0.0e-16384` are answered. [PostgreSQL] The number reaches the database with its sign and its digits, the zeros of
   its fraction left out: `-1.0e-16383` is bound as `-1E-16383`.
