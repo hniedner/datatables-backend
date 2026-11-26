@@ -914,8 +914,9 @@ def _positive(
 
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | Decimal:
     """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point or an exponent, else a ``Decimal``, which keeps every digit written. ``listed`` says the text is one of
-    several values (a list, or the two of a ``between``), where the reason must not ask for one number.
+    point or an exponent, else a ``Decimal``, which keeps every digit written (but see the limit below). ``listed``
+    says the text is one of several values (a list, or the two of a ``between``), where the reason must not ask for
+    one number.
 
     A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,

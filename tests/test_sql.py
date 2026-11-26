@@ -3036,19 +3036,14 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
 
 def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     """SPEC-F25.14: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2,
-    fetched 2026-11-24), so a longer one is `invalid_number`, never the driver's error; it was a float that read as zero."""
+    fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's error; it was
+    a float that read as zero. `1e-16383` is answered, as the live test of SPEC-F25.16 shows."""
     for dialect in (postgresql.dialect, mssql.dialect):
         source: Any = Compiling(dialect())
         assert refused(
             integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16384')), source),
             'invalid_number',
         ).endswith('with at most 16383 digits after the decimal point.')
-    taken: Any = Compiling(postgresql.dialect())
-    exact = SQLTable(
-        Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
-        [Column('id'), Column('n')],
-    )
-    assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', '1e-16383')), taken).error is None
 
 
 @pytest.mark.parametrize(
@@ -3082,8 +3077,8 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
 )
 def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_digits(value: str, sent: str):
     """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383`, zero as `0`, a negative number with its sign and one
-    of 31 significant digits with all of them, so the driver never sees a fraction of more than 16383 digits. It catches a sign
-    lost while the zeros are dropped, which makes `< -1.0e-16383` include the rows holding 0, and digits rounded away
+    of 31 significant digits with all of them, so the driver never sees a fraction of more than 16383 digits. It
+    catches a sign lost while the zeros are dropped, which makes `< -1.0e-16383` include the rows holding 0, and digits rounded away
     by `Decimal.normalize`."""
     exact = SQLTable(
         Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),

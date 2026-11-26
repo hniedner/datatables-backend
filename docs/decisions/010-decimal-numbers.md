@@ -53,8 +53,8 @@ SPEC-F25.12 pin.
   negative). So is a number of more than 16,383 digits after the point, the most PostgreSQL's `numeric` takes (its
   manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED 2026-11-24), which would
   otherwise reach the database as a driver error. The limit is of the value, not of how it is written: a fraction's
-  trailing zeros are not counted and zero has no fraction, so `1.0e-16383` is answered like `1e-16383`, and `parse_number`
-  returns it without those zeros (a number within the limit is returned as written, which no backend can tell: each
+  trailing zeros are not counted and zero has no fraction, so `1.0e-16383` is answered like `1e-16383`, and
+  `parse_number` returns it without those zeros (a number within the limit is returned as written, which no backend can tell: each
   drops the zeros again or sends a float).
 - An exact `Numeric` column gets a `Decimal` typed `Numeric()`, a fraction's trailing zeros removed (and zero as
   zero), so that SQL Server's count of 38 digits does not depend on how many zeros were typed and every database gets
