@@ -124,7 +124,7 @@ Source: the docstrings of `partial_answer`, `parse_request` and `DTResponse`.
 
 `IndexColumn.text` says how the field of a string column is mapped: `'keyword'`, `'text'` or `'text+keyword'`. `None`,
 the default, means the column does not say, and a string column is then read as `text+keyword`, which is what dynamic
-mapping makes of a string. A `text` of any value on a column that is not a string column (a number, date or boolean
+mapping makes of a string. A `text` other than `None` on a column that is not a string column (a number, date or boolean
 column) raises `SchemaError` when the table is built: nothing would read it.
 
 Source: the docstring of `IndexColumn`; SPEC-D23.12 and SPEC-D23.13.

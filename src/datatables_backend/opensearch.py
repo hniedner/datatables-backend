@@ -118,7 +118,8 @@ class IndexColumn(Column):
     """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
 
     ``text`` says how a string column's field is mapped; ``None`` means it does not say, and a string column is then
-    read as ``text+keyword``. A ``text`` of any value on a column that is not a string column raises ``SchemaError``.
+    read as ``text+keyword``. A ``text`` other than ``None`` on a column that is not a string column raises
+    ``SchemaError``.
 
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so

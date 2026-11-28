@@ -359,9 +359,10 @@ def check_name(column: Column) -> None:
 
 
 def check_hook(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``search_value`` that cannot be called: the table would build, and the first request
-    that searches the column would raise ``TypeError``, or, for a falsy value such as ``''`` or ``0``, the column would
-    silently be compared by whole value with the text unchanged."""
+    """Raise ``SchemaError`` for a ``search_value`` that cannot be called. On a string column that holds a whole
+    string the table would build, and the first request that searches the column would raise ``TypeError``, or, for a
+    falsy value such as ``''`` or ``0``, the column would silently be compared by whole value with the text unchanged;
+    on any other column the hook was already refused (PRD-D14, PRD-D20)."""
     if column.search_value is not None and not callable(column.search_value):
         raise SchemaError(
             f'The column "{column.name}" declares a search_value that is not callable. Pass a function that takes the '

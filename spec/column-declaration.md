@@ -147,22 +147,23 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   (a range mistake, step 3) is answered `invalid_date`.
 - **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
   column and, for the text column, `type="number"`.
-- **SPEC-D23.10** [OS, SQL] (on SQL, the `type=`) A `number=` or a `text=` that is none of its kinds, and a `type=`
-  that is none of the four, raises `SchemaError` at construction, naming the column, what was written and the accepted
-  ones. Before, the table usually built and a filter that carries a number failed with a `KeyError` (a `number=`), or
-  any SearchBuilder condition did (a `type=`), or a whole-string condition or an order was wrongly refused (a `text=`).
+- **SPEC-D23.10** [OS, SQL] (on SQL, the `type=`) A `number=` or a `text=` that is none of its kinds, and a `type=` that
+  is none of the four, raises `SchemaError` at construction, naming the column, what was written and the accepted ones.
+  Before, the table usually built and a filter that carries a number failed with a `KeyError` (a `number=`), or any
+  SearchBuilder condition did (a `type=`), or a whole-string condition or an order was wrongly refused (a `text=` on a
+  string column).
 - **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e308, -1e308 and a
   number of 255 digits on `double` (the last as an integer), and with 1e300 and -1e300 on `scaled_float`, sends each as
   it is.
 
 - **SPEC-D23.12** [OS] `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same request sends the same
   body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
-- **SPEC-D23.13** [OS] A `text` of any value, `text+keyword` included, on a number, date or boolean column raises
+- **SPEC-D23.13** [OS] A `text` other than `None`, `text+keyword` included, on a number, date or boolean column raises
   `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
 - **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
-  column and saying to pass a function. Before, a non-callable `search_value` on a string column built; the first
-  request that searched the column raised `TypeError`, or, for a falsy value such as `''` or `0`, the column was
-  silently compared by whole value with the text unchanged.
+  column and saying to pass a function. Before, a non-callable `search_value` on a string column that holds a whole
+  string built; the first request that searched the column raised `TypeError`, or, for a falsy value such as `''` or
+  `0`, the column was silently compared by whole value with the text unchanged.
 - **SPEC-D23.15** [OS, SQL] A column declared with an empty name (or a name of `None`), or an empty `field`, raises
   `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
   `field` built a table that sent an empty field name, and an empty `field` was silently read as the name on both
