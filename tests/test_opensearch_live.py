@@ -881,14 +881,13 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
 
 #: What a number finds of b2, the only document with a value (0.0) in `n_double`, `n_float` and `n_half`, through the
 #: library: the counts for `=`, a `multi_values` list, `<`, `<=`, `>` and `>=`. A number whose double is zero (`-1e-400`,
-#: which the unit tests show sends the same body as `-0.00` and `1e-400`) goes as `0`, so it has the answers of 0.0; a
-#: nonzero one goes as it is, so the field's own rounding answers, as docs/databases.md records from the raw queries.
+#: which the unit tests show sends the body of `0`) goes as `0`, so it has the answers of 0.0; a nonzero one goes as it
+#: is, so the field's own rounding answers, as docs/databases.md records from the raw queries. `-1e-400` is not run on
+#: `n_float`: the answers of `1e-50` there are the same, and the unit tests show it sent as `0`.
 ZERO_COUNTS = (1, 1, 0, 1, 0, 1)
 TINY_NUMBER_COUNTS = [
-    *(
-        (field, kind, '-1e-400', ZERO_COUNTS)
-        for field, kind in [('n_double', None), ('n_float', 'float'), ('n_half', 'half_float')]
-    ),
+    ('n_double', None, '-1e-400', ZERO_COUNTS),
+    ('n_half', 'half_float', '-1e-400', ZERO_COUNTS),
     ('n_float', 'float', '-1e-50', (0, 0, 0, 0, 1, 1)),
     ('n_float', 'float', '1e-50', (1, 1, 0, 1, 0, 1)),
     ('n_half', 'half_float', '-1e-10', (0, 0, 0, 0, 1, 1)),

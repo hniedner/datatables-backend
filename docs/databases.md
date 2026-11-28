@@ -466,11 +466,11 @@ as `invalid_number`, where the server answers it with a 400.
   in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields; `range`
   `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte` -0.0 -0.0
   and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find it. RUN
-  2026-11-25 on 2.19.7, before the library sent `0` for `-1e-400`: `= -1e-400` and `<= -1e-400` missed a 0.0 on a
-  `double` field, and `= -1e-400` found a stored -0.0. `test_minus_zero_finds_a_zero_on_a_double_field`
-  (`tests/test_opensearch_live.py`, since folded into
+  2026-11-25 on 2.19.7 (no run id was kept), before the library sent `0` for `-1e-400`: `= -1e-400` and `<= -1e-400`
+  missed a 0.0 on a `double` field, and `= -1e-400` found a stored -0.0.
+  `test_minus_zero_finds_a_zero_on_a_double_field` (`tests/test_opensearch_live.py`, since folded into
   `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`) failed for `=` and `<=` without the library's
-  zero and passed with it, for `-0.00`; `-1e-400` now sends the same body as `-0.00`
+  zero and passed with it, for `-0.00`; `-1e-400` now sends the body of `0`
   (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`). MEASURED by CI (runs 46093159275 on fbda0e1 and
   46093367670 on 3eccbcd, 2026-11-28 UTC) on 3.10.0 and 2.19.7: the table above, one query to the index per cell without
   the library, against a document holding 0.0 in each field. The same runs held the bodies -0.0 and 0.0 for the `float`
@@ -478,15 +478,16 @@ as `invalid_number`, where the server answers it with a 400.
   is not kept: a measurement is a record here, and the library's answers for the same numbers are pinned through the
   public API by `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`, which gives the cells above (a
   number whose double is zero as the row of 0.0, a nonzero one as its own row): RUN by CI (run 46095780308, 2026-11-28
-  UTC) on 3.10.0 and 2.19.7, all 13 cases (the `-0.00` and `1e-400` ones, which send the body of `-1e-400`, are dropped
-  since). That run holds `=`, a list, `<`, `<=`, `>` and `>=` of `-1e-400` too; the results for `!=`, `between` and
-  `!between` of it are INFERRED from the `term` and `range` measurements above. CI's first live run (run 45737687250,
-  2026-11-26 UTC) had found `=` and `<=` with `-1e-50` on a `float` field, and with `-1e-10` on a `half_float` field,
-  missing a 0.0: that was the exact answer. `!=` is the complement of `=` by construction (INFERRED). RUN by CI (run
-  46091503895, 2026-11-28 UTC) on 3.10.0 and 2.19.7, against a `half_float` field: `= 65519.999` is refused by the
-  server with a 400 (`[half_float] supports only finite values, but got [65520.0]`) where the library sent it. With the
-  library refusing it, the `half_float-through-float` pair of `NUMBER_EDGES` (`65519.99` answered, `65519.999` refused
-  before the query and a `RequestError` through an undeclared column,
+  UTC) on 3.10.0 and 2.19.7, all 13 cases (the `-0.00` and `1e-400` ones, which send `0` too, and `-1e-400` on the
+  `float` field, which has the answers of `1e-50` there, are dropped since). That run holds `=`, a list, `<`, `<=`, `>`
+  and `>=` of `-1e-400` too; the results for `!=`, `between` and `!between` of it are INFERRED from the `term` and
+  `range` measurements above. CI's first live run of the float-field rows (run 45737687250, 2026-11-26 UTC) had found
+  `=` and `<=` with `-1e-50` on a `float` field, and with `-1e-10` on a `half_float` field, missing a 0.0: that was the
+  exact answer. `!=` is the complement of `=` by construction (INFERRED). RUN by CI (run 46091503895, 2026-11-28 UTC) on
+  3.10.0 and 2.19.7, against a `half_float` field: `= 65519.999` is refused by the server with a 400 (`[half_float]
+  supports only finite values, but got [65520.0]`) where the library sent it. With the library refusing it, the
+  `half_float-through-float` pair of `NUMBER_EDGES` (`65519.99` answered, `65519.999` refused before the query and a
+  `RequestError` through an undeclared column,
   `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`) is RUN by CI (run 46094665855,
   2026-11-28 UTC) on 3.10.0 and 2.19.7: it passes on both.
 - **Requirement:** PRD-F25, PRD-D23.
