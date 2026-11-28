@@ -136,11 +136,11 @@ or an OpenSearch setting has an entry below.
   declares. No other database applies this bound.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
   `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
-- **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022
-  with Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
-  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`,
-  `docs/decisions/010-decimal-numbers.md`); the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the
-  integer-column case with a compiled statement; it was not measured.
+- **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022 with
+  Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
+  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`, `docs/decisions/010-decimal-numbers.md`);
+  the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the integer-column case with a compiled
+  statement; it was not measured.
 - **Requirement:** PRD-F25.
 
 ### A float's search text is written by `FORMAT`, which costs about four times a cast
@@ -203,12 +203,14 @@ or an OpenSearch setting has an entry below.
 ### A `Numeric` column is not compared exactly
 
 - **What you see:** a whole number outside the signed 64-bit range can match a neighbouring value on a `Numeric`
-  column. SQLite stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number.
-  PostgreSQL, MySQL and SQL Server compare the number exactly.
+  column, and a fraction can match a neighbouring value, or zero when it is too small for a float, on a `Numeric` or
+  an integer column. SQLite stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number,
+  also the one a fraction on an integer column goes as. PostgreSQL, MySQL and SQL Server compare the number exactly.
 - **Example:** a `Numeric(30, 0)` column holding 18446744073709551616 (2^64): `=` 18446744073709551617 finds that
-  row on SQLite and no row on the other three.
+  row on SQLite and no row on the other three. On SQLite, `=` 1e-16383 on an integer column finds the row holding 0.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
-  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`).
+  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`); the integer-column fraction on SQLite is
+  RUN by `test_sqlite_compares_a_fraction_on_an_integer_column_as_a_float`, and not measured on the other engines.
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused

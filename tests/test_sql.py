@@ -3022,12 +3022,27 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
     assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', '7.5')), session)) == []
 
 
+def test_sqlite_compares_a_fraction_on_an_integer_column_as_a_float(session: Session):
+    """PRD section 5 (PRD-F25): SQLAlchemy binds the `Decimal` of a fraction as a float on SQLite, so `1e-16383`, which
+    no float holds apart from zero, finds the row holding 0, and `8.0000000000000000001` finds the row holding 8,
+    though the number is neither. This is today's result, pinned so the stated limit is not forgotten if it changes;
+    no other engine is run here, as it was not measured there."""
+    if session.get_bind().dialect.name != 'sqlite':
+        pytest.skip('PRD section 5 states this limit for SQLite only')
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
+    numbers.create(session.connection())
+    session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
+    table = SQLTable(numbers, [Column('id'), Column('i')])
+    for value, found in (('1e-16383', [1]), ('8.0000000000000000001', [2])):
+        assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', value)), session)) == found
+
+
 @pytest.mark.parametrize('dialect', [postgresql.psycopg.dialect, postgresql.asyncpg.dialect])
 def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(dialect: Callable[[], Dialect]):
-    """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and
-    PostgreSQL's `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test
-    passes there). The fraction is bound as a float instead, so no `INTEGER` is rendered. RUN as a compile; the
-    rounding of the cast is INFERRED."""
+    """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and PostgreSQL's
+    `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test passes there).
+    The fraction is bound as a float instead, so no `INTEGER` is rendered. RUN as a compile; the rounding of the cast is
+    INFERRED."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Counted))
     source: Any = Compiling(dialect())
     SQLTable(numbers, [Column('id'), Column('i')]).fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), source)
@@ -3040,8 +3055,8 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
 @pytest.mark.parametrize('value', ['8.' + '1' * 38, '1e-16383'])
 def test_sql_servers_38_digits_do_not_bound_a_column_that_compares_a_float(kind: Any, value: str):
     """SPEC-F25.12, SPEC-F25.14: only a `Numeric` column and a fraction on an integer column are refused there, so a
-    `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest float.
-    It catches the check moved before the float is chosen, which refuses valid filters on these columns."""
+    `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest float. It
+    catches the check moved before the float is chosen, which refuses valid filters on these columns."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', kind))
     source: Any = Compiling(mssql.dialect())
     response = SQLTable(numbers, [Column('id'), Column('n')]).fetch_sync(
@@ -3055,9 +3070,9 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     Table 8.2, fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's
     error; it was a float that read as zero. That `1e-16383` itself is answered is shown on a `Numeric` column by the
     live test of SPEC-F25.16. `1.5e-16383` has a digit past the limit though its first digit is not: it catches the
-    limit read from the size of the number instead of from its last digit. A list entry and the bound of a `between`
-    are refused too, with the wording for a value among several (`listed`). The `mssql` leg adds that this refusal
-    comes before SQL Server's 38 digits."""
+    limit read from the size of the number instead of from its last digit. A list entry and the bound of a `between` are
+    refused too, with the wording for a value among several (`listed`). The `mssql` leg adds that this refusal comes
+    before SQL Server's 38 digits."""
     single = 'The filter on "i" needs a number with at most 16383 digits after the decimal point.'
     among = 'Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.'
     for dialect in (postgresql.dialect, mssql.dialect):
@@ -3088,9 +3103,9 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
 def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
     """SPEC-F25.14: a nonzero number whose negative exponent is beyond what a `Decimal` holds is one of more than 16383
     digits after the point, so the refusal says that, as it does for `1e-16384`; a positive one is too large, as
-    `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between` gets
-    the wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a
-    number, a zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a list's."""
+    `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between` gets the
+    wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a number, a
+    zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a list's."""
     reasons = {
         True: (
             'needs a number with at most 16383 digits after the decimal point.',

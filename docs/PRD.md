@@ -783,7 +783,7 @@ The maximum date (9999-12-31) as a bound is a user error, not a failed query.
 
 A number is parsed and bounded: a non-finite or non-numeric value is refused, and so is a value outside the column's SQL
 integer range. A number with a fraction is compared as that number against an integer column (`> 7.5` finds 8, `= 7.5`
-finds nothing), never cut to a whole one. An unsigned MySQL integer column is bounded by its unsigned range. On SQL
+finds nothing), never cut to a whole one (see section 5 for SQLite). An unsigned MySQL integer column is bounded by its unsigned range. On SQL
 Server a number with more than 38 digits in all, before and after the decimal point (a fraction's trailing zeros not
 counted), is out of range on a `Numeric` column, whatever precision the column declares (MEASURED 2026-11-22 for a whole
 number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary of 38 is pinned by the tests, not
@@ -1315,16 +1315,16 @@ structure over the bounds (PRD-F38) is `invalid_filter`; within step 1 the first
 order the request is read, the global search, then the column searches in the request's order (within one column the
 plain search, then the ColumnControl search, then the ColumnControl list), then the SearchBuilder tree (its structure,
 then its criteria in document order), and within one filter a control character in any of its values, then any value's
-length, then the words; last in step 1, after all of those, a request of more than 960
-conditions (PRD-C17) is `request_too_large`, counted over the parts the plan holds, so a part left out for a mistake
-is not counted, and a request over the budget only through such a part is answered with that mistake, and with
-`request_too_large` once it is fixed; (2) a value whose format a date or number column cannot read is
-`invalid_date` or `invalid_number`, including several words, `!` or quotes on an OpenSearch date column (PRD-F34) or
-number column (PRD-F33); (3) a readable value outside the range is `invalid_date` for the maximum date (PRD-F24) and
-`invalid_number` for a number its SQL column does not take (PRD-F25: outside an integer's range, signed or unsigned, or
-of more than 38 digits in all on SQL Server, on a `Numeric` column or with a fraction on an integer column (other than
-through a `TypeDecorator`, which gets a float)); (4) every other filter error, a boolean value outside PRD-F43's set
-included, is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it needs a valid count.
+length, then the words; last in step 1, after all of those, a request of more than 960 conditions (PRD-C17) is
+`request_too_large`, counted over the parts the plan holds, so a part left out for a mistake is not counted, and a
+request over the budget only through such a part is answered with that mistake, and with `request_too_large` once it is
+fixed; (2) a value whose format a date or number column cannot read is `invalid_date` or `invalid_number`, including
+several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value
+outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` for a number its SQL column does
+not take (PRD-F25: outside an integer's range, signed or unsigned, or of more than 38 digits in all on SQL Server, on a
+`Numeric` column or with a fraction on an integer column (other than through a `TypeDecorator`, which gets a float));
+(4) every other filter error, a boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page
+of PRD-C12 is `page_out_of_range`, since it needs a valid count.
 
 Within each of steps 2 to 4, the first mistake is the one found first in step 1's read order: the global search, then
 the column searches in the request's order (within one column the plain search, then the ColumnControl search, then
@@ -1898,7 +1898,7 @@ where a database decides. Each difference is stated here; every other answer is 
   docs/decisions/011-opensearch-number-kinds.md.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F25, PRD-E7, PRD-D23
-- On SQLite a number is not compared exactly with a `Numeric` column beyond about 15 significant digits: SQLite stores
+- On SQLite a number is not compared exactly with a `Numeric` column, nor a fraction with an integer column, beyond about 15 significant digits: SQLite stores
   the column as an integer or a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is stored as
   12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there, so the number can match a
   neighbouring value. PostgreSQL, MySQL, MariaDB and SQL Server compare it exactly (MEASURED 2026-11-24,

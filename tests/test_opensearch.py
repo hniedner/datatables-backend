@@ -3187,10 +3187,10 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
     ],
 )
 def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(value: str, answered: bool):
-    """SPEC-F25.16: a number of at most 16383 digits after the point (zero has none) is answered however it is
-    written, one of 16384 is `invalid_number`. Catches the limit read from the exponent as written, which refuses
-    `1.0e-16383`, and from the size of the number, which answers `1.5e-16383` (its last digit is past the limit
-    though its first is not)."""
+    """SPEC-F25.16: a number of at most 16383 digits after the point (zero has none) is answered however it is written,
+    one of 16384 is `invalid_number`. Catches the limit read from the exponent as written, which refuses `1.0e-16383`,
+    and from the size of the number, which answers `1.5e-16383` (its last digit is past the limit though its first is
+    not)."""
     searched = SearchTable('docs', [Column('n', type='number')], unique_key='n')
     response = searched.fetch_sync(request('n', **criterion('n', '=', value)), Client())
     if answered:
@@ -3201,8 +3201,8 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(value: str,
 
 @pytest.mark.parametrize(('value', 'answered'), [('1.0e-16383', True), ('1e-16384', False)])
 def test_a_single_value_column_search_reads_the_16383_digit_limit_by_the_value(value: str, answered: bool):
-    """SPEC-F25.16: the value of a column search on a number column goes through its own branch of the plan, not
-    through a filter's. On SQL a number column's text is searched by words, so that branch is OpenSearch's alone
+    """SPEC-F25.16: the value of a column search on a number column goes through its own branch of the plan, not through
+    a filter's. On SQL a number column's text is searched by words, so that branch is OpenSearch's alone
     (`value_search`) and has no SQL twin. It catches that branch not reading the number, or reading it without the
     limit, so that `1e-16384` reaches the server, and one that reads the limit from the spelling and refuses
     `1.0e-16383`."""

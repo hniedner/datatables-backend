@@ -499,24 +499,23 @@ def _number(
 ) -> Any:
     """``value`` as the column compares it, by the type the column stores (PRD-F25).
 
-    An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
-    ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is
-    unsigned (MySQL's). On SQL Server a ``Numeric`` column, and an integer column given a number with a fraction (not
-    through a ``TypeDecorator``, whose number goes as the nearest float), takes a number of at most 38 digits in all,
-    before and after the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its
-    driver refuses a longer one. A number outside either is the user's mistake. No other database bounds a
-    ``Numeric`` column here: a filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they answer
-    it.
+    An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a ``SmallInteger``,
+    64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is unsigned (MySQL's). On
+    SQL Server a ``Numeric`` column, and an integer column given a number with a fraction (not through a
+    ``TypeDecorator``, whose number goes as the nearest float), takes a number of at most 38 digits in all, before and
+    after the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses
+    a longer one. A number outside either is the user's mistake. No other database bounds a ``Numeric`` column here: a
+    filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they answer it.
 
     A number goes as the column compares. To an exact ``Numeric`` column it goes as a ``Decimal`` with every digit
     written but a fraction's trailing zeros, when it has a point or an exponent or lies outside the signed 64-bit range
     that a driver sends a whole number in. To an integer column a number with a fraction goes as a ``Decimal`` too (the
-    nearest float through a ``TypeDecorator``), and a whole number written with a point (``8.0``) as that whole
-    number. To any other column (a ``Float``, an expression without a type) it goes as the nearest float, which holds
-    every number a request may carry (at most 255 characters, below 1.8e308).
+    nearest float through a ``TypeDecorator``), and a whole number written with a point (``8.0``) as that whole number.
+    To any other column (a ``Float``, an expression without a type) it goes as the nearest float, which holds every
+    number a request may carry (at most 255 characters, below 1.8e308).
 
-    The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
-    is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
+    The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value is
+    one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
