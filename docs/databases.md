@@ -411,7 +411,7 @@ it goes away (PRD-D23).
   `docs/decisions/011-opensearch-number-kinds.md`).
 - **Requirement:** PRD-F25, PRD-E7, PRD-D23.
 
-### A `double`, `float` or `half_float` field keeps -0.0 apart from 0.0, and rounds a tiny number itself
+### A `double`, `float` or `half_float` field keeps -0.0 apart from 0.0; `float` and `half_float` round a tiny number
 
 This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for every number whose double is zero: one the
 user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324` round
@@ -473,19 +473,20 @@ as `invalid_number`, where the server answers it with a 400.
   `<=` without the library's zero and passed with it, for `-0.00` (the passing half: CI run 45723829359 on dd3fd4e,
   2026-11-25 UTC, on both servers; no run id was kept for the failing half); `-1e-400` now sends the body of `0`
   (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`). MEASURED by CI (runs 46093159275 on fbda0e1 and
-  46093367670 on 3eccbcd, 2026-11-28 UTC) on 3.10.0 and 2.19.7: the table above, one query to the index per cell without
-  the library, against a document holding 0.0 in each field. Run 46093367670 also held the bodies -0.0 and 0.0 for the
-  `float` and `half_float` fields, with the cells of the `double` rows, so a `half_float` field keeps them apart too.
-  That test is not kept: a measurement is a record here, and the library's answers for the same numbers are pinned
-  through the public API by `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`, which gives the cells
-  above (a number whose double is zero as the row of 0.0, a nonzero one as its own row): RUN by CI (run 46095780308,
-  2026-11-28 UTC) on 3.10.0 and 2.19.7, all 13 cases (the `-0.00` and `1e-400` ones, which send `0` too, and `-1e-400`
-  on the `float` field, which has the answers of `1e-50` there, are dropped since). That run holds `=`, a list, `<`,
-  `<=`, `>` and `>=` of `-1e-400` too; the results for `between` and `!between` of it are INFERRED from the `term` and
-  `range` measurements above. CI's first live run of the float-field rows (run 45737687250, 2026-11-26 UTC) had found
-  `=` and `<=` with `-1e-50` on a `float` field, and with `-1e-10` on a `half_float` field, missing a 0.0: that was the
-  exact answer. `!=` is the complement of `=` by construction (INFERRED). RUN by CI (run 46091503895, 2026-11-28 UTC) on
-  3.10.0 and 2.19.7, against a `half_float` field: `= 65519.999` is refused by the server with a 400
+  46093367670 on 3eccbcd, 2026-11-28 UTC) on 3.10.0 and 2.19.7: the table above, one query to the index per operation
+  (`term`, `terms`, `lt`, `lte`, `gt`, `gte`) without the library, against a document holding 0.0 in each field. Run
+  46093367670 also held the bodies -0.0 and 0.0 for the `float` and `half_float` fields, with the cells of the `double`
+  rows, so a `half_float` field keeps them apart too. That test is not kept: a measurement is a record here, and the
+  library's answers for the same numbers are pinned through the public API by
+  `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`, which gives the cells above (a number whose
+  double is zero as the row of 0.0, a nonzero one as its own row): RUN by CI (run 46095780308, 2026-11-28 UTC) on 3.10.0
+  and 2.19.7, all 13 cases (the `-0.00` and `1e-400` ones, which send `0` too, and `-1e-400` on the `float` field, which
+  has the answers of `1e-50` there, are dropped since). That run holds `=`, a list, `<`, `<=`, `>` and `>=` of `-1e-400`
+  too; the results for `between` and `!between` of it are INFERRED from the `term` and `range` measurements above. CI's
+  first live run of the float-field rows (run 45737687250, 2026-11-26 UTC) had found `=` and `<=` with `-1e-50` on a
+  `float` field, and with `-1e-10` on a `half_float` field, missing a 0.0: that was the exact answer. `!=` is the
+  complement of `=` by construction (INFERRED). RUN by CI (run 46091503895, 2026-11-28 UTC) on 3.10.0 and 2.19.7,
+  against a `half_float` field: `= 65519.999` is refused by the server with a 400
   (`[half_float] supports only finite values, but got [65520.0]`) where the library sent it. With the library refusing
   it, the `half_float-through-float` pair of `NUMBER_EDGES` (`65519.99` answered, `65519.999` refused before the query
   and a `RequestError` through an undeclared column,

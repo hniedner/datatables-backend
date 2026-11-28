@@ -3048,10 +3048,10 @@ def test_a_number_is_refused_exactly_where_opensearch_refuses_it_for_the_declare
     kind: NumberKind, last: str, first: str
 ):
     """SPEC-D23.1: a value the field answers is sent; one it refuses is answered with `invalid_number` and nothing is
-    sent. The edges are the measured ones (decision 011; `float`'s exact edge is the live test's), but for the
-    `half_float-through-float` pair, which straddles the edge (CI runs 46091503895 for the 400 on 65519.999 and
-    46094665855 for the answer to 65519.99); `byte` and `short` carry an integer's, since OpenSearch answers 128 on a
-    byte."""
+    sent. The edges are the measured ones (decision 011; `float`'s exact edge is the live test's); the
+    `half_float-through-float` pair, measured in CI (runs 46091503895 for the 400 on 65519.999 and 46094665855 for the
+    answer to 65519.99), straddles the edge rather than marking it; `byte` and `short` carry an integer's, since
+    OpenSearch answers 128 on a byte."""
     response, client = asked(kind, **criterion('n', '=', last))
     assert response.error is None
     assert len(client.searches) == 1
