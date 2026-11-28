@@ -218,10 +218,9 @@ or an OpenSearch setting has an entry below.
   `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-28 (UTC), on
   SQLite (`=` 8.0000000000000000001 finds the row holding 8, and `=` 1e-16383 the row holding 0), and on PostgreSQL,
   MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on any of the four); `=` 1e-16383 finds no row
-  on PostgreSQL, finds the row holding 0 on MySQL and MariaDB, and is refused on SQL Server by its 38 digits; not
-  measured on versions other than the ones CI runs (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That
-  `1e-16383` matches 0 on a `Numeric` column is INFERRED from the float bind (`= 1e-400` was MEASURED there, decision
-  010).
+  on PostgreSQL (MySQL, MariaDB and SQL Server: see their entries); not measured on versions other than the ones CI runs
+  (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That `1e-16383` matches 0 on a `Numeric` column is INFERRED
+  from the float bind (`= 1e-400` was MEASURED there, decision 010).
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused
