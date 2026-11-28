@@ -240,11 +240,11 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
     a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object. It does the same when a header is no ``<id> <kind> <size>`` (an id of hex digits, a kind git
-    has, a size of digits), or the byte after the declared size is not the newline git writes (a corrupt object whose
-    size is wrong): reading on would take the next bytes for a header and skip an object, or, at the end of the
-    output, pass an object git could not read whole. A wrong size whose declared end falls on a newline before a
-    line shaped like a header passes."""
+    it read every object. It does the same when a header is no ``<id> <kind> <size>`` (a lower-case hex id of SHA-1 or
+    SHA-256 length, a kind git has, a size of digits), or the byte after the declared size is not the newline git
+    writes (a corrupt object whose size is wrong): reading on would take the next bytes for a header and skip an
+    object, or, at the end of the output, pass an object git could not read whole. A wrong size whose declared end
+    falls on a newline before a line that is a valid header passes."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)

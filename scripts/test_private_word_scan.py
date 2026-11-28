@@ -947,13 +947,14 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
 _ID = '0' * 40
 _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, or later bytes read as a header
     'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
-    # a corrupt object declares one byte too much; two bytes into the next id a real-looking header starts
+    # a corrupt object declares two bytes too much; two bytes into the next id a real-looking header starts
     'size into the next header': f'{_ID} blob 7\nshort\n{"0" * 42} blob 5\nhello\n',
     'size past the end': f'{_ID} blob 200\nshort\n',
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
-    'id that is no id': f'{WORD} blob 5\nhello\n',  # a header-shaped line after a wrong declared end
+    'id that is no id': f'{WORD} blob 5\nhello\n',  # a line laid out like a header, read after a wrong declared end
     'id that is too short': f'{"0" * 39} blob 5\nhello\n',
+    'id of neither length': f'{"0" * 41} blob 5\nhello\n',
     'id that is not hex': f'{"z" * 40} blob 5\nhello\n',
     'kind that is no kind': f'{_ID} {WORD} 5\nhello\n',
 }
@@ -963,8 +964,8 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
 def test_an_object_git_cannot_read_cannot_check(
     words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
 ):
-    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the first rows' text or
-    makes later bytes read as one of the other rows."""
+    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the text of the first three
+    rows, or makes later bytes read as one of the other rows."""
     scanner = load_scanner(monkeypatch, words)
     printed = _UNREADABLE[answer].encode()
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
@@ -975,11 +976,10 @@ def test_an_object_git_cannot_read_cannot_check(
     assert WORD.casefold() not in shown.casefold()
 
 
-@pytest.mark.parametrize('length', [40, 64], ids=['sha-1', 'sha-256'])
-def test_batch_reads_the_ids_of_both_hash_functions(words: Path, monkeypatch: pytest.MonkeyPatch, length: int):
-    """A refusal of a SHA-256 repository's ids would block every push there."""
+def test_batch_reads_a_sha_256_id(words: Path, monkeypatch: pytest.MonkeyPatch):
+    """A refusal of a SHA-256 repository's ids would block every push there (the real-git tests give SHA-1 ids)."""
     scanner = load_scanner(monkeypatch, words)
-    out = f'{"a" * length} blob 3\nabc\n{"b" * length} tree 0\n\n'.encode()
+    out = f'{"a" * 64} blob 3\nabc\n{"b" * 64} tree 0\n\n'.encode()
     assert [(kind, data) for _, kind, data in scanner.batch(out)] == [('blob', b'abc'), ('tree', b'')]
 
 
