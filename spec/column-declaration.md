@@ -158,12 +158,13 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 
 - **SPEC-D23.12** [OS] `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same request sends the same
   body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
-- **SPEC-D23.13** [OS] A `text` other than `None`, `text+keyword` included, on a number, date or boolean column raises
+- **SPEC-D23.13** [OS] A `text` kind (`keyword`, `text` or `text+keyword`) on a number, date or boolean column raises
   `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
 - **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
   column and saying to pass a function. Before, a non-callable `search_value` on a string column that holds a whole
-  string built; the first request that searched the column raised `TypeError`, or, for a falsy value such as `''` or
-  `0`, the column was silently compared by whole value with the text unchanged.
+  string built; the first request that compared a search value with the column (`=`, `!=`, a column search or the global
+  search) raised `TypeError`, or, for a falsy value such as `''` or `0`, the column was silently compared by whole value
+  with the text unchanged.
 - **SPEC-D23.15** [OS, SQL] A column declared with an empty name (or a name of `None`), or an empty `field`, raises
   `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
   `field` built a table that sent an empty field name, and an empty `field` was silently read as the name on both
