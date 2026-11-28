@@ -416,31 +416,33 @@ it goes away (PRD-D23).
 This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for every number whose double is zero: one the
 user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324`
 round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). That is
-the nearest double, which PRD-F25 reads for a SQL `Float` column, where a zero written with a sign is zero, and which
-SQLite and OpenSearch use too; a `Numeric` column compares exactly instead, and PostgreSQL finds no row for
-`= 1e-400` there. A number that is tiny only in the format of a `float` or `half_float` field (`-1e-50` on a `float`
-field, `-1e-10` on a `half_float` one: nonzero doubles) is sent as it is, and the field rounds it, with the results
-below. A `half_float` field reads a number as a 32-bit float first and then rounds that to half, so a declared column
-refuses `65519.999` (the float 65520.0, which overflows half) as `invalid_number`, where the server answers it with a
-400.
+the rule PRD-F25 states for OpenSearch: the nearest double, as a SQL `Float` column compares it (SQLite too); a
+`Numeric` column compares exactly instead, and PostgreSQL finds no row for `= 1e-400` there. A number that is tiny only
+in the format of a `float` or `half_float` field (`-1e-50` on a `float` field, `-1e-10` on a `half_float` one: nonzero
+doubles) is sent as it is, and the field rounds it, with the results below. A `half_float` field reads a number as a
+32-bit float first and then rounds that to half, so a declared column refuses `65519.999` (the float 65520.0, which
+overflows half) as `invalid_number`, where the server answers it with a 400.
 
 - **What you see:** on a `double`, a `float` or a `half_float` field, -0.0 and 0.0 are two values in a `term`, `terms`
-  and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does
-  `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0 (measured on a
-  `double` and a `float` field, INFERRED for a `half_float` one) is found by a body of -0.0, which the library sends
-  for no number a user writes, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does
-  not. A `long` or an `integer` field reads -0.0 as 0. That -0.0 sorts below 0.0 is INFERRED from the range results,
-  not measured as an order. Sending `0` for `-1e-400` gives it the answers of the number zero, the nearest double and
-  not the exact number: on a document holding 0.0, `=`, `<=`, a column search and a list entry now find it, where they
-  found none (the exact answer), and `>` and `!=` no longer find it, where they did (the exact answer too). On a
-  document holding -0.0, `=`, a column search, a list entry and `>=` no longer find it, `<` and `!=` now find it, and
-  `between` and `!between` follow their bounds as `0` gives them. For `-0.00` nothing exact is lost: it is zero.
+  and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does `{"range": {"m":
+  {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0 (measured on a `double` and a
+  `float` field, INFERRED for a `half_float` one) is found by a body of -0.0, which the library sends for no number a
+  user writes to a `double` field, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does
+  not. A `float` or a `half_float` field reads `-1e-50` or `-1e-10`, which the library sends as they are, as -0.0, so
+  `=` with them finds a stored -0.0 there (INFERRED: no test stores one). A `long` or an `integer` field reads -0.0 as
+  0. That -0.0 sorts below 0.0 is INFERRED from the range results, not measured as an order. Sending `0` for `-1e-400`
+  gives it the answers of the number zero, the nearest double and not the exact number: on a document holding 0.0, `=`,
+  `<=`, a column search and a list entry now find it, where they found none (the exact answer), and `>` and `!=` no
+  longer find it, where they did (the exact answer too). On a document holding -0.0, `=`, a column search, a list entry
+  and `>=` no longer find it, `<` and `!=` now find it, and `between` and `!between` follow their bounds as `0` gives
+  them. For `-0.00` nothing exact is lost: it is zero.
 - **What a field does with a tiny number, or a -0.0, in a body:** against a document holding 0.0, a number the field
   rounds to zero. In `=` and in a list, a tiny negative is read as -0.0 and finds nothing (the exact answer), and a
   tiny positive is read as 0.0 and finds the document (a false one: the field cannot tell it from zero). In a range, a
-  `double` and a `float` field round the bound to the nearest first, so a tiny positive finds the document with `<=`
-  and `>=` and not with `<` and `>`, where the exact answer is `<` and `<=`; a `half_float` field rounds the bound in
-  the direction of the range, so its ranges give the exact answer. The cells (`Y` finds the document):
+  `float` field rounds the bound to the nearest float first, so a tiny positive finds the document with `<=` and `>=`
+  and not with `<` and `>`, where the exact answer is `<` and `<=`, and a `double` field, which rounds nothing, gives
+  the same cells for the bodies -0.0 and 0.0; a `half_float` field rounds the bound in the direction of the range, so
+  its ranges give the exact answer. The cells (`Y` finds the document):
 
   | field | number | `=`, list | `<` | `<=` | `>` | `>=` |
   |---|---|---|---|---|---|---|
@@ -471,15 +473,17 @@ refuses `65519.999` (the float 65520.0, which overflows half) as `invalid_number
   (`test_greater_than_a_negative_number_beyond_a_double_finds_no_zero`); the results for `<`, `>=`, `!=`, `between` and
   `!between` of `-1e-400` are INFERRED from the `term` and `range` measurements above. RUN by CI (runs 46093159275 and
   46093367670, 2026-11-27) on 3.10.0 and 2.19.7: the table above, each cell sent to the server as it is
-  (`test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is`), including the rows of `float` and
+  (`test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is`, which also holds the bodies -0.0 and 0.0
+  for the `float` and `half_float` fields, with the cells of the `double` rows, and so shows that a `half_float` field
+  keeps them apart), including the rows of `float` and
   `half_float` that CI's first live run had found missing a 0.0 for `= -1e-50` and `<= -1e-10` (2026-11-26 UTC): that
   was the exact answer. `!=` is the complement of `=` by construction (INFERRED). RUN by CI (run 46091503895,
   2026-11-27) on 3.10.0 and 2.19.7, against a `half_float` field: `= 65519.999` is refused by the server with a 400
   (`[half_float] supports only finite values, but got [65520.0]`) where the library sent it. With the library refusing
   it, the `half_float-through-float` pair of `NUMBER_EDGES` (`65519.99` answered, `65519.999` refused before the query
   and a `RequestError` through an undeclared column,
-  `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`) is INFERRED to pass until CI runs
-  it; the server's 400 for `65519.999` is the measurement above.
+  `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`) is RUN by CI (run 46094665855,
+  2026-11-27) on 3.10.0 and 2.19.7: it passes on both.
 - **Requirement:** PRD-F25, PRD-D23.
 
 ### A boolean field is a boolean column only when it is declared boolean

@@ -889,10 +889,9 @@ def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition
 
 def test_greater_than_a_negative_number_beyond_a_double_finds_no_zero(client: OpenSearch):
     """SPEC-F25.15 on a real server: b2 holds the only 0.0 in the `double` field. `-1e-400` is -0.0 as a double, and
-    the nearest double is compared, as PRD-F25 reads a SQL `Float` column, so the library sends `0` and `> -1e-400`
-    finds nothing, as `> -0.00` does. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a
-    number below zero, which the nearest double does not give, TINY_NUMBER_COUNTS). It catches a lower bound that goes as
-    -0.0."""
+    PRD-F25 sends a number whose double is zero as `0`, so `> -1e-400` finds nothing, as `> -0.00` does. Sent as -0.0
+    the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a number below zero, which the nearest double
+    does not give, TINY_NUMBER_COUNTS). It catches a lower bound that goes as -0.0."""
     params = request('id', 'n', **criterion('n', '>', '-1e-400'))
     assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == []
 
@@ -920,11 +919,13 @@ TINY_NUMBER_COUNTS = [
 def test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is(
     client: OpenSearch, field: str, number: float, counts: tuple[int, ...]
 ):
-    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. A `term` and
-    a `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which is not 0.0,
-    and a tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so `lt` and `gte`
-    with 1e-10 answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range rounds to the
-    nearest first. The counts of each row are the whole result: a mismatch shows which cell differs."""
+    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. It is the one
+    live test that sends its own query, the exception to testing through the public API: a body of -0.0 is one the
+    library never sends, so no library call reaches these cells, and docs/databases.md cites them as engine facts. A
+    `term` and a `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which
+    is not 0.0, and a tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so
+    `lt` and `gte` with 1e-10 answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range
+    rounds to the nearest first. The counts of each row are the whole result: a mismatch shows which cell differs."""
     queries = [
         {'term': {field: number}},
         {'terms': {field: [number, 7]}},

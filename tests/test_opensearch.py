@@ -3047,9 +3047,9 @@ def asked(kind: NumberKind | None, **body: Any) -> tuple[DTResponse, Client]:
 def test_a_number_is_refused_exactly_where_opensearch_refuses_it_for_the_declared_kind(
     kind: NumberKind, last: str, first: str
 ):
-    """SPEC-D23.1: the last value the field answers is sent; the first it refuses is answered with `invalid_number`
-    and nothing is sent. The edges are the measured ones (decision 011); `byte` and `short` carry an integer's, since
-    OpenSearch answers 128 on a byte."""
+    """SPEC-D23.1: a value the field answers is sent; one it refuses is answered with `invalid_number` and nothing is
+    sent. The edges are the measured ones (decision 011), but for the `half_float-through-float` pair, which straddles
+    the edge (CI run 46091503895); `byte` and `short` carry an integer's, since OpenSearch answers 128 on a byte."""
     response, client = asked(kind, **criterion('n', '=', last))
     assert response.error is None
     assert len(client.searches) == 1
@@ -3122,31 +3122,39 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
             for path in ('equals', 'greater-or-equal', 'less', 'less-or-equal')
         ),
         (None, 'multi-values', '-0.00'),  # a `terms` list, built apart from a bound or a `term`
-        *(
-            (None, path, text)
-            for text in ('-1e-400', '1e-400')
-            for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')
-        ),
+        *((None, path, '-1e-400') for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')),
+        (None, 'equals', '1e-400'),  # the one spelling `0`, where the double is 0.0 and not -0.0
+        (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
         # a column that declares a float kind: its numbers could be converted apart from `_json`
-        ('float', 'equals', '-0.00'),
         ('float', 'equals', '-1e-400'),
-        ('half_float', 'equals', '-0.00'),
         ('half_float', 'equals', '-1e-400'),
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
     """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
-    field keeps apart from 0.0 in a `term` and a `range`; the nearest double is compared, as PRD-F25 reads a SQL `Float`
-    column, where a signed zero is zero, so every number whose double is zero is sent as `0`, in an equality, a bound
-    and a list, on a column without a kind (a `double` field); `-0.00` also on a `long`, and `-0.00` and `-1e-400` on a
-    column declared `float` or `half_float`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches
-    a number sent as the float -0.0, also one converted for a float kind apart from `_json`; the `1e-400` rows pin the
-    one spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` and `greater` rows are not the `less` rows
+    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends the nearest double, and a number whose double is
+    zero as `0`, so every such number is sent as `0`, in an equality, a bound and a list, on a column without a kind
+    (a `double` field); `-0.00` also on a `long`, and `-1e-400` on a column declared `float` or `half_float`, where
+    its double is the same -0.0 as `-0.00`'s. The bodies are compared as JSON, since Python's -0.0 equals 0. It
+    catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a conversion that
+    treats the exact zero right and `-1e-400` wrong fails the `-1e-400` rows alone); the `1e-400` row pins the one
+    spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` and `greater` rows are not the `less` rows
     again: a rule skipped for an inclusive upper bound alone, or for a lower bound alone, passes every `less` row and
     fails these."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
+
+
+@pytest.mark.parametrize('text', ['-5e-324', '5e-324', '3e-324', '-1e-310', '1e-310'])
+def test_a_number_whose_double_is_not_zero_is_sent_as_that_double(text: str):
+    """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one, `3e-324` rounds up to it (zero would be
+    `2e-324`, below half of it), and `1e-310` is one of the many between it and the smallest normal double, so each is
+    sent as the double it is, not as `0`. It catches a rule that sends `0` for every tiny number, subnormals included,
+    which no other test sends."""
+    assert float(text) != 0
+    sent = asked(None, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
+    assert sent == {'term': {'n': float(text)}}
 
 
 @pytest.mark.parametrize(

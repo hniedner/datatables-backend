@@ -333,10 +333,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`,
   `<` and `<=` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
-  `7` on the column without a kind. `-1e-400`, a number whose double is -0.0, and `1e-400` send the body of `0` on
-  the column without a kind in `=`, `<`, `<=`, `>` and a `multi_values` list (the nearest double, as PRD-F25 reads a
-  SQL `Float` column), and `-0.00` and `-1e-400` do in `=` on a column declared `float` or `half_float`. On such a
-  column, `-1e-50` and `1e-50` on `float`, `-1e-10` and `1e-10` on `half_float`, which are nonzero doubles that the
+  `7` on the column without a kind. `-1e-400`, a number whose double is -0.0, sends the body of `0` on the column
+  without a kind in `=`, `<`, `<=`, `>` and a `multi_values` list (PRD-F25: the nearest double, and a number whose
+  double is zero as `0`), `-2e-324` and `1e-400` in `=`, and `-1e-400` in `=` on a column declared `float` or
+  `half_float`; `-5e-324`, `3e-324` and `-1e-310`, which are nonzero doubles, go in `=` as the doubles they are. On such
+  a column, `-1e-50` and `1e-50` on `float`, `-1e-10` and `1e-10` on `half_float`, which are nonzero doubles that the
   field rounds to zero in a `term`, go in `=` as the numbers they are, as on a column without a kind. With `n` over a
   `double` field, given a document holding 0.0: `=` and `<=` with `-0.00` → that document, and with `-1e-400` too, as
   it sends the same body, while `>` with `-1e-400` → no document (it sends `0`, and `> 0` does not find 0.0).

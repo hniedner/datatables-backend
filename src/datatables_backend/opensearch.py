@@ -611,8 +611,9 @@ def _accepted(kind: str, sent: int | float) -> bool:
     """Whether OpenSearch answers ``sent`` on a field of ``kind``. A float field refuses a number that rounds to
     infinity in its format, as it reads the number: through each of ``_FLOAT_FORMATS``, so a ``half_float`` field's
     ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. ``struct.pack``
-    raises ``OverflowError`` there. It is given a float: a whole number too large for one would raise ``struct.error``
-    in ``struct``, which is not caught, but a request holds at most 255 characters, so ``float`` never fails here."""
+    raises ``OverflowError`` there. It is given a float: ``struct`` would raise ``struct.error`` for an int too large to
+    convert. ``float(sent)``, outside the ``try``, would raise ``OverflowError`` for one too large for a double, which
+    a number never is: it is one value of at most 255 characters (PRD-F14)."""
     if kind in _FLOAT_FORMATS:
         # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
         # refused here, where the server might round it straight to a float it holds: a conservative refusal
