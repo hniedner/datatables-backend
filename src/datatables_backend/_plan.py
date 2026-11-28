@@ -378,8 +378,8 @@ def check_hook_is_searched(column: Column) -> None:
     never run. OpenSearch holds its document id unsearchable too, but its own check says so first."""
     if column.search_value is not None and not column.searchable:
         raise SchemaError(
-            f'The column "{column.name}" has a search_value hook but is declared searchable=False, so no search '
-            'reaches it and the hook never runs. Remove the hook, or declare the column searchable.'
+            f'The column "{column.name}" has a search_value hook but is declared searchable={column.searchable!r}, so '
+            'no search reaches it and the hook never runs. Remove the hook, or declare the column searchable.'
         )
 
 

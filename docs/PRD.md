@@ -520,7 +520,7 @@ mapping, which is never read (PRD-D8). A column that declares no kind is checked
 column has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column that is no number
 column raises `SchemaError` when the table is built, and so does a `number=`, `text=` or `type=` outside its accepted
 values, naming the column, what was written and the accepted values; so does a `number=` on a column declared
-`searchable=False` or on a number column that reads the document id, which no filter reaches. The mapping is still never read (PRD-D8).
+`searchable=False` or on a column that reads the document id, which no filter reaches. The mapping is still never read (PRD-D8).
 
 - **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
   mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads

@@ -3401,8 +3401,9 @@ def test_a_text_on_the_document_id_is_a_schema_error_that_says_to_drop_it():
 def test_the_document_id_is_told_that_it_cannot_be_ordered_or_the_key_before_what_nothing_reads(
     kwargs: dict[str, Any], unique_key: str, message: str
 ):
-    """SPEC-D23.17: a `text=` on `_id` is how someone tries to sort or key on it, so the more basic refusal, which says
-    to use a `keyword` field, comes first; dropping `text=` alone would only lead to it on the next build."""
+    """SPEC-D23.17, SPEC-D23.16: a `text=` on `_id` is how someone tries to sort or key on it, so the more basic refusal,
+    which says to use a `keyword` field, comes first (so does an `orderable=True` before the hook); dropping `text=` or
+    the hook alone would only lead to it on the next build."""
     columns = [KEY, IndexColumn('_id', **kwargs)]
     with pytest.raises(SchemaError, match=message):
         SearchTable('docs', columns, unique_key=unique_key)
@@ -3441,7 +3442,47 @@ def test_a_text_on_a_column_that_is_not_searched_ordered_or_the_key_is_a_schema_
         SchemaError, match=r'"s".*text=\'keyword\'.*not searched, not ordered and not the key'
     ) as raised:
         SearchTable('docs', [KEY, IndexColumn('s', text='keyword', searchable=False, orderable=False)], unique_key='id')
-    assert 'Drop text=, or let the column be searched or ordered' in str(raised.value)
+    assert 'Drop text=, or declare the column searchable' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('column', 'message'),
+    [
+        pytest.param(
+            IndexColumn('n', number='byte', searchable=False), r'"n".*number=\'byte\'.*searchable=False', id='number'
+        ),
+        pytest.param(IndexColumn('_id', number='long'), r'"_id".*number=\'long\'.*document id', id='id-number'),
+        pytest.param(
+            IndexColumn('_id', type='number', text='keyword'), r'"_id".*text=\'keyword\'.*document id', id='id-text'
+        ),
+    ],
+)
+def test_a_kind_nothing_reads_is_not_told_to_declare_a_type_that_leads_to_its_own_refusal(
+    column: IndexColumn, message: str
+):
+    """SPEC-D23.17, SPEC-D23.18: on a column that is never searched, `number=` or `text=` is unused whatever the column's
+    type, so the message is that one and says to drop it, not the older one that says to declare `type='number'` or
+    `type='string'`, which would build the column into the next refusal."""
+    with pytest.raises(SchemaError, match=message) as raised:
+        SearchTable('docs', [KEY, column], unique_key='id')
+    assert 'Declare it' not in str(raised.value)
+    assert 'type="string"' not in str(raised.value)
+    assert 'Drop ' in str(raised.value)
+
+
+def test_the_document_id_declared_as_an_index_column_with_nothing_unread_builds():
+    """SPEC-D23.19: the id declared `IndexColumn('_id')`, with no hook, `text=` or `number=`, builds as `Column('_id')`
+    does, and is read from the hit."""
+    table = SearchTable('docs', [KEY, IndexColumn('_id')], unique_key='id')
+    assert [column.name for column in table.columns] == ['id', '_id']
+
+
+def test_a_flag_that_is_not_false_is_named_as_it_was_written():
+    """SPEC-D23.16: `searchable=None` is falsy and the column is not searched, but the message says what was written,
+    not `searchable=False`."""
+    column = IndexColumn('s', text='keyword', searchable=cast(Any, None), search_value=str.upper)
+    with pytest.raises(SchemaError, match=r'"s".*searchable=None'):
+        SearchTable('docs', [KEY, column], unique_key='id')
 
 
 def test_a_number_kind_on_an_unsearchable_column_is_a_schema_error_that_says_no_filter_reaches_it():

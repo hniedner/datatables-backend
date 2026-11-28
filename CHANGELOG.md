@@ -25,11 +25,14 @@ and the versioning policy is in the README.
     ColumnControl's `contains` on it is refused with `invalid_filter`, and the global search leaves it out). Remove the
     hook, or (not on `_id`) declare the column searchable. The hook did change which requests were refused: a column
     search of only `"` or `!` on such a column was refused `invalid_filter` with it and is ignored without it;
-  - (OpenSearch) a `number=` on a column declared `searchable=False` or on `_id`: the kind only bounds the numbers a
-    filter sends. Drop it, or (not on `_id`) declare the column searchable;
-  - (OpenSearch) a `text=` on a column that reads `_id`, or on a column declared `searchable=False` and
-    `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it. A `text=` on the key, and on
-    an unsearchable column with the default `orderable`, stays: it picks the field the column is sorted by.
+  - (OpenSearch) a `number=` on a number column declared `searchable=False` or on `_id`: the kind only bounds the
+    numbers a filter sends. Drop it, or (not on `_id`) declare the column searchable. (On a column that is no number
+    column, `number=` was refused already, and still is.);
+  - (OpenSearch) a `text=` on a string column that reads `_id`, or on a string column declared `searchable=False` and
+    `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it, or (on the second) declare
+    the column searchable. A `text=` on the key, and on an unsearchable column with the default `orderable`, stays: it
+    picks the field the column is sorted by. (On a column that is no string column, `text=` was refused already, and
+    still is.)
 
 ### Fixed
 
