@@ -546,9 +546,8 @@ def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
 
 
 def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
-    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was: the scan never
-    decodes a byte to it, so the word would silently never match. The scan's own advice, to save the list as UTF-8,
-    leads here."""
+    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was, so the word would
+    miss the word as typed. The scan's own advice, to save the list as UTF-8, leads here."""
     listed = write(tmp_path / 'list.txt', f'{SECOND}\nG\ufffdrtner\n')
     result = scan(str(write(tmp_path / 'notes.md', 'see Gärtner\n')), words=listed)
     assert result.returncode == 2, result.stdout
@@ -564,7 +563,7 @@ def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
 )
 def test_a_note_after_a_word_cannot_check(tmp_path: Path, marker: str):
     """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces.
-    After a tab the tab is refused too, but the message must be the note's: retyping the word would not remove it.
+    After a tab the tab is refused too, but the message must be the note's: it says where the note goes, not to drop it.
     A no-break space (Option+Space on a Mac) is no control character: only the `\\s` of the check refuses it. A
     fullwidth hash (a Japanese input method) folds to `#`, so the check reads the folded word."""
     listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}{marker} the client\n')

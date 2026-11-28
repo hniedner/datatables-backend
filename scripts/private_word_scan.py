@@ -126,12 +126,12 @@ def _word(number: int, line: str) -> str:
     categories (variation selectors) are not checked.
 
     It also refuses U+FFFD, which a list in another encoding holds where each of its non-ASCII letters was once it is
-    opened as UTF-8 and saved again: the scan drops bytes it cannot decode and never replaces them, so the word would
-    silently never match. And it refuses whitespace followed by
-    ``#`` (``word  # note``), a note the list does not support: it would load as one word that never matches. So a
-    word cannot hold whitespace and then ``#``; a phrase with plain spaces and a ``#`` inside a word are fine."""
+    opened as UTF-8 and saved again: the word would match only text that lost the same letters, never the word as
+    typed. And it refuses whitespace followed by ``#`` (``word  # note``), a note the list does not support: it would
+    load as one word that never matches. So a word cannot hold whitespace and then ``#``; a phrase with plain spaces
+    and a ``#`` inside a word are fine."""
     word = line.strip()
-    if re.search(r'\s#', fold(word)):  # first: after a tab, retyping the word keeps the tab and the note
+    if re.search(r'\s#', fold(word)):  # first: a note after a tab gets the note's fix, which keeps the note
         raise CouldNotCheckError(
             f'word list line {number} holds a note after the word: put the note on its own line, starting with #'
         )
