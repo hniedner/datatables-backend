@@ -831,10 +831,11 @@ def numbers_in(field: str, kind: NumberKind | None) -> SearchTable:
 def test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers(
     client: OpenSearch, kind: NumberKind, last: str, first: str
 ):
-    """SPEC-D23.1 on a real server: the last value of each edge is answered through the declared column, the first is
-    `invalid_number` before the query, and the same value through an undeclared column is the server's own 400. So the
-    edge the kind carries is the server's, including the exact edge of `byte` and `short` (an integer's) and the
-    rounding edge of `float`, which the measurement of decision 011 only bracketed."""
+    """SPEC-D23.1 on a real server: a value the server answers is answered through the declared column, a value it
+    refuses is `invalid_number` before the query, and the same value through an undeclared column is the server's own
+    400. So the edge the kind carries is the server's, including the exact edge of `byte` and `short` (an integer's)
+    and the rounding edge of `float`, which the measurement of decision 011 only bracketed; the `half_float` pair
+    through a float straddles its edge."""
     field = NUMBER_FIELDS[kind]
     assert numbers_in(field, kind).fetch_sync(request('id', 'n', **criterion('n', '=', last)), client).error is None
     params = request('id', 'n', **criterion('n', '=', first))
@@ -901,10 +902,10 @@ def test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field(
 ):
     """SPEC-F25.15 on a real server: b2 holds the only 0.0 in each of `n_double`, `n_float` and `n_half`. A number
     whose double is zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep
-    `=`, `<=` and a list from finding b2 and `>` and `>=` from missing it. A nonzero number is sent as it is and the
-    field rounds it: a `float` or `half_float` field reads `-1e-50` or `-1e-10` as -0.0, which is not 0.0, and `1e-50`
-    or `1e-10` as 0.0, in `=` and a list; a `half_float` range rounds its bound in the direction of the range, so `<`
-    and `>=` with `1e-10` answer as the exact number does, where a `float` range rounds to the nearest float first. The
+    `=`, `<=` and a list from finding b2 and let `>` find it. A nonzero number is sent as it is and the field rounds
+    it: a `float` field reads `-1e-50`, and a `half_float` field `-1e-10`, as -0.0, which is not 0.0, and `1e-50` and
+    `1e-10` as 0.0, in `=` and a list; a `half_float` range rounds its bound in the direction of the range, so `<` and
+    `>=` with `1e-10` answer as the exact number does, where a `float` range rounds to the nearest float first. The
     counts of a row are the whole result, so a mismatch shows which cell differs."""
     table = numbers_in(field, kind)
     params = [

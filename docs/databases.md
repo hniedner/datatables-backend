@@ -414,28 +414,28 @@ it goes away (PRD-D23).
 ### A `double`, `float` or `half_float` field keeps -0.0 apart from 0.0, and rounds a tiny number itself
 
 This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for every number whose double is zero: one the
-user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324`
-round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). That is
-the rule PRD-F25 states for OpenSearch: the nearest double, as a SQL `Float` column compares it (SQLite too); a
-`Numeric` column compares exactly instead, and PostgreSQL finds no row for `= 1e-400` there. A number that is tiny only
-in the format of a `float` or `half_float` field (`-1e-50` on a `float` field, `-1e-10` on a `half_float` one: nonzero
-doubles) is sent as it is, and the field rounds it, with the results below. A `half_float` field reads a number as a
-32-bit float first and then rounds that to half, so a declared column refuses `65519.999` (the float 65520.0, which
-overflows half) as `invalid_number`, where the server answers it with a 400.
+user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324` round
+to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). That is the rule
+PRD-F25 states for OpenSearch: the nearest double, as a SQL `Float` column compares it (SQLite too); a `Numeric` column
+compares exactly on PostgreSQL, which finds no row for `= 1e-400` there (MySQL and MariaDB compare it as a float). A
+number that is tiny only in the format of a `float` or `half_float` field (`-1e-50` on a `float` field, `-1e-10` on a
+`half_float` one: nonzero doubles) is sent as it is, and the field rounds it, with the results below. A `half_float`
+field reads a number as a 32-bit float first and then rounds that to half, so a declared column refuses `65519.999` (the
+float 65520.0, which overflows half) as `invalid_number`, where the server answers it with a 400.
 
 - **What you see:** on a `double`, a `float` or a `half_float` field, -0.0 and 0.0 are two values in a `term`, `terms`
   and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and neither does `{"range": {"m":
   {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0 (measured on a `double` and a
   `float` field, INFERRED for a `half_float` one) is found by a body of -0.0, which the library sends for no number a
-  user writes to a `double` field, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does
-  not. A `float` or a `half_float` field reads `-1e-50` or `-1e-10`, which the library sends as they are, as -0.0, so
-  `=` with them finds a stored -0.0 there (INFERRED: no test stores one). A `long` or an `integer` field reads -0.0 as
-  0. That -0.0 sorts below 0.0 is INFERRED from the range results, not measured as an order. Sending `0` for `-1e-400`
-  gives it the answers of the number zero, the nearest double and not the exact number: on a document holding 0.0, `=`,
-  `<=`, a column search and a list entry now find it, where they found none (the exact answer), and `>` and `!=` no
-  longer find it, where they did (the exact answer too). On a document holding -0.0, `=`, a column search, a list entry
-  and `>=` no longer find it, `<` and `!=` now find it, and `between` and `!between` follow their bounds as `0` gives
-  them. For `-0.00` nothing exact is lost: it is zero.
+  user writes, and not by `= 0`, `= -0.00` or `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does not. A `float` field
+  reads `-1e-50`, and a `half_float` field `-1e-10`, which the library sends as they are, as -0.0, so `=` with them
+  finds a stored -0.0 there (INFERRED: no test stores one). A `long` or an `integer` field reads -0.0 as 0. That -0.0
+  sorts below 0.0 is INFERRED from the range results, not measured as an order. Sending `0` for `-1e-400` gives it the
+  answers of the number zero, the nearest double and not the exact number: on a document holding 0.0, `=`, `<=`, a
+  column search and a list entry now find it, where they found none (the exact answer), and `>` and `!=` no longer find
+  it, where they did (the exact answer too). On a document holding -0.0, `=`, a column search, a list entry and `>=` no
+  longer find it, `<` and `!=` now find it, and `between` and `!between` follow their bounds as `0` gives them. For
+  `-0.00` nothing exact is lost: it is zero.
 - **What a field does with a tiny number, or a -0.0, in a body:** against a document holding 0.0, a number the field
   rounds to zero. In `=` and in a list, a tiny negative is read as -0.0 and finds nothing (the exact answer), and a
   tiny positive is read as 0.0 and finds the document (a false one: the field cannot tell it from zero). In a range, a
