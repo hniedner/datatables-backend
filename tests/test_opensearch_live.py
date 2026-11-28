@@ -931,13 +931,18 @@ def test_greater_than_a_tiny_negative_finds_no_zero(client: OpenSearch, field: s
 
 #: What each field finds of the one 0.0 (b2) for a tiny number sent as it is: the counts of `term`, `terms`, and the
 #: ranges `lt`, `lte`, `gt`, `gte`. The truth for a negative tiny number is (0, 0, 0, 0, 1, 1), for a positive one
-#: (0, 0, 1, 1, 0, 0). A `double` field takes -0.0 and 0.0, which is what a number beyond a double becomes; a `float`
-#: field, -1e-50 and 1e-50, which round to -0.0 and 0.0; a `half_float` field, -1e-10 and 1e-10.
+#: (0, 0, 1, 1, 0, 0). Each field takes -0.0 and 0.0, which is what a number beyond a double becomes (`-1e-400`,
+#: `1e-400`); a `float` field also -1e-50 and 1e-50, which round to -0.0 and 0.0 as a float; a `half_float` field
+#: -1e-10 and 1e-10. The exact zero `-0.00` is the number 0, which is the row of 0.0.
 TINY_NUMBER_COUNTS = [
     ('n_double', -0.0, (0, 0, 0, 0, 1, 1)),
     ('n_double', 0.0, (1, 1, 0, 1, 0, 1)),
+    ('n_float', -0.0, (0, 0, 0, 0, 1, 1)),
+    ('n_float', 0.0, (1, 1, 0, 1, 0, 1)),
     ('n_float', -1e-50, (0, 0, 0, 0, 1, 1)),
     ('n_float', 1e-50, (1, 1, 0, 1, 0, 1)),
+    ('n_half', -0.0, (0, 0, 0, 0, 1, 1)),
+    ('n_half', 0.0, (1, 1, 0, 1, 0, 1)),
     ('n_half', -1e-10, (0, 0, 0, 0, 1, 1)),
     ('n_half', 1e-10, (1, 1, 1, 1, 0, 0)),
 ]
