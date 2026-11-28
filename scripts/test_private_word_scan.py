@@ -146,11 +146,38 @@ def test_a_message_scan_without_a_file_cannot_check(words: Path):
     assert 'could not check' in result.stderr
 
 
-@pytest.mark.parametrize('args', [(), ('--files',)])
-def test_a_scan_of_no_file_still_needs_the_word_list(args: tuple[str, ...]):
-    result = scan(*args, words=None)
+def test_a_scan_of_no_file_still_needs_the_word_list():
+    result = scan(words=None)
     assert result.returncode == 2
     assert 'could not check' in result.stderr
+
+
+def test_a_message_scan_of_two_files_cannot_check(tmp_path: Path, words: Path):
+    first = write(tmp_path / 'first.txt', 'A clean message\n')
+    second = write(tmp_path / 'second.txt', f'A message with {WORD}\n')
+    result = scan('--message', str(first), str(second), words=words)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Path, words: Path):
+    """Git strips only a line that starts with `#`; `  # word` stays in the message. The editor's hint line is what
+    shows git stripped the comments, so the scan strips them too."""
+    hint = "# with '#' will be ignored, and an empty message aborts the commit."
+    message = write(repo / 'COMMIT_EDITMSG', f'Add a file\n\n  # {WORD}\n{hint}\n')
+    result = scan('--message', str(message), words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+
+
+def test_a_cp1252_word_is_found_where_latin_1_reads_another_letter(tmp_path: Path):
+    """`Š` is byte 0x8A in cp1252, a control character in Latin-1, and no UTF-8 at all."""
+    listed = write(tmp_path / 'words.txt', 'Šumava\n')
+    planted = tmp_path / 'notes.txt'
+    planted.write_bytes('see Šumava here\n'.encode('cp1252'))
+    result = scan(str(planted), words=listed)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
 
 
 def test_a_broken_git_config_cannot_check_a_message(tmp_path: Path, words: Path):
@@ -187,8 +214,8 @@ def commit(
     git(repo, 'commit', '-q', '-m', message, env=env)
 
 
-# Where the word is planted in each case, in the order the cases run. A path case plants it in the path only (except
-# 'path and contents'), and 'author' and 'committer' each leave the other one clean
+# Where the word is planted in each case, in the order the cases run. 'non-ascii path' plants it in the path only, and
+# 'author' and 'committer' each leave the other one clean
 _PLANTERS: dict[str, Callable[[Path], object]] = {
     'non-ascii path': lambda repo: commit(repo, f'über-{WORD}.txt', b'clean\n'),
     'path and contents': lambda repo: commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode()),
@@ -294,9 +321,11 @@ def test_a_word_list_that_is_missing_is_never_named(tmp_path: Path):
 def test_a_tag_named_with_a_word_that_wraps_a_tag_with_one_is_found_and_never_printed(repo: Path, words: Path):
     git(repo, 'tag', '-a', 'inner', '-m', f'Release for {WORD}')
     git(repo, 'tag', '-a', f'outer-{WORD}', '-m', 'wrapped', 'inner')
+    git(repo, 'tag', '-d', 'inner')  # only the outer tag's ref is left, and it wraps the inner tag object
     result = scan('--refs', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
-    assert '(brought by ref' in result.stderr  # the inner tag's message is found, not only the outer name
+    # The outer tag object holds the word in its own name; the inner one holds it in its message: two objects
+    assert result.stderr.count('(brought by ref') == 2
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
