@@ -951,12 +951,14 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
     # a corrupt object declares two bytes too much; two bytes into the next id a real-looking header starts
     'size into the next header': f'{_ID} blob 7\nshort\n{"0" * 42} blob 5\nhello\n',
     'size past the end': f'{_ID} blob 200\nshort\n',
+    'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # only a newline ends the body
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
     # the rows below are lines laid out like a header, read after a wrong declared end
     'id that is too short': f'{"0" * 39} blob 5\nhello\n',
     'id of neither length': f'{"0" * 41} blob 5\nhello\n',
     'id that is not hex': f'{"z" * 40} blob 5\nhello\n',
+    'id with one byte that is not hex': f'{"0" * 39}z blob 5\nhello\n',
     'kind that is no kind': f'{_ID} {WORD} 5\nhello\n',
 }
 
@@ -965,8 +967,8 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
 def test_an_object_git_cannot_read_cannot_check(
     words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
 ):
-    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the text of the first three
-    rows, or makes later bytes read as one of the other rows."""
+    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the text of 'missing' or of
+    'size past the end', or makes later bytes read as one of the other rows ('size into the next header' models it)."""
     scanner = load_scanner(monkeypatch, words)
     printed = _UNREADABLE[answer].encode()
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
