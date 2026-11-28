@@ -3117,9 +3117,9 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
 @pytest.mark.parametrize(
     ('kind', 'path', 'text'),
     [
-        # the exact zero, where a `-1e-400` row of the same path and kind does not stand for it
+        # the exact zero, where no `-1e-400` row stands for it: a lower bound without a kind, and an integer kind
         (None, 'greater-or-equal', '-0.00'),
-        *(('long', path, '-0.00') for path in ('equals', 'greater-or-equal', 'less')),
+        ('long', 'equals', '-0.00'),
         # `-1e-400` covers every other path, and a `terms` list is built apart from a bound or a `term`
         *((None, path, '-1e-400') for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')),
         (None, 'equals', '1e-400'),  # the one spelling `0`, where the double is 0.0 and not -0.0
@@ -3134,13 +3134,14 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
     field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every
     such number is sent as `0`, in an equality, a bound and a list, on a column without a kind (a `double` field), and
     `-1e-400` on a column declared `float` or `half_float`, where its double is the same -0.0 as `-0.00`'s. A `-0.00`
-    row stays where no `-1e-400` row stands for its path and kind: `>=` without a kind, and a `long`, which shows the
-    exact zero on an integer kind. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches a number
-    sent as the float -0.0, also one converted for a float kind apart from `_json` (a conversion that treats the exact
-    zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds); the `1e-400` row pins the one
-    spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` rows are not the `less` rows again: a rule
-    skipped for an inclusive upper bound alone passes every `less` row and fails these; the `greater` rows add the
-    exclusive lower bound and `-1e-400` as a lower bound, where the `>=` rows already catch a rule skipped for one."""
+    row stays where no `-1e-400` row stands for it: `>=` without a kind, and `=` on a `long`, which shows the exact
+    zero on an integer kind (one row, since every path reaches the kind in one place). The bodies are compared as
+    JSON, since Python's -0.0 equals 0. It catches a number sent as the float -0.0, also one converted for a float
+    kind apart from `_json` (a conversion that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400`
+    rows of the float kinds); the `1e-400` row pins the one spelling `0` (OpenSearch reads 0.0 the same). The
+    `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the
+    `less` row and fails this one; the `greater` row adds the exclusive lower bound and `-1e-400` as a lower bound,
+    where the `>=` row already catches a rule skipped for one."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
@@ -3150,8 +3151,9 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
 def test_a_number_whose_double_is_not_zero_is_sent_as_that_double(text: str):
     """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one and `3e-324` rounds up to it (zero
     would be `2e-324`, below half of it), so each is sent as the double it is, not as `0`. The negative row catches a
-    rule for positives alone, `3e-324` one that sends `0` below the smallest subnormal itself, and all three a rule
-    that sends `0` for every tiny number, subnormals included: no other test sends a subnormal."""
+    rule for negatives alone, the positive rows one for positives alone, `3e-324` one that sends `0` below the
+    smallest subnormal itself, and all three a rule that sends `0` for every tiny number, subnormals included: no
+    other test sends a subnormal."""
     assert float(text) != 0
     sent = asked(None, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
     assert sent == {'term': {'n': float(text)}}

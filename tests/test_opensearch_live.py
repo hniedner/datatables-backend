@@ -879,9 +879,10 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
         numbers_in('n_float', None).fetch_sync(params, client)
 
 
-#: What a number finds of the one 0.0 (b2) through the library: the counts for `=`, a `multi_values` list, `<`, `<=`, `>`
-#: and `>=`. A number whose double is zero (`-0.00`, `-1e-400`, `1e-400`) goes as `0`, so it has the answers of 0.0; a
-#: nonzero one goes as it is, so the field's own rounding answers, as docs/databases.md records from the raw queries.
+#: What a number finds of b2, the only document with a value (0.0) in `n_double`, `n_float` and `n_half`, through the
+#: library: the counts for `=`, a `multi_values` list, `<`, `<=`, `>` and `>=`. A number whose double is zero (`-0.00`,
+#: `-1e-400`, `1e-400`) goes as `0`, so it has the answers of 0.0; a nonzero one goes as it is, so the field's own
+#: rounding answers, as docs/databases.md records from the raw queries.
 ZERO_COUNTS = (1, 1, 0, 1, 0, 1)
 TINY_NUMBER_COUNTS = [
     *(
@@ -900,7 +901,8 @@ TINY_NUMBER_COUNTS = [
 def test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field(
     client: OpenSearch, field: str, kind: NumberKind | None, text: str, counts: tuple[int, ...]
 ):
-    """SPEC-F25.15 on a real server: b2 holds the only 0.0 in each of `n_double`, `n_float` and `n_half`. A number
+    """SPEC-F25.15 on a real server: b2 is the only document with a value, 0.0, in each of `n_double`, `n_float` and
+    `n_half`, so the counts are its answers (another document with one would change them). A number
     whose double is zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep
     `=`, `<=` and a list from finding b2 and let `>` find it. A nonzero number is sent as it is and the field rounds
     it: a `float` field reads `-1e-50`, and a `half_float` field `-1e-10`, as -0.0, which is not 0.0, and `1e-50` and

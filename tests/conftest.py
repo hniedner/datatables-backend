@@ -456,10 +456,10 @@ KIND_BOUNDS = {
     'half_float': '-65504 and 65504',
 }
 #: (kind, a value OpenSearch answers, a value it refuses). Mostly the last and the first either side of the edge:
-#: `float`'s are the last double a float holds and the first that rounds to infinity, and `half_float`'s 65519 and
-#: 65520, the whole numbers either side of its edge, which the measurement found on both servers.
-#: `half_float-through-float` is 65519.99 and 65519.999, a pair that straddles the edge without being its last and
-#: first: a `half_float` field reads a number as a 32-bit float first, so the edge is, computed from that,
+#: `float`'s are the last double that rounds to a finite float (FLT_MAX) and the first that rounds to infinity, and
+#: `half_float`'s 65519 and 65520, the whole numbers either side of its edge, which the measurement found on both
+#: servers. `half_float-through-float` is 65519.99 and 65519.999, a pair that straddles the edge without being its last
+#: and first: a `half_float` field reads a number as a 32-bit float first, so the edge is, computed from that,
 #: 65519.998046875 (the float tie that rounds to 65520.0) and 65519.999 is the float 65520.0 (the server's 400 for it,
 #: on both servers, CI run 46091503895), where rounded straight to half it would be 65504.
 NUMBER_EDGES = [

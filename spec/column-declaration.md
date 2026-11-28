@@ -127,9 +127,10 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `invalid_number` and nothing sent, where the server's own answer is a 400 (`[half_float] supports only finite values,
   but got [65520.0]`).
 - **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query is
-  checked, and the value just past the edge is refused by every one: SearchBuilder `=`, `!=`, `<`, `<=`, `>`, `>=`,
-  `between` and `!between`, a column search, a `multi_values` list, and ColumnControl's `equal` and its list. Live: a
-  list of -1 on an undeclared `unsigned_long` answers the document holding 2^64-1, and a declared one refuses it.
+  checked, and the first value refused of a pair of `SPEC-D23.1` is refused by every one: SearchBuilder `=`, `!=`, `<`,
+  `<=`, `>`, `>=`, `between` and `!between`, a column search, a `multi_values` list, and ColumnControl's `equal` and its
+  list. Live: a list of -1 on an undeclared `unsigned_long` answers the document holding 2^64-1, and a declared one
+  refuses it.
 - **SPEC-D23.3** [OS] A `byte` and a `short` answer `<=` with 128, 40000 and -129: they refuse only beyond an
   `integer`'s range.
 - **SPEC-D23.4** [OS] The refusal of a number of 47 digits, for each kind, names the field type, says `within that
