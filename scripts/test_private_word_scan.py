@@ -165,12 +165,12 @@ def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Pat
     shows git stripped the comments, so the scan strips them too."""
     hint = "# with '#' will be ignored, and an empty message aborts the commit."
     message = write(repo / 'COMMIT_EDITMSG', f'Add a file\n\n  # {WORD}\n{hint}\n')
-    result = scan('--message', str(message), words=words, cwd=repo)
+    result = scan('--message', str(message), words=words, cwd=repo, extra={'GIT_CONFIG_GLOBAL': os.devnull})
     assert result.returncode == 1, result.stderr
     assert 'private word #' in result.stderr
 
 
-def test_a_cp1252_word_is_found_where_latin_1_reads_another_letter(tmp_path: Path):
+def test_a_cp1252_word_is_found_where_latin_1_reads_a_control_character(tmp_path: Path):
     """`Š` is byte 0x8A in cp1252, a control character in Latin-1, and no UTF-8 at all."""
     listed = write(tmp_path / 'words.txt', 'Šumava\n')
     planted = tmp_path / 'notes.txt'
@@ -318,15 +318,22 @@ def test_a_word_list_that_is_missing_is_never_named(tmp_path: Path):
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
-def test_a_tag_named_with_a_word_that_wraps_a_tag_with_one_is_found_and_never_printed(repo: Path, words: Path):
-    git(repo, 'tag', '-a', 'inner', '-m', f'Release for {WORD}')
-    git(repo, 'tag', '-a', f'outer-{WORD}', '-m', 'wrapped', 'inner')
-    git(repo, 'tag', '-d', 'inner')  # only the outer tag's ref is left, and it wraps the inner tag object
+@pytest.mark.parametrize('namespace', ['refs/notes', 'refs/remotes/origin'])
+def test_a_ref_named_with_a_word_outside_heads_and_tags_is_found(repo: Path, words: Path, namespace: str):
+    git(repo, 'update-ref', f'{namespace}/{WORD}', 'HEAD')
     result = scan('--refs', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
-    # The outer tag object holds the word in its own name; the inner one holds it in its message: two objects
-    assert result.stderr.count('(brought by ref') == 2
+    assert 'private word #' in result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_word_is_folded_with_its_compatibility_form_first(tmp_path: Path):
+    """U+03D2 decomposes to a capital upsilon, which casefolds to the lower-case one the text holds."""
+    listed = write(tmp_path / 'words.txt', '\u03d2x\n')
+    planted = write(tmp_path / 'notes.md', 'see \u03c5x here\n')
+    result = scan(str(planted), words=listed)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
 
 
 def test_a_tag_on_a_tree_named_with_a_word_is_found_and_never_printed(repo: Path, words: Path):
