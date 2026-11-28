@@ -65,6 +65,7 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unicodedata
@@ -86,9 +87,9 @@ _BOMS = [
 
 class CouldNotCheckError(Exception):
     """The scan cannot check: no usable word list (none readable, not UTF-8, a format, control or separator character
-    (Unicode Cf, Cc, Zl, Zp) or a replacement character U+FFFD in a word, or no word in it), a ``--message`` call that
-    does not name exactly one file, or an object could not be read. (A failing git or file system raises
-    CalledProcessError or OSError, which ``main`` answers the same way.)"""
+    (Unicode Cf, Cc, Zl, Zp), a replacement character U+FFFD or a note after a word, or no word in it), a
+    ``--message`` call that does not name exactly one file, or an object could not be read. (A failing git or file
+    system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
 
 
 def load_words() -> Words:
@@ -122,10 +123,16 @@ def _word(number: int, line: str) -> str:
     categories (variation selectors) are not checked.
 
     It also refuses U+FFFD, which a list converted to UTF-8 from another encoding holds where each accented letter
-    was: no scanned text produces it, so the word would silently never match."""
+    was: no scanned text produces it, so the word would silently never match. And it refuses whitespace followed by
+    ``#`` (``word  # note``), a note the list does not support: it would load as one word that never matches. So a
+    word cannot hold whitespace and then ``#``; a phrase with plain spaces and a ``#`` inside a word are fine."""
     word = line.strip()
     if any(unicodedata.category(character) in {'Cf', 'Cc', 'Zl', 'Zp'} for character in word):
         raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
+    if re.search(r'\s#', word):
+        raise CouldNotCheckError(
+            f'word list line {number} holds a note after the word: put the note on its own line, starting with #'
+        )
     if '\ufffd' in word:
         raise CouldNotCheckError(
             f'word list line {number} holds a replacement character (a letter lost when the list was converted to '

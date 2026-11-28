@@ -555,6 +555,24 @@ def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
     assert ': retype the word' in result.stderr  # the fix
 
 
+def test_a_note_after_a_word_cannot_check(tmp_path: Path):
+    """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}  # the client\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'could not check: word list line 2 holds a note after the word' in result.stderr
+    assert 'put the note on its own line, starting with #' in result.stderr  # the fix
+
+
+@pytest.mark.parametrize(
+    'listed', [f'{WORD[:4]} {WORD[4:]}', f'{WORD}#1'], ids=['a phrase with a space', 'a hash inside']
+)
+def test_a_phrase_or_a_hash_inside_a_word_is_still_a_word(tmp_path: Path, listed: str):
+    """Only whitespace followed by # is a note: a multi-word private name and a word like `C#` are legitimate."""
+    result = scan(str(write(tmp_path / 'notes.md', f'see {listed} here\n')), words=write(tmp_path / 'l.txt', listed))
+    assert result.returncode == 1, result.stdout
+
+
 @pytest.mark.parametrize('where', ['message', 'author'])
 def test_history_reads_commits_on_every_branch(repo: Path, words: Path, where: str):
     """The word is only in the side branch's commit, not in any file, so only the commit scan can find it."""
