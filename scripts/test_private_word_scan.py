@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+from collections.abc import Callable
 import importlib.util
 import os
 from pathlib import Path
@@ -26,9 +27,12 @@ def scan(
     env = {key: value for key, value in os.environ.items() if key != 'DTB_PRIVATE_WORDS'} | (extra or {})
     if words is not None:
         env['DTB_PRIVATE_WORDS'] = str(words)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(SCRIPT), *args], env=env, cwd=cwd, capture_output=True, text=True, check=False
     )
+    # Python exits 1 on an uncaught exception, the status of a finding: a crash must not pass a test of a refusal
+    assert 'Traceback' not in result.stderr, result.stderr
+    return result
 
 
 @pytest.fixture
@@ -142,6 +146,58 @@ def test_a_message_scan_without_a_file_cannot_check(words: Path):
     assert 'could not check' in result.stderr
 
 
+def test_a_scan_of_no_file_still_needs_the_word_list():
+    result = scan(words=None)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_a_message_scan_of_two_files_cannot_check(tmp_path: Path, words: Path):
+    first = write(tmp_path / 'first.txt', 'A clean message\n')
+    second = write(tmp_path / 'second.txt', f'A message with {WORD}\n')
+    result = scan('--message', str(first), str(second), words=words)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Path, words: Path):
+    """Git strips only a line that starts with `#`; `  # word` stays in the message. The editor's hint line is what
+    shows git will strip the comments, so the scan strips them too."""
+    hint = "# with '#' will be ignored, and an empty message aborts the commit."
+    message = write(repo / 'COMMIT_EDITMSG', f'Add a file\n\n  # {WORD}\n{hint}\n')
+    result = scan('--message', str(message), words=words, cwd=repo, extra={'GIT_CONFIG_GLOBAL': os.devnull})
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+
+
+def test_a_cp1252_word_is_found_where_latin_1_reads_a_control_character(tmp_path: Path):
+    """`Š` is byte 0x8A in cp1252, a control character in Latin-1, and no UTF-8 at all."""
+    listed = write(tmp_path / 'words.txt', 'Šumava\n')
+    planted = tmp_path / 'notes.txt'
+    planted.write_bytes('see Šumava here\n'.encode('cp1252'))
+    result = scan(str(planted), words=listed)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+
+
+def test_a_broken_git_config_cannot_check_a_message(tmp_path: Path, words: Path):
+    broken = write(tmp_path / 'gitconfig', '[core\n')
+    message = write(tmp_path / 'message.txt', 'A clean message\n')
+    result = scan('--message', str(message), words=words, extra={'GIT_CONFIG_GLOBAL': str(broken)})
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_a_ref_whose_objects_cannot_be_listed_cannot_check(repo: Path, words: Path):
+    git(repo, 'tag', 'tree-tag', 'HEAD^{tree}')
+    blob = git(repo, 'rev-parse', 'HEAD:a.txt').strip()
+    (repo / '.git' / 'objects' / blob[:2] / blob[2:]).chmod(0o644)
+    (repo / '.git' / 'objects' / blob[:2] / blob[2:]).unlink()  # the tree names a blob that is gone
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
 def test_a_history_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Path):
     outside = tmp_path / 'not-a-repo'
     outside.mkdir()
@@ -158,39 +214,28 @@ def commit(
     git(repo, 'commit', '-q', '-m', message, env=env)
 
 
-@pytest.mark.parametrize(
-    'where',
-    [
-        'non-ascii path',
-        'path and contents',
-        'binary blob',
-        'ref name',
-        'tag message',
-        'author',
-        'committer',
-        'author email',
-        'committer email',
-    ],
-)
+# Where the word is planted in each case. 'non-ascii path' plants it in the path only, and 'author' and 'committer'
+# each leave the other one clean.
+_PLANTERS: dict[str, Callable[[Path], object]] = {
+    'non-ascii path': lambda repo: commit(repo, f'über-{WORD}.txt', b'clean\n'),
+    'path and contents': lambda repo: commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode()),
+    'binary blob': lambda repo: commit(repo, 'blob.bin', b'\x00\x01' + WORD.encode() + b'\x00'),
+    'ref name': lambda repo: git(repo, 'branch', f'topic-{WORD}'),
+    'tag message': lambda repo: git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}'),
+    'author': lambda repo: commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'}),
+    'committer': lambda repo: commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_NAME': f'{WORD} Person'}),
+    'author email': lambda repo: commit(
+        repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_EMAIL': f'{WORD.lower()}@example.org'}
+    ),
+    'committer email': lambda repo: commit(
+        repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_EMAIL': f'{WORD.lower()}@example.org'}
+    ),
+}
+
+
+@pytest.mark.parametrize('where', list(_PLANTERS))
 def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words: Path, where: str):
-    if where == 'non-ascii path':  # the word in the path only
-        commit(repo, f'über-{WORD}.txt', b'clean\n')
-    elif where == 'path and contents':
-        commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode())
-    elif where == 'binary blob':
-        commit(repo, 'blob.bin', b'\x00\x01' + WORD.encode() + b'\x00')
-    elif where == 'ref name':
-        git(repo, 'branch', f'topic-{WORD}')
-    elif where == 'tag message':
-        git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
-    elif where == 'author email':
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_EMAIL': f'{WORD.lower()}@example.org'})
-    elif where == 'committer email':
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_EMAIL': f'{WORD.lower()}@example.org'})
-    elif where == 'author':  # the author alone: the committer stays clean
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'})
-    else:
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_NAME': f'{WORD} Person'})
+    _PLANTERS[where](repo)
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
@@ -240,6 +285,91 @@ def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     result = scan(str(link), words=words)
     assert result.returncode == 1
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_link_named_with_a_word_and_aimed_at_one_never_prints_either(tmp_path: Path, words: Path):
+    link = tmp_path / f'{WORD}-link'
+    link.symlink_to(f'../{WORD}/target')
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_symlink_target_in_latin_1_is_found(tmp_path: Path):
+    latin_1_words = write(tmp_path / 'latin1-words.txt', 'Grünspecht\n')
+    link = tmp_path / 'link'
+    os.symlink(b'../Gr\xfcnspecht/target', link)  # the target's bytes are Latin-1, which is no UTF-8
+    result = scan(str(link), words=latin_1_words)
+    assert result.returncode == 1
+    assert 'grünspecht' not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_file_that_is_not_the_last_one_given_is_scanned(tmp_path: Path, words: Path):
+    planted = write(tmp_path / 'planted.md', f'see {WORD} here\n')
+    clean = write(tmp_path / 'clean.md', 'nothing\n')
+    assert scan(str(planted), str(clean), words=words).returncode == 1
+
+
+def test_a_symlink_to_a_file_that_exists_is_scanned_as_a_link(tmp_path: Path, words: Path):
+    (tmp_path / f'{WORD}-notes').mkdir()
+    write(tmp_path / f'{WORD}-notes' / 'target', 'clean\n')
+    link = tmp_path / 'link'
+    link.symlink_to(f'{WORD}-notes/target')  # the target exists and holds no word; only its path has one
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_word_list_that_is_missing_is_never_named(tmp_path: Path):
+    result = scan('--files', words=tmp_path / f'{WORD}.txt')  # the path holds a word, and no file is there
+    assert result.returncode == 2
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+@pytest.mark.parametrize('namespace', ['refs/notes', 'refs/remotes/origin'])
+def test_a_ref_named_with_a_word_outside_heads_and_tags_is_found(repo: Path, words: Path, namespace: str):
+    git(repo, 'update-ref', f'{namespace}/{WORD}', 'HEAD')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_word_is_folded_with_its_compatibility_form_first(tmp_path: Path):
+    """U+03D2 decomposes to a capital upsilon, which casefolds to the lower-case one the text holds."""
+    listed = write(tmp_path / 'words.txt', '\u03d2x\n')
+    planted = write(tmp_path / 'notes.md', 'see \u03c5x here\n')
+    result = scan(str(planted), words=listed)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+
+
+def test_a_tag_on_a_tree_named_with_a_word_is_found_and_never_printed(repo: Path, words: Path):
+    commit(repo, f'{WORD}.txt', b'clean\n')
+    git(repo, 'tag', f'tree-{WORD}', 'HEAD^{tree}')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert '/***:*** (path)' in result.stderr  # the whole path under the tree is found, not only the tag's name
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_blob_that_ends_in_the_word_is_found(repo: Path, words: Path):
+    commit(repo, 'b.txt', WORD.encode())  # no byte after the word
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
+def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path, words: Path):
+    link = tmp_path / f'{WORD}-link'
+    link.symlink_to('clean-target')
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_list_word_with_spaces_around_it_still_matches(tmp_path: Path):
+    padded = write(tmp_path / 'padded.txt', f'  {WORD}  \n')
+    planted = write(tmp_path / 'notes.md', f'see {WORD} here\n')
+    assert scan(str(planted), words=padded).returncode == 1
 
 
 def test_a_symlink_target_in_history_is_scanned(repo: Path, words: Path):
@@ -678,6 +808,28 @@ def test_a_latin1_word_is_found(tmp_path: Path, repo: Path, non_ascii_words: Pat
     shown = (result.stdout + result.stderr).casefold()
     assert NON_ASCII.casefold() not in shown
     assert 'grnspecht' not in shown  # nor the word less the letter decoding drops
+
+
+def test_a_latin_1_word_spanning_two_parts_of_a_path_is_never_printed(tmp_path: Path, repo: Path):
+    """Only the whole path, read one byte per letter (`ü` is one byte), holds the word, so the path is hidden whole."""
+    spanning = write(tmp_path / 'spanning.txt', 'Grün/Specht\n')
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    inner = git(repo, 'mktree', input=f'100644 blob {blob}\tSpecht.txt\n').strip()
+    outer = git_bytes(repo, 'mktree', '-z', input=f'040000 tree {inner}\t'.encode() + 'Grün'.encode('latin-1') + b'\0')
+    git(repo, 'tag', 'just-a-tree', outer.strip())
+    result = scan('--refs', words=spanning, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'specht' not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_tag_object_only_the_store_holds_is_read(repo: Path, words: Path):
+    """A push can send a tag object by its id after its ref is deleted."""
+    git(repo, 'tag', '-a', 'gone', '-m', f'Release for {WORD}')
+    git(repo, 'tag', '-d', 'gone')
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
 def test_a_replaced_commit_is_read_as_stored(tmp_path: Path, repo: Path):
