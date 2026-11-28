@@ -341,7 +341,10 @@ def _scan(argv: list[str], words: Words) -> tuple[list[str], str]:
 
 
 def _message_scan(argv: list[str], words: Words) -> list[str]:
-    """The findings of a commit message file. Raises CouldNotCheckError unless ``argv`` names exactly one."""
+    """The findings of a commit message file. Raises CouldNotCheckError unless ``argv`` names exactly one file.
+
+    Reading the file and running git can fail too, as ``_scan`` says.
+    """
     if len(argv) != 2:
         raise CouldNotCheckError('--message needs the message file')
     found = text_hits(message_text(Path(argv[1]).read_bytes()), words)

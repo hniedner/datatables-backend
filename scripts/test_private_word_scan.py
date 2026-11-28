@@ -803,7 +803,7 @@ def test_a_latin1_word_is_found(tmp_path: Path, repo: Path, non_ascii_words: Pat
 
 
 def test_a_latin_1_word_spanning_two_parts_of_a_path_is_never_printed(tmp_path: Path, repo: Path):
-    """Only the whole path, read one byte per letter (`ü` is one byte), holds the word, so the name is hidden whole."""
+    """Only the whole path, read one byte per letter (`ü` is one byte), holds the word, so the path is hidden whole."""
     spanning = write(tmp_path / 'spanning.txt', 'Grün/Specht\n')
     blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
     inner = git(repo, 'mktree', input=f'100644 blob {blob}\tSpecht.txt\n').strip()
