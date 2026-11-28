@@ -14,8 +14,9 @@ and the versioning policy is in the README.
 ### Changed
 
 - On OpenSearch, `IndexColumn.text` is `None` when it is not declared, where it was `'text+keyword'`. A string column
-  that does not declare it is still read as `text+keyword`, so no answer changes; a `text` of any value, `text+keyword`
-  included, on a column that is not a string column is refused.
+  that does not declare it is still read as `text+keyword`, so no answer changes (an explicit `text=None`, whose
+  whole-string conditions and ordering 0.1.3 wrongly refused, now answers as `text+keyword` too); a `text` of any value,
+  `text+keyword` included, on a column that is not a string column is refused.
 
 ### Fixed
 
@@ -23,8 +24,8 @@ and the versioning policy is in the README.
   empty column name or `field` now raises `SchemaError` when it is built, naming what was written and the fix. Before,
   the `text=` was ignored, a non-callable `search_value` raised `TypeError` on the first request that searched the
   column, an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
-  OpenSearch (on SQL it was refused only as a missing column, with no fix, and a name of `None` raised SQLAlchemy's
-  `ArgumentError`). A table that used to build and now fails to build is the declaration being wrong.
+  OpenSearch (on SQL it was refused only as a missing column, with no fix, and a name of `None` with no `field` raised
+  SQLAlchemy's `ArgumentError`). A table that used to build and now fails to build is the declaration being wrong.
 - A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
   table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that

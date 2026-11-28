@@ -166,4 +166,4 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
   `field` built a table that sent an empty field name, and an empty `field` was silently read as the name on both
   backends; on SQL an empty name with no `field` was refused only as a missing column, with no fix, and a name of `None`
-  raised SQLAlchemy's `ArgumentError`.
+  with no `field` raised SQLAlchemy's `ArgumentError`.
