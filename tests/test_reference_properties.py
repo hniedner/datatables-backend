@@ -37,20 +37,19 @@ then one applied in the other direction, now and then over rows that tie on the 
 cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and
 then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice, nameless columns
 and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of PRD-E3.
-The rates are set so that half or more of the requests are answered (60% of the valid examples on the `ci` seed of SQLite) and most outcomes
-and paths are reached at least about 30 times in 500 examples; one seed varies around that, and the seed follows the
-test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
---hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
+The rates are set so that half or more of the requests are answered (60% of the valid examples on the `ci` seed of
+SQLite) and most outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that,
+and the seed follows the test's source, so an edit of the test changes it (`uv run pytest
+tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
 drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 3%, M5b 2%, M6 1%, M7 2%
-(`between`) and 1% (`!between`), M10 3% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
+(`between`) and 2% (`!between`), M10 3% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
 `compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
 that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text only 1% (1%), PAD SPACE changing the
 answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date text that finds a row and leaves out
 another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores it changes the answer 5% (0.5%), the
-spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; no example reaches this path, the
-hand tests of SPEC-F25.12 pin the bound). A rate moves by several points from one seed to the next, and each of the
-other paths also has its example. `n` holds 2^53 and
-2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen
+spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; on SQLite no example reaches
+this path, the hand tests of SPEC-F25.12 pin the bound). A rate moves by several points from one seed to the next, and
+each of the other paths also has its example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen
 `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row holding one in
 4% of the `ci` examples, 6% over the 2,000 (without that scenario 5,000 `explore` examples missed the mutant that binds
 an integer column's number as a double).
@@ -111,20 +110,22 @@ log records; the types a database adds of its own.
 
 Generator restrictions, each with its reason:
 - A number beyond 32 bits is sent only to `n`, the BigInteger, and to `m`, the `Numeric`; never to `id`, an Integer,
-  whose width the evaluator does not model. The evaluator reads every number column with a BigInteger's range, the mistake of the column's own type that
-  PRD-E3 answers in step 3 after the maximum date of PRD-F24 as a bound.
+  whose width the evaluator does not model. The evaluator reads every integer column with a BigInteger's range, the
+  mistake of the column's own type that PRD-E3 answers in step 3 after the maximum date of PRD-F24 as a bound.
 - A number with a fraction or an exponent is sent only to `m`, so a non-finite number on an integer column is never
-  compared here (the evaluator reads it as step 2 there too; the library's reading of it is pinned by the OpenSearch
-  hand test of SPEC-E3.15); no curly quote and no character outside ASCII: out of
-  scope above.
-- `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as a
-  floating-point number beyond about 15 significant digits (PRD section 5, `docs/databases.md` "A `Numeric` column is
-  not compared exactly"), and the evaluator models what it stores for these values, not every value.
+  compared here (the evaluator reads it as step 2 there too; the library's code for it on an integer column is pinned
+  by the test of SPEC-F25.1 and its step by the OpenSearch hand test of SPEC-E3.15, on a number column without a kind);
+  no curly quote and no character outside ASCII: out of scope above.
+- `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as a floating-point number beyond
+  about 15 significant digits (PRD section 5, `docs/databases.md` "A decimal is not compared exactly"), and the
+  evaluator models what it stores for these values, not every value.
 - No number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading would compare
   otherwise than its exact value: MySQL and MariaDB compare such a number as a double (`docs/databases.md` "`= 1e-400`
   finds a row holding zero on MySQL and MariaDB"). `0.` and 38 or 39 ones are sent (SQL Server's bound), which compare
-  with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3). `1.0e-16383` is
-  answered, so it is sent only on PostgreSQL and SQL Server (which refuses it), where no float reading is involved.
+  with every cell of `m` as their double does; `1e-16383` and its spelling `1.0e-16383` are within the limit and are
+  sent except on MySQL and MariaDB, which compare them as a double the evaluator does not model (it models SQLite's
+  float reading, PRD section 5; SQL Server refuses them by its 38 digits); `1e-16384` is refused at step 3 (PRD-F25,
+  PRD-E3).
 - No exponent beyond what a `Decimal` holds: the evaluator does not read one (it raises `OutOfScope`).
 - A request column's `name` is always empty, so its name is its `data` (PRD-P15), and an order entry sends no `name`:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
@@ -158,6 +159,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from decimal import InvalidOperation
 import json
 import os
 from pathlib import Path
@@ -244,22 +246,28 @@ DECIMALS = [Decimal('12345678901234567.89'), Decimal('12345678901234567.90'), De
             Decimal('0.30'), Decimal('0.31'), Decimal('0.00')]  # fmt: skip
 #: Numbers sent to `m`: the pool's own, spelled otherwise (trailing zeros, an exponent, `-0.00`), and numbers the
 #: comparison tells apart: 0.305 and 0.30000000000000001 hold more digits than the column, 12345678901234567 is whole
-#: and a float's neighbour of the first three
+#: and the integer neighbour that a float cannot tell from the first three
 DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '12345678901234567.90', '12345678901234568',
                     '0.305', '12345678901234567', '12345678901234567.8900', '-0.00', '3.1e-1', '0.3', '0.31', '0.3000',
                     '0', '00.31', '1.5e3']  # fmt: skip
 #: Numbers at a bound: 39 digits and `0.` with 39 digits are over SQL Server's 38, `0.` with 38 digits is not (the
 #: zero before the point is not counted); `1e-16384` holds more digits after the point than any column (step 3), while
-#: `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3). `1.0e-16383`
-#: is the same number as `1e-16383`, so it is answered, and an engine that reads it as a double finds the row holding
-#: 0.00 (PRD section 5): it is sent only where the comparison is exact, PostgreSQL, or refused, SQL Server
+#: `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3).
+#: `1.0e-16383` is the same number as `1e-16383`, so it is within the 16,383 limit; an engine that reads it as a double
+#: finds the row holding 0.00 (PRD section 5): the evaluator models that for SQLite, not for MySQL and MariaDB, so it
+#: is not sent there, nor on OpenSearch (`tests/test_opensearch.py` pins it); SQL Server refuses it by its 38 digits
 DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '0e-16384', '1e400', '1e999']
-if os.environ.get('DTB_SQL_DIALECT', 'sqlite') in ('postgresql', 'mssql'):
+TINY_NUMBER_MODELLED = os.environ.get('DTB_SQL_DIALECT', 'sqlite') in (
+    'sqlite',
+    'postgresql',
+    'mssql',
+) and not os.environ.get('DTB_OPENSEARCH_URL')
+if TINY_NUMBER_MODELLED:
     DECIMAL_BOUNDS.append('1.0e-16383')
 #: Search words over a decimal's text (PRD-F23), each found in one spelling and not the other when a row holds the
-#: value it names (the scenario sets the first, one of the next two and the fourth; `68.00`, `.9` and `7.90` need the
-#: draw to give a row that value): `4568` in SQLite's text of the first three (`12345678901234568`) and in the fixed-scale one of
-#: 12345678901234568.00 only, the others in the fixed-scale text only
+#: value it names (of `DECIMALS`, the scenario sets the first, one of the next two and the fourth; `68.00`, `.9` and
+#: `7.90` need the draw to give a row that value): `4568` in SQLite's text of the first three (`12345678901234568`) and
+#: in the fixed-scale one of 12345678901234568.00 only, the others in the fixed-scale text only
 DECIMAL_WORDS = ['.30', '4568', '68.00', '567.8', '.9', '7.90']
 CELLS: dict[str, st.SearchStrategy[Any]] = {
     's': st.none() | st.sampled_from(STRINGS),
@@ -598,7 +606,7 @@ def compared(
     alone as a global word over number text only matches no row. PRD section 5: a test of `''`, `' '`, `'a'` and `'a '`
     that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake. PRD-F23: a column
     search on a date column by a part of its `YYYY-MM-DD` text. PRD-F23, PRD-F25, PRD section 5: a filter on `m`, over
-    rows that hold two of the three numbers a float cannot tell apart and 0.30 (`decimal`). The `%` and the 2^63
+    rows that may hold two of the three numbers a float cannot tell apart and 0.30 (`decimal`). The `%` and the 2^63
     scenarios drop the order entries, since one may hold a mistake of its own."""
     columns = body['columns']
     present = {column['data']: index for index, column in enumerate(columns) if isinstance(column['data'], str)}
@@ -676,7 +684,7 @@ def decimal(
     orderable: bool,
     body: dict[str, Any],
 ) -> None:
-    """Rows that hold two of the three numbers a float cannot tell apart and 0.30, and a filter on `m` whose answer
+    """Rows that may hold two of the three numbers a float cannot tell apart and 0.30, and a filter on `m` whose answer
     hangs on how a number is compared with a `Numeric` or how a decimal is spelled: a criterion, a list or
     ColumnControl's comparison with a number of `DECIMAL_OPERANDS` (half the time one of the first five, one in four
     one of the others and one in four one of `DECIMAL_BOUNDS`), or a column or global search with a word of
@@ -1056,17 +1064,19 @@ def criteria_of(node: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def reversed_bounds(leaf: dict[str, Any]) -> bool:
-    """Whether a criterion's two values are a range written high to low (PRD-F27): numbers as numbers, days as days."""
-    if len(leaf['value']) != 2 or (KINDS.get(leaf['origData']) not in ('number', 'date') and leaf['origData'] != 'm'):
+    """Whether a criterion's two values are a range written high to low (PRD-F27): numbers and decimals as numbers, days
+    as days."""
+    kind = KINDS.get(leaf['origData'])
+    if len(leaf['value']) != 2 or kind not in ('number', 'decimal', 'date'):
         return False
     low, high = (value.strip() for value in leaf['value'])
     try:
-        return (
-            int(low) > int(high)
-            if KINDS[leaf['origData']] == 'number'
-            else date.fromisoformat(low) > date.fromisoformat(high)
-        )
-    except ValueError:
+        if kind == 'number':
+            return int(low) > int(high)
+        if kind == 'decimal':
+            return Decimal(low) > Decimal(high)
+        return date.fromisoformat(low) > date.fromisoformat(high)
+    except (ValueError, InvalidOperation):
         return False
 
 
@@ -1636,8 +1646,8 @@ EXAMPLES |= {
     'decimal order': (rows_of('m', DECIMALS[2], DECIMALS[1], DECIMALS[0]), DECLARED,
                       request_of({'data': 'm'}, order=[{'column': 0, 'dir': 'asc'}])),
     # PRD-F25, PRD-E3: `0.` and 39 digits is over SQL Server's 38 (step 3.5), so the last day (step 3) answers there
-    # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3) and the count of the zero before the
-    # point, not the bound, which only the hand tests of SPEC-F25.12 refuse on SQL Server (it answers alike without it)
+    # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3); the count of the zero before the
+    # point is pinned by `0.` and 38 ones in `DECIMAL_BOUNDS` and by the hand tests of SPEC-F25.12
     'decimal 39 digits then the last day': (rows_of('m', *DECIMALS), DECLARED,
                                             request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
                                                 ('m', '<', ['0.' + '1' * 39]), ('d', '<', [LAST])))),
@@ -1668,9 +1678,10 @@ EXAMPLES |= {
     'decimal zero past the fraction limit': (rows_of('m', *DECIMALS), DECLARED, request_of(
         {'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0e-16384'])))),
 }  # fmt: skip
-if os.environ.get('DTB_SQL_DIALECT', 'sqlite') in ('postgresql', 'mssql'):
-    # PRD-F25: `1.0e-16383` is the number 1e-16383, answered (PostgreSQL: no row, exact) or refused by its 38 digits
-    # (SQL Server); no engine that compares a number that small as a double sees it (`DECIMAL_BOUNDS`)
+if TINY_NUMBER_MODELLED:
+    # PRD-F25: `1.0e-16383` is the number 1e-16383, within the 16,383 limit: no row on PostgreSQL (exact), the row
+    # holding 0.00 on SQLite (as a float, PRD section 5), refused by SQL Server's 38 digits (step 3.5, which the hand
+    # tests of SPEC-F25.14 also pin); not sent where the evaluator does not model the engine (`DECIMAL_BOUNDS`)
     EXAMPLES['decimal one at the fraction limit'] = (
         rows_of('m', *DECIMALS),
         DECLARED,
@@ -1684,7 +1695,7 @@ TYPED_EXAMPLES = [
     for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',
                  'skipped first order', 'backslash', 'pad space', 'date text', 'decimal equal',
                  'decimal finer than the column', 'decimal whole neighbour', 'decimal spelling', 'decimal order',
-                 'decimal list of two')
+                 'decimal list of two', 'decimal zero past the fraction limit')
 ]  # fmt: skip
 
 

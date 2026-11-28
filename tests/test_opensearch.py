@@ -3244,6 +3244,7 @@ def test_a_single_value_column_search_reads_the_16383_digit_limit_by_the_value(v
         assert response.error is None, response.error
     else:
         refused(response, 'invalid_number')
+        assert (client.searches, client.counts) == ([], [])
 
 
 def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_names_the_fix():

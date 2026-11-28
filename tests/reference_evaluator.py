@@ -69,7 +69,7 @@ def code_points(text: str) -> str:
 
 
 def _stored_on_sqlite(value: Decimal) -> int | float:
-    """PRD section 5 (`docs/databases.md`, "A `Numeric` column is not compared exactly"; the integer storage is in
+    """PRD section 5 (`docs/databases.md`, "A decimal is not compared exactly"; the integer storage is in
     `docs/decisions/010-decimal-numbers.md`): SQLite stores a `Numeric` as a floating-point number, and as an integer
     when that number is whole and fits 64 bits (its NUMERIC affinity), so 12345678901234567.89 is stored as
     12345678901234568."""
@@ -161,10 +161,10 @@ _MONTH = re.compile(r'([0-9]{4})-([0-9]{2})')
 def _number(text: str) -> int:
     """PRD-F25: ASCII digits with an optional sign, white space around ignored; a whole number outside the signed
     64-bit range of a `BigInteger` is a mistake of the column's own type, in step 3 after the maximum date of PRD-F24
-    as a bound and a number with more digits after the point than PRD-F25 allows (PRD-E3). Every number column is read
-    as a BigInteger: the generator sends a number that large only to one, so the narrower range of an Integer column is
-    not modelled. A number that is not finite is one the column cannot read, a mistake of step 2 (PRD-E3);
-    any other number with a fraction or an exponent is out of scope on this type."""
+    as a bound and a number with more digits after the point than PRD-F25 allows (PRD-E3). Every integer column (kind
+    `number`) is read as a BigInteger: the generator sends a number that large only to one, so the narrower range of an
+    Integer column is not modelled. A number that is not finite is one the column cannot read, a mistake of step 2
+    (PRD-E3); any other number with a fraction or an exponent is out of scope on this type."""
     written = text.strip()
     if _WHOLE.fullmatch(written):
         number = int(written)
@@ -830,8 +830,9 @@ def _sorted(
 ) -> list[Row]:
     """PRD-O8: the first applied entry is primary. PRD-O2: NULL is the lowest value, false before true. PRD-O6: text in
     the database's collation, the engine's sort key (code-point order on SQLite). A decimal orders as the engine
-    compares it (`Engine.numeric`): on SQLite and as doubles 12345678901234567.89, .90 and 12345678901234568.00 tie. PRD-O3, PRD-O4: the unique key breaks
-    ties, equal sort keys included, in the first applied entry's direction, ascending when none is applied."""
+    compares it (`Engine.numeric`): on SQLite and as doubles 12345678901234567.89, .90 and 12345678901234568.00 tie.
+    PRD-O3, PRD-O4: the unique key breaks ties, equal sort keys included, in the first applied entry's direction,
+    ascending when none is applied."""
 
     def key(value: Any) -> Any:
         if not isinstance(value, str):
