@@ -502,7 +502,7 @@ def _number(
     An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a ``SmallInteger``,
     64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is unsigned (MySQL's). On
     SQL Server a ``Numeric`` column, and an integer column given a number with a fraction (not through a
-    ``TypeDecorator``, whose number goes as the nearest float), takes a number of at most 38 digits in all, before and
+    ``TypeDecorator``, whose number goes as the nearest float), take a number of at most 38 digits in all, before and
     after the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses
     a longer one. A number outside either is the user's mistake. No other database bounds a ``Numeric`` column here: a
     filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they answer it.

@@ -943,8 +943,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 
 def _within_the_fraction_limit(number: Decimal, column: Column, *, listed: bool) -> Decimal:
     """``number``, without its fraction's trailing zeros when it is written with more than 16,383 digits after the
-    point, if that brings it within the limit (as ``parse_number`` says: no backend can tell, each drops the zeros
-    again, sends a whole number as an integer, or sends a float); else the user's mistake."""
+    point, if that brings it within the limit (why: see ``parse_number``); else the user's mistake."""
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
         number = without_trailing_zeros(number)  # the limit is of the value, not of how it is written
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
@@ -968,8 +967,8 @@ def _too_many_fraction_digits(column: Column, *, listed: bool) -> InvalidFilter:
 
 def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilter:
     """The mistake of ``text``, a number whose exponent no ``Decimal`` holds: a nonzero one with a negative exponent has
-    more than 16,383 digits after the point; any other is too large, or is a zero, which has no fraction to count, and
-    is no number a filter can use."""
+    more than 16,383 digits after the point; any other is too large for a ``Decimal`` to read, a zero included (it has
+    no fraction to count, so the limit's reason would be untrue)."""
     mantissa, _, exponent = text.lower().partition('e')
     if exponent.startswith('-') and mantissa.strip('+-.0'):
         return _too_many_fraction_digits(column, listed=listed)

@@ -206,8 +206,8 @@ or an OpenSearch setting has an entry below.
 
 - **What you see:** a whole number outside the signed 64-bit range can match a neighbouring value on a `Numeric` column,
   and a fraction can match a neighbouring value, or zero when it is too small for a float, on a `Numeric` or an integer
-  column. SQLite stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number, also the one
-  a fraction on an integer column goes as. PostgreSQL compares the number exactly, MySQL and MariaDB except a fraction
+  column. SQLite stores no exact decimal, and SQLAlchemy sends it a decimal as a floating-point number, a fraction for
+  an integer column too. PostgreSQL compares the number exactly, MySQL and MariaDB except a fraction
   of more than 30 digits after the point (below), and SQL Server up to 38 digits (it refuses a longer one). OpenSearch
   gets the same float, so there too `1e-16383` is the number zero (INFERRED from the float the body carries; neither the
   body nor the server is pinned for this value).
