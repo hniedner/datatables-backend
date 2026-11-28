@@ -3120,7 +3120,7 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
         # the exact zero, where no `-1e-400` row stands for it: a lower bound without a kind, and an integer kind
         (None, 'greater-or-equal', '-0.00'),
         ('long', 'equals', '-0.00'),
-        # `-1e-400` covers every other path, and a `terms` list is built apart from a bound or a `term`
+        # `-1e-400` covers an equality, each bound and a list: a `terms` list is built apart from a bound or a `term`
         *((None, path, '-1e-400') for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')),
         (None, 'equals', '1e-400'),  # the one spelling `0`, where the double is 0.0 and not -0.0
         (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
@@ -3147,14 +3147,13 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
     assert json.dumps(tiny) == json.dumps(zero)
 
 
-@pytest.mark.parametrize('text', ['-5e-324', '5e-324', '3e-324'])
+@pytest.mark.parametrize('text', ['-5e-324', '3e-324'])
 def test_a_number_whose_double_is_not_zero_is_sent_as_that_double(text: str):
     """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one and `3e-324` rounds up to it (zero
     would be `2e-324`, below half of it), so each is sent as the double it is, not as `0`. The negative row catches a
-    rule for negatives alone, the positive rows one for positives alone, `3e-324` one that sends `0` below the
-    smallest subnormal itself, and all three a rule that sends `0` for every tiny number, subnormals included: no
-    other test sends a subnormal."""
-    assert float(text) != 0
+    rule for negatives alone, the positive row one for positives alone and one that sends `0` up to the smallest
+    subnormal itself, and both a rule that sends `0` for every tiny number, subnormals included: no other test sends
+    a subnormal."""
     sent = asked(None, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
     assert sent == {'term': {'n': float(text)}}
 

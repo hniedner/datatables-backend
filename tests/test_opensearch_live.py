@@ -902,8 +902,8 @@ def test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field(
     client: OpenSearch, field: str, kind: NumberKind | None, text: str, counts: tuple[int, ...]
 ):
     """SPEC-F25.15 on a real server: b2 is the only document with a value, 0.0, in each of `n_double`, `n_float` and
-    `n_half`, so the counts are its answers (another document with one would change them). A number
-    whose double is zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep
+    `n_half`, so the counts are its answers (another document with one would change them). A number whose double is
+    zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep
     `=`, `<=` and a list from finding b2 and let `>` find it. A nonzero number is sent as it is and the field rounds
     it: a `float` field reads `-1e-50`, and a `half_float` field `-1e-10`, as -0.0, which is not 0.0, and `1e-50` and
     `1e-10` as 0.0, in `=` and a list; a `half_float` range rounds its bound in the direction of the range, so `<` and

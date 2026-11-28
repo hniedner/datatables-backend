@@ -90,7 +90,7 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
 }
 #: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
 #: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (measured, OpenSearch 3.10.0
-#: and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is computed from that)
+#: and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is computed from that).
 _FLOAT_FORMATS = {'float': ('<f',), 'half_float': ('<f', '<e')}
 _AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 
@@ -632,7 +632,7 @@ def _accepted(kind: str, sent: int | float) -> bool:
 def _number(column: Column, value: Any) -> Any:
     """``value`` as the request body carries it (``_json``), checked against the field type the column declares: a
     number OpenSearch refuses for it is the user's mistake, answered before the query (PRD-D23). The check is on what is
-    sent: a number with a point goes as a float, which may round to the edge."""
+    sent: a number with a point or an exponent goes as a float (or as `0`), which may round to the edge."""
     sent = _json(value)
     kind = column.number if isinstance(column, IndexColumn) else None
     if kind is None or not isinstance(sent, int | float) or _accepted(kind, sent):

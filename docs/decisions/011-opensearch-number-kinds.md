@@ -38,8 +38,8 @@ Three more facts:
 - A `scaled_float` takes a value whose scaled form passes a `long` without complaint: 1e300 finds the document that
   holds the largest value. It is a wrong match without an error, and no request fails.
 - The edge of a `float` is where a number rounds to infinity, which is where Python's `struct.pack('<f', x)` raises
-  `OverflowError`; for `half_float` the server and `struct.pack('<e', x)` agree at 65519 and 65520, but not between
-  them: the server reads a number as a 32-bit float first, so it refuses 65519.999 (the float 65520.0) where `'<e'`
+  `OverflowError`; for `half_float` the server and `struct.pack('<e', x)` agree at 65519 and 65520, but not just below
+  65520: the server reads a number as a 32-bit float first, so it refuses 65519.999 (the float 65520.0) where `'<e'`
   alone gives 65504 (CI, 2026-11-27, `docs/databases.md`, "A `double`, `float` or `half_float` field keeps -0.0 apart
   from 0.0, and rounds a tiny number itself"), so the library rounds through both formats. For `float` the
   measurement sent only the largest value and 3.4028238e38, so the exact rounding edge, 3.4028235677973366e38, is
