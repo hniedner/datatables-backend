@@ -140,7 +140,7 @@ or an OpenSearch setting has an entry below.
   Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`, `docs/decisions/010-decimal-numbers.md`);
   the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the integer-column case against a compiling
-  source with no database and, for `1e-16383`, in CI's SQL Server job (RUN 2026-11-28 UTC;
+  source with no database and, for `1e-16383`, in CI's SQL Server job (MEASURED 2026-11-28 UTC;
   `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`); the driver's own refusal of
   that case was not measured.
 - **Requirement:** PRD-F25.
@@ -214,7 +214,7 @@ or an OpenSearch setting has an entry below.
   holding 0.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`), and for a fraction on a `Numeric` column
-  MEASURED 2026-11-24 on SQLite (`docs/decisions/010-decimal-numbers.md`); the integer-column fraction is RUN by
+  MEASURED 2026-11-24 on SQLite (`docs/decisions/010-decimal-numbers.md`); the integer-column fraction is MEASURED by
   `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-28 (UTC), on
   SQLite (`=` 8.0000000000000000001 finds the row holding 8, and `=` 1e-16383 the row holding 0), and on PostgreSQL,
   MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on any of the four); `=` 1e-16383 finds no row
@@ -306,9 +306,9 @@ This is a limit of the databases, not of the library: the library sends the numb
 - **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
 - **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB
   12.3.3 (`docs/decisions/010-decimal-numbers.md`); on an integer column `= 1e-16383` finds the row holding 0 on MySQL
-  8.4 and MariaDB 12.3, RUN by CI on 2026-11-28 (UTC); the rule is INFERRED from MySQL's manual, which gives a `DECIMAL`
-  at most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>, fetched
-  2026-11-24).
+  8.4 and MariaDB 12.3, MEASURED 2026-11-28 (UTC) by that test's CI jobs; the rule is INFERRED from MySQL's manual,
+  which gives a `DECIMAL` at most 30 digits after the point
+  (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>, fetched 2026-11-24).
 - **Requirement:** PRD-F25.
 
 ### A fraction on a `TypeDecorator` over an integer is compared as a float
@@ -320,9 +320,9 @@ number to give it.
   integer is compared as a float, without the decorator's conversion. Bound as the decorator's type, psycopg 3 and
   asyncpg would cast it to the impl's `INTEGER`, which rounds it (`> 7.5` would miss 8).
 - **Example:** a decorator over `Integer` holding 8: `> 7.5` finds it, `= 7.5` finds nothing.
-- **How it is known:** RUN 2026-11-24 as a compile: psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg
-  `col > $1::INTEGER` for the decorator's own bind, and no cast for a float bound as `Float`; the rounding of
-  PostgreSQL's cast is INFERRED, and CI's psycopg 3 leg shows it (`tests/test_sql.py`,
+- **How it is known:** MEASURED 2026-11-24 as a compile: psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg `col >
+  $1::INTEGER` for the decorator's own bind, and no cast for a float bound as `Float`; the rounding of PostgreSQL's cast
+  is INFERRED, and CI's psycopg 3 leg shows it (`tests/test_sql.py`,
   `test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float`).
 - **Requirement:** PRD-F25.
 
@@ -442,13 +442,13 @@ This is a rule of OpenSearch. The library sends `0` for a number the user writes
   That -0.0 sorts below 0.0 is INFERRED from the range results, not measured as an order.
 - **Example:** a `double` field holding 0.0: `= -0.00` and `<= -0.00` find it (they found nothing while the library
   sent -0.0, and `> -0.00` and `!= -0.00` found it); a `double` field holding -0.0: `= 0` finds nothing.
-- **How it is known:** MEASURED 2026-11-25 on OpenSearch 3.10.0 (Lucene 10.6.0) on a scratch index holding 0.0 and
-  -0.0 in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields;
-  `range` `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte`
-  -0.0 -0.0 and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find
-  it. RUN 2026-11-25 on 2.19.7: `= -1e-400` and `<= -1e-400` miss a 0.0 on a `double` field, and `= -1e-400` finds a
-  stored -0.0; `tests/test_opensearch_live.py` (`test_minus_zero_finds_a_zero_on_a_double_field`) fails for `=` and
-  `<=` without the library's zero and passes with it. CI's `opensearch` job runs that test on 3.10 and 2.19.
+- **How it is known:** MEASURED 2026-11-25 on OpenSearch 3.10.0 (Lucene 10.6.0) on a scratch index holding 0.0 and -0.0
+  in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields; `range`
+  `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte` -0.0 -0.0
+  and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find it. MEASURED
+  2026-11-25 on 2.19.7: `= -1e-400` and `<= -1e-400` miss a 0.0 on a `double` field, and `= -1e-400` finds a stored
+  -0.0; `tests/test_opensearch_live.py` (`test_minus_zero_finds_a_zero_on_a_double_field`) fails for `=` and `<=`
+  without the library's zero and passes with it. CI's `opensearch` job runs that test on 3.10 and 2.19.
 - **Requirement:** PRD-F25.
 
 ### A boolean field is a boolean column only when it is declared boolean

@@ -3049,8 +3049,8 @@ def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_
 def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(dialect: Callable[[], Dialect]):
     """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and PostgreSQL's
     `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test passes there).
-    The fraction is bound as a float instead, so no `INTEGER` is rendered. RUN as a compile; the rounding of the cast is
-    INFERRED."""
+    The fraction is bound as a float instead, so no `INTEGER` is rendered. MEASURED as a compile; the rounding of the
+    cast is INFERRED."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Counted))
     source: Any = Compiling(dialect())
     SQLTable(numbers, [Column('id'), Column('i')]).fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), source)
