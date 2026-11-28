@@ -9,6 +9,12 @@ coverage.xml
 htmlcov/
 dist/
 
+# IntelliJ IDEA and PyCharm project files
+.idea/
+*.iml
+*.ipr
+*.iws
+
 # Private, never committed
 CLAUDE.local.md
 local/

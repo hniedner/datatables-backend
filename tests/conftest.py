@@ -455,8 +455,13 @@ KIND_BOUNDS = {
     'float': '-3.4028234663852886e+38 and 3.4028234663852886e+38',
     'half_float': '-65504 and 65504',
 }
-#: (kind, the last value OpenSearch answers, the first it refuses). `float`'s are the two floats either side of the one
-#: that rounds to infinity, and `half_float`'s 65519 and 65520, which the measurement found on both servers.
+#: (kind, a value OpenSearch answers, a value it refuses). Mostly the last and the first either side of the edge:
+#: `float`'s are the last double that rounds to a finite float (to FLT_MAX) and the first that rounds to infinity, and
+#: `half_float`'s 65519 and 65520, the whole numbers either side of its edge, which the measurement found on both
+#: servers. `half_float-through-float` is 65519.99 and 65519.999, a pair that straddles the edge without being its last
+#: and first: a `half_float` field reads a number as a 32-bit float first, so the edge is, computed from that,
+#: 65519.998046875 (the float tie that rounds to 65520.0) and 65519.999 is the float 65520.0 (the server's 400 for it,
+#: on both servers, CI run 46091503895), where rounded straight to half it would be 65504.
 NUMBER_EDGES = [
     pytest.param('byte', '2147483647', '2147483648', id='byte-high'),
     pytest.param('byte', '-2147483648', '-2147483649', id='byte-low'),
@@ -472,6 +477,7 @@ NUMBER_EDGES = [
     pytest.param('float', '-3.4028235677973362e38', '-3.4028235677973366e38', id='float-low'),
     pytest.param('half_float', '65519', '65520', id='half_float-high'),
     pytest.param('half_float', '-65519', '-65520', id='half_float-low'),
+    pytest.param('half_float', '65519.99', '65519.999', id='half_float-through-float'),
 ]
 
 
