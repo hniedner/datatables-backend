@@ -533,7 +533,7 @@ def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, in
     listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}{invisible}{WORD[3:]}\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
-    assert 'could not check: word list line 2 holds an invisible character: retype the word' in result.stderr
+    assert 'word list line 2 holds an invisible character: retype the word alone on its line' in result.stderr
     assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # no piece of the word is printed
 
 
@@ -557,12 +557,17 @@ def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
     assert 'rtner' not in result.stdout + result.stderr  # no piece of the word is printed
 
 
-@pytest.mark.parametrize('gap', [' ', '  ', '\t', '\u00a0'], ids=['one space', 'two spaces', 'tab', 'no-break space'])
-def test_a_note_after_a_word_cannot_check(tmp_path: Path, gap: str):
+@pytest.mark.parametrize(
+    'marker',
+    [' #', '  #', '\t#', '\u00a0#', '\u3000\uff03'],
+    ids=['one space', 'two spaces', 'tab', 'no-break space', 'fullwidth space and hash'],
+)
+def test_a_note_after_a_word_cannot_check(tmp_path: Path, marker: str):
     """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces.
     After a tab the tab is refused too, but the message must be the note's: retyping the word would not remove it.
-    A no-break space (Option+Space on a Mac) is no control character: only the `\\s` of the check refuses it."""
-    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}{gap}# the client\n')
+    A no-break space (Option+Space on a Mac) is no control character: only the `\\s` of the check refuses it. A
+    fullwidth hash (a Japanese input method) folds to `#`, so the check reads the folded word."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}{marker} the client\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'could not check: word list line 2 holds a note after the word' in result.stderr

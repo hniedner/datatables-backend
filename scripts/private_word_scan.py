@@ -128,12 +128,14 @@ def _word(number: int, line: str) -> str:
     ``#`` (``word  # note``), a note the list does not support: it would load as one word that never matches. So a
     word cannot hold whitespace and then ``#``; a phrase with plain spaces and a ``#`` inside a word are fine."""
     word = line.strip()
-    if re.search(r'\s#', word):  # first: after a tab, retyping the word would keep the tab and the note
+    if re.search(r'\s#', fold(word)):  # first: after a tab, retyping the word keeps the tab and the note
         raise CouldNotCheckError(
             f'word list line {number} holds a note after the word: put the note on its own line, starting with #'
         )
     if any(unicodedata.category(character) in {'Cf', 'Cc', 'Zl', 'Zp'} for character in word):
-        raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
+        raise CouldNotCheckError(
+            f'word list line {number} holds an invisible character: retype the word alone on its line'
+        )
     if '\ufffd' in word:
         raise CouldNotCheckError(
             f'word list line {number} holds a replacement character (a letter lost when the list was converted to '
