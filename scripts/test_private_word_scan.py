@@ -1055,6 +1055,7 @@ BOMMED = {  # list word and planted bytes: a byte order mark in front of text in
     'utf-16 mark before ascii': (WORD, codecs.BOM_UTF16_LE + f'hello {WORD}\n'.encode()),
     'utf-8 mark before latin-1': (NON_ASCII, codecs.BOM_UTF8 + b'see ' + NON_ASCII.encode('latin-1') + b'\n'),
     'utf-16 mark before utf-8': (NON_ASCII, codecs.BOM_UTF16_LE + b'see ' + NON_ASCII.encode() + b'\n'),
+    'utf-16 mark right before the word': (WORD, codecs.BOM_UTF16_LE + f'{WORD} is the title\n'.encode()),
 }
 
 
