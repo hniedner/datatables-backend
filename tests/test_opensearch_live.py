@@ -861,8 +861,8 @@ def test_a_declared_unsigned_long_refuses_minus_one_in_a_list_where_the_server_a
 
 
 def test_a_scaled_float_answers_a_number_beyond_its_range_as_its_largest(client: OpenSearch):
-    """PRD section 5, decision 011: no request fails on a `scaled_float`, declared or not; 1e300 finds the
-    document that holds the largest value, which is a wrong match without an error."""
+    """PRD section 5, decision 011: no request fails on an undeclared `scaled_float`; 1e300 finds the document that
+    holds the largest value, which is a wrong match without an error."""
     response = numbers_in('n_scaled', None).fetch_sync(request('id', 'n', **criterion('n', '=', '1e300')), client)
     assert ids(response) == ['c3']
 

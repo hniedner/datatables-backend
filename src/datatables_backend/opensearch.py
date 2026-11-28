@@ -94,6 +94,7 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'double': (-1.7976931348623157e308, 1.7976931348623157e308),
     'scaled_float': (-1.7976931348623157e308, 1.7976931348623157e308),
 }
+_NOT_NUMBER = frozenset({'string', 'date', 'boolean'})  # a type that is no number; a misspelled one is _check_type's
 _TEXT_KINDS = get_args(TextKind.__value__)
 _NUMBER_KINDS = get_args(NumberKind.__value__)
 _FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
@@ -421,7 +422,7 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 def _check_kinds(column: Column) -> None:
     """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
     run time, and the table would build and fail on a filter. The message names the column, what was written
-    and the accepted kinds, all of which the server declared."""
+    and the accepted kinds; the name and the value are the server's, never the client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
@@ -440,7 +441,7 @@ def _held(column: Column) -> Column:
     declared on a column that is no number column is the server's mistake too, and so is a ``text`` or ``number`` that
     is none of its kinds."""
     _check_kinds(column)
-    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
+    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) in _NOT_NUMBER:
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
             f'range applies to it. Declare it IndexColumn("{column.name}", type="number", number="{column.number}"), '

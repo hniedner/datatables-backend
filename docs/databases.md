@@ -396,9 +396,10 @@ it goes away (PRD-D23).
   `half_float`) is refused by the server with a 400, which reaches the application as the client's `RequestError`, not
   as `invalid_number`. The library does not read the mapping, so a column that declares no kind cannot know the range.
   `IndexColumn('pages', type='number', number='integer')` makes the library answer `invalid_number` before the query,
-  with the range in the message and never the value. A `double` field takes every number the library sends (MEASURED
-  2026-11-25, decision 011: 255 digits, 1e308 and 2^64), and so does a `scaled_float`; both can be declared
-  (`number='double'`, `number='scaled_float'`) and are then checked by the floor alone.
+  with the range in the message and never the value. A `double` field took 255 digits, 1e308 and 2^64, and a
+  `scaled_float` 255 digits and 1e300 (MEASURED 2026-11-25, CI run 45639230811, decision 011); every other number the
+  library sends is INFERRED to pass. Both can be declared (`number='double'`, `number='scaled_float'`) and are then
+  checked only as every number column is: at most 255 characters (PRD-F14) and finite as a double (PRD-F25).
 - **Two answers are wrong without an error:** `-1` in a list (`multi_values`, ColumnControl's list) on an
   `unsigned_long` field finds the document holding 2^64-1, which OpenSearch reads it as; and a number beyond a
   `scaled_float`'s range finds the document holding its largest value. A declared `unsigned_long` refuses the first; a

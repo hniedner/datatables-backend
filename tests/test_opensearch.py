@@ -3193,7 +3193,9 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
         ),
         pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), 'Keyword', 'text+keyword', id='text'),
         pytest.param(lambda: IndexColumn('n', text=cast(Any, None)), 'None', 'text+keyword', id='text-none'),
-        pytest.param(lambda: Column('n', type=cast(Any, 'numbr')), 'numbr', 'boolean', id='type'),
+        pytest.param(
+            lambda: IndexColumn('n', type=cast(Any, 'numbr'), number='long'), 'numbr', 'boolean', id='type-with-number'
+        ),
     ],
 )
 def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kind_and_the_accepted_ones(
@@ -3211,13 +3213,19 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kin
     assert accepted in message
 
 
-@pytest.mark.parametrize('kind', ['double', 'scaled_float'])
 @pytest.mark.parametrize(
-    'text', ['1e300', '-1e300', pytest.param('9' * 255, id='255-digits')]
-)  # the last also pins that a whole number goes as an int
+    ('kind', 'text'),
+    [
+        ('double', '1e300'),
+        ('double', '-1e300'),
+        pytest.param('double', '9' * 255, id='double-255-digits'),  # pins that a whole number goes as an int
+        ('scaled_float', '1e300'),
+        ('scaled_float', '-1e300'),
+    ],
+)
 def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_it(kind: NumberKind, text: str):
     """SPEC-D23.11: the field refuses no finite number, so the kind is checked by the floor alone and each number it
-    lets through is sent as it is. Before, the table built and the first number filter failed with a `KeyError`."""
+    lets through is sent as it is. Before, the table built and every number filter failed with a `KeyError`."""
     response, client = asked(kind, **criterion('n', '=', text))
     assert response.error is None
     sent = int(text) if text.isdigit() else float(text)  # a whole number goes as an int, any other as a float

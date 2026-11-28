@@ -7,17 +7,18 @@ and the versioning policy is in the README.
 
 ### Added
 
-- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite
-  number, so they are checked by the floor alone, as a column with no kind. A `scaled_float` still clamps a number whose
-  scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
+- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite number, so they
+  are checked as a column with no kind is: at most 255 characters and finite as a double. A `scaled_float` still clamps
+  a number whose scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
 
 ### Fixed
 
 - A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
-  table built: a table with `number='double'` (or any other name outside the kinds) answered every filter that carries
-  a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for every SearchBuilder condition
-  on it, and a misspelled `text=` (or `text=None`) had its string filters wrongly refused. A table that used to build
+  table built: a table with `number='double'` (then no kind, as is any other name outside them) answered every filter
+  that carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for every
+  SearchBuilder condition on it, and a misspelled `text=` (or `text=None`) had its whole-string conditions (`=`, starts
+  with, ends with) wrongly refused. A table that used to build
   and now fails to build is the declaration being wrong.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,

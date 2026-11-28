@@ -57,9 +57,9 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
 - The check is on the number as the request sends it: a number with a point goes as a float, so a fraction that
   rounds to the edge is refused, as the server does. `9223372036854775807.0`, written with a point, is therefore refused
   on a `long`; an integral decimal is not sent as an integer.
-- The library already refuses a number that is not finite as a double with `invalid_number` (PRD-F25), and a value of
-  at most 255 characters that is finite as a double is accepted by a `double` or `scaled_float` field, so those columns
-  need no check beyond that.
+- The library already refuses a number that is not finite as a double with `invalid_number` (PRD-F25), and a `double`
+  field answered every value measured (255 digits, 1e308 and 2^64), a `scaled_float` 255 digits and 1e300, so those
+  columns need no check beyond that (INFERRED for the values between).
 - The two answers without an error are stated limits (PRD section 5, `docs/databases.md`): a declared `unsigned_long`
   refuses `-1` where an undeclared column does not, and a `scaled_float` clamps declared or not.
 - The live test `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers` sends each edge pair
