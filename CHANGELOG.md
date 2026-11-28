@@ -21,10 +21,11 @@ and the versioning policy is in the README.
 - A table now raises `SchemaError` when it is built for a declaration on a column that no search reaches, which built
   before and did nothing. If your table declares one of these, it raises now:
   - a `search_value` on a column declared `searchable=False`, or (OpenSearch) on a column that reads the document id
-    (`_id`): the hook never ran, because a global search, a column search, a SearchBuilder condition and ColumnControl's
-    `contains` all skip such a column. Remove the hook, or (not on `_id`) declare the column searchable;
-  - (OpenSearch) a `number=` on a column declared `searchable=False`: the kind only bounds the numbers a filter sends.
-    Drop it, or declare the column searchable;
+    (`_id`): the hook never ran, because no search reaches such a column (a column search, a SearchBuilder condition or
+    ColumnControl's `contains` on it is refused with `invalid_filter`, and the global search leaves it out). Remove the
+    hook, or (not on `_id`) declare the column searchable;
+  - (OpenSearch) a `number=` on a column declared `searchable=False` or on `_id`: the kind only bounds the numbers a
+    filter sends. Drop it, or (not on `_id`) declare the column searchable;
   - (OpenSearch) a `text=` on a column that reads `_id`, or on a column declared `searchable=False` and
     `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it. A `text=` on the key, and on
     an unsearchable column with the default `orderable`, stays: it picks the field the column is sorted by.

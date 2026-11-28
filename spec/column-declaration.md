@@ -175,19 +175,22 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   construction, naming the column and saying to remove the hook or declare the column searchable; on OpenSearch the
   same for a column that reads the document id (`_id`), whose message only says to remove the hook, since `searchable`
   is ignored on the id. Before, the table built and the hook never ran: a global search, a column search, a SearchBuilder
-  condition and ColumnControl's `contains` never called it on that column. A hook on a column that is no string, or that
-  holds analysed text only, is refused first, by its own message (`SPEC-D14.1`, `SPEC-D20.1`).
+  condition and ColumnControl's `contains` never called it on that column. On a `searchable=False` column, a hook that
+  cannot be called, one on a column that is no string, and one on analysed text only are refused first, each by its
+  own message (`SPEC-D23.14`, `SPEC-D14.1`, `SPEC-D20.1`); on the document id, an empty name and a hook that cannot be
+  called are.
 - **SPEC-D23.17** [OS] A `text` kind on a column that reads the document id, and on a column declared
   `searchable=False` and `orderable=False` that is not in `unique_key`, raises `SchemaError` at construction, naming the
   column and saying to drop `text=`. Before, the table built and no string field of the column was read. A `text` on the
   key stays (its sort ends every order), and so does one on a `searchable=False` column with the default `orderable`:
   `text=` picks the field the column is sorted by and decides whether it can be sorted at all. A stated limit:
   `searchable=False`, the default `orderable` and `text='text'` builds, though `text='text'` then only turns ordering
-  off; declare `orderable=False` to say so.
+  off; to say so, drop `text=` and declare `orderable=False` (with `text='text'` kept, that column is refused).
 - **SPEC-D23.18** [OS] A `number` kind on a column declared `searchable=False` raises `SchemaError` at construction,
-  naming the column and saying to drop `number=` or declare the column searchable. Before, the table built and the kind,
-  which only bounds the numbers a filter sends, was never read.
+  naming the column and saying to drop `number=` or declare the column searchable; on a column that reads the document
+  id, whose message only says to drop `number=`, since `searchable` is ignored on the id. Before, the table built and
+  the kind, which only bounds the numbers a filter sends, was never read.
 - **SPEC-D23.19** [OS] Each of these builds: `text='keyword'` on a `searchable=False` column with the default
-  `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column; a
-  hook on a searchable column; a `number` kind on a searchable column; and the key declared
-  `IndexColumn('id', text='keyword', searchable=False, orderable=False)`, whose search sorts by `id`.
+  `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column with
+  the default `orderable`; and a key declared `IndexColumn('id', text='keyword', searchable=False, orderable=False)`,
+  alone or one of several in a tuple `unique_key`, whose tie-break sorts by `id`, not `id.keyword`.

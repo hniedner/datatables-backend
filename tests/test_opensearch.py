@@ -3362,9 +3362,9 @@ KEY = IndexColumn('id', text='keyword')
 
 
 def test_a_search_value_on_an_unsearchable_column_is_a_schema_error_that_says_the_hook_never_runs():
-    """SPEC-D23.16: no search reaches a column declared `searchable=False` (a column search, a criterion and the global
-    search all skip it), so the hook never runs; the table used to build and the hook looked as if it protected
-    something."""
+    """SPEC-D23.16: no search reaches a column declared `searchable=False` (a column search and a criterion on it are
+    refused, and the global search leaves it out), so the hook never runs; the table used to build and the hook looked
+    as if it protected something."""
     with pytest.raises(SchemaError, match=r'"s".*search_value.*searchable=False.*never runs') as raised:
         SearchTable(
             'docs', [KEY, IndexColumn('s', text='keyword', searchable=False, search_value=str.upper)], unique_key='id'
@@ -3385,6 +3385,32 @@ def test_a_text_on_the_document_id_is_a_schema_error_that_says_to_drop_it():
     with pytest.raises(SchemaError, match=r'"_id".*text=\'keyword\'.*document id') as raised:
         SearchTable('docs', [KEY, IndexColumn('_id', text='keyword')], unique_key='id')
     assert 'Drop text=' in str(raised.value)
+
+
+def test_a_number_kind_on_the_document_id_does_not_say_it_was_declared_unsearchable():
+    """SPEC-D23.18: the id is held unsearchable and `searchable` is ignored on it, so the message says what the column
+    shows and the only fix is to drop `number=`, where a generic message would claim a `searchable=False` the integrator
+    never wrote and tell them to declare the column searchable."""
+    with pytest.raises(SchemaError, match=r'"_id".*number=\'long\'.*document id') as raised:
+        SearchTable('docs', [KEY, IndexColumn('_id', type='number', number='long')], unique_key='id')
+    assert 'Drop number=' in str(raised.value)
+    assert 'searchable' not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('column', 'message'),
+    [
+        pytest.param(IndexColumn('', field='_id', search_value=str.upper), r"name=''.*empty", id='empty-name'),
+        pytest.param(
+            IndexColumn('i', field='_id', search_value=cast(Any, 'x')), r'"i".*search_value.*not callable', id='hook'
+        ),
+    ],
+)
+def test_the_document_id_with_a_hook_reports_a_basic_mistake_before_the_hook(column: IndexColumn, message: str):
+    """SPEC-D23.16: a column that also has an empty name or a hook that cannot be called is told that first, as any
+    other column is, not that its hook never runs."""
+    with pytest.raises(SchemaError, match=message):
+        SearchTable('docs', [KEY, column], unique_key='id')
 
 
 def test_a_text_on_a_column_that_is_not_searched_ordered_or_the_key_is_a_schema_error():
@@ -3412,21 +3438,44 @@ def test_a_number_kind_on_an_unsearchable_column_is_a_schema_error_that_says_no_
         pytest.param(IndexColumn('s', text='keyword', searchable=False), id='text-on-an-unsearchable-ordered-column'),
         pytest.param(IndexColumn('s', searchable=False, orderable=False), id='neither-searched-nor-ordered-no-text'),
         pytest.param(IndexColumn('s', text='text', searchable=False), id='text-only-with-the-default-orderable'),
-        pytest.param(IndexColumn('s', text='keyword', search_value=str.upper), id='a-hook-on-a-searchable-column'),
-        pytest.param(IndexColumn('n', type='number', number='double'), id='a-number-kind-on-a-searchable-column'),
     ],
 )
 def test_a_declaration_that_still_does_something_builds(column: IndexColumn):
-    """SPEC-D23.19: `text=` picks the sort field and decides the default `orderable`, so it stays where the column is
-    searched or may be ordered; `searchable=False` alone, and a hook or a kind on a searchable column, build."""
+    """SPEC-D23.19: `text=` picks the sort field and decides the default `orderable`, so it stays on a column that is
+    not searched but may be ordered; `searchable=False` with `orderable=False` and no `text=` builds too."""
     SearchTable('docs', [KEY, column], unique_key='id')
 
 
-def test_the_documented_key_declaration_builds_and_its_text_picks_the_tie_break_sort():
-    """SPEC-D23.19: the key declared `text='keyword'`, `searchable=False` and `orderable=False` is neither searched nor
-    ordered by the client, and `text=` is what its tie-break sort reads."""
-    table = SearchTable('docs', [IndexColumn('id', text='keyword', searchable=False, orderable=False)], unique_key='id')
+@pytest.mark.parametrize(
+    ('columns', 'unique_key'),
+    [
+        pytest.param([IndexColumn('id', text='keyword', searchable=False, orderable=False)], 'id', id='one-column'),
+        pytest.param(
+            [
+                IndexColumn('a', text='keyword', searchable=False, orderable=False),
+                IndexColumn('id', text='keyword', searchable=False, orderable=False),
+            ],
+            ('a', 'id'),
+            id='two-columns',
+        ),
+    ],
+)
+def test_the_documented_key_declaration_builds_and_its_text_picks_the_tie_break_sort(
+    columns: list[Column], unique_key: str | tuple[str, ...]
+):
+    """SPEC-D23.19: a key declared `text='keyword'`, `searchable=False` and `orderable=False`, alone or one of several,
+    builds, and `text=` is what its tie-break sort reads (`id`, where the default would sort `id.keyword`)."""
+    table = SearchTable('docs', columns, unique_key=unique_key)
     client = Client()
-    table.fetch_sync(request('id'), client)
-    assert 'id' in json.dumps(client.searches[0]['sort'])
-    assert 'id.keyword' not in json.dumps(client.searches[0]['sort'])
+    table.fetch_sync(request(*(column.name for column in columns)), client)
+    sort = json.dumps(client.searches[0]['sort'])
+    assert '"id"' in sort
+    assert 'id.keyword' not in sort
+
+
+def test_a_hook_on_an_unsearchable_number_column_is_told_it_is_no_string_column_first():
+    """SPEC-D23.16: the refusal that says to declare the column searchable would lead to a second error here, since a
+    number column takes no hook either; the number-column message comes first."""
+    column = IndexColumn('n', type='number', searchable=False, search_value=str.upper)
+    with pytest.raises(SchemaError, match=r'"n".*search_value.*number column'):
+        SearchTable('docs', [KEY, column], unique_key='id')
