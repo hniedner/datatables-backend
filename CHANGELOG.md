@@ -33,8 +33,7 @@ and the versioning policy is in the README.
   - (OpenSearch) a `text=` on a string column that reads `_id`, or on a string column declared `searchable=False` and
     `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it, or (on the second) declare
     the column searchable. A `text=` on the key, and on an unsearchable column with the default `orderable`, stays: it
-    picks the field the column is sorted by. (On a column that is no string column, `text=` was refused already, and
-    still is.)
+    picks the field the column is sorted by. (On a column that is no string column, `text=` is refused too: see Fixed.)
 
 ### Fixed
 

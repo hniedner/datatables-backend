@@ -179,19 +179,20 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   is ignored on the id. Before, a table with a hook on a string column of that kind built and the hook never ran: a
   global search, a column search, a SearchBuilder condition and ColumnControl's `contains` never called it on that
   column (a hook on a column of another type, or on analysed text only, was refused already). On a `searchable=False`
-  column, a hook that
-  cannot be called, one on a column that is no string, and one on analysed text only are refused first, each by its
-  own message (`SPEC-D23.14`, `SPEC-D14.1`, `SPEC-D20.1`; on analysed text only, that message says just to remove the
-  hook, since declaring a keyword field would lead to this refusal); on the document id, an empty name and a hook that
-  cannot be called are.
+  column, a hook that cannot be called, one on a column that is no string, and one on analysed text only are refused
+  first, each by its own message (`SPEC-D23.14`, `SPEC-D14.1`, `SPEC-D20.1`; on analysed text only, that message says
+  just to remove the hook, since declaring a keyword field would lead to this refusal). On the document id, an empty
+  name, a hook that cannot be called and a request to order by it (`orderable=True`, whose message says to use a
+  `keyword` field) are refused first.
 - **SPEC-D23.17** [OS] A `text` kind on a column that reads the document id (whatever its `type`), and on a column
   declared `searchable=False` and `orderable=False` that is not in `unique_key`, raises `SchemaError` at construction,
   naming the column and saying to drop `text=` (on the second, or to declare the column searchable). Before, a table
   with a `text=` on a string column of that kind built and no string field of the column was read (on a column of
-  another type it was refused already, as `SPEC-D23.13` says). On the document id, a request to order by it (`orderable=True`) or
-  to key on it is refused first, by its own message that says to use a `keyword` field. A `text` on the key stays (its
-  sort ends every order), and so does one on a `searchable=False` column with the default `orderable`: `text=` picks
-  the field the column is sorted by and decides whether it can be sorted at all. A stated limit: `searchable=False`,
+  another type it was refused already, as `SPEC-D23.13` says). On the document id, a request to order by it
+  (`orderable=True`) or to key on it is refused first, by its own message that says to use a `keyword` field. A `text`
+  on the key stays (its sort ends every order), and so does one on a `searchable=False` column with the default
+  `orderable`: `text=` picks the field the column is sorted by and decides whether it can be sorted at all. A stated
+  limit: `searchable=False`,
   the default `orderable` and `text='text'` builds, though `text='text'` then only turns ordering off; to say so, drop
   `text=` and declare `orderable=False` (with `text='text'` kept, that column is refused). A second stated limit: a
   `text=` on a column of another type than string that is declared `searchable=False` and `orderable=False` and is not
@@ -203,8 +204,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   on the id. Before, the table built and the kind, which only bounds the numbers a filter sends, was never read. On a
   column of another type that is declared `searchable=False` or reads the document id, `number=` was refused already,
   as on any column that is no number column (`SPEC-D23.9`), and still is; that message now says only to drop
-  `number=`, since declaring a number column would lead to the refusal above. These come after the checks every
-  column gets (an empty name or `field`, a duplicate name), which are reported first.
+  `number=`, since declaring a number column would lead to the refusal above. The refusal of a `number=` on a number
+  column comes after the checks every column gets (an empty name or `field`, a duplicate name), which are reported
+  first; the not-a-number-column message does not (it is raised while the columns are held, as before).
 - **SPEC-D23.19** [OS] Each of these builds: `text='keyword'` on a `searchable=False` column with the default
   `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column
   with the default `orderable`; the document id declared `IndexColumn('_id')` with no hook, `text=` or `number=`; and a

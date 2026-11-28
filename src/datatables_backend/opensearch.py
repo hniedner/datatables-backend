@@ -489,8 +489,9 @@ def _check_document_id(column: Column) -> None:
     """Raise ``SchemaError`` for a ``search_value`` on a column that reads the document id: the id is read from the hit
     and is never searched, so the hook would never run. Not the message of ``check_hook_is_searched``, which tells the
     integrator to declare the column searchable: ``searchable`` is ignored on the id. An empty name and a hook that
-    cannot be called are raised first, as for any column, because ``check_declaration`` has not run yet. A ``text`` or a
-    ``number`` on the id is refused later, by ``_check_unused_kinds``, after the refusals to order or key on it."""
+    cannot be called are raised first, as for any column, because ``check_declaration`` has not run yet. A ``text`` or
+    a ``number`` on the id (a ``number`` on one that is a number column; on another type it was refused earlier, by
+    ``_check_number_fits``) is refused later, by ``_check_unused_kinds``, after the refusals to order or key on it."""
     check_name(column)
     check_hook(column)
     if column.search_value is not None:

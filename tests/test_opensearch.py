@@ -3402,8 +3402,8 @@ def test_the_document_id_is_told_that_it_cannot_be_ordered_or_the_key_before_wha
     kwargs: dict[str, Any], unique_key: str, message: str
 ):
     """SPEC-D23.17, SPEC-D23.16: a `text=` on `_id` is how someone tries to sort or key on it, so the more basic refusal,
-    which says to use a `keyword` field, comes first (so does an `orderable=True` before the hook); dropping `text=` or
-    the hook alone would only lead to it on the next build."""
+    which says to use a `keyword` field, comes first (so does an `orderable=True` before the hook, as SPEC-D23.16
+    says); dropping `text=` or the hook alone would only lead to it on the next build."""
     columns = [KEY, IndexColumn('_id', **kwargs)]
     with pytest.raises(SchemaError, match=message):
         SearchTable('docs', columns, unique_key=unique_key)
@@ -3465,9 +3465,10 @@ def test_a_text_on_a_column_that_is_not_searched_ordered_or_the_key_is_a_schema_
 def test_a_kind_nothing_reads_is_not_told_to_declare_a_type_that_leads_to_its_own_refusal(
     column: IndexColumn, message: str
 ):
-    """SPEC-D23.17, SPEC-D23.18: on a column that is never searched, `number=` or `text=` is unused whatever the column's
-    type, so a message that says only to drop it is raised, not one that says to declare `type='number'` or
-    `type='string'` (or to declare the column searchable), which would build the column into the next refusal."""
+    """SPEC-D23.17, SPEC-D23.18: on a column that is never searched (declared unsearchable, or the document id) a
+    `number=` is unused whatever the column's type, and so is a `text=` on the document id, so a message that says only
+    to drop it is raised, not one that says to declare `type='number'` or `type='string'` (or to declare the column
+    searchable), which would build the column into the next refusal."""
     with pytest.raises(SchemaError, match=message) as raised:
         SearchTable('docs', [KEY, column], unique_key='id')
     assert 'Declare it' not in str(raised.value)
@@ -3491,7 +3492,7 @@ def test_a_kind_nothing_reads_is_not_told_to_declare_a_type_that_leads_to_its_ow
 )
 def test_a_never_read_number_does_not_hide_an_empty_name_or_field(column: IndexColumn, message: str):
     """SPEC-D23.18: the refusal of a `number=` that nothing reads runs after the checks every column gets, so a column
-    that also has an empty name or `field` is told that first, as main did."""
+    that also has an empty name or `field` is told that first, as before this refusal existed."""
     with pytest.raises(SchemaError, match=message):
         SearchTable('docs', [KEY, column], unique_key='id')
 

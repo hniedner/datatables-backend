@@ -148,13 +148,26 @@ def leg() -> Iterator[Leg]:
 
 
 def table_of(decl: tuple[Declared, ...]) -> SearchTable:
-    """The declaration as an adopter of the mapping above writes it."""
+    """The declaration as an adopter of the mapping above writes it: a `text=` or `number=` only where something reads it
+    (a column that is not searched, is not ordered and is not the key reads no `text=`, and a column that is not
+    searched reads no `number=`, which the table refuses to build with: SPEC-D23.17, SPEC-D23.18)."""
     columns: list[Column] = []
     for name, kind, searchable, orderable in decl:
         if kind == 'string':
-            columns.append(IndexColumn(name, text='keyword', searchable=searchable, orderable=orderable))
+            read = searchable or orderable or name == 'id'
+            columns.append(
+                IndexColumn(name, text='keyword' if read else None, searchable=searchable, orderable=orderable)
+            )
         elif kind == 'number':
-            columns.append(IndexColumn(name, type='number', number='long', searchable=searchable, orderable=orderable))
+            columns.append(
+                IndexColumn(
+                    name,
+                    type='number',
+                    number='long' if searchable else None,
+                    searchable=searchable,
+                    orderable=orderable,
+                )
+            )
         else:
             columns.append(Column(name, type=kind, searchable=searchable, orderable=orderable))
     return SearchTable(INDEX, columns, unique_key='id')
