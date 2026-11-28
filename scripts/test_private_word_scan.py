@@ -557,7 +557,7 @@ def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
     assert 'rtner' not in result.stdout + result.stderr  # no piece of the word is printed
 
 
-@pytest.mark.parametrize('gap', ['  ', '\t', '\u00a0'], ids=['spaces', 'tab', 'no-break space'])
+@pytest.mark.parametrize('gap', [' ', '  ', '\t', '\u00a0'], ids=['one space', 'two spaces', 'tab', 'no-break space'])
 def test_a_note_after_a_word_cannot_check(tmp_path: Path, gap: str):
     """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces.
     After a tab the tab is refused too, but the message must be the note's: retyping the word would not remove it.
