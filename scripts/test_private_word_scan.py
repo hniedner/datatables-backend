@@ -162,7 +162,7 @@ def test_a_message_scan_of_two_files_cannot_check(tmp_path: Path, words: Path):
 
 def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Path, words: Path):
     """Git strips only a line that starts with `#`; `  # word` stays in the message. The editor's hint line is what
-    shows git stripped the comments, so the scan strips them too."""
+    shows git will strip the comments, so the scan strips them too."""
     hint = "# with '#' will be ignored, and an empty message aborts the commit."
     message = write(repo / 'COMMIT_EDITMSG', f'Add a file\n\n  # {WORD}\n{hint}\n')
     result = scan('--message', str(message), words=words, cwd=repo, extra={'GIT_CONFIG_GLOBAL': os.devnull})
@@ -287,7 +287,7 @@ def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
-def test_a_symlink_target_in_latin_1_is_read_in_that_encoding_too(tmp_path: Path):
+def test_a_symlink_target_in_latin_1_is_found(tmp_path: Path):
     latin_1_words = write(tmp_path / 'latin1-words.txt', 'Grünspecht\n')
     link = tmp_path / 'link'
     os.symlink(b'../Gr\xfcnspecht/target', link)  # the target's bytes are Latin-1, which is no UTF-8
@@ -815,7 +815,7 @@ def test_a_latin_1_word_spanning_two_parts_of_a_path_is_never_printed(tmp_path: 
 
 
 def test_a_tag_object_only_the_store_holds_is_read(repo: Path, words: Path):
-    """A push can send a tag by its id, after the tag itself is deleted."""
+    """A push can send a tag object by its id after its ref is deleted."""
     git(repo, 'tag', '-a', 'gone', '-m', f'Release for {WORD}')
     git(repo, 'tag', '-d', 'gone')
     result = scan('--history', words=words, cwd=repo)
