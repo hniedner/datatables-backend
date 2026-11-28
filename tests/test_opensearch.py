@@ -3266,13 +3266,16 @@ def test_a_text_on_a_column_that_is_no_string_column_is_a_schema_error_that_name
             unique_key='id',
         )
     assert 'Drop text=' in str(raised.value)
+    assert 'type="string"' in str(raised.value)
 
 
 def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_column():
-    """SPEC-D23.14: the table would build and raise `TypeError` on the first request that searches the column."""
+    """SPEC-D23.14: the table would build and raise `TypeError` on the first request that searches the column. The
+    message says to pass a function."""
     hook: Any = 'x'
-    with pytest.raises(SchemaError, match=r'"n".*search_value.*callable'):
+    with pytest.raises(SchemaError, match=r'"n".*search_value.*callable') as raised:
         SearchTable('docs', [IndexColumn('id', text='keyword'), Column('n', search_value=hook)], unique_key='id')
+    assert 'Pass a function' in str(raised.value)
 
 
 @pytest.mark.parametrize(
