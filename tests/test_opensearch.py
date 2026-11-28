@@ -3134,17 +3134,17 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
-    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
-    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every
-    such number is sent as `0`, in an equality, a bound and a list, on a column without a kind (a `double` field), and
+    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double` field
+    keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every such
+    number is sent as `0`, in an equality, a bound and a list, on a column without a kind (over a `double` field), and
     `-1e-400` on a column declared `float` or `half_float`, where its double is the same -0.0 as `-0.00`'s. A `-0.00`
-    row stays where no `-1e-400` row stands for it: `=` on a `long`, which shows the exact zero on an integer kind
-    (one row, since every path reaches the kind in one place). The bodies are compared as JSON, since Python's -0.0
-    equals 0. It catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a
-    conversion that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds);
-    the `1e-400` row pins that a double of 0.0 goes as the integer `0`, not as `0.0` (OpenSearch reads both the same).
-    The `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the
-    `less` row and fails this one, and the `greater` and `greater-or-equal` rows are the two lower bounds likewise."""
+    row stays where no `-1e-400` row stands for it: `=` on a `long`, which shows the exact zero on an integer kind (one
+    row, since every path reaches the kind in one place). The bodies are compared as JSON, since Python's -0.0 equals 0.
+    It catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a conversion
+    that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds); the `1e-400`
+    row pins that a double of 0.0 goes as the integer `0`, not as `0.0` (OpenSearch reads both the same). The
+    `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the `less`
+    row and fails this one, and the `greater` and `greater-or-equal` rows are the two lower bounds likewise."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
