@@ -403,8 +403,8 @@ it goes away (PRD-D23).
 - **Two answers are wrong without an error:** `-1` in a list (`multi_values`, ColumnControl's list) on an
   `unsigned_long` field finds the document holding 2^64-1, which OpenSearch reads it as; and a number beyond a
   `scaled_float`'s range finds the document holding its largest value. A declared `unsigned_long` refuses the first; a
-  declared `scaled_float` still clamps (INFERRED: it sends the same body as an undeclared one), since its scaling
-  factor is in the mapping, which is never read; nothing fails.
+  declared `scaled_float` still clamps (INFERRED: it sends the same body as an undeclared one), since its scaling factor
+  is in the mapping, which is never read; nothing fails.
 - **`byte` and `short`:** OpenSearch refuses them only beyond an `integer`'s range and answers 128 on a `byte`, so a
   declared `byte` or `short` carries the `integer` bounds. SQL bounds a `SmallInteger` by 16 bits (PRD-F25) and refuses
   40000; OpenSearch answers 40000 on a `short`, and the library follows each engine.

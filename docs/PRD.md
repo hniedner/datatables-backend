@@ -480,11 +480,12 @@ not affected.
 #### PRD-D22
 
 On SQL, a declared type that does not fit the column's SQL type raises `SchemaError` naming the column when the table is
-constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`.
-A string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator`
-is judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
+constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`. A
+string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator` is
+judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
 `string` included, and so does a column whose SQL type is none of these (an expression without a type, a `Uuid`, a
-`JSON`). OpenSearch is not checked: the mapping is not read (PRD-D8).
+`JSON`), except a `type` outside the four, which raises `SchemaError` when the table is built (PRD-D23). OpenSearch is
+not checked: the mapping is not read (PRD-D8).
 
 - **Reason:** Such a column is answered differently on each database or fails on the server (MEASURED 2026-11-24: `=` 5
   on text finds '5' on SQLite, '5', '05' and '5.0' on MySQL, and is an operator error on PostgreSQL); the mistake is

@@ -3204,13 +3204,13 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
         ),
     ],
 )
-def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kind_and_the_accepted_ones(
+def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_was_written_and_the_accepted_ones(
     column: Callable[[], Column], written: str, accepted: str
 ):
     """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
     table builds, and a filter that carries a number (a number kind) or any SearchBuilder condition (a type) fails with
-    a `KeyError`, or a string filter is wrongly refused (a text kind, `None` too). The message names the column, what
-    was written and what is accepted, all declared by the server."""
+    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind, `None` too). The message
+    names the column, what was written and what is accepted, all declared by the server."""
     with pytest.raises(SchemaError) as raised:
         SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
     message = str(raised.value)
@@ -3231,7 +3231,8 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kin
 )
 def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_it(kind: NumberKind, text: str):
     """SPEC-D23.11: the field refuses no finite number, so the kind is checked by the floor alone and each number it
-    lets through is sent as it is. Before, the table built and every number filter failed with a `KeyError`."""
+    lets through is sent as it is. Before, the table built and a filter that carries a number failed with a
+    `KeyError`."""
     response, client = asked(kind, **criterion('n', '=', text))
     assert response.error is None
     sent = int(text) if text.isdigit() else float(text)  # a whole number goes as an int, any other as a float

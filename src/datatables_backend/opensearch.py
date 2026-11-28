@@ -73,8 +73,9 @@ type TextKind = Literal['keyword', 'text', 'text+keyword']
 
 #: The mapping type of a number field (decision 011). ``byte`` and ``short`` are refused by OpenSearch only beyond an
 #: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse no finite number, so they are
-#: checked by the floor alone. A ``scaled_float`` still clamps a number whose scaled value passes a ``long``, because
-#: its scaling factor lives in the mapping, which is never read.
+#: checked by the floor alone, which every number column has: at most 255 characters (PRD-F14) and finite as a double
+#: (PRD-F25). A ``scaled_float`` still clamps a number whose scaled value passes a ``long``, because its scaling factor
+#: lives in the mapping, which is never read.
 type NumberKind = Literal[
     'byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float', 'double', 'scaled_float'
 ]
@@ -421,8 +422,8 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 
 def _check_kinds(column: Column) -> None:
     """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
-    run time, and the table would build and fail, or wrongly refuse, a filter. The message names the column, what was
-    written and the accepted kinds; the name and the value are the server's, never the client's."""
+    run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message names the column,
+    what was written and the accepted kinds; the name and the value are the server's, never the client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
@@ -438,8 +439,8 @@ def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
     plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
     unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too, and so is a ``text`` or ``number`` that
-    is none of its kinds."""
+    declared on a column that is no number column is the server's mistake too, and so is a ``type`` that is none of the
+    four, or a ``text`` or ``number`` that is none of its kinds."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':

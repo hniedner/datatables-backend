@@ -336,8 +336,8 @@ class Plan:
 
 def check_type(column: Column) -> None:
     """Raise ``SchemaError`` for a ``type`` that is none of the four: a ``Literal`` checks nothing at run time, and the
-    table would build and then fail on a filter. The message names the column, the type written and the accepted
-    ones; the name and the value are the server's, never the client's."""
+    table would build and then fail on a filter. The message names the column, the type written and the accepted ones;
+    the name and the value are the server's, never the client's."""
     accepted = get_args(ColumnType.__value__)
     if column.type is not None and column.type not in accepted:
         raise SchemaError(
