@@ -5,6 +5,22 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
+This release makes a table refuse at construction several declarations that never worked as declared, changes the
+default of `IndexColumn.text` to `None`, adds the `double` and `scaled_float` number kinds for OpenSearch columns, and
+changes a few answers (see Fixed): a number written as minus zero or too close to zero, the limits on a number's digits
+and on a `half_float`, a reversed `between`, and a column search with no word.
+
+**Upgrade impact:** this is a minor release and it breaks the Python API in two ways; read Changed before upgrading.
+A table that declares something that never worked as declared now raises `SchemaError` when it is built, where it
+built before and then did nothing, answered wrongly, or failed on the first request that used it (some already failed
+to build with another message; see Changed), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build
+each table once, as at start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong,
+and a number too close to zero for a double now answers as `0`. Nothing else needs a change.
+
+**Security:** none; this release fixes no known vulnerability.
+
 ### Added
 
 - On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite number, so they
@@ -13,53 +29,63 @@ and the versioning policy is in the README.
 
 ### Changed
 
-- On OpenSearch, `IndexColumn.text` is `None` when it is not declared, where it was `'text+keyword'`. A string column
-  that does not declare it is still read as `text+keyword`, so no answer changes (an explicit `text=None`, whose
-  whole-string conditions and ordering 0.1.3 wrongly refused and whose contains, column search and global search it
-  matched as analysed text only, now answers as `text+keyword` too); a `text` other than `None`, `text+keyword`
-  included, on a column that is not a string column is refused.
+- **A table now raises `SchemaError` when it is built, for a declaration that never worked as declared.** The message
+  names the column or what was written, and the fix. If your table declares one of these, it built before, or failed to
+  build with another message, and raises this now:
+  - **`text=` on a column that is not a string column** (OpenSearch): `text='keyword'`, `'text'` or `'text+keyword'` on
+    a number, date or boolean column was ignored. Remove the `text=`.
+  - **A `search_value` that is not callable** (both backends), such as `'x'`, `''` or `0`: on a string column that holds
+    a whole string, the first request that compared a search value with the column (`=`, `!=`, a column search or the
+    global search) raised `TypeError`, and a falsy one silently made the column compare by whole value. Pass a function
+    from the search text to the value to compare, or remove it.
+  - **An empty column name or `field`, or a name of `None`** (both backends): an empty `field` was read as the name, and
+    an empty name with no `field` sent an empty field name to OpenSearch (`null` for `None`); on SQL it was refused only
+    as a missing column, with no fix, and a `None` name with no `field` raised SQLAlchemy's `ArgumentError`. Give the
+    column a non-empty name, and drop an empty `field=` or give it the source's name.
+  - **A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values**: a
+    number kind this library did not know (`number='double'`, until it was added above) or a misspelled one failed the
+    first filter that carried a number to that column (a SearchBuilder condition, a column search or a list) with a
+    `KeyError`, and a misspelled `type=` failed the first SearchBuilder condition on it, both a 500 through the FastAPI
+    adapter (on SQL, unless the check that a declared `type=` fits the column's SQL type refused a `type=` first). A
+    misspelled `text=` on a string column had its whole-string conditions (`=`, `!=`, starts with, ends with and their
+    negations), its lists of exact values (a `multi_values` list, a categorical regex, a ColumnControl list) and its
+    ordering wrongly refused, and matched contains, a column search and the global search as analysed text only (no
+    substring inside a word). Use one of the accepted values, which the message lists.
+- **`IndexColumn.text` is `None` when it is not declared** (OpenSearch), where it was `'text+keyword'`. If your code
+  reads `column.text`, or compares an `IndexColumn` with one built with `text='text+keyword'` (`IndexColumn('x') ==
+  IndexColumn('x', text='text+keyword')` is now false), read `None` as `'text+keyword'` on a string column; a string
+  column that does not declare it is still read as `text+keyword`, so its answers do not change. An explicit
+  `text=None` (which the type did not allow) now behaves as not declaring it: 0.1.3 refused its whole-string conditions
+  (`=`, `!=`, starts with, ends with and their negations), its lists of exact values and its ordering, and matched
+  contains, a column search and the global search as analysed text only.
 
 ### Fixed
 
-- A table that declared a `text=` other than `None` on a column that is not a string column, a `search_value` that is
-  not callable, or an empty column name or `field` now raises `SchemaError` when it is built, naming the column or what
-  was written, and the fix. Before, the `text=` was ignored, a non-callable `search_value` on a string column that holds
-  a whole string raised `TypeError` on the first request that compared a search value with the column (`=`, `!=`, a
-  column search or the global search) (a falsy one, such as `''` or `0`, silently made the column compare by whole
-  value), an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
-  OpenSearch (`null` for a name of `None`; on SQL it was refused only as a missing column, with no fix, and a name of
-  `None` with no `field` raised SQLAlchemy's `ArgumentError`). A table that used to build and now fails to build is the
-  declaration being wrong.
-- A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
-  `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
-  table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
-  carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for any SearchBuilder
-  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` on a string column had
-  its whole-string conditions (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused,
-  and matched contains, a column search and the global search as analysed text only (no substring inside a word).
-  A table that used to build and now fails to build is the declaration being wrong.
 - On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
   `-1e-400`, is sent as `0`, as `0` is: a whole number goes as written, and one written with a point or an exponent as
-  the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it (PRD-F25). Before, such a
-  number with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or
-  `half_float` field keeps apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a
-  column search of it and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for
-  `0`. For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
-  for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none, and
-  `>` and `!=` no longer find it. For a document holding -0.0 in a `double` or a `float` field, `=`, `>=`, a column
-  search and a list entry with either no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a
-  bound answer as for `0` too. A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`,
-  `-1e-10`) is sent as it is, as before.
+  the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it. Before, such a number
+  with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or `half_float`
+  field keeps apart from 0.0. So on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a column search
+  of it and a list entry of it (a `multi_values` list, a categorical regex or a ColumnControl list) missed the
+  document, while `>` and `!=` found it. Each now answers as for `0`.
+  - For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
+    for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none,
+    and `>` and `!=` no longer find it.
+  - For a document holding -0.0 in a `double` or a `float` field, `=`, `>=`, a column search and a list entry with
+    either no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a bound answer as for `0`
+    too.
+  - A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`, `-1e-10`) is sent as it is,
+    as before.
 - On OpenSearch, a column declared `half_float` (`IndexColumn(number='half_float')`) answers `invalid_number` for
   `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with the
   server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).
-- The limit of 16,383 digits after the decimal point is read from the number's value, not from how it is written:
-  `1e-16383` and `1.0e-16383` are the same number, and the second is now answered too (it was refused for having too
-  many digits after the point), as are `100e-16385` and `0e-16384`; `1e-16384` and its spellings are still
-  `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal holds
-  (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason.
-  On SQL Server, on a `Numeric` column (behind a `TypeDecorator` too) or a plain integer column, of the numbers
-  answered above only `0e-16384` is answered there: its limit of 38 digits refuses the others.
+- The limit of 16,383 digits after the decimal point (the most PostgreSQL's `numeric` takes) is read from the number's
+  value, not from how it is written: `1e-16383` and `1.0e-16383` are the same number, and the second is now answered
+  too (it was refused for having too many digits after the point), as are `100e-16385` and `0e-16384`; `1e-16384` and
+  its spellings are still `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal
+  holds (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason. On SQL
+  Server, on a `Numeric` column (behind a `TypeDecorator` too) or a plain integer column, of the numbers answered above
+  only `0e-16384` is answered there: its limit of 38 digits refuses the others.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken
@@ -69,8 +95,8 @@ and the versioning policy is in the README.
   `multi_values` list, which alone then answers. ColumnControl's `contains`, a column search, is covered too. Before,
   each of these was refused with `invalid_filter`, and so was text of spaces only beside such a list. A column search
   with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
-  with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
-  refused with `invalid_character`.
+  with a `search_value` hook, whose text is one whole value, and text holding a control character is still refused with
+  `invalid_character`.
 
 ## [0.1.3] - 2026-11-25
 
@@ -313,7 +339,8 @@ The first release, a release candidate: install it with `pip install --pre datat
 
 What it does: see [0.1.0].
 
-[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/hniedner/datatables-backend/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hniedner/datatables-backend/releases/tag/v0.2.0
 [0.1.3]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.3
 [0.1.2]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.2
 [0.1.1]: https://github.com/hniedner/datatables-backend/releases/tag/v0.1.1
