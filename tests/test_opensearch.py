@@ -3343,6 +3343,7 @@ def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_c
     [
         pytest.param(lambda: Column(''), "name=''", 'Give it a non-empty name', id='name'),
         pytest.param(lambda: Column(cast(Any, None)), 'name=None', 'Give it a non-empty name', id='name-none'),
+        pytest.param(lambda: Column('', field='src'), "name=''", 'Give it a non-empty name', id='name-with-field'),
         pytest.param(lambda: Column('x', field=''), 'field=""', 'Drop field=', id='field'),
     ],
 )
