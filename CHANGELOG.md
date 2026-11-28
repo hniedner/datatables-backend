@@ -11,9 +11,9 @@ and the versioning policy is in the README.
   `1e-16383` and `1.0e-16383` are the same number, and the second is now answered too (it was refused for having too
   many digits after the point), as are `100e-16385` and `0e-16384`; `1e-16384` and its spellings are still
   `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal holds
-  (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason. On SQL Server
-  only `0e-16384` of these is answered, on a `Numeric` column or an integer column not behind a `TypeDecorator`: its
-  limit of 38 digits refuses the others.
+  (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason. On SQL Server, on
+  a `Numeric` column or an integer column not behind a `TypeDecorator`, only `0e-16384` of these is answered: its limit
+  of 38 digits refuses the others.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken

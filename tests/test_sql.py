@@ -3077,10 +3077,10 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     """SPEC-F25.14, SPEC-F25.16: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual,
     Table 8.2, fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's
     error; it was a float that read as zero. That `1e-16383` itself is answered is shown on a `Numeric` column by the
-    live test of SPEC-F25.16. `1.5e-16383` has a digit past the limit though its first digit is not: it catches the
-    limit read from the size of the number instead of from its last digit. A list entry and the bound of a `between` are
-    refused too, with the wording for a value among several (`listed`). The `mssql` leg adds that this refusal comes
-    before SQL Server's 38 digits."""
+    live test of SPEC-F25.16 (except on SQL Server, with its 38 digits). `1.5e-16383` has a digit past the limit though
+    its first digit is not: it catches the limit read from the size of the number instead of from its last digit. A list
+    entry and the bound of a `between` are refused too, with the wording for a value among several (`listed`). The
+    `mssql` leg adds that this refusal comes before SQL Server's 38 digits."""
     single = 'The filter on "i" needs a number with at most 16383 digits after the decimal point.'
     among = 'Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.'
     for dialect in (postgresql.dialect, mssql.dialect):

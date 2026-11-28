@@ -921,7 +921,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
     ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which is
     also what decides whether a backend that compares as a float can take it (a number too small for a float reaches it
-    as 0, see docs/databases.md), and has at most 16,383 digits after the decimal point (16,383 is the most PostgreSQL's
+    as 0, see docs/databases.md). It has at most 16,383 digits after the decimal point (16,383 is the most PostgreSQL's
     ``numeric`` takes, so ``1e-20000`` is refused). The limit is of the value: a fraction's trailing zeros are not
     counted and zero has no fraction, so ``1.0e-16383`` and ``0e-16384`` are accepted here, with their zeros dropped (a
     number within the limit is returned as written, which no backend can tell: each drops the zeros again, sends a whole
@@ -968,8 +968,8 @@ def _too_many_fraction_digits(column: Column, *, listed: bool) -> InvalidFilter:
 
 def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilter:
     """The mistake of ``text``, a number whose exponent no ``Decimal`` holds: a nonzero one with a negative exponent has
-    more than 16,383 digits after the point; any other has an exponent of too many digits for a ``Decimal`` to read, a
-    zero's included (it has no fraction to count, so the limit's reason would be untrue)."""
+    more than 16,383 digits after the point; any other has an exponent too large for a ``Decimal`` to read, a zero's
+    included (it has no fraction to count, so the limit's reason would be untrue)."""
     mantissa, _, exponent = text.lower().partition('e')
     if exponent.startswith('-') and mantissa.strip('+-.0'):
         return _too_many_fraction_digits(column, listed=listed)
@@ -979,9 +979,9 @@ def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilt
 def without_trailing_zeros(value: Decimal) -> Decimal:
     """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and any zero
     is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the number, not its spelling, so
-    each needs it, and every database then gets the same number. A whole number stays as written: ``1E+2`` is not turned
-    into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which also rounds to the context's 28
-    digits), which changes nothing for a database."""
+    each needs it, and every database then gets the same number. A number without fraction digits keeps its exponent:
+    ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which also rounds to
+    the context's 28 digits), which changes nothing for a database."""
     sign, digits, point = value.as_tuple()
     exponent = int(point)  # a finite number's
     if not any(digits):  # zero has no digits to keep, however long its fraction is written
@@ -992,8 +992,8 @@ def without_trailing_zeros(value: Decimal) -> Decimal:
 
 
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
-    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or a zero or a positive
-    exponent no ``Decimal`` holds."""
+    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or a zero or a number with a
+    positive exponent whose exponent no ``Decimal`` holds."""
     needed = (
         f'Each value in the filter on "{column.name}" must be a number'
         if listed
