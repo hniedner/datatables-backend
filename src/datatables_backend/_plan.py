@@ -24,6 +24,7 @@ import math
 import re
 from typing import Any
 from typing import Literal
+from typing import get_args
 import unicodedata
 
 from .columns import Column
@@ -333,15 +334,29 @@ class Plan:
         return bool(self.global_search or self.column_searches or self.search_builder)
 
 
+def check_type(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``type`` that is none of the four: a ``Literal`` checks nothing at run time, and the
+    table would build and then fail on a filter. The message names the column, the type written and the accepted ones;
+    the name and the value are the server's, never the client's."""
+    accepted = get_args(ColumnType.__value__)
+    if column.type is not None and column.type not in accepted:
+        raise SchemaError(
+            f'The column "{column.name}" declares type={column.type!r}, which is not a type. Declare one of '
+            f'{", ".join(accepted)}.'
+        )
+
+
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
-    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14) or
-    holds no whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the
-    backend's: SQL reads the type of a column it did not declare one for from the source."""
+    second would silently replace the first (PRD-D1), a ``type`` that is none of the four, or a search-value hook on a
+    column that is no string (PRD-D14) or holds no whole string to compare with (PRD-D20). The messages name only
+    declared columns. ``describe`` is the backend's: SQL reads the type of a column it did not declare one for from the
+    source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()
     for column in columns:
+        check_type(column)
         if column.name in names:
             raise SchemaError(
                 f'Two columns are declared with the name "{column.name}". Give each its own name: '

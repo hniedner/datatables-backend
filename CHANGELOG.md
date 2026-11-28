@@ -5,8 +5,21 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Added
+
+- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite number, so they
+  are checked as a column with no kind is: at most 255 characters and finite as a double. A `scaled_float` still clamps
+  a number whose scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
+
 ### Fixed
 
+- A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
+  `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
+  table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
+  carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for any SearchBuilder
+  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` (or `text=None`) had
+  its whole-string conditions (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused.
+  A table that used to build and now fails to build is the declaration being wrong.
 - On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
   `-1e-400`, is sent as `0`, as `0` is: a whole number goes as written, and one written with a point or an exponent as
   the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it (PRD-F25). Before, such a

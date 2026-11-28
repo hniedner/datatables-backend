@@ -24,6 +24,7 @@ from typing import Any
 from typing import Literal
 from typing import Protocol
 from typing import cast
+from typing import get_args
 
 from ._plan import Bound
 from ._plan import Capabilities
@@ -39,6 +40,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import check_type
 from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
@@ -69,15 +71,20 @@ log = logging.getLogger('datatables_backend')
 #: which is what dynamic mapping creates for a string
 type TextKind = Literal['keyword', 'text', 'text+keyword']
 
-#: The mapping type of a number field, for the kinds that refuse a number (decision 011). ``byte`` and ``short`` are
-#: refused by OpenSearch only beyond an ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float``
-#: refuse nothing, so they have no kind.
-type NumberKind = Literal['byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float']
+#: The mapping type of a number field (decision 011). ``byte`` and ``short`` are refused by OpenSearch only beyond an
+#: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse no finite number, so they are
+#: checked by the floor alone, which every number column has: at most 255 characters (PRD-F14) and finite as a double
+#: (PRD-F25). A ``scaled_float`` still clamps a number whose scaled value passes a ``long``, because its scaling factor
+#: lives in the mapping, which is never read.
+type NumberKind = Literal[
+    'byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float', 'double', 'scaled_float'
+]
 
 #: What OpenSearch accepts for each ``NumberKind`` (decision 011): the lowest and the highest number, as the message
-#: names them. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The floats'
-#: range is where a number rounds to infinity in their format, as the field reads it (``_FLOAT_FORMATS``), which
-#: ``_accepted`` asks of ``struct``: ``half_float`` takes 65519.99, which is 65504 in half.
+#: names them. ``double`` and ``scaled_float`` carry a double's range, which the floor already enforces, so they are
+#: never refused here. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The
+#: floats' range is where a number rounds to infinity in their format, as the field reads it (``_FLOAT_FORMATS``),
+#: which ``_accepted`` asks of ``struct``: ``half_float`` takes 65519.99, which is 65504 in half.
 _INTEGER_BOUNDS = (-(2**31), 2**31 - 1)
 _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'byte': _INTEGER_BOUNDS,
@@ -87,7 +94,11 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'unsigned_long': (0, 2**64 - 1),
     'float': (-3.4028234663852886e38, 3.4028234663852886e38),
     'half_float': (-65504, 65504),
+    'double': (-1.7976931348623157e308, 1.7976931348623157e308),
+    'scaled_float': (-1.7976931348623157e308, 1.7976931348623157e308),
 }
+_TEXT_KINDS = get_args(TextKind.__value__)
+_NUMBER_KINDS = get_args(NumberKind.__value__)
 #: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
 #: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (CI run 46091503895,
 #: OpenSearch 3.10.0 and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is
@@ -113,7 +124,9 @@ class IndexColumn(Column):
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
-    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``.
+    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
+    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind is checked by the floor
+    alone (see ``NumberKind``).
     """
 
     text: TextKind = 'text+keyword'
@@ -412,11 +425,29 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
     return isinstance(total, Mapping) and total.get('relation') == 'gte'
 
 
+def _check_kinds(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
+    run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message names the column,
+    what was written and the accepted kinds; the name and the value are the server's, never the client's."""
+    if not isinstance(column, IndexColumn):
+        return
+    kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
+    for field_name, written, accepted in kinds:
+        if written not in accepted and not (field_name == 'number' and written is None):  # only number may be None
+            raise SchemaError(
+                f'The column "{column.name}" declares {field_name}={written!r}, which is not a kind. Declare one of '
+                f'{", ".join(accepted)}.'
+            )
+
+
 def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
     plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
     unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too."""
+    declared on a column that is no number column is the server's mistake too, and so is a ``type`` that is none of the
+    four, or a ``text`` or ``number`` that is none of its kinds."""
+    check_type(column)  # first: what follows reads the type
+    _check_kinds(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '

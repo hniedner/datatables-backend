@@ -47,11 +47,13 @@ Three more facts:
 
 ## What follows from it
 
-The owner decided on 2026-11-25, and PRD-D23 states it:
+The owner decided on 2026-11-25 (one point revised on 2026-11-27, below), and PRD-D23 states it:
 
 - A value outside a kind's range is refused with `invalid_number` before the query for `integer`, `long`,
-  `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing,
-  so they have no kind.
+  `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing, so
+  the first decision gave them no kind. The owner later approved both as kinds checked as every number column is (owner,
+  2026-11-27, recorded on pull request #227), so that declaring the mapping type of any number field builds; they still
+  refuse no finite number.
 - `byte` and `short` refuse only where OpenSearch does, beyond an `integer`'s range, and carry its bounds. A `byte` kind
   that refused 128 would take away an answer the library gives without a kind (`=` finds nothing, `<=` every row), and
   there is no failure to prevent there. SQL bounds a `SmallInteger` by 16 bits and refuses 40000; OpenSearch answers it
@@ -59,10 +61,12 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
 - The check is on the number as the request sends it: a number with a point goes as a float, so a fraction that
   rounds to the edge is refused, as the server does. `9223372036854775807.0`, written with a point, is therefore refused
   on a `long`; an integral decimal is not sent as an integer.
-- A value of at most 255 characters (PRD-F14) is finite as a double, so `double` and `scaled_float` columns need no
-  check, and the library already refuses a number that is not finite as a double with `invalid_number`.
-- The two answers without an error are stated limits for an undeclared column (PRD section 5, `docs/databases.md`): a
-  declared `unsigned_long` refuses `-1`, and a `scaled_float` has no kind.
+- The library already refuses a number that is not finite as a double with `invalid_number` (PRD-F25), and a `double`
+  field answered every value measured (MEASURED 2026-11-25, CI run 45639230811: 255 digits, 1e308 and 2^64), a
+  `scaled_float` 255 digits and 1e300, so those columns need no check beyond that (INFERRED for the values not sent).
+- The two answers without an error are stated limits (PRD section 5, `docs/databases.md`): a declared `unsigned_long`
+  refuses `-1` where an undeclared column does not, and a `scaled_float` clamps declared or not (INFERRED for a declared
+  one: it sends the same body).
 - The live test `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers` sends each edge pair
   of the table above through a declared and an undeclared column on both servers, so the exact edges the library
   carries (the `byte` and `short` edge at 2^31 and the `float` rounding edge) are checked against the server on every
