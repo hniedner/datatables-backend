@@ -83,11 +83,26 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     word_file = {
         'unset': None,
         'missing file': tmp_path / 'absent.txt',
-        'no words': write(tmp_path / 'empty.txt', '# only a comment\n\n'),
+        'no words': write(tmp_path / 'empty.txt', '# only a comment\n  # an indented one\n \t\n\n'),
     }[case]
     result = scan(str(clean), words=word_file)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    fix = {
+        'unset': 'set it to the path of the word list',
+        'missing file': 'point it at the word list',
+        'no words': 'add the private words, one per line',
+    }[case]
+    assert 'could not check: ' in result.stderr
+    assert fix in result.stderr  # the message names the fix
+
+
+def test_a_word_list_under_an_unknown_home_cannot_check(tmp_path: Path):
+    """A typo such as `~nosuchuser/words.txt` makes expanduser raise RuntimeError; it must be exit 2, not a crash."""
+    clean = write(tmp_path / 'clean.md', 'nothing here\n')
+    result = scan(str(clean), words=None, extra={'DTB_PRIVATE_WORDS': '~nosuchuserxyz/words.txt'})
+    assert result.returncode == 2
+    assert 'could not check: DTB_PRIVATE_WORDS names no readable file: point it at the word list' in result.stderr
+    assert 'nosuchuserxyz' not in result.stderr  # the message names the variable, not the path
 
 
 def git(repo: Path, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:  # noqa: A002
@@ -137,7 +152,9 @@ def test_a_planted_word_anywhere_in_history_fails(repo: Path, words: Path, where
 def test_a_utf16_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path):
     planted = tmp_path / 'notes.txt'
     planted.write_bytes(f'see {WORD} here\n'.encode('utf-16'))
-    assert scan(str(planted), words=words).returncode == 1
+    result = scan(str(planted), words=words)
+    assert result.returncode == 1
+    assert f'{planted}:1: private word #3' in result.stderr  # read by the mark, not only as a second reading
 
 
 def test_a_message_scan_without_a_file_cannot_check(words: Path):
@@ -157,7 +174,7 @@ def test_a_message_scan_of_two_files_cannot_check(tmp_path: Path, words: Path):
     second = write(tmp_path / 'second.txt', f'A message with {WORD}\n')
     result = scan('--message', str(first), str(second), words=words)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'could not check: --message needs exactly one message file' in result.stderr
 
 
 def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Path, words: Path):
@@ -274,11 +291,6 @@ def test_a_casefolded_word_in_history_is_found_and_redacted(repo: Path, folded_w
     assert never_printed(result), result.stderr
 
 
-def test_a_utf16_blob_in_history_is_found(repo: Path, words: Path):
-    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-16'))
-    assert scan('--history', words=words, cwd=repo).returncode == 1
-
-
 def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     link = tmp_path / 'link'
     link.symlink_to(f'../{WORD}/target')
@@ -367,7 +379,7 @@ def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path
 
 
 def test_a_list_word_with_spaces_around_it_still_matches(tmp_path: Path):
-    padded = write(tmp_path / 'padded.txt', f'  {WORD}  \n')
+    padded = write(tmp_path / 'padded.txt', f'  {WORD}\t \n')  # a tab at an end is whitespace, as a space is
     planted = write(tmp_path / 'notes.md', f'see {WORD} here\n')
     assert scan(str(planted), words=padded).returncode == 1
 
@@ -385,12 +397,22 @@ def test_a_missing_message_file_cannot_check_and_is_not_printed(tmp_path: Path, 
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
-def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path):
-    latin1 = tmp_path / 'latin1.txt'
-    latin1.write_bytes('Gärtner\n'.encode('latin-1'))
-    result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=latin1)
-    assert result.returncode == 2
-    assert 'not UTF-8' in result.stderr
+@pytest.mark.parametrize(
+    'saved',
+    [
+        'Gärtner\n'.encode('latin-1'),
+        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with NULs: the message must say to save it as UTF-8
+        f'{WORD}\n'.encode('utf-16-le'),
+        f'{WORD}\n'.encode('utf-16-be'),  # starts with a NUL, where the little-endian text ends with one
+    ],
+    ids=['latin-1', 'utf-16 without a mark', 'utf-16be without a mark'],
+)
+def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path, saved: bytes):
+    listed = tmp_path / 'list.txt'
+    listed.write_bytes(saved)
+    result = scan(str(write(tmp_path / 'clean.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'is not UTF-8: save it as UTF-8' in result.stderr
 
 
 @pytest.mark.parametrize('where', ['branch', 'tag name', 'tag message'])
@@ -460,7 +482,7 @@ def test_an_unreadable_file_cannot_check(tmp_path: Path, words: Path):
     finally:
         locked.chmod(0o600)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'every file given to the scan can be read' in result.stderr  # says what to check, not only that it failed
 
 
 def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path):
@@ -469,11 +491,153 @@ def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path
     assert scan(str(planted), words=words).returncode == 1
 
 
-def test_a_word_list_saved_with_a_byte_order_mark_keeps_its_first_word(tmp_path: Path):
+def test_a_utf32_blob_in_history_is_found(repo: Path, words: Path):
+    """No other reading covers UTF-32, so only the byte order mark finds the word in a blob."""
+    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-32'))
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
+@pytest.mark.parametrize('where', ['first line', 'joined lists'])
+def test_a_byte_order_mark_in_a_word_list_does_not_hide_a_word(tmp_path: Path, where: str):
+    """A joined list (`cat a.txt b.txt`) keeps the second file's mark at the start of a line in the middle of the file:
+    a mark there is a file artifact."""
     listed = tmp_path / 'bom.txt'
-    listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
+    if where == 'first line':
+        listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
+    else:  # both lists saved by the same editor, so both carry a mark
+        listed.write_bytes(f'{SECOND}\n'.encode('utf-8-sig') + f'{WORD}\n'.encode('utf-8-sig'))
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 1, result.stdout
+    assert f'private word #{1 if where == "first line" else 2}' in result.stderr
+
+
+def test_a_byte_order_mark_joining_two_words_cannot_check(tmp_path: Path):
+    """With no final newline in the first list, the second list's mark sits inside a line. Dropping it would make one
+    word of two that matches neither, so only a mark that starts a line is dropped and the rest is refused."""
+    listed = tmp_path / 'joined.txt'
+    listed.write_bytes(SECOND.encode() + f'{WORD}\n'.encode('utf-8-sig'))
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD} and {SECOND}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'could not check: word list line 1 holds an invisible character: retype the word' in result.stderr
+
+
+@pytest.mark.parametrize(
+    'invisible',
+    ['\u200b', '\u00ad', '\t', '\x1b', '\x0c', '\u2028', '\u2029'],
+    ids=['zero-width space', 'soft hyphen', 'tab', 'escape', 'form feed', 'line separator', 'paragraph separator'],
+)
+def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, invisible: str):
+    """A format (Cf), control (Cc) or separator (Zl, Zp) character inside a word misses the text typed without it:
+    refuse, do not guess. A tab is `word<TAB>note` from a spreadsheet. The form feed and the line separator are ones
+    that `str.splitlines()` would split a word at, so the list is split at newlines only and they are refused too."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}{invisible}{WORD[3:]}\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'word list line 2 holds an invisible character: retype the word alone on its line' in result.stderr
+    assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # no piece of the word is printed
+
+
+def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
+    """A form feed on an earlier line is no line break to an editor, so the message must not count it as one."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\x0c\n{WORD[:3]}\u200b{WORD[3:]}\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'word list line 2 holds an invisible character' in result.stderr
+
+
+def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
+    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was, so the word would
+    miss the word as typed. The scan's own advice, to save the list as UTF-8, leads here."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\nG\ufffdrtner\n')
+    result = scan(str(write(tmp_path / 'notes.md', 'see Gärtner\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'word list line 2 holds a replacement character' in result.stderr
+    assert ': retype the word' in result.stderr  # the fix
+    assert 'rtner' not in result.stdout + result.stderr  # no piece of the word is printed
+
+
+@pytest.mark.parametrize(
+    'marker',
+    [' #', '  #', '\t#', '\u00a0#', '\u3000\uff03'],
+    ids=['one space', 'two spaces', 'tab', 'no-break space', 'fullwidth space and hash'],
+)
+def test_a_note_after_a_word_cannot_check(tmp_path: Path, marker: str):
+    """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces.
+    After a tab the tab is refused too, but the message must be the note's: it says where the note goes, not to drop it.
+    A no-break space (Option+Space on a Mac) is no control character: only the `\\s` of the check refuses it. A
+    fullwidth hash (a Japanese input method) folds to `#`, so the check reads the folded word."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}{marker} the client\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'could not check: word list line 2 holds a note after the word' in result.stderr
+    assert 'put the note on its own line, starting with #' in result.stderr  # the fix
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()  # the word is never printed
+
+
+@pytest.mark.parametrize(
+    'listed', [f'{WORD[:4]} {WORD[4:]}', f'{WORD}#1'], ids=['a phrase with a space', 'a hash inside']
+)
+def test_a_phrase_or_a_hash_inside_a_word_is_still_a_word(tmp_path: Path, listed: str):
+    """Only whitespace followed by # is a note: a multi-word private name and a word like `C#` are legitimate."""
+    result = scan(str(write(tmp_path / 'notes.md', f'see {listed} here\n')), words=write(tmp_path / 'l.txt', listed))
+    assert result.returncode == 1, result.stdout
+
+
+PHRASE = f'{WORD[:5]} {WORD[5:]}'  # a two-word private name: 'Zebra finch'
+
+
+@pytest.mark.parametrize(
+    'wrapped',
+    ['Zebra\nfinch', 'Zebra  finch', 'Zebra\tfinch', 'Zebra\n\n   finch'],
+    ids=['line break', 'two spaces', 'tab', 'blank line and indent'],
+)
+@pytest.mark.parametrize('where', ['file', 'history'])
+def test_a_phrase_is_found_across_whitespace_and_line_breaks(tmp_path: Path, repo: Path, where: str, wrapped: str):
+    """Docs are hard-wrapped, so a two-word private name can split across a line break or carry two spaces; it must
+    still be found, and reported at the line its first word is on."""
+    listed = write(tmp_path / 'list.txt', f'{PHRASE}\n')
+    data = f'first line\nsee {wrapped} here\n'
+    if where == 'file':
+        result = scan(str(write(tmp_path / 'notes.md', data)), words=listed)
+        assert 'notes.md:2: private word #1' in result.stderr
+    else:
+        commit(repo, 'notes.txt', data.encode())
+        result = scan('--history', words=listed, cwd=repo)
+    assert result.returncode == 1, result.stdout
+    assert 'zebra' not in (result.stdout + result.stderr).casefold()  # nothing of the word is printed
+
+
+def test_a_phrase_with_two_spaces_in_the_list_matches_single_spaces(tmp_path: Path):
+    """The list's whitespace is squeezed as the text's is, so `Zebra  finch` in the list matches `Zebra finch`."""
+    listed = write(tmp_path / 'l.txt', f'{WORD[:5]}  {WORD[5:]}')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {PHRASE} here\n')), words=listed)
+    assert result.returncode == 1, result.stdout
+
+
+def test_each_line_a_word_starts_on_is_reported_once_in_a_long_file(tmp_path: Path, words: Path):
+    """The line offsets must hold deep in a file, across blank lines and several matches: a word that opens a line, a
+    second word on the next, and one that appears twice on a line far down."""
+    lines = ['filler'] * 200
+    lines[0] = ''
+    lines[1] = f'{WORD} opens this line'
+    lines[2] = f'{SECOND} too'
+    lines[149] = f'see {WORD} and {WORD} again'
+    planted = write(tmp_path / 'long.md', '\n'.join(lines) + '\n')
+    result = scan(str(planted), words=words)
+    assert result.returncode == 1, result.stdout
+    assert result.stderr.splitlines() == [
+        f'{planted}:2: private word #3',
+        f'{planted}:3: private word #5',
+        f'{planted}:150: private word #3',
+    ]
+
+
+@pytest.mark.parametrize('breaker', ['\x0c', '\x85', '\u2028'], ids=['form feed', 'next line', 'line separator'])
+def test_a_finding_is_reported_at_the_line_git_counts(tmp_path: Path, words: Path, breaker: str):
+    """Git and editors count lines at newlines only: a form feed (a page break in GNU sources) must not add a line."""
+    planted = write(tmp_path / 'notes.md', f'import os\n{breaker}\nsee {WORD}\n')
+    result = scan(str(planted), words=words)
+    assert f'{planted}:3: private word #3' in result.stderr, result.stderr
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])
@@ -534,6 +698,43 @@ def editor_hint(comment: str = '#') -> str:
 def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, words: Path, template: str):
     result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    'template',
+    [
+        f'Fix\n{SCISSORS}\n{WORD}\n# Do not modify or remove the line above.\n',  # the warning line must follow at once
+        f'Fix\n{SCISSORS} and more\n# Do not modify or remove the line above.\n{WORD}\n',  # git writes the line whole
+        f'Fix\n{SCISSORS}\n# Do not modify or remove the line above. And more.\n{WORD}\n',  # and the warning too
+        f'Fix\n {SCISSORS}\n# Do not modify or remove the line above.\n{WORD}\n',  # nothing before it either
+        f'Fix\n{SCISSORS}\n # Do not modify or remove the line above.\n{WORD}\n',  # and not before the warning
+    ],
+    ids=[
+        'scissors and warning apart',
+        'scissors line with more on it',
+        'warning line with more on it',
+        'scissors line with a space before it',
+        'warning line with a space before it',
+    ],
+)
+def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, words: Path, template: str):
+    result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
+    assert result.returncode == 1, result.stderr
+
+
+def test_a_message_is_cut_at_git_s_scissors_pair_and_not_above_it(tmp_path: Path, words: Path):
+    template = f'Fix {WORD}\n{SCISSORS}\n# Do not modify or remove the line above.\ndiff --git a/a.txt b/a.txt\n'
+    result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
+    assert result.returncode == 1, result.stderr  # the word above the pair is the message
+
+
+def test_the_scissors_pair_uses_git_s_comment_character(repo: Path, words: Path):
+    git(repo, 'config', 'core.commentChar', ';')
+    warning = 'Do not modify or remove the line above.'
+    cut = write(repo / 'cut', f'Fix\n; ------------------------ >8 ------------------------\n; {warning}\n{WORD}\n')
+    uncut = write(repo / 'uncut', f'Fix\n{SCISSORS}\n# {warning}\n{WORD}\n')  # `#` lines: not git's pair here
+    assert scan('--message', str(cut), words=words, cwd=repo).returncode == 0
+    assert scan('--message', str(uncut), words=words, cwd=repo).returncode == 1
 
 
 def test_the_message_comment_character_is_git_s(repo: Path, words: Path):
@@ -683,6 +884,7 @@ def test_a_loose_commit_pushed_as_a_second_refspec_is_refused_by_the_hook(tmp_pa
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode != 0, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also blocks the push
     assert git(remote, 'for-each-ref') == ''  # nothing reached the remote
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
@@ -719,22 +921,13 @@ def test_an_editor_commit_removing_a_word_named_file_goes_through(repo: Path, wo
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'Remove a leaked file'
 
 
-@pytest.mark.parametrize('where', ['tag in a tag', 'tagged tree'])
-def test_every_object_kind_is_read(repo: Path, words: Path, where: str):
-    """A tag object a tag wraps, or a tree only a tag holds, is published but is no blob and no commit."""
-    if where == 'tag in a tag':
-        git(repo, 'tag', '-a', 'inner', '-m', f'Notes on {WORD}')
-        git(repo, 'tag', '-a', 'outer', 'inner', '-m', 'Clean')
-        git(repo, 'tag', '-d', 'inner')
-    else:
-        write(repo / f'{WORD}.txt', 'clean\n')
-        git(repo, 'add', '.')
-        tree = git(repo, 'write-tree').strip()
-        git(repo, 'rm', '-q', '--cached', f'{WORD}.txt')
-        (repo / f'{WORD}.txt').unlink()
-        git(repo, 'tag', 'just-a-tree', tree)
+def test_a_tree_no_ref_and_no_commit_holds_is_read(repo: Path, words: Path):
+    """`git push origin main <tree>:refs/tags/t` sends a tree that no commit and no ref holds."""
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    git(repo, 'mktree', input=f'100644 blob {blob}\t{WORD}.txt\n')
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
+    assert 'tree ' in result.stderr  # the tree's own finding: no ref and no commit leads to it
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
@@ -770,6 +963,7 @@ def test_a_message_given_on_the_command_line_is_scanned_whole(repo: Path, words:
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode == 1, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also aborts the commit
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'
 
 
@@ -885,7 +1079,8 @@ MIXED = {  # list words and a two-part path: (words, first part, second part)
 
 
 def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
-    """The script as a module, for a file name the file system here may refuse to create (APFS takes UTF-8 only)."""
+    """The script as a module, to patch it in process: for a file name the file system here may refuse to create
+    (APFS takes UTF-8 only), for an answer from git that only a race or a corrupt object gives."""
     spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -916,6 +1111,36 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
         output = '\n'.join(scanner.scan_files([os.fsdecode(first + b'/' + second)], scanner.load_words()))
     assert '***/*** (path)' in output, output
     assert not leaked(output, *listed_words), output
+
+
+_ID = '0' * 40
+_UNREADABLE = {  # what batch() may get
+    # git's own answers for an unreadable object
+    'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
+    'size one past the end': f'{_ID} blob 6\nshort\n',  # the body is 5 bytes, the output ends on its newline
+    'size past the end': f'{_ID} blob 200\nshort\n',  # a valid zlib stream whose object header declares too much
+    # (a byte flipped in the body's part of the stream makes git exit 128 instead, which main answers as a git failure)
+    'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # a body longer than its size: no newline
+    # lines git never prints, read as a header after a wrong declared end
+    'size that is no number': f'{_ID} blob {WORD}\nshort\n',
+    'a fourth field': f'{_ID} blob 5 5\nhello\n',  # its size field is digits, so only the field count refuses it
+}
+
+
+@pytest.mark.parametrize('answer', list(_UNREADABLE))
+def test_an_object_git_cannot_read_cannot_check(
+    words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
+):
+    """In process, with the bytes given: a race cannot be staged. The table comments say which rows are git's own
+    answers and which are lines a wrong declared end makes the parser read as a header."""
+    scanner = load_scanner(monkeypatch, words)
+    printed = _UNREADABLE[answer].encode()
+    monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
+    assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
+    shown = capsys.readouterr().err
+    assert 'could not check: an object could not be read' in shown  # not the generic git failure
+    assert 'run it again, and if it repeats, check the repository with git fsck' in shown  # and the fix
+    assert WORD.casefold() not in shown.casefold()
 
 
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
@@ -1013,6 +1238,7 @@ def test_a_lightweight_tag_on_an_unpushed_commit_is_refused_by_the_pre_push_hook
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode != 0, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also blocks the push
     assert git(remote, 'tag') == ''  # nothing reached the remote
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
@@ -1022,12 +1248,15 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
     outside.mkdir()
     result = scan('--refs', words=words, cwd=outside)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'could not check: git or the file system failed' in result.stderr
+    fix = 'check that git runs here (git fsck in the repository) and that the word list and every file given to the'
+    assert f'{fix} scan can be read' in result.stderr  # and it says what to do
 
 
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
-    'utf-16 mark before ascii': (WORD, codecs.BOM_UTF16_LE + f'hello {WORD}\n'.encode()),
     'utf-8 mark before latin-1': (NON_ASCII, codecs.BOM_UTF8 + b'see ' + NON_ASCII.encode('latin-1') + b'\n'),
+    'utf-16 mark before utf-8': (NON_ASCII, codecs.BOM_UTF16_LE + b'see ' + NON_ASCII.encode() + b'\n'),
+    'utf-16 mark right before the word': (WORD, codecs.BOM_UTF16_LE + f'{WORD} is the title\n'.encode()),
 }
 
 
@@ -1190,7 +1419,7 @@ def test_an_unreadable_word_list_has_its_own_message(tmp_path: Path, words: Path
     finally:
         words.chmod(0o600)
     assert result.returncode == 2
-    assert 'private-word scan could not check: the word list cannot be read' in result.stderr
+    assert 'private-word scan could not check: the word list cannot be read: check its permissions' in result.stderr
 
 
 def test_a_plain_install_creates_every_hook_the_config_names(tmp_path: Path):

@@ -1,15 +1,17 @@
 """Refuse words that must never become public, in file paths, file contents, commit messages and git history.
 
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
-word per line, matched as a substring after both sides are folded (NFKD, casefold, NFKD), so case and canonically or
-compatibly equal spellings do not matter; blank lines and lines starting with ``#`` are skipped. The
-list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
-path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
-``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
+word per line, matched as a substring after both sides are folded (NFKD, casefold, NFKD) and every run of whitespace,
+line breaks included, is one space, so case, canonically or compatibly equal spellings and the wrapping of a two-word
+name do not matter; blank lines and lines starting with ``#`` are skipped. The list is never committed, and a
+finding never prints the word: it names the word's line in the list (``#3``), and a path or ref name is printed with
+each ``/``-separated part that holds a word in any reading replaced by ``***``, or as ``***`` whole when a word spans
+parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
-The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, it
-cannot check, and says so with exit status 2, which blocks like a finding (exit status 1). That message names no
-command and no path, since either could hold a word.
+The scan fails closed: without the variable, a readable UTF-8 file, or a usable word in it, or when a word in it is
+refused, or when git or the file system fails, or an object cannot be read, it cannot check, and says so with exit
+status 2, which blocks like a finding (exit status 1). That message names no path and no command that ran, since
+either could hold a word.
 
 Usage:
     private_word_scan.py --files FILE... paths and contents of the given files (the pre-commit stage; without
@@ -59,11 +61,14 @@ refuses it.
 
 from __future__ import annotations
 
+import bisect
 import codecs
 from collections.abc import Iterable
 from collections.abc import Iterator
+import itertools
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unicodedata
@@ -72,7 +77,7 @@ VARIABLE = 'DTB_PRIVATE_WORDS'
 FOUND = 1
 COULD_NOT_CHECK = 2
 
-type Words = list[tuple[int, str]]  # (line in the list, folded word)
+type Words = list[tuple[int, str]]  # (line in the list, squeezed word)
 
 _BOMS = [
     (codecs.BOM_UTF32_LE, 'utf-32'),
@@ -84,35 +89,82 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no word list, or git or the file system failed."""
+    """The scan cannot check: no usable word list (none readable, not UTF-8, a format, control or separator character
+    (Unicode Cf, Cc, Zl, Zp), a replacement character U+FFFD or a note after a word, or no word in it), a
+    ``--message`` call that does not name exactly one file, or an object could not be read. (A failing git or file
+    system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
 
 
 def load_words() -> Words:
-    """The private words with their line numbers in the list. Raises CouldNotCheckError when there are none."""
+    """The private words with their line numbers in the list. Raises CouldNotCheckError when there is no usable list
+    or no word in it, or a word is refused (``_word``)."""
     location = os.environ.get(VARIABLE)
     if not location:
-        raise CouldNotCheckError(f'{VARIABLE} is not set')
-    path = Path(location).expanduser()
+        raise CouldNotCheckError(f'{VARIABLE} is not set: set it to the path of the word list')
+    try:
+        path = Path(location).expanduser()  # raises RuntimeError for ``~user`` of an unknown user
+    except RuntimeError:
+        raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list') from None
     if not path.is_file():
-        raise CouldNotCheckError(f'{VARIABLE} names no readable file')
+        raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list')
     words = [
-        (number, fold(line.strip()))
-        for number, line in enumerate(_read_list(path).splitlines(), 1)
+        (number, _word(number, line))
+        for number, line in enumerate(_read_list(path).split('\n'), 1)  # not splitlines(), which splits at U+2028 too
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
-        raise CouldNotCheckError(f'the file {VARIABLE} names holds no word')
+        raise CouldNotCheckError(f'the file {VARIABLE} names holds no word: add the private words, one per line')
     return words
 
 
+def _word(number: int, line: str) -> str:
+    """The squeezed word of a list line. Raises CouldNotCheckError on an invisible character inside it (Unicode category
+    Cf, such as a zero-width space pasted from a web page, Cc, such as the tab of ``word<TAB>note``, or the line and
+    paragraph separators Zl and Zp): a word holding one misses the text typed without it, so the list is refused for
+    its owner to fix, not guessed at. The message names the line and never the word. A word that needs U+200C or
+    U+200D (Persian, Indic) is refused too, so it cannot be listed; the default-ignorable characters outside these
+    categories (variation selectors) are not checked.
+
+    It also refuses U+FFFD, which a list in another encoding holds where each of its non-ASCII letters was once it is
+    opened as UTF-8 and saved again: the word would match only text that lost the same letters, never the word as
+    typed. And it refuses whitespace followed by ``#`` (``word  # note``), a note the list does not support: it would
+    load as one word that never matches. So a word cannot hold whitespace and then ``#``; a phrase with plain spaces
+    and a ``#`` inside a word are fine."""
+    word = line.strip()
+    if re.search(r'\s#', fold(word)):  # first: a note after a tab gets the note's fix, which keeps the note
+        raise CouldNotCheckError(
+            f'word list line {number} holds a note after the word: put the note on its own line, starting with #'
+        )
+    if any(unicodedata.category(character) in {'Cf', 'Cc', 'Zl', 'Zp'} for character in word):
+        raise CouldNotCheckError(
+            f'word list line {number} holds an invisible character: retype the word alone on its line'
+        )
+    if '\ufffd' in word:
+        raise CouldNotCheckError(
+            f'word list line {number} holds a replacement character (a letter lost when the list was converted to '
+            'UTF-8): retype the word'
+        )
+    return squeeze(word)
+
+
 def _read_list(path: Path) -> str:
-    """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8."""
+    """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8.
+
+    A NUL counts as not UTF-8: ASCII text saved as UTF-16 with no byte order mark is valid UTF-8 with a NUL between
+    its letters. ``_word`` would refuse it too, but would tell the owner to retype a word instead of saving the file
+    as UTF-8."""
+    not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
-        return path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
+        # a byte order mark that starts a line is a file artifact (lists joined with ``cat``); one inside a line is left
+        # for ``_word`` to refuse, since dropping it would join two words into one that matches neither
+        text = path.read_text(encoding='utf-8').replace('\n\ufeff', '\n').removeprefix('\ufeff')
     except UnicodeDecodeError:
-        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
+        raise not_utf8 from None
     except OSError:
-        raise CouldNotCheckError('the word list cannot be read') from None
+        raise CouldNotCheckError('the word list cannot be read: check its permissions') from None
+    if '\0' in text:
+        raise not_utf8
+    return text
 
 
 def decode(data: bytes) -> str:
@@ -145,16 +197,47 @@ def content_hits(data: bytes, words: Words) -> list[int]:
 
 
 def fold(text: str) -> str:
-    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since casefolding can undo the
-    normal form. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal,
-    and the form is decomposed so that a combining mark after a word cannot merge with its last letter."""
+    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since Unicode does not promise
+    that casefolding keeps NFKD. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then
+    compare equal, and the form is decomposed so that a combining mark after a word cannot merge with its last
+    letter."""
+    # Defensive: on Python 3.12-3.15 (Unicode 15.0-17.0) casefolding NFKD text always gives NFKD, so dropping the outer
+    # NFKD changes nothing today and that mutant is equivalent.
     return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
+
+
+def squeeze(text: str) -> str:
+    """The text folded, with every run of whitespace (spaces, tabs, line breaks) turned into one space and none at
+    the ends, so a private name written in two words matches however a document wraps or spaces it."""
+    return ' '.join(fold(text).split())
 
 
 def hits(text: str, words: Words) -> list[int]:
     """The list lines of the words ``text`` contains."""
-    folded = fold(text)
-    return [number for number, word in words if word in folded]
+    squeezed = squeeze(text)
+    return [number for number, word in words if word in squeezed]
+
+
+def line_hits(text: str, words: Words) -> dict[int, set[int]]:
+    """The list lines of the words ``text`` contains, by the line of ``text`` each match starts on, so a phrase whose
+    words a line break separates is found and reported at the line it starts on. Lines are counted at newlines only,
+    as git and editors count them, not at the form feed or U+2028 that ``str.splitlines()`` also breaks at."""
+    kept = [(number, piece) for number, line in enumerate(text.split('\n'), 1) if (piece := squeeze(line))]
+    squeezed = ' '.join(piece for _, piece in kept)
+    starts = list(itertools.accumulate((len(piece) + 1 for _, piece in kept), initial=0))
+    found: dict[int, set[int]] = {}
+    for number, word in words:
+        for at in _occurrences(squeezed, word):
+            found.setdefault(kept[bisect.bisect_right(starts, at) - 1][0], set()).add(number)
+    return found
+
+
+def _occurrences(text: str, word: str) -> Iterator[int]:
+    """The offsets ``word`` starts at in ``text``."""
+    at = text.find(word)
+    while at >= 0:
+        yield at
+        at = text.find(word, at + 1)
 
 
 def text_hits(data: bytes, words: Words) -> list[int]:
@@ -200,11 +283,11 @@ def _file_findings(name: str, words: Words) -> list[str]:
 
 
 def _content_findings(shown: str, data: bytes, words: Words) -> list[str]:
-    """What a file's bytes hold, line by line as ``decode`` reads them, then in the other encodings."""
+    """What a file's bytes hold as ``decode`` reads them, by the line each match starts on, then in the other
+    encodings."""
     findings: list[str] = []
-    for number, line in enumerate(decode(data).splitlines(), 1):
-        if found := hits(line, words):
-            findings.append(report(f'{shown}:{number}', found))
+    for number, found in sorted(line_hits(decode(data), words).items()):
+        findings.append(report(f'{shown}:{number}', sorted(found)))
     if found := content_hits(data, words):
         findings.append(report(f'{shown} (contents in another encoding)', found))
     return findings
@@ -228,14 +311,40 @@ def all_objects() -> Iterator[tuple[str, str, bytes]]:
 
 
 def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
-    """The objects of ``git cat-file --batch`` output: id, kind and raw bytes."""
+    """The objects of ``git cat-file --batch`` output: id, kind and raw bytes.
+
+    Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
+    a push), or is corrupt (git exits 0 and prints ``missing`` for an object whose header it cannot unpack), so the
+    scan cannot say it read every object. It does the same when a header is not ``<id> <kind> <size>`` with a size of
+    digits, or the byte after the declared size is not the newline git writes (a corrupt object whose size is wrong):
+    reading on would take the next bytes for a header and skip an object, or, at the end of the output, pass an
+    object git could not read whole. A wrong size whose declared end falls on a newline passes when that newline ends
+    the output or comes before a line that is a valid header. The id and the kind are git's own and are not checked."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
-        sha, kind, size = out[at:end].split()
+        parts = out[at:end].split()
+        if not _is_header(parts):
+            raise _unreadable()
+        sha, kind, size = parts
         start = end + 1
-        at = start + int(size) + 1
-        yield sha.decode(), kind.decode(), out[start : start + int(size)]
+        stop = start + int(size)
+        if out[stop : stop + 1] != b'\n':
+            raise _unreadable()
+        at = stop + 1
+        yield sha.decode(), kind.decode(), out[start:stop]
+
+
+def _is_header(parts: list[bytes]) -> bool:
+    """Whether the fields are the ``<id> <kind> <size>`` git prints before an object, with a size of digits."""
+    return len(parts) == 3 and parts[2].isdigit()
+
+
+def _unreadable() -> CouldNotCheckError:
+    return CouldNotCheckError(
+        'an object could not be read (pruned while the scan ran, or corrupt): run it again, and if it repeats, '
+        'check the repository with git fsck'
+    )
 
 
 def scan_refs(words: Words) -> list[str]:
@@ -346,7 +455,7 @@ def _message_scan(argv: list[str], words: Words) -> list[str]:
     Reading the file and running git can fail too, as ``_scan`` says.
     """
     if len(argv) != 2:
-        raise CouldNotCheckError('--message needs the message file')
+        raise CouldNotCheckError('--message needs exactly one message file')
     found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
     return [report('commit message', found)] if found else []
 
@@ -357,8 +466,12 @@ def main(argv: list[str]) -> int:
     except CouldNotCheckError as error:
         print(f'private-word scan could not check: {error}', file=sys.stderr)
         return COULD_NOT_CHECK
-    except (subprocess.CalledProcessError, OSError):  # no command line or path: either could hold a word
-        print('private-word scan could not check: git or the file system failed', file=sys.stderr)
+    except (subprocess.CalledProcessError, OSError):  # not the command that ran or a path: either could hold a word
+        print(
+            'private-word scan could not check: git or the file system failed: check that git runs here (git fsck '
+            'in the repository) and that the word list and every file given to the scan can be read',
+            file=sys.stderr,
+        )
         return COULD_NOT_CHECK
     for finding in findings:
         print(finding, file=sys.stderr)
