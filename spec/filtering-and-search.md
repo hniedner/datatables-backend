@@ -339,23 +339,32 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `The filter on "i" needs one number, written like 42 or -3.5.` A list entry or a `between` bound gets the limit's
   reason worded for a value among several:
   `Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.`
-- **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
-  and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
-  `7` on the column without a kind. With `n` over a `double` field, given a document holding 0.0: `=` and `<=`
-  with `-0.00` → that document.
+- **SPEC-F25.15** [OS] With `n`, a number column declared a `long`: SearchBuilder `=` with `-0.00` sends the body of `0`
+  on the `long`. PRD-F25 sends a whole number as written, and one written with a point or an exponent as the nearest
+  double, or as `0` when that double is zero: `-1e-400`, a number whose double is -0.0, sends the body of `0` on a
+  column without a kind in `<`, `<=`, `>`, `>=` and a `multi_values` list, `-2e-324`, `1e-400` and `-0.0e-16384` in `=`,
+  and `-1e-400` in `=` on a column declared `float` or `half_float`; `-5e-324` and `3e-324`, which are nonzero doubles,
+  go in `=` as the doubles they are on the column without a kind. On a column declared `float` or `half_float`, `-1e-50`
+  on `float` and `-1e-10` on `half_float`, which are nonzero doubles that the field rounds to -0.0 in a `term`, go in
+  `=` as the numbers they are, as on a column without a kind. With `n` over a `double`, a `float` and a `half_float`
+  field, each given a document holding 0.0: `-1e-400` on the `double` and the `half_float` has the answers of `0` (it
+  sends it): `=`, a `multi_values` list, `<=` and `>=` find that document, `<` and `>` do not; `-1e-50` and `1e-50` on
+  `float`, `-1e-10` and `1e-10` on `half_float`, which go as they are, have the answers of `docs/databases.md`: for a
+  tiny negative `>` and `>=` find it and the others do not, and for a tiny positive `=` and the list find it on both,
+  `<=` and `>=` on `float`, `<` and `<=` on `half_float`.
 - **SPEC-F25.16** [all] With a number column (`exact`, a `Numeric`, on SQL; on OpenSearch a number column, which gets a
-  float, or `0` for zero): the limit of 16383 digits after the point is of the value, not of how it is written: `=`
-  `1e-16383`, `1.0e-16383`, `100e-16385` and `0e-16384` are answered (a fraction's trailing zeros are not counted and
-  zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code `invalid_number` (the
-  last digit of `1.5e-16383` is past the limit though its first is not; the plain spellings `1e-16383` and `1e-16384`
-  are those of `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they
-  are checked on `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of the four
-  answered above, the first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is
-  answered. [PostgreSQL] The number reaches the database with its sign and its digits, its fraction's trailing zeros
-  left out: `-1.0e-16383` is bound as `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a
-  number of 31 significant digits is bound with all 31 (`Decimal.normalize` would round it to 28). [OpenSearch] A
-  single-value column search (`value_search`) reads the same limit: `1.0e-16383` is answered and `1e-16384` →
-  `invalid_number`; the `=` cases above rest on the one `parse_number`, which the SQL tests check.
+  float, or `0` when its double is zero): the limit of 16383 digits after the point is of the value, not of how it is
+  written: `=` `1e-16383`, `1.0e-16383`, `100e-16385` and `0e-16384` are answered (a fraction's trailing zeros are not
+  counted and zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code
+  `invalid_number` (the last digit of `1.5e-16383` is past the limit though its first is not; the plain spellings
+  `1e-16383` and `1e-16384` are those of `SPEC-F25.14`, here as the control for the others). The refusals hold whatever
+  the column; on SQL they are checked on `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL
+  Server] Of the four answered above, the first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`);
+  `0e-16384` is answered. [PostgreSQL] The number reaches the database with its sign and its digits, its fraction's
+  trailing zeros left out: `-1.0e-16383` is bound as `-1E-16383` (checked against a compiling source of `n`, a
+  `Numeric(20, 2)`), and a number of 31 significant digits is bound with all 31 (`Decimal.normalize` would round it to
+  28). [OpenSearch] A single-value column search (`value_search`) reads the same limit: `1.0e-16383` is answered and
+  `1e-16384` → `invalid_number`; the `=` cases above rest on the one `parse_number`, which the SQL tests check.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a

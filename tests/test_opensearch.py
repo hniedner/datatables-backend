@@ -3021,6 +3021,8 @@ PATHS: dict[str, Callable[[str], dict[str, Any]]] = {
     'equals': lambda text: criterion('n', '=', text),
     'not-equals': lambda text: criterion('n', '!=', text),
     'less': lambda text: criterion('n', '<', text),
+    'less-or-equal': lambda text: criterion('n', '<=', text),
+    'greater': lambda text: criterion('n', '>', text),
     'greater-or-equal': lambda text: criterion('n', '>=', text),
     'between': lambda text: criterion('n', 'between', text, text),
     'not-between': lambda text: criterion('n', '!between', text, text),
@@ -3045,8 +3047,10 @@ def asked(kind: NumberKind | None, **body: Any) -> tuple[DTResponse, Client]:
 def test_a_number_is_refused_exactly_where_opensearch_refuses_it_for_the_declared_kind(
     kind: NumberKind, last: str, first: str
 ):
-    """SPEC-D23.1: the last value the field answers is sent; the first it refuses is answered with `invalid_number`
-    and nothing is sent. The edges are the measured ones (decision 011); `byte` and `short` carry an integer's, since
+    """SPEC-D23.1: a value the field answers is sent; one it refuses is answered with `invalid_number` and nothing is
+    sent. The edges are the measured ones (decision 011; `float`'s exact edge is the live test's); the
+    `half_float-through-float` pair, measured in CI (runs 46091503895 for the 400 on 65519.999 and 46094665855 for the
+    answer to 65519.99), straddles the edge rather than marking it; `byte` and `short` carry an integer's, since
     OpenSearch answers 128 on a byte."""
     response, client = asked(kind, **criterion('n', '=', last))
     assert response.error is None
@@ -3112,20 +3116,59 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
 
 
 @pytest.mark.parametrize(
-    ('kind', 'path'),
+    ('kind', 'path', 'text'),
     [
-        *((kind, path) for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
-        (None, 'multi-values'),  # a `terms` list, built apart from a bound or a `term`
+        # the exact zero, where no `-1e-400` row stands for it: an integer kind
+        ('long', 'equals', '-0.00'),
+        # `-1e-400` covers each bound and a list (a `terms` list is built apart from a bound or a `term`), and its
+        # equality is the `-2e-324` row and the two float kinds below
+        *((None, path, '-1e-400') for path in ('less', 'less-or-equal', 'greater', 'greater-or-equal', 'multi-values')),
+        (None, 'equals', '1e-400'),  # its double is 0.0, which goes as the integer `0` too, not as `0.0`
+        # zero with a sign and an exponent past the limit of 16383: accepted, since zero has no fraction, and the plan
+        # drops its sign, so this row pins the acceptance and not a signed zero of `_json`
+        (None, 'equals', '-0.0e-16384'),
+        (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
+        # a column that declares a float kind: its numbers could be converted apart from `_json`
+        ('float', 'equals', '-1e-400'),
+        ('half_float', 'equals', '-1e-400'),
     ],
 )
-def test_minus_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str):
-    """SPEC-F25.15: `-0.00` is the number zero, so it sends what `0` sends, on a column without a kind (a `double`
-    field) and on a `long`, in a bound, an equality and a `multi_values` list. The bodies are compared as JSON, since
-    Python's -0.0 equals 0: a `double` field keeps -0.0 apart from 0.0 in a `term` and a `range`, which the live test
-    pins."""
-    zero, minus_zero = (asked(kind, **PATHS[path](text))[1].searches for text in ('0', '-0.00'))
+def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
+    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
+    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every
+    such number is sent as `0`, in an equality, a bound and a list, on a column without a kind (a `double` field), and
+    `-1e-400` on a column declared `float` or `half_float`, where its double is the same -0.0 as `-0.00`'s. A `-0.00`
+    row stays where no `-1e-400` row stands for it: `=` on a `long`, which shows the exact zero on an integer kind
+    (one row, since every path reaches the kind in one place). The bodies are compared as JSON, since Python's -0.0
+    equals 0. It catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a
+    conversion that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds);
+    the `1e-400` row pins that a double of 0.0 goes as the integer `0`, not as `0.0` (OpenSearch reads both the same).
+    The `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the
+    `less` row and fails this one, and the `greater` and `greater-or-equal` rows are the two lower bounds likewise."""
+    zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
-    assert json.dumps(minus_zero) == json.dumps(zero)
+    assert json.dumps(tiny) == json.dumps(zero)
+
+
+@pytest.mark.parametrize('text', ['-5e-324', '3e-324'])
+def test_a_number_whose_double_is_not_zero_is_sent_as_that_double(text: str):
+    """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one and `3e-324` rounds up to it (`2e-324`,
+    below half of it, would round to zero), so each is sent as the double it is, not as `0`. The negative row catches
+    a rule for negatives alone, the positive row one for positives alone, and both a rule that sends `0` for every
+    tiny number, subnormals included, or up to the smallest subnormal itself: no other test sends a subnormal."""
+    sent = asked(None, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
+    assert sent == {'term': {'n': float(text)}}
+
+
+@pytest.mark.parametrize(('kind', 'text'), [('float', '-1e-50'), ('half_float', '-1e-10')])
+def test_a_number_that_is_zero_only_in_the_format_of_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
+    """SPEC-F25.15: `-1e-50` is a nonzero double that a `float` field rounds to -0.0 in a `term` (`-1e-10` on a
+    `half_float`), and the library sends it as it is, as a column without a kind does, not as `0`: the field's own
+    rounding gives the answers of docs/databases.md (the matrix of CI runs 46093159275 and 46093367670), the exact one
+    for a tiny negative, where `0` would give the false one. It catches a rule that sends such a number as `0`; the
+    live test of the same numbers, the positive ones too, pins what the field answers."""
+    sent = asked(kind, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
+    assert sent == {'term': {'n': float(text)}}
 
 
 def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():

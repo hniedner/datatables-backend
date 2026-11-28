@@ -496,17 +496,18 @@ is judged by the type it stores. Every other declaration constructs as before, a
 An OpenSearch number column may declare its field's number kind, and a number that OpenSearch refuses for that kind is
 refused with `invalid_number` before the query.
 
-The kind is `IndexColumn(..., type='number', number=...)`, the field's mapping type: `byte`, `short`, `integer`,
-`long`, `unsigned_long`, `float` or `half_float`. A number is checked as the request sends it, and the refusal names
-the field type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses it
-(MEASURED 2026-11-25, `docs/decisions/011-opensearch-number-kinds.md`): `integer` outside -2147483648 and 2147483647,
-`long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where a number rounds to
-infinity in their format (about 3.4e38 and 65520). `byte` and `short` carry the `integer` bounds: OpenSearch answers 128
-on a `byte` and 40000 on a `short`, so the library follows the engine and SQL's 16-bit bound for a `SmallInteger` does
-not apply there. A `double` or `scaled_float` field refuses nothing, so neither has a kind. A column that declares no
-kind is checked as before, by the floor every number column has: at most 255 characters (PRD-F14) and finite as a
-double (PRD-F25). `number=` on a column that is no number column raises `SchemaError` when the table is built. The
-mapping is still never read (PRD-D8).
+The kind is `IndexColumn(..., type='number', number=...)`, the field's mapping type: `byte`, `short`, `integer`, `long`,
+`unsigned_long`, `float` or `half_float`. A number is checked as the request sends it, and the refusal names the field
+type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses it (MEASURED 2026-11-25,
+`docs/decisions/011-opensearch-number-kinds.md`; that a `half_float` field reads a float first was MEASURED by CI on
+2026-11-28 UTC, `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`): `integer` outside
+-2147483648 and 2147483647, `long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where
+a number rounds to infinity in their format (about 3.4e38 and 65520; a `half_float` field reads a number as a 32-bit
+float first). `byte` and `short` carry the `integer` bounds: OpenSearch answers 128 on a `byte` and 40000 on a `short`,
+so the library follows the engine and SQL's 16-bit bound for a `SmallInteger` does not apply there. A `double` or
+`scaled_float` field refuses nothing, so neither has a kind. A column that declares no kind is checked as before, by the
+floor every number column has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column
+that is no number column raises `SchemaError` when the table is built. The mapping is still never read (PRD-D8).
 
 - **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
   mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads
@@ -799,7 +800,10 @@ and so is a number whose exponent is beyond what a decimal holds, or one of more
 a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII:
 an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white
 space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a digit separator
-(`1_000`, `1,000`) and a second sign. A zero written with a sign (`-0.00`) is the number zero.
+(`1_000`, `1,000`) and a second sign. A zero written with a sign (`-0.00`) is the number zero. On OpenSearch a whole
+number is sent as written, and one written with a point or an exponent as the nearest double, or as `0` when that double
+is zero, as a SQL `Float` column compares it; a `float` or `half_float` field then rounds it to its own format
+(`docs/databases.md`).
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
@@ -1900,6 +1904,11 @@ where a database decides. Each difference is stated here; every other answer is 
   docs/decisions/011-opensearch-number-kinds.md.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F25, PRD-E7, PRD-D23
+- On OpenSearch a `float` or `half_float` field rounds a tiny positive number (`1e-50` on `float`) to zero, so `=` and a
+  list with it find a document holding 0.0; a `float` range rounds the bound to the nearest float, a `half_float` range
+  in the direction of the range (#226, docs/databases.md).
+  - **Between:** OpenSearch fields by their format
+  - **Requirement:** PRD-F25, PRD-D23
 - On SQLite a number is not compared exactly with a `Numeric` column, nor a fraction with an integer column, beyond
   about 15 significant digits, or at all when the number is too small for a floating-point number (`1e-16383` matches 0:
   MEASURED 2026-11-28 UTC on an integer column, INFERRED on a `Numeric` one): SQLite stores the column as an integer or
