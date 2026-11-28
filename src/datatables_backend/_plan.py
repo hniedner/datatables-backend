@@ -132,9 +132,9 @@ class _Part:
     """The ``with`` of ``Mistakes.part``: keeps an ``InvalidFilter`` raised inside it and lets any other exception go.
 
     A class and not a ``@contextmanager`` generator, because ``__exit__`` is declared ``-> bool``: a type checker takes
-    such a ``with`` to swallow an exception, so it reads the code after ``with mistakes.part(): return ...`` as
-    reachable. A generator's ``__exit__`` is typed ``bool | None``, which it takes to never swallow, and it calls that
-    code unreachable.
+    such a ``with`` to possibly swallow an exception, so it reads the code after ``with mistakes.part(): return ...``
+    as reachable. A generator's ``__exit__`` is typed ``bool | None``, which it takes to never swallow, and it calls
+    that code unreachable.
     """
 
     def __init__(self, found: list[InvalidFilter]) -> None:
