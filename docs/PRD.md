@@ -799,7 +799,7 @@ around it is ignored. Any other spelling is `invalid_number`, among them a digit
 (`1_000`, `1,000`) and a second sign.
 A zero written with a sign (`-0.00`) is the number zero. On OpenSearch a whole number is sent as written, and one
 written with a point or an exponent as the nearest double, or as `0` when that double is zero, as a SQL `Float` column
-compares it; a `float` or `half_float` field then rounds it to its own format (docs/databases.md).
+compares it; a `float` or `half_float` field then rounds it to its own format (`docs/databases.md`).
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
