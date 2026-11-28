@@ -156,8 +156,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   number of 255 digits on `double` (the last as an integer), and with 1e300 and -1e300 on `scaled_float`, sends each as
   it is.
 
-- **SPEC-D23.12** [OS] `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same request sends the same
-  body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
+- **SPEC-D23.12** [OS] On a string column, `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same
+  request sends the same body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
 - **SPEC-D23.13** [OS] A `text` kind (`keyword`, `text` or `text+keyword`) on a number, date or boolean column raises
   `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
 - **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the

@@ -446,8 +446,8 @@ def _check_kinds(column: Column) -> None:
 
 
 def _check_text_fits(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``text`` on a column that is no string column: the declaration is for another
-    column, and nothing would read it. Run after ``check_type``, which makes the type one of the four."""
+    """Raise ``SchemaError`` for a ``text`` other than ``None`` on a column that is no string column: the declaration is
+    for another column, and nothing would read it. Run after ``check_type``, which makes the type one of the four."""
     if isinstance(column, IndexColumn) and column.text is not None and _type_of(column) != 'string':
         raise SchemaError(
             f'The column "{column.name}" declares text={column.text!r} but is not a string column, so no string field '
@@ -460,7 +460,8 @@ def _held(column: Column) -> Column:
     refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
     the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
     that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
-    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` on a column that is no string column."""
+    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is
+    no string column."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     _check_text_fits(column)
