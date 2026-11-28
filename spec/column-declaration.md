@@ -140,7 +140,7 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   (a range mistake, step 3) is answered `invalid_date`.
 - **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
   column and, for the text column, `type="number"`.
-- **SPEC-D23.10** [OS] [SQL] (on SQL, the `type=`) A `number=` or a `text=` that is none of its kinds, and a `type=`
+- **SPEC-D23.10** [OS, SQL] (on SQL, the `type=`) A `number=` or a `text=` that is none of its kinds, and a `type=`
   that is none of the four, raises `SchemaError` at construction, naming the column, what was written and the accepted
   ones. Before, the table usually built and a filter that carries a number failed with a `KeyError` (a `number=`), or
   any SearchBuilder condition did (a `type=`), or a whole-string condition or an order was wrongly refused (a `text=`).

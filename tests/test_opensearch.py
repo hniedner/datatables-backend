@@ -3209,8 +3209,9 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_wa
 ):
     """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
     table builds, and a filter that carries a number (a number kind) or any SearchBuilder condition (a type) fails with
-    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind, `None` too). The message
-    names the column, what was written and what is accepted, all declared by the server."""
+    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind, `None` too). A misspelled
+    type beside a kind (the list row) was refused as no number column, so the type is checked first. The message names
+    the column, what was written and what is accepted, all declared by the server."""
     with pytest.raises(SchemaError) as raised:
         SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
     message = str(raised.value)
@@ -3222,8 +3223,8 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_wa
 @pytest.mark.parametrize(
     ('kind', 'text'),
     [
-        ('double', '1e300'),
-        ('double', '-1e300'),
+        ('double', '1e308'),  # the largest measured (decision 011); past it a bound mutant would refuse
+        ('double', '-1e308'),
         pytest.param('double', '9' * 255, id='double-255-digits'),  # pins that a whole number goes as an int
         ('scaled_float', '1e300'),
         ('scaled_float', '-1e300'),

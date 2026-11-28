@@ -44,7 +44,7 @@ Three more facts:
 
 ## What follows from it
 
-The owner decided on 2026-11-25, and PRD-D23 states it:
+The owner decided on 2026-11-25 (one point revised on 2026-11-27, below), and PRD-D23 states it:
 
 - A value outside a kind's range is refused with `invalid_number` before the query for `integer`, `long`,
   `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing, so
