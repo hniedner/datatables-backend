@@ -117,6 +117,10 @@ _DOCUMENT_ID = '_id'
 class IndexColumn(Column):
     """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
 
+    ``text`` says how a string column's field is mapped; ``None`` means it does not say, and a string column is then
+    read as ``text+keyword``. A ``text`` other than ``None`` on a column that is not a string column raises
+    ``SchemaError``.
+
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
     ``orderable=True`` on it raises ``SchemaError``.
@@ -124,12 +128,12 @@ class IndexColumn(Column):
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
-    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
-    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind is checked by the floor
-    alone (see ``NumberKind``).
+    is: finite as a double. A ``number`` other than ``None`` on a column that is not a number column raises
+    ``SchemaError``, and so does a ``text`` or a ``number`` other than ``None`` that is none of the kinds. A ``double``
+    or ``scaled_float`` kind is checked by the floor alone (see ``NumberKind``).
     """
 
-    text: TextKind = 'text+keyword'
+    text: TextKind | None = None
     number: NumberKind | None = None
 
 
@@ -426,28 +430,41 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 
 
 def _check_kinds(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
-    run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message names the column,
-    what was written and the accepted kinds; the name and the value are the server's, never the client's."""
+    """Raise ``SchemaError`` for a ``text`` or a ``number`` other than ``None`` that is none of the kinds: a ``Literal``
+    checks nothing at run time, and the table would build and fail, wrongly refuse, or answer as analysed text only, a
+    filter or an order. The message names the column, what was written and the accepted kinds; the name and the value
+    are the server's, never the client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
     for field_name, written, accepted in kinds:
-        if written not in accepted and not (field_name == 'number' and written is None):  # only number may be None
+        if written is not None and written not in accepted:  # None: not declared
             raise SchemaError(
                 f'The column "{column.name}" declares {field_name}={written!r}, which is not a kind. Declare one of '
                 f'{", ".join(accepted)}.'
             )
 
 
+def _check_text_fits(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` other than ``None`` on a column that is no string column: the declaration is
+    for another column, and nothing would read it. Run after ``check_type``, which makes the type one of the four."""
+    if isinstance(column, IndexColumn) and column.text is not None and _type_of(column) != 'string':
+        raise SchemaError(
+            f'The column "{column.name}" declares text={column.text!r} but is not a string column, so no string field '
+            f'applies to it. Drop text=, or declare the column type="string".'
+        )
+
+
 def _held(column: Column) -> Column:
-    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
-    plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
-    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too, and so is a ``type`` that is none of the
-    four, or a ``text`` or ``number`` that is none of its kinds."""
+    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the plan
+    refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
+    the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
+    that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
+    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is
+    no string column."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
+    _check_text_fits(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
@@ -472,7 +489,7 @@ def _type_of(column: Column) -> ColumnType:
 
 
 def _kind(column: Column) -> TextKind:
-    return column.text if isinstance(column, IndexColumn) else 'text+keyword'
+    return column.text or 'text+keyword' if isinstance(column, IndexColumn) else 'text+keyword'
 
 
 def _keyword(column: Column) -> str | None:

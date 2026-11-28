@@ -3254,7 +3254,6 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
             id='number',
         ),
         pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), "'Keyword'", 'text+keyword', id='text'),
-        pytest.param(lambda: IndexColumn('n', text=cast(Any, None)), 'None', 'text+keyword', id='text-none'),
         pytest.param(
             lambda: IndexColumn('n', type=cast(Any, ['number']), number='long'),
             "['number']",
@@ -3268,7 +3267,7 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_wa
 ):
     """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
     table builds, and a filter that carries a number (a number kind) or any SearchBuilder condition (a type) fails with
-    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind, `None` too). A misspelled
+    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind). A misspelled
     type beside a kind (the list row) was refused as no number column, so the type is checked first. The message names
     the column, what was written and what is accepted, all declared by the server."""
     with pytest.raises(SchemaError) as raised:
@@ -3297,3 +3296,63 @@ def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_i
     assert response.error is None
     sent = int(text) if text.isdigit() else float(text)  # a whole number goes as an int, any other as a float
     assert [client.searches[0]['query']] == [{'bool': {'must': [{'term': {'n': sent}}]}}]
+
+
+def test_a_text_that_is_not_declared_is_the_default_text_and_keyword_field():
+    """SPEC-D23.12: `text=None` means not declared, and answers as an explicit `text+keyword` and as a plain `Column`
+    do, so a column that says nothing about its string field is read as dynamic mapping makes it."""
+    bodies = []
+    for column in (IndexColumn('t', text=None), IndexColumn('t', text='text+keyword'), Column('t')):
+        table = SearchTable('docs', [IndexColumn('id', text='keyword'), column], unique_key='id')
+        client = Client()
+        table.fetch_sync(request('id', 't', **criterion('t', '=', 'Ann')), client)
+        bodies.append(client.searches[0])
+    assert bodies[0] == bodies[1] == bodies[2]
+    assert 't.keyword' in json.dumps(bodies[0])
+
+
+@pytest.mark.parametrize(
+    ('kind', 'text'),
+    [('number', 'keyword'), ('date', 'text'), ('boolean', 'text+keyword')],  # each kind and each text once
+)
+def test_a_text_on_a_column_that_is_no_string_column_is_a_schema_error_that_names_the_fix(kind: str, text: Any):
+    """SPEC-D23.13: a string field applies to a string column only; the integrator wrote the declaration for the wrong
+    column. The default text is not declared (`None`), so an explicit `text+keyword` is refused too."""
+    with pytest.raises(SchemaError, match=r'"n".*text.*not a string column') as raised:
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('n', type=cast(Any, kind), text=text)],
+            unique_key='id',
+        )
+    assert 'Drop text=' in str(raised.value)
+    assert 'type="string"' in str(raised.value)
+
+
+@pytest.mark.parametrize('hook', ['x', pytest.param('', id='falsy')])
+def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_column(hook: Any):
+    """SPEC-D23.14: the table would build; the first request that compared a search value with the column raised
+    `TypeError`, or, for a falsy value, silently compared the column by whole value. The message says to pass a
+    function."""
+    with pytest.raises(SchemaError, match=r'"n".*search_value.*callable') as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('n', search_value=hook)], unique_key='id')
+    assert 'Pass a function' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('column', 'written', 'fix'),
+    [
+        pytest.param(lambda: Column(''), "name=''", 'Give it a non-empty name', id='name'),
+        pytest.param(lambda: Column(cast(Any, None)), 'name=None', 'Give it a non-empty name', id='name-none'),
+        pytest.param(lambda: Column('', field='src'), "name=''", 'Give it a non-empty name', id='name-with-field'),
+        pytest.param(lambda: Column('x', field=''), 'field=""', 'Drop field=', id='field'),
+    ],
+)
+def test_an_empty_name_or_field_is_a_schema_error_that_says_what_was_written_and_what_to_do(
+    column: Callable[[], Column], written: str, fix: str
+):
+    """SPEC-D23.15: an empty name (with no `field`) built a table that sent an empty field name, or a `null` one for
+    `None`; an empty `field` was read as the name."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
+    assert written in str(raised.value)
+    assert fix in str(raised.value)
