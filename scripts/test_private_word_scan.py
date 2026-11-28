@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+from collections.abc import Callable
 import importlib.util
 import os
 from pathlib import Path
@@ -158,39 +159,28 @@ def commit(
     git(repo, 'commit', '-q', '-m', message, env=env)
 
 
-@pytest.mark.parametrize(
-    'where',
-    [
-        'non-ascii path',
-        'path and contents',
-        'binary blob',
-        'ref name',
-        'tag message',
-        'author',
-        'committer',
-        'author email',
-        'committer email',
-    ],
-)
+# Where the word is planted in each case, in the order the cases run. A path case plants it in the path only (except
+# 'path and contents'), and 'author' and 'committer' each leave the other one clean
+_PLANTERS: dict[str, Callable[[Path], object]] = {
+    'non-ascii path': lambda repo: commit(repo, f'über-{WORD}.txt', b'clean\n'),
+    'path and contents': lambda repo: commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode()),
+    'binary blob': lambda repo: commit(repo, 'blob.bin', b'\x00\x01' + WORD.encode() + b'\x00'),
+    'ref name': lambda repo: git(repo, 'branch', f'topic-{WORD}'),
+    'tag message': lambda repo: git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}'),
+    'author': lambda repo: commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'}),
+    'committer': lambda repo: commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_NAME': f'{WORD} Person'}),
+    'author email': lambda repo: commit(
+        repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_EMAIL': f'{WORD.lower()}@example.org'}
+    ),
+    'committer email': lambda repo: commit(
+        repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_EMAIL': f'{WORD.lower()}@example.org'}
+    ),
+}
+
+
+@pytest.mark.parametrize('where', list(_PLANTERS))
 def test_history_finds_what_gets_published_and_never_prints_it(repo: Path, words: Path, where: str):
-    if where == 'non-ascii path':  # the word in the path only
-        commit(repo, f'über-{WORD}.txt', b'clean\n')
-    elif where == 'path and contents':
-        commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode())
-    elif where == 'binary blob':
-        commit(repo, 'blob.bin', b'\x00\x01' + WORD.encode() + b'\x00')
-    elif where == 'ref name':
-        git(repo, 'branch', f'topic-{WORD}')
-    elif where == 'tag message':
-        git(repo, 'tag', '-a', 'v0', '-m', f'Release for {WORD}')
-    elif where == 'author email':
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_EMAIL': f'{WORD.lower()}@example.org'})
-    elif where == 'committer email':
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_EMAIL': f'{WORD.lower()}@example.org'})
-    elif where == 'author':  # the author alone: the committer stays clean
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_AUTHOR_NAME': f'{WORD} Person'})
-    else:
-        commit(repo, 'b.txt', b'clean\n', env={'GIT_COMMITTER_NAME': f'{WORD} Person'})
+    _PLANTERS[where](repo)
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
