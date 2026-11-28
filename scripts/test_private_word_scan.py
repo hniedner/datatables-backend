@@ -266,6 +266,51 @@ def test_a_symlink_target_in_latin_1_is_read_in_that_encoding_too(tmp_path: Path
     assert 'grünspecht' not in (result.stdout + result.stderr).casefold()
 
 
+@pytest.mark.parametrize('planted_first', [True, False])
+def test_every_file_given_is_scanned_whichever_holds_the_word(tmp_path: Path, words: Path, planted_first: bool):
+    planted = write(tmp_path / 'planted.md', f'see {WORD} here\n')
+    clean = write(tmp_path / 'clean.md', 'nothing\n')
+    given = (planted, clean) if planted_first else (clean, planted)
+    assert scan(*map(str, given), words=words).returncode == 1
+
+
+def test_a_symlink_to_a_file_that_exists_is_scanned_as_a_link(tmp_path: Path, words: Path):
+    (tmp_path / f'{WORD}-notes').mkdir()
+    write(tmp_path / f'{WORD}-notes' / 'target', 'clean\n')
+    link = tmp_path / 'link'
+    link.symlink_to(f'{WORD}-notes/target')  # the target exists and holds nothing, only its path has the word
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_word_list_that_is_missing_is_never_named(tmp_path: Path):
+    result = scan('--files', words=tmp_path / f'{WORD}.txt')  # the path holds a word, and no file is there
+    assert result.returncode == 2
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_tag_named_with_a_word_that_wraps_a_tag_with_one_is_found_and_never_printed(repo: Path, words: Path):
+    git(repo, 'tag', '-a', 'inner', '-m', f'Release for {WORD}')
+    git(repo, 'tag', '-a', f'outer-{WORD}', '-m', 'wrapped', 'inner')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_tag_on_a_tree_named_with_a_word_is_found_and_never_printed(repo: Path, words: Path):
+    commit(repo, f'{WORD}.txt', b'clean\n')
+    git(repo, 'tag', f'tree-{WORD}', 'HEAD^{tree}')
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_blob_that_ends_in_the_word_is_found(repo: Path, words: Path):
+    commit(repo, 'b.txt', WORD.encode())  # no byte after the word
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
 def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path, words: Path):
     link = tmp_path / f'{WORD}-link'
     link.symlink_to('clean-target')
