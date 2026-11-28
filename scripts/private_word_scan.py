@@ -7,9 +7,10 @@ list is never committed, and a finding never prints the word: it names the word'
 path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
 ``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
-The scan fails closed: without the variable, a readable UTF-8 file, or a usable word in it, or when git or the file
-system fails, or an object cannot be read, it cannot check, and says so with exit status 2, which blocks like a finding
-(exit status 1). That message names no path and no command that ran, since either could hold a word.
+The scan fails closed: without the variable, a readable UTF-8 file, or a usable word in it, or when a word in it is
+refused, or when git or the file system fails, or an object cannot be read, it cannot check, and says so with exit
+status 2, which blocks like a finding (exit status 1). That message names no path and no command that ran, since
+either could hold a word.
 
 Usage:
     private_word_scan.py --files FILE... paths and contents of the given files (the pre-commit stage; without
@@ -104,7 +105,7 @@ def load_words() -> Words:
         raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list')
     words = [
         (number, _word(number, line))
-        for number, line in enumerate(_read_list(path).splitlines(), 1)
+        for number, line in enumerate(_read_list(path).split('\n'), 1)  # not splitlines(), which splits at U+2028 too
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
@@ -114,12 +115,13 @@ def load_words() -> Words:
 
 def _word(number: int, line: str) -> str:
     """The folded word of a list line. Raises CouldNotCheckError on an invisible character inside it (Unicode category
-    Cf, such as a zero-width space pasted from a web page, or Cc, such as the tab of ``word<TAB>note``): a word
-    holding one misses the text typed without it, so the list is refused for its owner to fix, not guessed at. The
-    message names the line and never the word. A word that needs U+200C or U+200D (Persian, Indic) is refused too, so
-    it cannot be listed; the default-ignorable characters outside Cf and Cc (variation selectors) are not checked."""
+    Cf, such as a zero-width space pasted from a web page, Cc, such as the tab of ``word<TAB>note``, or the line and
+    paragraph separators Zl and Zp): a word holding one misses the text typed without it, so the list is refused for
+    its owner to fix, not guessed at. The message names the line and never the word. A word that needs U+200C or
+    U+200D (Persian, Indic) is refused too, so it cannot be listed; the default-ignorable characters outside these
+    categories (variation selectors) are not checked."""
     word = line.strip()
-    if any(unicodedata.category(character) in {'Cf', 'Cc'} for character in word):
+    if any(unicodedata.category(character) in {'Cf', 'Cc', 'Zl', 'Zp'} for character in word):
         raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
     return fold(word)
 
@@ -128,8 +130,8 @@ def _read_list(path: Path) -> str:
     """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8.
 
     A NUL counts as not UTF-8: ASCII text saved as UTF-16 with no byte order mark is valid UTF-8 with a NUL between
-    its letters, so its words would miss the plain text they stand for (and in UTF-16LE the lone NUL its last line
-    leaves would match every file that holds one)."""
+    its letters. ``_word`` would refuse it too, but would tell the owner to retype a word instead of saving the file
+    as UTF-8."""
     not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
         # a byte order mark that starts a line is a file artifact (lists joined with ``cat``); one inside a line is left

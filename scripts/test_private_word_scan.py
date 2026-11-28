@@ -522,17 +522,26 @@ def test_a_byte_order_mark_joining_two_words_cannot_check(tmp_path: Path):
 
 @pytest.mark.parametrize(
     'invisible',
-    ['\u200b', '\u00ad', '\t', '\x1b'],
-    ids=['zero-width space', 'soft hyphen', 'tab', 'escape'],
+    ['\u200b', '\u00ad', '\t', '\x1b', '\x0c', '\u2028'],
+    ids=['zero-width space', 'soft hyphen', 'tab', 'escape', 'form feed', 'line separator'],
 )
 def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, invisible: str):
-    """A format (Unicode Cf) or control (Cc) character inside a word misses the text typed without it: refuse, do not
-    guess. A tab is `word<TAB>note` from a spreadsheet. Two characters of each category, so the rule is the category."""
+    """A format (Cf), control (Cc) or separator (Zl, Zp) character inside a word misses the text typed without it:
+    refuse, do not guess. A tab is `word<TAB>note` from a spreadsheet. The form feed and the line separator are ones
+    that `str.splitlines()` would split a word at, so the list is split at newlines only and they are refused too."""
     listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}{invisible}{WORD[3:]}\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'could not check: word list line 2 holds an invisible character: retype the word' in result.stderr
     assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # a piece the character cannot split
+
+
+def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
+    """A form feed on an earlier line is no line break to an editor, so the message must not count it as one."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\x0c\n{WORD[:3]}\u200b{WORD[3:]}\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'word list line 2 holds an invisible character' in result.stderr
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])
