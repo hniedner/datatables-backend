@@ -145,9 +145,10 @@ def content_hits(data: bytes, words: Words) -> list[int]:
 
 
 def fold(text: str) -> str:
-    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since casefolding can undo the
-    normal form. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal,
+    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since casefolding can leave text
+    outside NFKD. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal,
     and the form is decomposed so that a combining mark after a word cannot merge with its last letter."""
+    # The outer NFKD is defensive: dropping it changes no single code point tried, so that mutant is equivalent.
     return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
 
 
