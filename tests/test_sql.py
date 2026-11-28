@@ -2970,10 +2970,13 @@ def test_a_fraction_on_an_integer_column_is_compared_as_the_number_written(diale
 
 
 def test_a_fraction_of_more_than_38_digits_on_an_integer_column_is_refused_on_sql_server():
-    """SPEC-F25.12: the count of SQL Server's digits holds on an integer column too, for a fraction it compares."""
-    source: Any = Compiling(mssql.dialect())
-    response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', '8.' + '1' * 38)), source)
-    assert 'at most 38 digits in all' in refused(response, 'invalid_number')
+    """SPEC-F25.12, SPEC-F25.14: the count of SQL Server's digits holds on an integer column too, for a fraction it
+    compares, `1e-16383` included (16383 digits after the point). That value catches a count of significant digits only,
+    which skips the zeros at the start of a fraction."""
+    for value in ('8.' + '1' * 38, '1e-16383'):
+        source: Any = Compiling(mssql.dialect())
+        response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', value)), source)
+        assert 'at most 38 digits in all' in refused(response, 'invalid_number')
 
 
 class Hundredths(TypeDecorator[Decimal]):
@@ -3020,12 +3023,34 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
     assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', '7.5')), session)) == []
 
 
+def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it(session: Session):
+    """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
+    the `Decimal` as it is (on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the stated exception: SQLAlchemy
+    binds the `Decimal` of a fraction as a float there, so it finds the row holding 8. `1e-16383`, which no float holds,
+    is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row, MySQL and MariaDB find it too (the
+    reason is INFERRED: a fraction of more than 30 digits after the point is compared as a double there,
+    docs/databases.md), and SQL Server refuses it by its 38 digits. These are today's results, pinned so the stated
+    limits are not forgotten if they change."""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
+    numbers.create(session.connection())
+    session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
+    table = SQLTable(numbers, [Column('id'), Column('i')])
+    engine = session.get_bind().dialect.name
+    fraction = table.fetch_sync(request('id', 'i', **criterion('i', '=', '8.0000000000000000001')), session)
+    assert ids(fraction) == ([2] if engine == 'sqlite' else [])
+    tiny = table.fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16383')), session)
+    if engine == 'mssql':
+        refused(tiny, 'invalid_number')
+    else:
+        assert ids(tiny) == ([1] if engine in ('sqlite', 'mysql', 'mariadb') else [])
+
+
 @pytest.mark.parametrize('dialect', [postgresql.psycopg.dialect, postgresql.asyncpg.dialect])
 def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(dialect: Callable[[], Dialect]):
-    """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and
-    PostgreSQL's `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test
-    passes there). The fraction is bound as a float instead, so no `INTEGER` is rendered. RUN as a compile; the
-    rounding of the cast is INFERRED."""
+    """SPEC-F25.10: psycopg 3 and asyncpg cast a value bound as a `TypeDecorator`'s type to its impl, and PostgreSQL's
+    `7.5::INTEGER` is 8, so `> 7.5` would miss 8 (psycopg 2 renders no cast, which is why the live test passes there).
+    The fraction is bound as a float instead, so no `INTEGER` is rendered. MEASURED as a compile; the rounding of the
+    cast is INFERRED."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Counted))
     source: Any = Compiling(dialect())
     SQLTable(numbers, [Column('id'), Column('i')]).fetch_sync(request('id', 'i', **criterion('i', '>', '7.5')), source)
@@ -3034,21 +3059,117 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
     assert not any('INTEGER' in condition for condition in conditions)
 
 
-def test_an_exponent_of_more_than_16383_digits_after_the_point_is_refused():
-    """SPEC-F25.14: 1e-16383 is the smallest number PostgreSQL's `numeric` takes (its manual, Table 8.2, fetched
-    2026-11-24), so a longer one is `invalid_number`, never the driver's error; it was a float that read as zero."""
+@pytest.mark.parametrize('kind', [Counted, Float])
+@pytest.mark.parametrize('value', ['8.' + '1' * 38, '1e-16383'])
+def test_sql_servers_38_digits_do_not_bound_a_column_that_compares_a_float(kind: Any, value: str):
+    """SPEC-F25.12, SPEC-F25.14: only a number on a `Numeric` column and a fraction on an integer column are bounded
+    there, so a `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest
+    float. It catches the check moved before the float is chosen, which refuses valid filters on these columns."""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', kind))
+    source: Any = Compiling(mssql.dialect())
+    response = SQLTable(numbers, [Column('id'), Column('n')]).fetch_sync(
+        request('id', 'n', **criterion('n', '<', value)), source
+    )
+    assert response.error is None, response.error
+
+
+def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
+    """SPEC-F25.14, SPEC-F25.16: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual,
+    Table 8.2, fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's
+    error; it was a float that read as zero. That `1e-16383` itself is answered is shown on a `Numeric` column by the
+    live test of SPEC-F25.16 (except on SQL Server, with its 38 digits). `1.5e-16383` has a digit past the limit though
+    its first digit is not: it catches the limit read from the size of the number instead of from its last digit. A list
+    entry and the bound of a `between` are refused too, with the wording for a value among several (`listed`). The
+    `mssql` leg adds that this refusal comes before SQL Server's 38 digits."""
+    single = 'The filter on "i" needs a number with at most 16383 digits after the decimal point.'
+    among = 'Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.'
     for dialect in (postgresql.dialect, mssql.dialect):
-        source: Any = Compiling(dialect())
-        assert refused(
-            integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16384')), source),
-            'invalid_number',
-        ).endswith('with at most 16383 digits after the decimal point.')
-    taken: Any = Compiling(postgresql.dialect())
+        for value in ('1e-16384', '1.0e-16384', '-1.0e-16384', '1.5e-16383'):
+            source: Any = Compiling(dialect())
+            found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source)
+            assert refused(found, 'invalid_number') == single
+        listed = request('id', 'i', column_search={'i': {'multi_values': ['7', '1e-16384']}})
+        ranged = request('id', 'i', **criterion('i', 'between', '7', '1e-16384'))
+        for params in (listed, ranged):
+            compiling: Any = Compiling(dialect())
+            found = integer_numbers().fetch_sync(params, compiling)
+            assert refused(found, 'invalid_number') == among
+
+
+@pytest.mark.parametrize(
+    ('value', 'past_the_limit'),
+    [
+        ('1e-9999999999999999999', True),
+        ('1E-9999999999999999999', True),  # SPEC-F25.14: also with `E`
+        ('-1.5e-9999999999999999999', True),
+        ('0.5e-9999999999999999999', True),  # nonzero though it starts with a zero
+        ('1e9999999999999999999', False),  # no Decimal holds it; told the reason of `1e400`
+        ('0e-9999999999999999999', False),  # zero has no fraction to count, whatever its spelling with such an exponent
+        ('-0.0e-9999999999999999999', False),
+        ('+0e-9999999999999999999', False),
+    ],
+)
+def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
+    """SPEC-F25.14: a nonzero number whose negative exponent is beyond what a `Decimal` holds is one of more than 16383
+    digits after the point, so the refusal says that, as it does for `1e-16384`; one with a positive exponent is too
+    large, as `1e400`, and zero has no fraction, so both get 'needs one number', the reason for a number no filter can
+    use. A bound of a `between` gets the wording for a value among several. It catches the first kind told 'needs one
+    number', which says nothing of the limit it is past, a zero told it is past the limit, a spelling with `E` missed,
+    and the wording of one value for a `between` bound."""
+    reasons = {
+        True: (
+            'needs a number with at most 16383 digits after the decimal point.',
+            'must be a number with at most 16383 digits after the decimal point.',
+        ),
+        False: ('needs one number, written like 42 or -3.5.', 'must be a number, written like 42 or -3.5.'),
+    }
+    single, among = reasons[past_the_limit]
+    source: Any = Compiling(postgresql.dialect())
+    found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source)
+    assert refused(found, 'invalid_number') == f'The filter on "i" {single}'
+    ranged: Any = Compiling(postgresql.dialect())
+    found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', 'between', '7', value)), ranged)
+    assert refused(found, 'invalid_number') == f'Each value in the filter on "i" {among}'
+
+
+@pytest.mark.parametrize(
+    ('value', 'sql_server_answers'),
+    [('1e-16383', False), ('1.0e-16383', False), ('100e-16385', False), ('0e-16384', True)],
+)
+def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
+    session: Session, value: str, sql_server_answers: bool
+):
+    """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `100e-16385` are one number and zero is another with no fraction, all
+    within the limit, so each is answered on every database, except the first three on SQL Server, whose 38 digits
+    refuse them (SPEC-F25.12). `1e-16383`, the plain spelling, is the control; on PostgreSQL its live send also shows
+    that the database takes a fraction of 16383 digits (SQLite gets a float, PRD section 5). It catches the limit read
+    from the exponent as written, which refuses the others."""
+    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
+    if session.get_bind().dialect.name == 'mssql' and not sql_server_answers:
+        refused(response, 'invalid_number')
+    else:
+        assert response.error is None
+
+
+@pytest.mark.parametrize(
+    ('value', 'sent'),
+    [
+        ('-1.0e-16383', '-1E-16383'),
+        # 34 digits written, three trailing zeros among them: `Decimal.normalize` would round the 31 left to 28
+        ('1234567890123456789012345678901000e-16386', '1.234567890123456789012345678901E-16353'),
+    ],
+)
+def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_digits(value: str, sent: str):
+    """SPEC-F25.16: PostgreSQL gets a negative number with its sign and one of 31 significant digits with all of them,
+    so the driver never sees a fraction of more than 16383 digits. It catches a sign lost while the zeros are dropped,
+    which makes `< -1.0e-16383` include the rows holding 0, and digits rounded away by `Decimal.normalize`."""
     exact = SQLTable(
         Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
         [Column('id'), Column('n')],
     )
-    assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', '1e-16383')), taken).error is None
+    source: Any = Compiling(postgresql.dialect())
+    assert exact.fetch_sync(request('id', 'n', **criterion('n', '=', value)), source).error is None
+    assert {str(bound) for bound in source.decimals} == {sent}  # each statement of the page binds it
 
 
 @pytest.mark.parametrize('column', ['ratio', 'exact', 'untyped'])
