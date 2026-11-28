@@ -266,7 +266,8 @@ def _ref_findings(line: bytes, words: Words) -> list[str]:
 
 
 def _brought_findings(ref: bytes, shown: str, words: Words) -> list[str]:
-    """What the objects ``ref`` brings that no remote-tracking ref holds contain."""
+    """What the objects that ``ref`` brings and no remote-tracking ref holds contain, and the whole paths of each such
+    commit."""
     findings: list[str] = []
     listed = git('rev-list', '--objects', ref, '--not', '--remotes')
     ids = b''.join(entry.split(b' ', 1)[0] + b'\n' for entry in listed.splitlines())  # `<id> [<path>]`
