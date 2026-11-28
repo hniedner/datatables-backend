@@ -3093,7 +3093,7 @@ def test_a_byte_or_a_short_refuses_only_beyond_an_integer(kind: NumberKind, text
 @pytest.mark.parametrize('kind', list(KIND_BOUNDS))
 def test_the_refusal_never_holds_the_value(kind: NumberKind):
     """SPEC-D23.4: it names the field type and its range and the fix, never what the user sent."""
-    value = '9' * 45 + '73'  # beyond every kind, and no part of any bound
+    value = '9' * 45 + '73'  # beyond every kind in KIND_BOUNDS (those that refuse), and no part of any bound
     text = refused(asked(kind, **criterion('n', '=', value))[0], 'invalid_number')
     assert value not in text
     assert 'within that range' in text
