@@ -188,7 +188,7 @@ _SPLIT = re.compile(r'!?["\u201C][^"\u201D]+["\u201D]|[^ ]+')
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
 #: The most digits after the decimal point a database takes in a number: PostgreSQL's `numeric` (its manual, Table 8.2,
 #: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a number with more, a fraction's
-#: trailing zeros not counted, is the user's mistake, never the driver's error
+#: trailing zeros not counted and zero having none, is the user's mistake, never the driver's error
 _MAX_FRACTION_DIGITS = 16383
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
 _DAY = re.compile(
@@ -925,8 +925,9 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     the decimal point (16,383 is the most PostgreSQL's ``numeric`` takes, so ``1e-20000`` is refused). The limit is of
     the value: a fraction's trailing zeros are not counted and zero has no fraction, so ``1.0e-16383`` and
     ``0e-16384`` are answered, with their zeros dropped (a number within the limit is returned as written, which no
-    backend can tell: each drops the zeros again or sends a float). An exponent beyond what a ``Decimal`` holds is
-    refused, zero included."""
+    backend can tell: each drops the zeros again, sends a whole number as an integer, or sends a float). An exponent
+    beyond what a ``Decimal`` holds is refused, zero included: a nonzero number with a negative one for its digits
+    after the point (the limit's reason), any other as no number a filter can use."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
@@ -935,7 +936,7 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     try:
         number = Decimal(stripped)
     except InvalidOperation:  # an exponent beyond what a Decimal holds
-        raise number_unreadable(column, listed=listed) from None
+        raise _beyond_a_decimal(stripped, column, listed=listed) from None
     if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
     return _within_the_fraction_limit(number, column, listed=listed)
@@ -944,21 +945,36 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
 def _within_the_fraction_limit(number: Decimal, column: Column, *, listed: bool) -> Decimal:
     """``number``, without its fraction's trailing zeros when it is written with more than 16,383 digits after the
     point, if that brings it within the limit (as ``parse_number`` says: no backend can tell, each drops the zeros
-    again or sends a float); else the user's mistake."""
+    again, sends a whole number as an integer, or sends a float); else the user's mistake."""
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
         number = without_trailing_zeros(number)  # the limit is of the value, not of how it is written
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
-        needed = (
-            f'Each value in the filter on "{column.name}" must be a number'
-            if listed
-            else f'The filter on "{column.name}" needs a number'
-        )
-        raise mistake(
-            'datatables_number_out_of_range',
-            f'{needed} with at most {_MAX_FRACTION_DIGITS} digits after the decimal point.',
-            column,
-        )
+        raise _too_many_fraction_digits(column, listed=listed)
     return number
+
+
+def _too_many_fraction_digits(column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of a number of more than 16,383 digits after the decimal point, in a filter on ``column``."""
+    needed = (
+        f'Each value in the filter on "{column.name}" must be a number'
+        if listed
+        else f'The filter on "{column.name}" needs a number'
+    )
+    return mistake(
+        'datatables_number_out_of_range',
+        f'{needed} with at most {_MAX_FRACTION_DIGITS} digits after the decimal point.',
+        column,
+    )
+
+
+def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of ``text``, a number whose exponent no ``Decimal`` holds: a nonzero one with a negative exponent has
+    more than 16,383 digits after the point; any other is too large, or is a zero, which has no fraction to count,
+    and is no number a filter can use."""
+    mantissa, _, exponent = text.lower().partition('e')
+    if exponent.startswith('-') and mantissa.strip('+-.0'):
+        return _too_many_fraction_digits(column, listed=listed)
+    return number_unreadable(column, listed=listed)
 
 
 def without_trailing_zeros(value: Decimal) -> Decimal:

@@ -2246,6 +2246,7 @@ FULL_WIDTH = {ord('0') + digit: 0xFF10 + digit for digit in range(10)}  # the di
         # SPEC-F25.1: an exponent no decimal holds, which a float read as infinity or as zero
         ('age', '>', ['1e9999999999999999999999'], 'invalid_number'),
         ('age', '<', ['1e-9999999999999999999999'], 'invalid_number'),
+        ('age', '<', ['0e-9999999999999999999999'], 'invalid_number'),  # zero too: it is no exponent a decimal holds
         # SPEC-F25.3: spellings Python's own parsers read as 31, and PRD-F25 does not
         ('age', '=', ['3_1'], 'invalid_number'),
         ('age', '=', ['--3.5'], 'invalid_number'),  # a second sign, which `float` refuses with an exception
@@ -3051,16 +3052,17 @@ def test_sql_servers_38_digits_do_not_bound_a_column_that_compares_a_float(kind:
 
 
 def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
-    """SPEC-F25.14, SPEC-F25.16: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2,
-    fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's error; it was
-    a float that read as zero. `1e-16383` is answered on a `Numeric` column on every database but SQL Server, as
-    the live test of SPEC-F25.16 shows. `1.5e-16383` and `11e-16384` have a digit past the limit though their first
-    digit is not: it catches the limit read from the size of the number instead of from its last digit. A list entry
-    and the bound of a `between` are refused too, with the wording for a value among several (`listed`)."""
+    """SPEC-F25.14, SPEC-F25.16: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual,
+    Table 8.2, fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's
+    error; it was a float that read as zero. That `1e-16383` itself is answered is shown on a `Numeric` column by the
+    live test of SPEC-F25.16. `1.5e-16383` and `11e-16384` have a digit past the limit though their first digit is not:
+    it catches the limit read from the size of the number instead of from its last digit. A list entry and the bound
+    of a `between` are refused too, with the wording for a value among several (`listed`). The `mssql` leg adds that
+    this refusal comes before SQL Server's 38 digits."""
     single = 'The filter on "i" needs a number with at most 16383 digits after the decimal point.'
     among = 'Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.'
     for dialect in (postgresql.dialect, mssql.dialect):
-        for value in ('1e-16384', '1.0e-16384', '10e-16385', '-1.0e-16384', '1.5e-16383', '11e-16384'):
+        for value in ('1e-16384', '1.0e-16384', '-1.0e-16384', '1.5e-16383', '11e-16384'):
             source: Any = Compiling(dialect())
             found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source)
             assert refused(found, 'invalid_number') == single
@@ -3073,13 +3075,32 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
 
 
 @pytest.mark.parametrize(
+    ('value', 'reason'),
+    [
+        ('1e-9999999999999999999', 'needs a number with at most 16383 digits after the decimal point.'),
+        ('-1.5e-9999999999999999999', 'needs a number with at most 16383 digits after the decimal point.'),
+        ('1e9999999999999999999', 'needs one number, written like 42 or -3.5.'),  # as `1e400`: no float holds it
+        ('0e-9999999999999999999', 'needs one number, written like 42 or -3.5.'),  # zero has no fraction to count
+    ],
+)
+def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, reason: str):
+    """SPEC-F25.14: a number whose negative exponent is beyond what a `Decimal` holds is one of more than 16383 digits
+    after the point, so the refusal says that, as it does for `1e-16384`; a positive one is too large, as `1e400`, and
+    zero has no fraction, so both get the reason of a number that is none. It catches the first two told 'needs one
+    number', which is untrue of a number."""
+    source: Any = Compiling(postgresql.dialect())
+    found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source)
+    assert refused(found, 'invalid_number') == f'The filter on "i" {reason}'
+
+
+@pytest.mark.parametrize(
     ('value', 'sql_server_answers'),
-    [('1e-16383', False), ('1.0e-16383', False), ('10e-16384', False), ('0e-16384', True), ('0.0e-16384', True)],
+    [('1e-16383', False), ('1.0e-16383', False), ('100e-16385', False), ('0e-16384', True), ('0.0e-16384', True)],
 )
 def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
     session: Session, value: str, sql_server_answers: bool
 ):
-    """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `10e-16384` are one number and zero is another with no fraction, all
+    """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `100e-16385` are one number and zero is another with no fraction, all
     within the limit, so each is answered on every database, except the first three on SQL Server, whose 38 digits
     refuse them (SPEC-F25.12). `1e-16383`, the plain spelling, is the control; on PostgreSQL its live send also shows
     that the database takes a fraction of 16383 digits (SQLite gets a float, PRD section 5). It catches the limit read
@@ -3095,7 +3116,7 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
     ('value', 'sent'),
     [
         ('1.0e-16383', '1E-16383'),
-        ('10e-16384', '1E-16383'),
+        ('100e-16385', '1E-16383'),
         ('0.0e-16384', '0'),
         ('-1.0e-16383', '-1E-16383'),
         # 34 digits written, three trailing zeros among them: `Decimal.normalize` would round the 31 left to 28

@@ -551,9 +551,9 @@ def _fraction(value: int | Decimal) -> bool:
 def _decimal(
     column: ColumnElement[Any], value: int | Decimal, needed: str, declared: Column, dialect: Dialect
 ) -> int | Decimal | ColumnElement[Any]:
-    """``value`` for a column that compares exactly: a whole number within 64 bits as an ``int`` (the driver's own
-    integer), any other as a ``Decimal`` with every digit written but a fraction's trailing zeros. SQL Server refuses
-    a number of more than 38 digits in all, which is the user's mistake here (``_number``)."""
+    """``value`` for a column that compares exactly: an ``int`` within 64 bits as that ``int`` (the driver's own
+    integer), any other number as a ``Decimal`` with every digit written but a fraction's trailing zeros. SQL Server
+    refuses a number of more than 38 digits in all, which is the user's mistake here (``_number``)."""
     if isinstance(value, Decimal):
         value = without_trailing_zeros(value)
     if dialect.name == 'mssql' and _digits(value) > _MSSQL_DECIMAL_DIGITS:
