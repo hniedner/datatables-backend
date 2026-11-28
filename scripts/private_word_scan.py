@@ -84,8 +84,8 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no word list, a ``--message`` call without one file, git or the file system failed, or an
-    object vanished while it was read."""
+    """The scan cannot check: no word list, a ``--message`` call that does not name exactly one file, git or the file
+    system failed, or an object vanished while it was read."""
 
 
 def load_words() -> Words:
