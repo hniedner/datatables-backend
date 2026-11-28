@@ -56,7 +56,8 @@ scenario 5,000 `explore` examples missed the mutant that binds an integer column
 The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
 them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
 (step 2) in a criterion, a categorical filter and a list, which the random draw reaches on the last two only after
-about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5).
+about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5),
+and 38 after a zero before the point, which it answers.
 The other examples on `m` are one for each reading the legs tell apart (a decimal compared exactly, as SQLite stores
 it and as a double; its spelling; its order). One more pins what a server leg caught: a list of two numbers, which
 MariaDB compares as doubles when they are bound as text (a mutant only `explore` caught on the servers). Two pin the
@@ -65,8 +66,9 @@ zero having no fraction, and `1.0e-16383`, the number 1e-16383. The defect this 
 kept apart from zero, is pinned by #219's tests, not here.
 `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 declaration, which `tests/test_reference_opensearch.py` imports; those the shared plan answers alike on every backend
-(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 39 digits then the last day) are left
-out, and so is the example of `1.0e-16383`, which is not defined where the leg runs on OpenSearch (`DECIMAL_BOUNDS`).
+(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 39 digits then the last day; `0.` and
+38 ones) are left out, and so is the example of `1.0e-16383`, which is not defined where the leg runs on OpenSearch
+(`DECIMAL_BOUNDS`).
 
 Rare cases, and what carries each:
 - a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
@@ -1042,7 +1044,7 @@ def library(
 
 
 def declared_type(kind: Kind) -> Literal['string', 'number', 'date', 'boolean']:
-    """The library's type of a declared kind: the evaluator's `decimal` is a number column (PRD-D1)."""
+    """The library's type of a declared kind: the evaluator's `decimal` is a number column (PRD-D3)."""
     return 'number' if kind == 'decimal' else kind
 
 
@@ -1307,7 +1309,7 @@ def compared_paths(
                 and column['searchable'] and column['data'] in searchable and kinds[column['data']] != 'boolean'}  # fmt: skip
     positive, negated = words(body['search']['value'])
     if (isinstance(answer, Answer) and positive and set(positive) <= {'%', '_'} and not negated and globally
-            and all(kinds[name] in ('number', 'date') for name in globally)
+            and all(kinds[name] in ('number', 'decimal', 'date') for name in globally)
             and any(row[name] is not None for row in rows for name in globally)):  # fmt: skip
         reached.append('path: % or _ alone as the global search over number or date text only')
     if answer == Refusal('invalid_number') and BIG in json.dumps(body):
@@ -1648,11 +1650,15 @@ EXAMPLES |= {
     'decimal order': (rows_of('m', DECIMALS[2], DECIMALS[1], DECIMALS[0]), DECLARED,
                       request_of({'data': 'm'}, order=[{'column': 0, 'dir': 'asc'}])),
     # PRD-F25, PRD-E3: `0.` and 39 digits is over SQL Server's 38 (step 3.5), so the last day (step 3) answers there
-    # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3); the count of the zero before the
-    # point is drawn from `DECIMAL_BOUNDS` (`0.` and 38 ones) and pinned by the hand tests of SPEC-F25.12
+    # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3), not the count of the zero before
+    # the point, which the next example and the hand tests of SPEC-F25.12 pin
     'decimal 39 digits then the last day': (rows_of('m', *DECIMALS), DECLARED,
                                             request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
                                                 ('m', '<', ['0.' + '1' * 39]), ('d', '<', [LAST])))),
+    # PRD-F25: `0.` and 38 ones is 38 digits, the zero before the point not counted, so it is answered on SQL Server
+    # too: no row on every engine. An oracle that counted that zero would refuse it there
+    'decimal 38 digits after a zero': (rows_of('m', *DECIMALS), DECLARED, request_of(
+        {'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0.' + '1' * 38])))),
     # Not finite (step 2) after the last day (step 3): `invalid_number` (PRD-E3)
     'decimal not finite': (rows_of('m', *DECIMALS), DECLARED,
                            request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
