@@ -195,8 +195,8 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
     dropped. Not finite: step 2. More than 16,383 digits after the point: a limit of every column, step 3 (PRD-E3).
     More than ``engine.decimal_digits`` digits in all (SQL Server's 38; a fraction's trailing zeros and the zero before
     the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). The limit is of the
-    value: a fraction's trailing zeros are not counted and zero has no fraction (PRD-F25). An exponent beyond what a
-    `Decimal` holds is out of scope (the generator does not send one)."""
+    value: a fraction's trailing zeros are not counted and zero has no fraction (PRD-F25). A negative exponent beyond
+    what a `Decimal` holds is out of scope (the generator does not send one); a positive one is not finite, step 2."""
 
     def read(text: str) -> int | Decimal:
         written = text.strip()
