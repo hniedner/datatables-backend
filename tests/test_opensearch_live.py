@@ -887,46 +887,23 @@ def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition
     assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
 
 
-@pytest.mark.parametrize(
-    ('field', 'kind', 'text'),
-    [
-        ('n_float', 'float', '-1e-50'),
-        ('n_half', 'half_float', '-1e-10'),
-        ('n_half', 'half_float', '-2.98023224e-8'),
-    ],
-)
-@pytest.mark.parametrize('condition', ['=', '<='])
-def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
-    client: OpenSearch, condition: str, field: str, kind: NumberKind, text: str
-):
-    """SPEC-F25.15 on a real server: b2 holds 0.0 in a `float` and a `half_float` field, and `-1e-50` is no zero as a
-    double but rounds to -0.0 as a 32-bit float, `-1e-10` as a 16-bit one. Sent as the double, the field read it as
-    -0.0 and kept it apart from 0.0, so `=` and `<=` found nothing (CI, before the fix); the library sends `0` for a
-    number that rounds to zero in the field's own kind, which finds b2. A `half_float` field rounds a number to a
-    32-bit float first: `-2.98023224e-8` is a hair beyond -2^-25, so straight to half it is no zero, but as a float it
-    is exactly -2^-25, which ties to even, zero. The library sending it as itself found nothing (CI run 46091503895,
-    on both servers); it now rounds through both formats."""
-    params = request('id', 'n', **criterion('n', condition, text))
-    assert ids(numbers_in(field, kind).fetch_sync(params, client)) == ['b2']
-
-
 def test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float(client: OpenSearch):
     """SPEC-D23.1 on a real server: `65519.999` is 65504 rounded straight to half but 65520.0 through a 32-bit float,
-    which overflows half, and a `half_float` field reads a number through a float first (the case of `-2.98023224e-8`
-    above): the server answered it with a 400 (CI run 46091503895, on both servers) when the library sent it. The
-    library refuses it as `invalid_number` before the query."""
+    which overflows half, and a `half_float` field reads a number through a float first: the server answered it with a
+    400 (`[half_float] supports only finite values, but got [65520.0]`, CI run 46091503895, on both servers) when the
+    library sent it. The library refuses it as `invalid_number` before the query."""
     params = request('id', 'n', **criterion('n', '=', '65519.999'))
     assert numbers_in('n_half', 'half_float').fetch_sync(params, client).error_code == 'invalid_number'
 
 
-@pytest.mark.parametrize(('field', 'kind', 'text'), [('n_double', None, '-1e-400'), ('n_float', 'float', '-1e-50')])
-def test_greater_than_a_tiny_negative_finds_no_zero(client: OpenSearch, field: str, kind: NumberKind | None, text: str):
-    """SPEC-F25.15 on a real server: b2 holds the only 0.0, and a number that is -0.0 as the field reads it is sent as
-    `0`, so `> -1e-400` on a `double` field and `> -1e-50` on a `float` one are `> 0`, which does not find 0.0, as `=`
-    finds it. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0, docs/databases.md). It catches a lower bound
-    that goes as -0.0."""
-    params = request('id', 'n', **criterion('n', '>', text))
-    assert ids(numbers_in(field, kind).fetch_sync(params, client)) == []
+def test_greater_than_a_negative_number_beyond_a_double_finds_no_zero(client: OpenSearch):
+    """SPEC-F25.15 on a real server: b2 holds the only 0.0 in the `double` field. `-1e-400` is -0.0 as a double, and
+    PRD-F25 compares the nearest double, a signed zero being zero, so the library sends `0` and `> -1e-400` finds
+    nothing, as `> -0.00` does. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a
+    number below zero, which the nearest double does not give, TINY_NUMBER_COUNTS). It catches a lower bound that goes as
+    -0.0."""
+    params = request('id', 'n', **criterion('n', '>', '-1e-400'))
+    assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == []
 
 
 #: What each field finds of the one 0.0 (b2) for a tiny number sent as it is: the counts of `term`, `terms`, and the

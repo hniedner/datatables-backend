@@ -3132,11 +3132,12 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
     """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
-    field keeps apart from 0.0 in a `term` and a `range`; every number whose double is zero is sent as `0`, in an
-    equality, a bound and a list, on a column without a kind (a `double` field); `-0.00` also on a `long`. The bodies
-    are compared as JSON, since Python's -0.0 equals 0. It catches a number sent as the float -0.0; the `1e-400` rows
-    pin the one spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` rows are not the `less` rows again:
-    a rule that sends the float for an inclusive upper bound alone passes every `less` row and fails these."""
+    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 compares a number as the nearest double and a signed
+    zero is zero, so every number whose double is zero is sent as `0`, in an equality, a bound and a list, on a column
+    without a kind (a `double` field); `-0.00` also on a `long`. The bodies are compared as JSON, since Python's -0.0
+    equals 0. It catches a number sent as the float -0.0; the `1e-400` rows pin the one spelling `0` (OpenSearch reads
+    0.0 the same). The `less-or-equal` and `greater` rows are not the `less` rows again: a rule skipped for an inclusive
+    upper bound alone, or for a lower bound alone, passes every `less` row and fails these."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
@@ -3144,41 +3145,13 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
 
 @pytest.mark.parametrize(
     ('kind', 'text'),
-    [
-        ('float', '-1e-50'),
-        ('float', '1e-50'),
-        ('half_float', '-1e-10'),
-        ('half_float', '1e-10'),
-        # a hair beyond 2^-25, half of the smallest `half_float`: rounded straight to half it is no zero, but the server
-        # reads it as a 32-bit float first, which is exactly 2^-25 and ties to even, zero (CI run 46091503895)
-        ('half_float', '-2.98023224e-8'),
-        ('half_float', '2.98023224e-8'),
-    ],
+    [('float', '-1e-50'), ('float', '1e-50'), ('half_float', '-1e-10'), ('half_float', '1e-10')],
 )
-@pytest.mark.parametrize('path', ['equals', 'less', 'less-or-equal', 'greater', 'multi-values'])
-def test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero(kind: NumberKind, text: str, path: str):
-    """SPEC-F25.15: `-1e-50` is no zero as a double but rounds to -0.0 in a `float` field (`-1e-10` in a `half_float`
-    one), which keeps -0.0 apart from 0.0 like a `double` does; a number that rounds to zero in the declared kind is sent
-    as `0`, and a `half_float` field rounds to a 32-bit float before it rounds to half. The bodies are compared as JSON,
-    since Python's -0.0 equals 0. It catches the number sent as the double, which the field then reads as -0.0 (CI's live
-    run, 2026-11-26 UTC, found `= -1e-50` on a `float` field missing a 0.0), and a rounding straight to half, which
-    sends `-2.98023224e-8` for the field to read as -0.0 (CI run 46091503895, on OpenSearch 3.10.0 and 2.19.7). The
-    `less-or-equal` and `greater` rows are not the `less` rows again: a zero rule skipped for an inclusive upper bound
-    alone, or for a lower bound alone, passes every `less` row and fails these."""
-    zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
-    assert len(zero) == 1
-    assert json.dumps(tiny) == json.dumps(zero)
-
-
-@pytest.mark.parametrize(
-    ('kind', 'text'),
-    [('float', '-1e-30'), ('float', '1e-40'), ('half_float', '-1e-5'), ('half_float', '-2.9803e-8')],
-)
-def test_a_number_that_does_not_round_to_zero_in_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
-    """SPEC-F25.15: `-1e-30` is nonzero in a `float` field (it holds down to about 1.4e-45) and `-1e-5` in a
-    `half_float` one (about 6e-8), `1e-40` is a subnormal `float`, still nonzero, and `-2.9803e-8` is past the tie at
-    2^-25 even as a 32-bit float, so each goes as the number it is, as a column without a kind sends it. It catches a
-    rule that sends a number that is tiny but nonzero in the kind as `0`."""
+def test_a_number_that_is_zero_only_in_the_format_of_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
+    """SPEC-F25.15: `-1e-50` is a nonzero double that a `float` field rounds to -0.0 (`-1e-10` on a `half_float`), and
+    the library sends it as it is, as a column without a kind does, not as `0`: the field's own rounding gives the
+    answers of docs/databases.md (the matrix of CI run 46093367670), and the true one for a tiny negative, where `0` would
+    give the false one. It catches a rule that sends such a number as `0`."""
     kept = asked(kind, **criterion('n', '=', text))[1].searches
     assert json.dumps(kept) == json.dumps(asked(None, **criterion('n', '=', text))[1].searches)
     assert json.dumps(kept) != json.dumps(asked(None, **criterion('n', '=', '0'))[1].searches)
