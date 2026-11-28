@@ -129,8 +129,8 @@ class IndexColumn(Column):
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
     is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
-    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind is checked by the floor
-    alone (see ``NumberKind``).
+    ``text`` or a ``number`` other than ``None`` that is none of the kinds. A ``double`` or ``scaled_float`` kind is
+    checked by the floor alone (see ``NumberKind``).
     """
 
     text: TextKind | None = None
@@ -430,9 +430,10 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 
 
 def _check_kinds(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
-    run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message names the column,
-    what was written and the accepted kinds; the name and the value are the server's, never the client's."""
+    """Raise ``SchemaError`` for a ``text`` or a ``number`` other than ``None`` that is none of the kinds: a ``Literal``
+    checks nothing at run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message
+    names the column, what was written and the accepted kinds; the name and the value are the server's, never the
+    client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
@@ -459,7 +460,7 @@ def _held(column: Column) -> Column:
     refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
     the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
     that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
-    or ``number`` that is none of its kinds, or a ``text`` on a column that is no string column."""
+    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` on a column that is no string column."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     _check_text_fits(column)
