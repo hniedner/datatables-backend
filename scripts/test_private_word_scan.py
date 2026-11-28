@@ -401,10 +401,11 @@ def test_a_missing_message_file_cannot_check_and_is_not_printed(tmp_path: Path, 
     'saved',
     [
         'Gärtner\n'.encode('latin-1'),
-        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with a NUL between the letters: no word would match
+        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with a NUL between the letters: a word would pass
         f'{WORD}\n'.encode('utf-16-le'),
+        f'{WORD}\n'.encode('utf-16-be'),  # starts with a NUL, where the little-endian text ends with one
     ],
-    ids=['latin-1', 'utf-16 without a mark'],
+    ids=['latin-1', 'utf-16 without a mark', 'utf-16be without a mark'],
 )
 def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path, saved: bytes):
     listed = tmp_path / 'list.txt'

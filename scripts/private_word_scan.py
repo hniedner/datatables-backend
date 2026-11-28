@@ -114,7 +114,8 @@ def _read_list(path: Path) -> str:
     """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8.
 
     A NUL counts as not UTF-8: ASCII text saved as UTF-16 with no byte order mark is valid UTF-8 with a NUL between
-    its letters, and no word read that way would match anything."""
+    its letters, so its words would miss the plain text they stand for (and the lone NUL its last line leaves would
+    match every file that holds one)."""
     not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
         text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
