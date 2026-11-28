@@ -905,7 +905,7 @@ MIXED = {  # list words and a two-part path: (words, first part, second part)
 
 def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
     """The script as a module, to patch it in process: for a file name the file system here may refuse to create
-    (APFS takes UTF-8 only), or for an answer from git that cannot be staged."""
+    (APFS takes UTF-8 only), or for an answer from git that only a race or a corrupt object gives."""
     spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -938,16 +938,27 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
     assert not leaked(output, *listed_words), output
 
 
-def test_an_object_git_cannot_read_cannot_check(
-    words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    """`cat-file --batch` answers `<id> missing` for an object a `gc` pruned after it was listed, and for a corrupt one.
+_ID = '0' * 40
+_UNREADABLE = {  # what `cat-file --batch` prints for an object it cannot read as it is stored
+    'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
+    'size past the body': f'{_ID} blob 200\nshort\n{_ID} blob 5\nhello\n',  # a corrupt object that declares too much
+    'size past the end': f'{_ID} blob 200\nshort\n',
+    'size that is no number': f'{_ID} blob {WORD}\nshort\n',
+}
 
-    In process, with git's answer given: a real race cannot be staged."""
+
+@pytest.mark.parametrize('answer', list(_UNREADABLE))
+def test_an_object_git_cannot_read_cannot_check(
+    words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
+):
+    """In process, with git's answer given: a real race, or a corrupt object, cannot be staged."""
     scanner = load_scanner(monkeypatch, words)
-    monkeypatch.setattr(scanner, 'git', lambda *args, **_: b'0' * 40 + b' missing\n' if 'cat-file' in args else b'')
+    printed = _UNREADABLE[answer].encode()
+    monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
     assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
-    assert 'could not check: an object could not be read' in capsys.readouterr().err  # not the generic git failure
+    shown = capsys.readouterr().err
+    assert 'could not check: an object could not be read' in shown  # not the generic git failure
+    assert WORD.casefold() not in shown.casefold()
 
 
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])

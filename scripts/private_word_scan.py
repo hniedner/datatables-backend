@@ -237,20 +237,28 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
     a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object."""
+    it read every object. It does the same when a header is no ``<id> <kind> <size>`` or the object is shorter than
+    its size says (a corrupt object): reading on would take the next bytes for a header and skip an object."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
         parts = out[at:end].split()
-        if len(parts) != 3:  # `<id> missing`
-            raise CouldNotCheckError(
-                'an object could not be read (pruned while the scan ran, or corrupt): run it again, and if it repeats, '
-                'check the repository with git fsck'
-            )
+        if len(parts) != 3 or not parts[2].isdigit():
+            raise _unreadable()
         sha, kind, size = parts
         start = end + 1
-        at = start + int(size) + 1
-        yield sha.decode(), kind.decode(), out[start : start + int(size)]
+        stop = start + int(size)
+        if out[stop : stop + 1] != b'\n':
+            raise _unreadable()
+        at = stop + 1
+        yield sha.decode(), kind.decode(), out[start:stop]
+
+
+def _unreadable() -> CouldNotCheckError:
+    return CouldNotCheckError(
+        'an object could not be read (pruned while the scan ran, or corrupt): run it again, and if it repeats, '
+        'check the repository with git fsck'
+    )
 
 
 def scan_refs(words: Words) -> list[str]:
