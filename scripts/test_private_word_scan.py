@@ -287,6 +287,14 @@ def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
+def test_a_link_named_with_a_word_and_aimed_at_one_never_prints_either(tmp_path: Path, words: Path):
+    link = tmp_path / f'{WORD}-link'
+    link.symlink_to(f'../{WORD}/target')
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
 def test_a_symlink_target_in_latin_1_is_found(tmp_path: Path):
     latin_1_words = write(tmp_path / 'latin1-words.txt', 'Grünspecht\n')
     link = tmp_path / 'link'
