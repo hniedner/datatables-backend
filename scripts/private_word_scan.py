@@ -93,20 +93,20 @@ def load_words() -> Words:
     """The private words with their line numbers in the list. Raises CouldNotCheckError when there are none."""
     location = os.environ.get(VARIABLE)
     if not location:
-        raise CouldNotCheckError(f'{VARIABLE} is not set')
+        raise CouldNotCheckError(f'{VARIABLE} is not set: set it to the path of the word list')
     try:
         path = Path(location).expanduser()  # raises RuntimeError for ``~user`` of an unknown user
     except RuntimeError:
-        raise CouldNotCheckError(f'{VARIABLE} names no readable file') from None
+        raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list') from None
     if not path.is_file():
-        raise CouldNotCheckError(f'{VARIABLE} names no readable file')
+        raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list')
     words = [
         (number, fold(line.strip()))
         for number, line in enumerate(_read_list(path).splitlines(), 1)
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
-        raise CouldNotCheckError(f'the file {VARIABLE} names holds no word')
+        raise CouldNotCheckError(f'the file {VARIABLE} names holds no word: add the private words, one per line')
     return words
 
 
@@ -115,9 +115,9 @@ def _read_list(path: Path) -> str:
     try:
         return path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
     except UnicodeDecodeError:
-        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
+        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8') from None
     except OSError:
-        raise CouldNotCheckError('the word list cannot be read') from None
+        raise CouldNotCheckError('the word list cannot be read: check its permissions') from None
 
 
 def decode(data: bytes) -> str:

@@ -87,7 +87,13 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     }[case]
     result = scan(str(clean), words=word_file)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    fix = {
+        'unset': 'set it to the path of the word list',
+        'missing file': 'point it at the word list',
+        'no words': 'add the private words, one per line',
+    }[case]
+    assert 'could not check: ' in result.stderr
+    assert fix in result.stderr  # the message names the fix, as the rule for an error says
 
 
 def test_a_word_list_under_an_unknown_home_cannot_check(tmp_path: Path):
@@ -95,7 +101,7 @@ def test_a_word_list_under_an_unknown_home_cannot_check(tmp_path: Path):
     clean = write(tmp_path / 'clean.md', 'nothing here\n')
     result = scan(str(clean), words=None, extra={'DTB_PRIVATE_WORDS': '~nosuchuserxyz/words.txt'})
     assert result.returncode == 2
-    assert 'could not check: DTB_PRIVATE_WORDS names no readable file' in result.stderr
+    assert 'could not check: DTB_PRIVATE_WORDS names no readable file: point it at the word list' in result.stderr
     assert 'nosuchuserxyz' not in result.stderr  # the message names the variable, not the path
 
 
@@ -396,7 +402,7 @@ def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path):
     latin1.write_bytes('Gärtner\n'.encode('latin-1'))
     result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=latin1)
     assert result.returncode == 2
-    assert 'not UTF-8' in result.stderr
+    assert 'is not UTF-8: save it as UTF-8' in result.stderr
 
 
 @pytest.mark.parametrize('where', ['branch', 'tag name', 'tag message'])
@@ -1266,7 +1272,7 @@ def test_an_unreadable_word_list_has_its_own_message(tmp_path: Path, words: Path
     finally:
         words.chmod(0o600)
     assert result.returncode == 2
-    assert 'private-word scan could not check: the word list cannot be read' in result.stderr
+    assert 'private-word scan could not check: the word list cannot be read: check its permissions' in result.stderr
 
 
 def test_a_plain_install_creates_every_hook_the_config_names(tmp_path: Path):
