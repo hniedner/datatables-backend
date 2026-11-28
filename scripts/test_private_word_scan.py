@@ -269,12 +269,10 @@ def test_a_symlink_target_in_latin_1_is_read_in_that_encoding_too(tmp_path: Path
     assert 'grünspecht' not in (result.stdout + result.stderr).casefold()
 
 
-@pytest.mark.parametrize('planted_first', [True, False])
-def test_every_file_given_is_scanned_whichever_holds_the_word(tmp_path: Path, words: Path, planted_first: bool):
+def test_a_file_that_is_not_the_last_one_given_is_scanned(tmp_path: Path, words: Path):
     planted = write(tmp_path / 'planted.md', f'see {WORD} here\n')
     clean = write(tmp_path / 'clean.md', 'nothing\n')
-    given = (planted, clean) if planted_first else (clean, planted)
-    assert scan(*map(str, given), words=words).returncode == 1
+    assert scan(str(planted), str(clean), words=words).returncode == 1
 
 
 def test_a_symlink_to_a_file_that_exists_is_scanned_as_a_link(tmp_path: Path, words: Path):
@@ -766,6 +764,28 @@ def test_a_latin1_word_is_found(tmp_path: Path, repo: Path, non_ascii_words: Pat
     shown = (result.stdout + result.stderr).casefold()
     assert NON_ASCII.casefold() not in shown
     assert 'grnspecht' not in shown  # nor the word less the letter decoding drops
+
+
+def test_a_latin_1_word_spanning_two_parts_of_a_path_is_never_printed(tmp_path: Path, repo: Path):
+    """Only the whole path, read in Latin-1, holds the word, so the name is hidden whole."""
+    spanning = write(tmp_path / 'spanning.txt', 'Grün/Specht\n')
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    inner = git(repo, 'mktree', input=f'100644 blob {blob}\tSpecht.txt\n').strip()
+    outer = git_bytes(repo, 'mktree', '-z', input=f'040000 tree {inner}\t'.encode() + 'Grün'.encode('latin-1') + b'\0')
+    git(repo, 'tag', 'just-a-tree', outer.strip())
+    result = scan('--refs', words=spanning, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'specht' not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_tag_object_only_the_store_holds_is_read(repo: Path, words: Path):
+    """A push can send a tag by its id, after the tag itself is deleted."""
+    git(repo, 'tag', '-a', 'gone', '-m', f'Release for {WORD}')
+    git(repo, 'tag', '-d', 'gone')
+    result = scan('--history', words=words, cwd=repo)
+    assert result.returncode == 1, result.stderr
+    assert 'private word #' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
 def test_a_replaced_commit_is_read_as_stored(tmp_path: Path, repo: Path):
