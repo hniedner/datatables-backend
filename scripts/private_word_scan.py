@@ -74,6 +74,9 @@ COULD_NOT_CHECK = 2
 
 type Words = list[tuple[int, str]]  # (line in the list, folded word)
 
+_KINDS = frozenset({b'blob', b'tree', b'commit', b'tag'})
+_HEX = frozenset(b'0123456789abcdef')  # the bytes of a lower-case hex id, as ints
+
 _BOMS = [
     (codecs.BOM_UTF32_LE, 'utf-32'),
     (codecs.BOM_UTF32_BE, 'utf-32'),
@@ -237,14 +240,16 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
     a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object. It does the same when a header is no ``<id> <kind> <size>``, or the byte after the declared
-    size is not the newline git writes (a corrupt object that is shorter than its size says): reading on would take
-    the next bytes for a header and skip an object. A short object whose declared end falls on a newline passes."""
+    it read every object. It does the same when a header is no ``<id> <kind> <size>`` (an id of hex digits, a kind git
+    has, a size of digits), or the byte after the declared size is not the newline git writes (a corrupt object whose
+    size is wrong): reading on would take the next bytes for a header and skip an object, or, at the end of the
+    output, pass an object git could not read whole. A wrong size whose declared end falls on a newline before a
+    line shaped like a header passes."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
         parts = out[at:end].split()
-        if len(parts) != 3 or not parts[2].isdigit():
+        if not _is_header(parts):
             raise _unreadable()
         sha, kind, size = parts
         start = end + 1
@@ -253,6 +258,18 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
             raise _unreadable()
         at = stop + 1
         yield sha.decode(), kind.decode(), out[start:stop]
+
+
+def _is_header(parts: list[bytes]) -> bool:
+    """Whether the fields are the ``<id> <kind> <size>`` git prints before an object: a hex id of SHA-1 or SHA-256
+    length, a kind git has and a size of digits."""
+    return (
+        len(parts) == 3
+        and len(parts[0]) in (40, 64)
+        and set(parts[0]) <= _HEX
+        and parts[1] in _KINDS
+        and parts[2].isdigit()
+    )
 
 
 def _unreadable() -> CouldNotCheckError:
