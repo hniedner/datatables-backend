@@ -7,8 +7,8 @@ list is never committed, and a finding never prints the word: it names the word'
 path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
 ``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
-The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, or an
-object cannot be read, it cannot check, and says so with exit status 2, which blocks like a finding
+The scan fails closed: without the variable, a readable UTF-8 file, or a usable word in it, or when git or the file
+system fails, or an object cannot be read, it cannot check, and says so with exit status 2, which blocks like a finding
 (exit status 1). That message names no path and no command that ran, since either could hold a word.
 
 Usage:
@@ -84,13 +84,14 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no usable word list (none readable, not UTF-8, an invisible character in a word, or no
-    word in it), a ``--message`` call that does not name exactly one file, or an object could not be read. (A failing
-    git or file system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
+    """The scan cannot check: no usable word list (none readable, not UTF-8, a format character (Unicode Cf) in a
+    word, or no word in it), a ``--message`` call that does not name exactly one file, or an object could not be
+    read. (A failing git or file system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
 
 
 def load_words() -> Words:
-    """The private words with their line numbers in the list. Raises CouldNotCheckError when there are none."""
+    """The private words with their line numbers in the list. Raises CouldNotCheckError when there is no usable list
+    or no word in it, or a word is refused (``_word``)."""
     location = os.environ.get(VARIABLE)
     if not location:
         raise CouldNotCheckError(f'{VARIABLE} is not set: set it to the path of the word list')
@@ -112,8 +113,8 @@ def load_words() -> Words:
 
 def _word(number: int, line: str) -> str:
     """The folded word of a list line. Raises CouldNotCheckError on an invisible character (Unicode category Cf, such
-    as a zero-width space pasted from a web page): the word would never match the text it stands for, so the list is
-    refused for its owner to fix, not guessed at. The message names the line and never the word."""
+    as a zero-width space pasted from a web page): a word holding one misses the text typed without it, so the list
+    is refused for its owner to fix, not guessed at. The message names the line and never the word."""
     if any(unicodedata.category(character) == 'Cf' for character in line):
         raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
     return fold(line.strip())
@@ -123,12 +124,13 @@ def _read_list(path: Path) -> str:
     """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8.
 
     A NUL counts as not UTF-8: ASCII text saved as UTF-16 with no byte order mark is valid UTF-8 with a NUL between
-    its letters, so its words would miss the plain text they stand for (and the lone NUL its last line leaves would
-    match every file that holds one)."""
+    its letters, so its words would miss the plain text they stand for (and in UTF-16LE the lone NUL its last line
+    leaves would match every file that holds one)."""
     not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
-        # a byte order mark is a file artifact, first or in the middle of lists joined with ``cat``: it hides no word
-        text = path.read_text(encoding='utf-8').replace('\ufeff', '')
+        # a byte order mark that starts a line is a file artifact (lists joined with ``cat``); one inside a line is left
+        # for ``_word`` to refuse, since dropping it would join two words into one that matches neither
+        text = path.read_text(encoding='utf-8').replace('\n\ufeff', '\n').removeprefix('\ufeff')
     except UnicodeDecodeError:
         raise not_utf8 from None
     except OSError:

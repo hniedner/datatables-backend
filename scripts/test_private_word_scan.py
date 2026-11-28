@@ -503,20 +503,32 @@ def test_a_byte_order_mark_in_a_word_list_does_not_hide_a_word(tmp_path: Path, w
     listed = tmp_path / 'bom.txt'
     if where == 'first line':
         listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
-    else:
-        listed.write_bytes(f'{SECOND}\n'.encode() + f'{WORD}\n'.encode('utf-8-sig'))
+    else:  # both lists saved by the same editor, so both carry a mark
+        listed.write_bytes(f'{SECOND}\n'.encode('utf-8-sig') + f'{WORD}\n'.encode('utf-8-sig'))
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 1, result.stdout
     assert f'private word #{1 if where == "first line" else 2}' in result.stderr
 
 
-def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path):
-    """A zero-width space inside a word is a word that never matches the text it stands for: refuse, do not guess."""
-    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}\u200b{WORD[3:]}\n')
+def test_a_byte_order_mark_joining_two_words_cannot_check(tmp_path: Path):
+    """With no final newline in the first list, the second list's mark sits inside a line. Dropping it would make one
+    word of two that matches neither, so only a mark that starts a line is dropped and the rest is refused."""
+    listed = tmp_path / 'joined.txt'
+    listed.write_bytes(SECOND.encode() + f'{WORD}\n'.encode('utf-8-sig'))
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD} and {SECOND}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'could not check: word list line 1 holds an invisible character: retype the word' in result.stderr
+
+
+@pytest.mark.parametrize('invisible', ['\u200b', '\u00ad'], ids=['zero-width space', 'soft hyphen'])
+def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, invisible: str):
+    """A format character (Unicode Cf) inside a word misses the text typed without it: refuse, do not guess. Two
+    different characters, so the rule is the category and not one character."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}{invisible}{WORD[3:]}\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'could not check: word list line 2 holds an invisible character: retype the word' in result.stderr
-    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+    assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # a piece the character cannot split
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])
