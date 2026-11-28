@@ -107,8 +107,8 @@ or an OpenSearch setting has an entry below.
 
 - **What you see:** `IN ('12345678901234567.89', '0.30000000000000001')` over a `DECIMAL` column compares each entry as
   a double, so it finds a row holding 12345678901234567.90 too, while `= '12345678901234567.89'` with one text constant
-  compares exactly. The library binds a number as a `Decimal`, never as text, so a list of numbers is compared as a
-  single `=` is.
+  compares exactly. The library binds a number as a number (an `int` or a `Decimal`), never as text, so a list of
+  numbers is compared as a single `=` is.
 - **Example:** rows 12345678901234567.89 and 12345678901234567.90, a `multi_values` list of `12345678901234567.89`
   and `0.30000000000000001`: the first row only. A number bound as text would also find the second.
 - **How it is known:** MEASURED 2026-11-25 on MariaDB 12.3.3: the example `decimal list of two` of

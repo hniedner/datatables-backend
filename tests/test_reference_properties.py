@@ -40,17 +40,18 @@ and an undeclared one; a server declaration with at least one unorderable column
 The rates are set so that half or more of the requests are answered (60% of the valid examples on the `ci` seed of
 SQLite) and most outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that,
 and the seed follows the test's source, so an edit of the test changes it (`uv run pytest
-tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
-drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 3%, M5b 2%, M6 1%, M7 2%
+tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The paths that tell known mutants
+apart (M4 to M10b in the events) are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of
+SQLite M4 3%, M5b 2%, M6 1%, M7 2%
 (`between`) and 2% (`!between`), M10 3% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
 `compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
 that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text only 1% (1%), PAD SPACE changing the
 answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date text that finds a row and leaves out
 another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores it changes the answer 5% (0.5%), the
-spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; on SQLite no example reaches
-this path, the hand tests of SPEC-F25.12 pin the bound). A rate moves by several points from one seed to the next, and
-each of the other paths also has its example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen
-`outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row holding one in
+spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; the hand tests of SPEC-F25.12
+pin the bound). A rate moves by several points from one seed to the next, and each of the other paths also has its
+example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its
+neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row holding one in
 4% of the `ci` examples, 6% over the 2,000 (without that scenario 5,000 `explore` examples missed the mutant that binds
 an integer column's number as a double).
 
@@ -60,12 +61,14 @@ them), one of each `compared` scenario, and on `m` the reading of each step of P
 about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5).
 The other examples on `m` are one for each reading the legs tell apart (a decimal compared exactly, as SQLite stores
 it and as a double; its spelling; its order). One more pins what a server leg caught: a list of two numbers, which
-MariaDB compares as doubles when they are bound as text (a mutant only `explore` caught on the servers). The defect
-this property found on OpenSearch, `-0.00` kept apart from zero, is pinned by #219's tests, not here.
+MariaDB compares as doubles when they are bound as text (a mutant only `explore` caught on the servers). Two pin the
+16,383 limit read by the value, which a mutant of the library or of the evaluator breaks on every seed: `0e-16384`,
+zero having no fraction, and `1.0e-16383`, the number 1e-16383. The defect this property found on OpenSearch, `-0.00`
+kept apart from zero, is pinned by #219's tests, not here.
 `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 declaration, which `tests/test_reference_opensearch.py` imports; those the shared plan answers alike on every backend
-(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 39 digits then the last day) are
-left out.
+(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 39 digits then the last day) are left
+out, and so is the example of `1.0e-16383`, which is not defined where the leg runs on OpenSearch (`DECIMAL_BOUNDS`).
 
 Rare cases, and what carries each:
 - a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
@@ -119,13 +122,13 @@ Generator restrictions, each with its reason:
 - `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as a floating-point number beyond
   about 15 significant digits (PRD section 5, `docs/databases.md` "A decimal is not compared exactly"), and the
   evaluator models what it stores for these values, not every value.
-- No number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading would compare
-  otherwise than its exact value: MySQL and MariaDB compare such a number as a double (`docs/databases.md` "`= 1e-400`
+- On MySQL and MariaDB no number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading
+  would compare otherwise than its exact value: they compare such a number as a double (`docs/databases.md` "`= 1e-400`
   finds a row holding zero on MySQL and MariaDB"). `0.` and 38 or 39 ones are sent (SQL Server's bound), which compare
-  with every cell of `m` as their double does; `1e-16383` and its spelling `1.0e-16383` are within the limit and are
-  sent except on MySQL and MariaDB, which compare them as a double the evaluator does not model (it models SQLite's
-  float reading, PRD section 5; SQL Server refuses them by its 38 digits); `1e-16384` is refused at step 3 (PRD-F25,
-  PRD-E3).
+  with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3). `1.0e-16383`, the
+  number 1e-16383, is within the limit and is sent on SQLite (the evaluator models its float reading, PRD section 5),
+  PostgreSQL (exact) and SQL Server (refused by its 38 digits), not on MySQL and MariaDB, nor on OpenSearch, where
+  `tests/test_opensearch.py` pins it.
 - No exponent beyond what a `Decimal` holds: the evaluator does not read one (it raises `OutOfScope`).
 - A request column's `name` is always empty, so its name is its `data` (PRD-P15), and an order entry sends no `name`:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
@@ -308,7 +311,8 @@ VALUED: dict[str, st.SearchStrategy[Any]] = {
 RANGED: dict[str, list[Any]] = {'n': NUMBERS, 'd': DATES}
 #: A word that ColumnControl's `contains` finds in some cells, by type
 CONTAINED: dict[str, list[str]] = {'string': ['a', 'red', 'b', 'x_y', '-'], 'number': ['7', '0', '1', '-'],
-                                   'date': ['2024', '03', '-', '12-31'], 'decimal': ['.3', '0', '68', '.89']}  # fmt: skip
+                                   'date': ['2024', '03', '-', '12-31'],
+                                   'decimal': ['.3', '0', '68', '.89']}  # fmt: skip
 BIG = '9223372036854775808'  # 2^63, one past a BigInteger (PRD-F25, step 3)
 LAST = '9999-12-31'  # the last day there is (PRD-F24)
 #: The values a filter sends, by column: most of them read, some not (`abc`, `2024-13-01`, `yes`, and seldom a
@@ -1680,8 +1684,9 @@ EXAMPLES |= {
 }  # fmt: skip
 if TINY_NUMBER_MODELLED:
     # PRD-F25: `1.0e-16383` is the number 1e-16383, within the 16,383 limit: no row on PostgreSQL (exact), the row
-    # holding 0.00 on SQLite (as a float, PRD section 5), refused by SQL Server's 38 digits (step 3.5, which the hand
-    # tests of SPEC-F25.14 also pin); not sent where the evaluator does not model the engine (`DECIMAL_BOUNDS`)
+    # holding 0.00 on SQLite (as a float, PRD section 5), refused by SQL Server's 38 digits (step 3.5; SPEC-F25.16's
+    # hand test pins the refusal, not its step); not sent on MySQL and MariaDB, whose double reading the evaluator does
+    # not model, nor on OpenSearch, which the hand test pins (`DECIMAL_BOUNDS`)
     EXAMPLES['decimal one at the fraction limit'] = (
         rows_of('m', *DECIMALS),
         DECLARED,
