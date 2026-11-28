@@ -3218,8 +3218,8 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
 
 def test_a_number_that_is_not_finite_comes_before_the_last_day():
     """SPEC-E3.15: `1e999` is no number its column can read, a mistake of step 2, and `< 9999-12-31` uses the maximum
-    date, a mistake of step 3, so the number is answered in either order, with nothing sent. Catches a non-finite
-    number treated as a step-3 mistake, which answers `invalid_date` when the last day is read first."""
+    date, a mistake of step 3, so the number is answered in either order, with nothing sent. Catches a non-finite number
+    treated as a step-3 mistake, which answers `invalid_date` when the last day is read first."""
     searched = SearchTable('docs', [Column('created', type='date'), Column('n', type='number')], unique_key='n')
     number = {'condition': '=', 'origData': 'n', 'value': ['1e999']}
     day = {'condition': '<', 'origData': 'created', 'value': ['9999-12-31']}

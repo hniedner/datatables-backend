@@ -123,7 +123,8 @@ Generator restrictions, each with its reason:
 - No number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading would compare
   otherwise than its exact value: MySQL and MariaDB compare such a number as a double (`docs/databases.md` "`= 1e-400`
   finds a row holding zero on MySQL and MariaDB"). `0.` and 38 or 39 ones are sent (SQL Server's bound), which compare
-  with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3).
+  with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3). `1.0e-16383` is
+  answered, so it is sent only on PostgreSQL and SQL Server (which refuses it), where no float reading is involved.
 - No exponent beyond what a `Decimal` holds: the evaluator does not read one (it raises `OutOfScope`).
 - A request column's `name` is always empty, so its name is its `data` (PRD-P15), and an order entry sends no `name`:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
@@ -249,9 +250,12 @@ DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '123456789012
                     '0', '00.31', '1.5e3']  # fmt: skip
 #: Numbers at a bound: 39 digits and `0.` with 39 digits are over SQL Server's 38, `0.` with 38 digits is not (the
 #: zero before the point is not counted); `1e-16384` holds more digits after the point than any column (step 3), while
-#: `1.0e-16383` is the same number as `1e-16383` and `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are
-#: not finite (step 2) (PRD-F25, PRD-E3)
-DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '1.0e-16383', '0e-16384', '1e400', '1e999']
+#: `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3). `1.0e-16383`
+#: is the same number as `1e-16383`, so it is answered, and an engine that reads it as a double finds the row holding
+#: 0.00 (PRD section 5): it is sent only where the comparison is exact, PostgreSQL, or refused, SQL Server
+DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '0e-16384', '1e400', '1e999']
+if os.environ.get('DTB_SQL_DIALECT', 'sqlite') in ('postgresql', 'mssql'):
+    DECIMAL_BOUNDS.append('1.0e-16383')
 #: Search words over a decimal's text (PRD-F23), each found in one spelling and not the other when a row holds the
 #: value it names (the scenario sets the first, one of the next two and the fourth; `68.00`, `.9` and `7.90` need the
 #: draw to give a row that value): `4568` in SQLite's text of the first three (`12345678901234568`) and in the fixed-scale one of
