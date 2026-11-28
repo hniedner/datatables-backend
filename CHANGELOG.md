@@ -7,6 +7,28 @@ and the versioning policy is in the README.
 
 ### Fixed
 
+- On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
+  `-1e-400`, is sent as `0`, as `0` is: a whole number goes as written, and one written with a point or an exponent as
+  the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it (PRD-F25). Before, such a
+  number with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or
+  `half_float` field keeps apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a
+  column search of it and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for
+  `0`. For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
+  for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none, and
+  `>` and `!=` no longer find it. For a document holding -0.0 in a `double` or a `float` field, `=`, `>=`, a column
+  search and a list entry with either no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a
+  bound answer as for `0` too. A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`,
+  `-1e-10`) is sent as it is, as before.
+- On OpenSearch, a column declared `half_float` (`IndexColumn(number='half_float')`) answers `invalid_number` for
+  `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with the
+  server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).
+- The limit of 16,383 digits after the decimal point is read from the number's value, not from how it is written:
+  `1e-16383` and `1.0e-16383` are the same number, and the second is now answered too (it was refused for having too
+  many digits after the point), as are `100e-16385` and `0e-16384`; `1e-16384` and its spellings are still
+  `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal holds
+  (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason.
+  On SQL Server, on a `Numeric` column (behind a `TypeDecorator` too) or a plain integer column, of the numbers
+  answered above only `0e-16384` is answered there: its limit of 38 digits refuses the others.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken
@@ -18,10 +40,6 @@ and the versioning policy is in the README.
   with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
   with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
   refused with `invalid_character`.
-- On OpenSearch, a number written as zero with a sign, such as `-0.00`, is sent as `0`, as `0` is. On a document
-  holding 0.0 in a `double` or `float` field, the library sent -0.0, which such a field keeps apart from 0.0: so
-  SearchBuilder `=` and `<=` with `-0.00`, a column search of `-0.00` and a list entry of `-0.00` missed the document,
-  and `>` and `!=` with `-0.00` wrongly found it. Each now answers as for `0`.
 
 ## [0.1.3] - 2026-11-25
 
