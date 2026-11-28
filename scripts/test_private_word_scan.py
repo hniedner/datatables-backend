@@ -545,8 +545,16 @@ def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, w
         f'Fix\n{SCISSORS}\n{WORD}\n# Do not modify or remove the line above.\n',  # the warning line must follow at once
         f'Fix\n{SCISSORS} and more\n# Do not modify or remove the line above.\n{WORD}\n',  # git writes the line whole
         f'Fix\n{SCISSORS}\n# Do not modify or remove the line above. And more.\n{WORD}\n',  # and the warning too
+        f'Fix\n {SCISSORS}\n# Do not modify or remove the line above.\n{WORD}\n',  # nothing before it either
+        f'Fix\n{SCISSORS}\n # Do not modify or remove the line above.\n{WORD}\n',  # and not before the warning
     ],
-    ids=['scissors and warning apart', 'scissors line with more on it', 'warning line with more on it'],
+    ids=[
+        'scissors and warning apart',
+        'scissors line with more on it',
+        'warning line with more on it',
+        'scissors line with a space before it',
+        'warning line with a space before it',
+    ],
 )
 def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, words: Path, template: str):
     result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
@@ -946,15 +954,18 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
 
 
 _ID = '0' * 40
-_UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, or later bytes read as a header
+_UNREADABLE = {  # what batch() may get
+    # git's own answers for an unreadable object
     'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
-    # a corrupt object declares two bytes too much; two bytes into the next id a real-looking header starts
+    'size one past the end': f'{_ID} blob 6\nshort\n',  # the body is 5 bytes, the output ends on its newline
+    'size past the end': f'{_ID} blob 200\nshort\n',  # a valid zlib stream whose object header declares too much
+    # (a byte flipped inside the stream makes git exit 128 instead, which main answers as a git failure)
+    'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # a body longer than its size: no newline
+    # lines git never prints, read as a header after a wrong declared end ('size into the next header' models it:
+    # a corrupt object declares two bytes too much, and two bytes into the next id a real-looking header starts)
     'size into the next header': f'{_ID} blob 7\nshort\n{"0" * 42} blob 5\nhello\n',
-    'size past the end': f'{_ID} blob 200\nshort\n',
-    'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # only a newline ends the body
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
-    # the rows below are lines laid out like a header, read after a wrong declared end
     'id that is too short': f'{"0" * 39} blob 5\nhello\n',
     'id of neither length': f'{"0" * 41} blob 5\nhello\n',
     'id that is not hex': f'{"z" * 40} blob 5\nhello\n',
@@ -967,8 +978,8 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
 def test_an_object_git_cannot_read_cannot_check(
     words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
 ):
-    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the text of 'missing' or of
-    'size past the end', or makes later bytes read as one of the other rows ('size into the next header' models it)."""
+    """In process, with the bytes given: a race cannot be staged. The table comments say which rows are git's own
+    answers and which are lines a wrong declared end makes the parser read as a header."""
     scanner = load_scanner(monkeypatch, words)
     printed = _UNREADABLE[answer].encode()
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
