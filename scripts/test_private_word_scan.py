@@ -214,8 +214,8 @@ def commit(
     git(repo, 'commit', '-q', '-m', message, env=env)
 
 
-# Where the word is planted in each case, in the order the cases run. 'non-ascii path' plants it in the path only, and
-# 'author' and 'committer' each leave the other one clean
+# Where the word is planted in each case. 'non-ascii path' plants it in the path only, and 'author' and 'committer'
+# each leave the other one clean.
 _PLANTERS: dict[str, Callable[[Path], object]] = {
     'non-ascii path': lambda repo: commit(repo, f'über-{WORD}.txt', b'clean\n'),
     'path and contents': lambda repo: commit(repo, f'{WORD}.txt', f'{WORD}\n'.encode()),
