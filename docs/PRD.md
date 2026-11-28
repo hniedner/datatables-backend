@@ -480,11 +480,12 @@ not affected.
 #### PRD-D22
 
 On SQL, a declared type that does not fit the column's SQL type raises `SchemaError` naming the column when the table is
-constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`.
-A string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator`
-is judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
+constructed: a string column declared `number`, `date` or `boolean`, and a date or date-time column declared `number`. A
+string column is one of a string type or an `Enum`; a date column one of a date or date-time type; a `TypeDecorator` is
+judged by the type it stores. Every other declaration constructs as before, an integer or a boolean column declared
 `string` included, and so does a column whose SQL type is none of these (an expression without a type, a `Uuid`, a
-`JSON`). OpenSearch is not checked: the mapping is not read (PRD-D8).
+`JSON`), except a `type` outside the four, which raises `SchemaError` when the table is built (PRD-D23). OpenSearch is
+not checked: the mapping is not read (PRD-D8).
 
 - **Reason:** Such a column is answered differently on each database or fails on the server (MEASURED 2026-11-24: `=` 5
   on text finds '5' on SQLite, '5', '05' and '5.0' on MySQL, and is an operator error on PostgreSQL); the mistake is
@@ -497,17 +498,21 @@ An OpenSearch number column may declare its field's number kind, and a number th
 refused with `invalid_number` before the query.
 
 The kind is `IndexColumn(..., type='number', number=...)`, the field's mapping type: `byte`, `short`, `integer`, `long`,
-`unsigned_long`, `float` or `half_float`. A number is checked as the request sends it, and the refusal names the field
-type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses it (MEASURED 2026-11-25,
-`docs/decisions/011-opensearch-number-kinds.md`; that a `half_float` field reads a float first was MEASURED by CI on
-2026-11-28 UTC, `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`): `integer` outside
--2147483648 and 2147483647, `long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where
-a number rounds to infinity in their format (about 3.4e38 and 65520; a `half_float` field reads a number as a 32-bit
-float first). `byte` and `short` carry the `integer` bounds: OpenSearch answers 128 on a `byte` and 40000 on a `short`,
-so the library follows the engine and SQL's 16-bit bound for a `SmallInteger` does not apply there. A `double` or
-`scaled_float` field refuses nothing, so neither has a kind. A column that declares no kind is checked as before, by the
-floor every number column has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column
-that is no number column raises `SchemaError` when the table is built. The mapping is still never read (PRD-D8).
+`unsigned_long`, `float`, `half_float`, `double` or `scaled_float`. A number is checked as the request sends it, and the
+refusal names the field type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses
+it (MEASURED 2026-11-25, `docs/decisions/011-opensearch-number-kinds.md`; that a `half_float` field reads a float first
+was MEASURED by CI on 2026-11-28 UTC,
+`test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`): `integer` outside -2147483648 and
+2147483647, `long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where a number rounds
+to infinity in their format (about 3.4e38 and 65520; a `half_float` field reads a number as a 32-bit float first).
+`byte` and `short` carry the `integer` bounds: OpenSearch answers 128 on a `byte` and 40000 on a `short`, so the library
+follows the engine and SQL's 16-bit bound for a `SmallInteger` does not apply there. A `double` or `scaled_float` field
+refuses no finite number, so a column that declares either is checked by the floor alone, as one that declares no kind.
+A `scaled_float` still clamps a number whose scaled value passes a `long`, because its scaling factor lives in the
+mapping, which is never read (PRD-D8). A column that declares no kind is checked as before, by the floor every number
+column has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column that is no number
+column raises `SchemaError` when the table is built, and so does a `number=`, `text=` or `type=` outside its accepted
+values, naming the column, what was written and the accepted values. The mapping is still never read (PRD-D8).
 
 - **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
   mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads
@@ -1897,9 +1902,11 @@ where a database decides. Each difference is stated here; every other answer is 
 - On OpenSearch a number column that declares no kind (PRD-D23) sends a number outside the range of its field's mapping
   (`integer`, `long`, `unsigned_long`, `float`, `half_float`) to the server, which refuses it, so the request fails as
   any server failure does, a limit of the library, not of OpenSearch: the mapping is never read (PRD-D8). Declare the
-  kind and the request is answered with `invalid_number`; a number of at most 255 characters is finite as a double, so a
-  `double` field takes every one. Two answers are wrong without an error: `-1` in a list on an `unsigned_long` finds the
-  document holding 2^64-1, and a number beyond a `scaled_float`'s range finds the document holding its largest value.
+  kind and the request is answered with `invalid_number` (every kind but `double` and `scaled_float`, which refuse no
+  finite number); every number the library sends is finite as a double (PRD-F25), so a `double` field takes every one.
+  Two answers are wrong without an error: `-1` in a list on an `unsigned_long` finds the document holding 2^64-1, and a
+  number beyond a `scaled_float`'s range finds the document holding its largest value, which declaring `scaled_float`
+  does not prevent.
   A kind that does not match the mapping has the same limit. The measurements are in
   docs/decisions/003-opensearch-number-ranges-and-fullwidth-marks.md and
   docs/decisions/011-opensearch-number-kinds.md.

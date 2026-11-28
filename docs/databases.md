@@ -430,12 +430,15 @@ it goes away (PRD-D23).
   `half_float`) is refused by the server with a 400, which reaches the application as the client's `RequestError`, not
   as `invalid_number`. The library does not read the mapping, so a column that declares no kind cannot know the range.
   `IndexColumn('pages', type='number', number='integer')` makes the library answer `invalid_number` before the query,
-  with the range in the message and never the value. A `double` field takes every number of at most 255 characters,
-  which is what every request holds, and so does a `scaled_float`.
+  with the range in the message and never the value. A `double` field took 255 digits, 1e308 and 2^64, and a
+  `scaled_float` 255 digits and 1e300 (MEASURED 2026-11-25, CI run 45639230811, decision 011); every other number the
+  library sends is INFERRED to pass. Both can be declared (`number='double'`, `number='scaled_float'`) and are then
+  checked only as every number column is: at most 255 characters (PRD-F14) and finite as a double (PRD-F25).
 - **Two answers are wrong without an error:** `-1` in a list (`multi_values`, ColumnControl's list) on an
   `unsigned_long` field finds the document holding 2^64-1, which OpenSearch reads it as; and a number beyond a
   `scaled_float`'s range finds the document holding its largest value. A declared `unsigned_long` refuses the first; a
-  `scaled_float` has no kind, since nothing fails.
+  declared `scaled_float` still clamps (INFERRED: it sends the same body as an undeclared one), since its scaling factor
+  is in the mapping, which is never read; nothing fails.
 - **`byte` and `short`:** OpenSearch refuses them only beyond an `integer`'s range and answers 128 on a `byte`, so a
   declared `byte` or `short` carries the `integer` bounds. SQL bounds a `SmallInteger` by 16 bits (PRD-F25) and refuses
   40000; OpenSearch answers 40000 on a `short`, and the library follows each engine.

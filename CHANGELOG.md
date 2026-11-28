@@ -5,8 +5,39 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Added
+
+- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite number, so they
+  are checked as a column with no kind is: at most 255 characters and finite as a double. A `scaled_float` still clamps
+  a number whose scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
+
+### Changed
+
+- On OpenSearch, `IndexColumn.text` is `None` when it is not declared, where it was `'text+keyword'`. A string column
+  that does not declare it is still read as `text+keyword`, so no answer changes (an explicit `text=None`, whose
+  whole-string conditions and ordering 0.1.3 wrongly refused and whose contains, column search and global search it
+  matched as analysed text only, now answers as `text+keyword` too); a `text` other than `None`, `text+keyword`
+  included, on a column that is not a string column is refused.
+
 ### Fixed
 
+- A table that declared a `text=` other than `None` on a column that is not a string column, a `search_value` that is
+  not callable, or an empty column name or `field` now raises `SchemaError` when it is built, naming the column or what
+  was written, and the fix. Before, the `text=` was ignored, a non-callable `search_value` on a string column that holds
+  a whole string raised `TypeError` on the first request that compared a search value with the column (`=`, `!=`, a
+  column search or the global search) (a falsy one, such as `''` or `0`, silently made the column compare by whole
+  value), an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
+  OpenSearch (`null` for a name of `None`; on SQL it was refused only as a missing column, with no fix, and a name of
+  `None` with no `field` raised SQLAlchemy's `ArgumentError`). A table that used to build and now fails to build is the
+  declaration being wrong.
+- A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
+  `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
+  table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
+  carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for any SearchBuilder
+  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` on a string column had
+  its whole-string conditions (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused,
+  and matched contains, a column search and the global search as analysed text only (no substring inside a word).
+  A table that used to build and now fails to build is the declaration being wrong.
 - On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
   `-1e-400`, is sent as `0`, as `0` is: a whole number goes as written, and one written with a point or an exponent as
   the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it (PRD-F25). Before, such a

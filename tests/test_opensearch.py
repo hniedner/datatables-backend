@@ -3093,7 +3093,7 @@ def test_a_byte_or_a_short_refuses_only_beyond_an_integer(kind: NumberKind, text
 @pytest.mark.parametrize('kind', list(KIND_BOUNDS))
 def test_the_refusal_never_holds_the_value(kind: NumberKind):
     """SPEC-D23.4: it names the field type and its range and the fix, never what the user sent."""
-    value = '9' * 45 + '73'  # beyond every kind, and no part of any bound
+    value = '9' * 45 + '73'  # beyond every kind in KIND_BOUNDS (those that refuse), and no part of any bound
     text = refused(asked(kind, **criterion('n', '=', value))[0], 'invalid_number')
     assert value not in text
     assert 'within that range' in text
@@ -3134,17 +3134,17 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
-    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
-    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every
-    such number is sent as `0`, in an equality, a bound and a list, on a column without a kind (a `double` field), and
+    """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double` field
+    keeps apart from 0.0 in a `term` and a `range`; PRD-F25 sends a number whose double is zero as `0`, so every such
+    number is sent as `0`, in an equality, a bound and a list, on a column without a kind (over a `double` field), and
     `-1e-400` on a column declared `float` or `half_float`, where its double is the same -0.0 as `-0.00`'s. A `-0.00`
-    row stays where no `-1e-400` row stands for it: `=` on a `long`, which shows the exact zero on an integer kind
-    (one row, since every path reaches the kind in one place). The bodies are compared as JSON, since Python's -0.0
-    equals 0. It catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a
-    conversion that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds);
-    the `1e-400` row pins that a double of 0.0 goes as the integer `0`, not as `0.0` (OpenSearch reads both the same).
-    The `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the
-    `less` row and fails this one, and the `greater` and `greater-or-equal` rows are the two lower bounds likewise."""
+    row stays where no `-1e-400` row stands for it: `=` on a `long`, which shows the exact zero on an integer kind (one
+    row, since every path reaches the kind in one place). The bodies are compared as JSON, since Python's -0.0 equals 0.
+    It catches a number sent as the float -0.0, also one converted for a float kind apart from `_json` (a conversion
+    that treats the exact zero right and `-1e-400` wrong fails the two `-1e-400` rows of the float kinds); the `1e-400`
+    row pins that a double of 0.0 goes as the integer `0`, not as `0.0` (OpenSearch reads both the same). The
+    `less-or-equal` row is not the `less` row again: a rule skipped for an inclusive upper bound alone passes the `less`
+    row and fails this one, and the `greater` and `greater-or-equal` rows are the two lower bounds likewise."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
@@ -3256,3 +3256,117 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
             [IndexColumn('id', text='keyword'), IndexColumn('created', type='date', number='long')],
             unique_key='id',
         )
+
+
+@pytest.mark.parametrize(
+    ('column', 'written', 'accepted'),
+    [
+        pytest.param(
+            lambda: IndexColumn('n', type='number', number=cast(Any, 'decimal')),
+            "'decimal'",
+            'scaled_float',
+            id='number',
+        ),
+        pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), "'Keyword'", 'text+keyword', id='text'),
+        pytest.param(
+            lambda: IndexColumn('n', type=cast(Any, ['number']), number='long'),
+            "['number']",
+            'boolean',
+            id='type-with-number',
+        ),
+    ],
+)
+def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_was_written_and_the_accepted_ones(
+    column: Callable[[], Column], written: str, accepted: str
+):
+    """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
+    table builds, and a filter that carries a number (a number kind) or any SearchBuilder condition (a type) fails with
+    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind). A misspelled
+    type beside a kind (the list row) was refused as no number column, so the type is checked first. The message names
+    the column, what was written and what is accepted, all declared by the server."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
+    message = str(raised.value)
+    assert '"n"' in message
+    assert written in message
+    assert accepted in message
+
+
+@pytest.mark.parametrize(
+    ('kind', 'text'),
+    [
+        ('double', '1e308'),  # the largest measured (decision 011); past it a bound mutant would refuse
+        ('double', '-1e308'),
+        pytest.param('double', '9' * 255, id='double-255-digits'),  # pins that a whole number goes as an int
+        ('scaled_float', '1e300'),
+        ('scaled_float', '-1e300'),
+    ],
+)
+def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_it(kind: NumberKind, text: str):
+    """SPEC-D23.11: the field refuses no finite number, so the kind is checked by the floor alone and each number it
+    lets through is sent as it is. Before, the table built and a filter that carries a number failed with a
+    `KeyError`."""
+    response, client = asked(kind, **criterion('n', '=', text))
+    assert response.error is None
+    sent = int(text) if text.isdigit() else float(text)  # a whole number goes as an int, any other as a float
+    assert [client.searches[0]['query']] == [{'bool': {'must': [{'term': {'n': sent}}]}}]
+
+
+def test_a_text_that_is_not_declared_is_the_default_text_and_keyword_field():
+    """SPEC-D23.12: `text=None` means not declared, and answers as an explicit `text+keyword` and as a plain `Column`
+    do, so a column that says nothing about its string field is read as dynamic mapping makes it."""
+    bodies = []
+    for column in (IndexColumn('t', text=None), IndexColumn('t', text='text+keyword'), Column('t')):
+        table = SearchTable('docs', [IndexColumn('id', text='keyword'), column], unique_key='id')
+        client = Client()
+        table.fetch_sync(request('id', 't', **criterion('t', '=', 'Ann')), client)
+        bodies.append(client.searches[0])
+    assert bodies[0] == bodies[1] == bodies[2]
+    assert 't.keyword' in json.dumps(bodies[0])
+
+
+@pytest.mark.parametrize(
+    ('kind', 'text'),
+    [('number', 'keyword'), ('date', 'text'), ('boolean', 'text+keyword')],  # each kind and each text once
+)
+def test_a_text_on_a_column_that_is_no_string_column_is_a_schema_error_that_names_the_fix(kind: str, text: Any):
+    """SPEC-D23.13: a string field applies to a string column only; the integrator wrote the declaration for the wrong
+    column. The default text is not declared (`None`), so an explicit `text+keyword` is refused too."""
+    with pytest.raises(SchemaError, match=r'"n".*text.*not a string column') as raised:
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('n', type=cast(Any, kind), text=text)],
+            unique_key='id',
+        )
+    assert 'Drop text=' in str(raised.value)
+    assert 'type="string"' in str(raised.value)
+
+
+@pytest.mark.parametrize('hook', ['x', pytest.param('', id='falsy')])
+def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_column(hook: Any):
+    """SPEC-D23.14: the table would build; the first request that compared a search value with the column raised
+    `TypeError`, or, for a falsy value, silently compared the column by whole value. The message says to pass a
+    function."""
+    with pytest.raises(SchemaError, match=r'"n".*search_value.*callable') as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('n', search_value=hook)], unique_key='id')
+    assert 'Pass a function' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('column', 'written', 'fix'),
+    [
+        pytest.param(lambda: Column(''), "name=''", 'Give it a non-empty name', id='name'),
+        pytest.param(lambda: Column(cast(Any, None)), 'name=None', 'Give it a non-empty name', id='name-none'),
+        pytest.param(lambda: Column('', field='src'), "name=''", 'Give it a non-empty name', id='name-with-field'),
+        pytest.param(lambda: Column('x', field=''), 'field=""', 'Drop field=', id='field'),
+    ],
+)
+def test_an_empty_name_or_field_is_a_schema_error_that_says_what_was_written_and_what_to_do(
+    column: Callable[[], Column], written: str, fix: str
+):
+    """SPEC-D23.15: an empty name (with no `field`) built a table that sent an empty field name, or a `null` one for
+    `None`; an empty `field` was read as the name."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
+    assert written in str(raised.value)
+    assert fix in str(raised.value)

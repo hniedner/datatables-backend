@@ -71,6 +71,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import check_name
 from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
@@ -154,6 +155,7 @@ class SQLTable:
                     f'The column "{column.name}" is an IndexColumn, which declares an OpenSearch field, and a SQL '
                     f'table ignores what it adds. Declare it as Column("{column.name}", ...) instead.'
                 )
+            check_name(column)  # before the missing-column check, which cannot say what an empty name is
         self.base_filter = base_filter
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
