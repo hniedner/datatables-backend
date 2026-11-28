@@ -3166,8 +3166,8 @@ def test_a_number_that_is_zero_only_in_the_format_of_a_float_field_is_sent_as_it
     rounding gives the answers of docs/databases.md (the matrix of CI runs 46093159275 and 46093367670), the exact one
     for a tiny negative, where `0` would give the false one. It catches a rule that sends such a number as `0`; the
     live test of the same numbers, the positive ones too, pins what the field answers."""
-    kept = asked(kind, **criterion('n', '=', text))[1].searches
-    assert json.dumps(kept) == json.dumps(asked(None, **criterion('n', '=', text))[1].searches)
+    sent = asked(kind, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
+    assert sent == {'term': {'n': float(text)}}
 
 
 def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():

@@ -89,8 +89,9 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'half_float': (-65504, 65504),
 }
 #: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
-#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (measured, OpenSearch 3.10.0
-#: and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is computed from that).
+#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (run by CI, run 46091503895,
+#: OpenSearch 3.10.0 and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is
+#: computed from that).
 _FLOAT_FORMATS = {'float': ('<f',), 'half_float': ('<f', '<e')}
 _AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 

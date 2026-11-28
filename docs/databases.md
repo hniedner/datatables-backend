@@ -462,15 +462,16 @@ as `invalid_number`, where the server answers it with a 400.
   nothing while the library sent -0.0, and `>` and `!=` with either found it, which they no longer do; for `-1e-400`
   that is the number zero, not the exact answer); a `double` field holding -0.0: `= 0` finds nothing. A `float` field
   holding 0.0: `= -1e-50` finds nothing, `= 1e-50` finds it.
-- **How it is known:** MEASURED 2026-11-25 on OpenSearch 3.10.0 (Lucene 10.6.0) on a scratch index holding 0.0 and -0.0
-  in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0 only 0.0, on both fields; `range`
-  `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not -0.0, `lt` 0.0 and `lte` -0.0 -0.0
-  and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range` `gte`/`lte` -0.0 find it. RUN
-  2026-11-25 on 2.19.7 (no run id was kept), before the library sent `0` for `-1e-400`: `= -1e-400` and `<= -1e-400`
-  missed a 0.0 on a `double` field, and `= -1e-400` found a stored -0.0.
-  `test_minus_zero_finds_a_zero_on_a_double_field` (`tests/test_opensearch_live.py`, since folded into
-  `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`) failed for `=` and `<=` without the library's
-  zero and passed with it, for `-0.00`; `-1e-400` now sends the body of `0`
+- **How it is known:** MEASURED 2026-11-25 (by hand, no run id was kept) on OpenSearch 3.10.0 (Lucene 10.6.0) on a
+  scratch index holding 0.0 and -0.0 in a `double` and a `float` field: `term` -0.0 finds only -0.0 and `term` 0.0 and 0
+  only 0.0, on both fields; `range` `gte`/`lte` -0.0 only -0.0, `gte`/`lte` 0.0 only 0.0, `gt` -0.0 and `gte` 0.0 not
+  -0.0, `lt` 0.0 and `lte` -0.0 -0.0 and not 0.0; on a `long` and an `integer` field holding 0, `term` -0.0 and `range`
+  `gte`/`lte` -0.0 find it. RUN 2026-11-25 on 2.19.7 (no run id was kept), before the library sent `0` for `-1e-400`: `=
+  -1e-400` and `<= -1e-400` missed a 0.0 on a `double` field, and `= -1e-400` found a stored -0.0.
+  `test_minus_zero_finds_a_zero_on_a_double_field` (`tests/test_opensearch_live.py`, since replaced by
+  `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`, which has no `-0.00` row) failed for `=` and
+  `<=` without the library's zero and passed with it, for `-0.00` (the passing half: CI run 45723829359 on dd3fd4e,
+  2026-11-25 UTC, on both servers); `-1e-400` now sends the body of `0`
   (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`). MEASURED by CI (runs 46093159275 on fbda0e1 and
   46093367670 on 3eccbcd, 2026-11-28 UTC) on 3.10.0 and 2.19.7: the table above, one query to the index per cell without
   the library, against a document holding 0.0 in each field. The same runs held the bodies -0.0 and 0.0 for the `float`
