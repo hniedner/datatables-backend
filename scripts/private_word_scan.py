@@ -237,8 +237,9 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
     a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object. It does the same when a header is no ``<id> <kind> <size>`` or the object is shorter than
-    its size says (a corrupt object): reading on would take the next bytes for a header and skip an object."""
+    it read every object. It does the same when a header is no ``<id> <kind> <size>``, or the byte after the declared
+    size is not the newline git writes (a corrupt object that is shorter than its size says): reading on would take
+    the next bytes for a header and skip an object. A short object whose declared end falls on a newline passes."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
@@ -369,7 +370,7 @@ def _message_scan(argv: list[str], words: Words) -> list[str]:
     Reading the file and running git can fail too, as ``_scan`` says.
     """
     if len(argv) != 2:
-        raise CouldNotCheckError('--message needs the message file')
+        raise CouldNotCheckError('--message needs exactly one message file')
     found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
     return [report('commit message', found)] if found else []
 
