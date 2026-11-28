@@ -42,18 +42,17 @@ SQLite) and most outcomes and paths are reached at least about 30 times in 500 e
 and the seed follows the test's source, so an edit of the test changes it (`uv run pytest
 tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The paths that tell known mutants
 apart (M4 to M10b in the events) are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of
-SQLite M4 3%, M5b 2%, M6 1%, M7 2%
-(`between`) and 2% (`!between`), M10 3% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
-`compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
-that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text only 1% (1%), PAD SPACE changing the
-answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date text that finds a row and leaves out
-another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores it changes the answer 5% (0.5%), the
-spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2% (1%; the hand tests of SPEC-F25.12
-pin the bound). A rate moves by several points from one seed to the next, and each of the other paths also has its
-example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number bound as a double finds its
-neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion, and a request sends one of them beside a row holding one in
-4% of the `ci` examples, 6% over the 2,000 (without that scenario 5,000 `explore` examples missed the mutant that binds
-an integer column's number as a double).
+SQLite M4 3%, M5b 2%, M6 1%, M7 2% (`between`) and 2% (`!between`), M10 3% (the last day read before a number mistake of
+step 2) and M10b 5%. The paths of `compared`, on the same seed (over 2,000 examples of another seed in brackets): a
+word holding `\\`, `%`, `_` or `[` that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text
+only 1% (1%), PAD SPACE changing the answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date
+text that finds a row and leaves out another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores
+it changes the answer 5% (0.5%), the spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2%
+(1%; the hand tests of SPEC-F25.12 pin the bound). A rate moves by several points from one seed to the next, and each
+of the other paths also has its example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number
+bound as a double finds its neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion,
+and a request sends one of them beside a row holding one in 4% of the `ci` examples, 6% over the 2,000 (without that
+scenario 5,000 `explore` examples missed the mutant that binds an integer column's number as a double).
 
 The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
 them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
@@ -119,9 +118,9 @@ Generator restrictions, each with its reason:
   compared here (the evaluator reads it as step 2 there too; the library's code for it on an integer column is pinned
   by the test of SPEC-F25.1 and its step by the OpenSearch hand test of SPEC-E3.15, on a number column without a kind);
   no curly quote and no character outside ASCII: out of scope above.
-- `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as a floating-point number beyond
-  about 15 significant digits (PRD section 5, `docs/databases.md` "A decimal is not compared exactly"), and the
-  evaluator models what it stores for these values, not every value.
+- `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as an integer or a floating-point
+  number and compares it inexactly beyond about 15 significant digits (PRD section 5, `docs/databases.md` "A decimal is
+  not compared exactly"), and the evaluator models its text (`sqlite_text`) for these values only.
 - On MySQL and MariaDB no number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading
   would compare otherwise than its exact value: they compare such a number as a double (`docs/databases.md` "`= 1e-400`
   finds a row holding zero on MySQL and MariaDB"). `0.` and 38 or 39 ones are sent (SQL Server's bound), which compare
@@ -249,7 +248,7 @@ DECIMALS = [Decimal('12345678901234567.89'), Decimal('12345678901234567.90'), De
             Decimal('0.30'), Decimal('0.31'), Decimal('0.00')]  # fmt: skip
 #: Numbers sent to `m`: the pool's own, spelled otherwise (trailing zeros, an exponent, `-0.00`), and numbers the
 #: comparison tells apart: 0.305 and 0.30000000000000001 hold more digits than the column, 12345678901234567 is whole
-#: and the integer neighbour that a float cannot tell from the first three
+#: and the integer neighbour that a float cannot tell from the first three; `1.5e3` is an exponent above every cell
 DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '12345678901234567.90', '12345678901234568',
                     '0.305', '12345678901234567', '12345678901234567.8900', '-0.00', '3.1e-1', '0.3', '0.31', '0.3000',
                     '0', '00.31', '1.5e3']  # fmt: skip
@@ -1693,8 +1692,7 @@ if TINY_NUMBER_MODELLED:
         request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['1.0e-16383']))),
     )
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
-#: declaration, which OpenSearch's leg pins as well; those the shared plan answers alike on every backend (`%` alone
-#: over number text, the decimal refusals, `0.` and 39 digits then the last day) are left out
+#: declaration, which OpenSearch's leg pins as well; the others are left out for the reasons in the module docstring
 TYPED_EXAMPLES = [
     EXAMPLES[name]
     for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',

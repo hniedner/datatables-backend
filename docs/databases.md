@@ -235,9 +235,9 @@ or an OpenSearch setting has an entry below.
   MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on any of the four); `=` 1e-16383 finds no row
   on PostgreSQL (MySQL, MariaDB and SQL Server: see their entries); not measured on versions other than the ones CI runs
   (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That `1e-16383` matches 0 on SQLite's `Numeric` column is
-  MEASURED 2026-11-28 (UTC) by the example 'decimal one at the fraction limit' of `tests/test_reference_properties.py`,
-  which CI's `tests` jobs run; on MySQL's and MariaDB's it is INFERRED from the float bind (`= 1e-400` was MEASURED
-  there, decision 010).
+  MEASURED 2026-11-28 (UTC) by the example 'decimal one at the fraction limit' of `tests/test_reference_properties.py`
+  (sent as `1.0e-16383`), which CI's `tests` jobs run; on MySQL's and MariaDB's it is INFERRED from the float bind
+  (`= 1e-400` was MEASURED there, decision 010).
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused
