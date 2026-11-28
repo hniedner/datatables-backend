@@ -162,6 +162,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
   column and saying to pass a function. Before, the table built and the first request that searched the column raised
   `TypeError`.
-- **SPEC-D23.15** [OS] A column declared with an empty name, or an empty `field`, raises `SchemaError` at construction.
-  Before, an empty name built a table that sent an empty field name to the server, and an empty `field` was silently
-  read as the name.
+- **SPEC-D23.15** [OS, SQL] A column declared with an empty name (or a name of `None`), or an empty `field`, raises
+  `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
+  `field` built a table that sent an empty field name, and an empty `field` was silently read as the name on both
+  backends; on SQL an empty name was refused only as a missing column, with no fix, and a name of `None` raised
+  SQLAlchemy's `ArgumentError`.
