@@ -500,13 +500,13 @@ The kind is `IndexColumn(..., type='number', number=...)`, the field's mapping t
 `long`, `unsigned_long`, `float` or `half_float`. A number is checked as the request sends it, and the refusal names
 the field type and its range and the fix, never the value. Each kind is refused where OpenSearch refuses it
 (MEASURED 2026-11-25, `docs/decisions/011-opensearch-number-kinds.md`): `integer` outside -2147483648 and 2147483647,
-`long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where a number rounds to
-infinity in their format (about 3.4e38 and 65520). `byte` and `short` carry the `integer` bounds: OpenSearch answers 128
-on a `byte` and 40000 on a `short`, so the library follows the engine and SQL's 16-bit bound for a `SmallInteger` does
-not apply there. A `double` or `scaled_float` field refuses nothing, so neither has a kind. A column that declares no
-kind is checked as before, by the floor every number column has: at most 255 characters (PRD-F14) and finite as a
-double (PRD-F25). `number=` on a column that is no number column raises `SchemaError` when the table is built. The
-mapping is still never read (PRD-D8).
+`long` outside 64 bits, `unsigned_long` outside 0 and 2^64-1, `float` and `half_float` where a number rounds to infinity
+in their format (about 3.4e38 and 65520; a `half_float` field reads a number as a 32-bit float first). `byte` and
+`short` carry the `integer` bounds: OpenSearch answers 128 on a `byte` and 40000 on a `short`, so the library follows
+the engine and SQL's 16-bit bound for a `SmallInteger` does not apply there. A `double` or `scaled_float` field refuses
+nothing, so neither has a kind. A column that declares no kind is checked as before, by the floor every number column
+has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column that is no number column
+raises `SchemaError` when the table is built. The mapping is still never read (PRD-D8).
 
 - **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
   mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads

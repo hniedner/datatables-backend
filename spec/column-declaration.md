@@ -115,14 +115,15 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `string`, a `Boolean` declared `number`, an expression without a type declared `number`, a `Uuid` declared
   `string`.
 - **SPEC-D23.1** [OS] A number column declared with each kind, SearchBuilder `=`: a value OpenSearch answers is sent and
-  answered, and one it refuses is answered with `invalid_number` and nothing sent; the pairs are the last value answered
-  and the first refused, but for `half_float`'s last pair. The pairs: `byte`, `short` and `integer` 2147483647 and
-  2147483648, -2147483648 and -2147483649; `long` 2^63-1 and 2^63, -2^63 and -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0
-  and -1; `float` 3.4028235677973362e38 and 3.4028235677973366e38 and their negatives; `half_float` 65519 and 65520 and
-  their negatives, and 65519.99 and 65519.999. Live, on both servers: the same value through an undeclared column is the
-  server's own 400, and `byte` and `short` are refused at 2^31 as the integer is. A `half_float` field reads a number as
-  a 32-bit float before it rounds to half, so between 65519 and 65520 its edge is, computed from that, 65519.998046875,
-  the tie that rounds to 65520.0: `65519.99` is sent and `65519.999`, which reads as the float 65520.0, is refused with
+  answered, and one it refuses is answered with `invalid_number` and nothing sent. The pairs are the last value answered
+  and the first refused (the last and first whole numbers for `half_float`), but for the `half_float` pair of 65519.99
+  and 65519.999, which straddles its edge: `byte`, `short` and `integer` 2147483647 and 2147483648, -2147483648 and
+  -2147483649; `long` 2^63-1 and 2^63, -2^63 and -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0 and -1; `float`
+  3.4028235677973362e38 and 3.4028235677973366e38 and their negatives; `half_float` 65519 and 65520 and their negatives,
+  and 65519.99 and 65519.999. Live, on both servers: the same value through an undeclared column is the server's own
+  400, and `byte` and `short` are refused at 2^31 as the integer is. A `half_float` field reads a number as a 32-bit
+  float before it rounds to half, so between 65519 and 65520 its edge is, computed from that, 65519.998046875, the tie
+  that rounds to 65520.0: `65519.99` is sent and `65519.999`, which reads as the float 65520.0, is refused with
   `invalid_number` and nothing sent, where the server's own answer is a 400 (`[half_float] supports only finite values,
   but got [65520.0]`).
 - **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query is
