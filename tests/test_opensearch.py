@@ -3022,6 +3022,7 @@ PATHS: dict[str, Callable[[str], dict[str, Any]]] = {
     'not-equals': lambda text: criterion('n', '!=', text),
     'less': lambda text: criterion('n', '<', text),
     'less-or-equal': lambda text: criterion('n', '<=', text),
+    'greater': lambda text: criterion('n', '>', text),
     'greater-or-equal': lambda text: criterion('n', '>=', text),
     'between': lambda text: criterion('n', 'between', text, text),
     'not-between': lambda text: criterion('n', '!between', text, text),
@@ -3125,7 +3126,7 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
         *(
             (None, path, text)
             for text in ('-1e-400', '1e-400')
-            for path in ('equals', 'less', 'less-or-equal', 'multi-values')
+            for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')
         ),
     ],
 )
@@ -3153,7 +3154,7 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
         ('half_float', '2.98023224e-8'),
     ],
 )
-@pytest.mark.parametrize('path', ['equals', 'less', 'less-or-equal', 'multi-values'])
+@pytest.mark.parametrize('path', ['equals', 'less', 'less-or-equal', 'greater', 'multi-values'])
 def test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero(kind: NumberKind, text: str, path: str):
     """SPEC-F25.15: `-1e-50` is no zero as a double but rounds to -0.0 in a `float` field (`-1e-10` in a `half_float`
     one), which keeps -0.0 apart from 0.0 like a `double` does; a number that rounds to zero in the declared kind is sent
@@ -3183,8 +3184,9 @@ def test_a_number_that_does_not_round_to_zero_in_a_float_field_is_sent_as_it_is(
 def test_a_half_float_number_is_refused_where_the_server_reads_it_as_infinity():
     """SPEC-D23.1: a `half_float` field reads a number as a 32-bit float first, so `65519.999` is 65520.0, which
     overflows half, though rounded straight to half it is 65504; the server answers it with a 400 (CI run 46091503895,
-    on OpenSearch 3.10.0 and 2.19.7), so it is `invalid_number` before the query. `65519.99` is the float below 65520, so
-    it is sent. It catches a refusal that rounds the double straight to half."""
+    on OpenSearch 3.10.0 and 2.19.7), so it is `invalid_number` before the query. `65519.99` is a float below 65520
+    (65519.98828125), which rounds to 65504 in half, so it is sent. It catches a refusal that rounds the double
+    straight to half."""
     response, client = asked('half_float', **criterion('n', '=', '65519.999'))
     refused(response, 'invalid_number')
     assert client.searches == []

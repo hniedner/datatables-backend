@@ -14,8 +14,9 @@ and the versioning policy is in the README.
   `0`, so `>` and `!=` no longer find a document holding 0.0. For a document holding -0.0, `=`, `>=`, a column search
   and a list entry with `-0.00` no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a bound
   answer as for `0` too. The same holds on a column declared `float` or `half_float` (`IndexColumn(number=...)`) for
-  a number that rounds to zero in that format (`-1e-50`, `-1e-10`): the library sent the number, which the field read
-  as -0.0, so it missed a document holding 0.0. A `half_float` field reads a number as a 32-bit float before it rounds
+  a number that rounds to zero in that format (`-1e-50` on `float`, `-1e-10` on `half_float`): the library sent the
+  number, which the field read as -0.0, so it missed a document holding 0.0, and `>` with `-1e-50` on `float`, like
+  `!=` on either, no longer finds it. A `half_float` field reads a number as a 32-bit float before it rounds
   to half, so `-2.98023224e-8` (which is -2^-25 as a float, a tie that rounds to zero) is sent as `0` too, and
   `65519.999` (the float 65520.0, which overflows half) on a `half_float` column answers `invalid_number`, where it
   failed with the server's own 400 (`[half_float] supports only finite values, but got [65520.0]`) before.

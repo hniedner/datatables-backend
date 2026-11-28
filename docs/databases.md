@@ -429,12 +429,13 @@ library does not read the mapping.
   two values in a `term`, `terms` and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and
   neither does `{"range": {"m": {"gte": -0.0, "lte": -0.0}}}`; a body sent with 0.0 finds it. A document holding -0.0
   is found by a body of -0.0, which the library sends for no number a user writes, and not by `= 0`, `= -0.00` or
-  `= -1e-400`; `< 0` and `<= 0` find it,
-  `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0. That -0.0 sorts below 0.0 is INFERRED from the range
-  results, not measured as an order. Sending `0` also changes what `-1e-400` finds: `=`, a column search and a list
-  entry no longer find a document holding -0.0, and `<`, `>`, `>=`, `!=`, `between` and `!between` now answer as for
-  `0`: `>` and `!=` no longer find a document holding 0.0, `>=` no longer finds one holding -0.0, `<` and `!=` now
-  find one holding -0.0, and a range follows its bounds as `0` gives them.
+  `= -1e-400`; `< 0` and `<= 0` find it, `>= 0` does not. A `long` or an `integer` field reads -0.0 as 0. That -0.0
+  sorts below 0.0 is INFERRED from the range results, not measured as an order. Sending `0` also changes what
+  `-1e-400` finds: `=`, a column search and a list entry no longer find a document holding -0.0, and `<`, `>`, `>=`,
+  `!=`, `between` and `!between` now answer as for `0`: `>` and `!=` no longer find a document holding 0.0, `>=` no
+  longer finds one holding -0.0, `<` and `!=` now find one holding -0.0, and a range follows its bounds as `0` gives
+  them. The same holds on a column declared `float` for a number that rounds to zero in that format: `> -1e-50` no
+  longer finds a document holding 0.0, and on one declared `float` or `half_float`, `!=` no longer finds it.
 - **Example:** a `double` field holding 0.0: `= -0.00`, `<= -0.00`, `= -1e-400` and `<= -1e-400` find it (they found
   nothing while the library sent -0.0, and `>` and `!=` with either found it, which they no longer do); a `double`
   field holding -0.0: `= 0` finds nothing.
@@ -456,10 +457,10 @@ library does not read the mapping.
   RUN by CI (run 46091503895, 2026-11-27) on 3.10.0 and 2.19.7, against a `half_float` field holding 0.0: with the
   library rounding straight to half, `= -2.98023224e-8` and `<= -2.98023224e-8` found nothing, and `= 65519.999` was
   refused by the server with a 400 (`[half_float] supports only finite values, but got [65520.0]`) where the library
-  had sent it; so the field reads a number through a 32-bit float first. That the two live tests
+  had sent it; so the field reads a number through a 32-bit float first. RUN by CI (run 46092080961, 2026-11-27) on
+  3.10.0 and 2.19.7, with the library rounding through both formats: the same two live tests
   (`test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero` and
-  `test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float`) pass with the library rounding
-  through both formats is INFERRED until CI runs them.
+  `test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float`) pass.
 - **Requirement:** PRD-F25.
 
 ### A boolean field is a boolean column only when it is declared boolean

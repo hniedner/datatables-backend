@@ -919,6 +919,27 @@ def test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_f
     assert numbers_in('n_half', 'half_float').fetch_sync(params, client).error_code == 'invalid_number'
 
 
+@pytest.mark.parametrize(('field', 'kind', 'text'), [('n_double', None, '-1e-400'), ('n_float', 'float', '-1e-50')])
+def test_greater_than_a_tiny_negative_finds_no_zero(client: OpenSearch, field: str, kind: NumberKind | None, text: str):
+    """SPEC-F25.15 on a real server: b2 holds the only 0.0, and a number that is -0.0 as the field reads it is sent as
+    `0`, so `> -1e-400` on a `double` field and `> -1e-50` on a `float` one are `> 0`, which does not find 0.0, as `=`
+    finds it. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0, docs/databases.md). It catches a lower bound
+    that goes as -0.0."""
+    params = request('id', 'n', **criterion('n', '>', text))
+    assert ids(numbers_in(field, kind).fetch_sync(params, client)) == []
+
+
+@pytest.mark.parametrize(('bound', 'count'), [('lt', 1), ('gte', 0)])
+def test_a_half_float_range_rounds_its_bound_in_the_direction_of_the_range(client: OpenSearch, bound: str, count: int):
+    """A measurement of the server, no library: b2 holds the only 0.0 in the `half_float` field `n_half`. Whether a range
+    rounds its bound to the nearest half, as a `term` does, or in the direction of the range (a lower bound up, an upper
+    bound down) decides what the library may send for 1e-10, which is 0 as a `half_float`: if it is the direction,
+    `lt` 1e-10 finds b2 and `gte` 1e-10 does not, and the reverse if it is the nearest. The counts are for the direction;
+    a red run means the nearest."""
+    body = {'query': {'range': {'n_half': {bound: 1e-10}}}}
+    assert client.count(index=INDEX, body=body)['count'] == count
+
+
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
     """PRD-D8 today's result: a column is a string column unless declared, and the global search puts a string column's
     text on its field. `created` is a `date` field, so the server refuses the text with a 400 that reaches the

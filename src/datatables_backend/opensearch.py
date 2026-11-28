@@ -609,8 +609,9 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
 def _rounded(kind: str, sent: int | float) -> float:
     """``sent`` as a float field of ``kind`` reads it: rounded through each of ``_FLOAT_FORMATS``, so a ``half_float``
     field's ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. It raises
-    ``OverflowError`` where the number rounds to infinity in a format, and where ``float`` cannot hold a whole number
-    (``struct`` alone would raise ``struct.error``)."""
+    ``OverflowError`` where the number rounds to infinity in a format. ``float`` makes ``struct`` always get a float: a
+    whole number would be refused by ``struct`` as it is, though it is never too large for a double here (at most 255
+    characters)."""
     number = float(sent)
     for form in _FLOAT_FORMATS[kind]:
         number = struct.unpack(form, struct.pack(form, number))[0]
@@ -653,7 +654,7 @@ def _number(column: Column, value: Any) -> Any:
     if kind is None or not isinstance(sent, int | float):
         return sent
     if kind in _FLOAT_FORMATS and _rounds_to_zero(kind, sent):
-        return 0  # a `float` or `half_float` field keeps -0.0 apart from 0.0 as a `double` does
+        return 0  # the field reads a tiny negative as -0.0, apart from 0.0; a tiny positive is `0` too
     if _accepted(kind, sent):
         return sent
     low, high = _NUMBER_BOUNDS[kind]

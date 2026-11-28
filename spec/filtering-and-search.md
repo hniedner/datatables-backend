@@ -331,17 +331,18 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
-- **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
-  and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
+- **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`,
+  `<` and `<=` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. `-1e-400`, a number whose double is -0.0, and `1e-400` send the body of `0` on
-  the column without a kind in `=`, `<`, `<=` and a `multi_values` list; on a column declared `float` or `half_float`,
+  the column without a kind in `=`, `<`, `<=`, `>` and a `multi_values` list; on a column declared `float` or `half_float`,
   so do `-1e-50` and `1e-50` on `float`, `-1e-10` and `1e-10` on `half_float`, which round to zero in that kind, and
   `-2.98023224e-8` and `2.98023224e-8` on `half_float`, which a `half_float` field reads as a 32-bit float first
   (exactly 2^-25, which ties to even, zero) though straight to half they are no zero, while `-1e-30` and `1e-40` on
   `float`, and `-1e-5` and `-2.9803e-8` on `half_float`, go in `=` as the number they are. With `n` over a `double`
   field, given a document holding 0.0: `=` and `<=` with `-0.00` → that document, and with `-1e-400` too, as it sends
-  the same body; over a `float` field with `-1e-50` and a `half_float` one with `-1e-10` and with `-2.98023224e-8`,
-  the same.
+  the same body, while `>` with `-1e-400` → no document (it sends `0`, and `> 0` does not find 0.0); over a `float`
+  field with `-1e-50` and a `half_float` one with `-1e-10` and with `-2.98023224e-8`, the same for `=` and `<=`, and
+  `>` with `-1e-50` on the `float` field finds no document.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
