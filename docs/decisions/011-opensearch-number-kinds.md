@@ -48,8 +48,8 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
 
 - A value outside a kind's range is refused with `invalid_number` before the query for `integer`, `long`,
   `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing,
-  so the measurement gave them no kind. The owner later approved both as kinds checked by the floor alone, so that
-  declaring the mapping type of any number field builds; they still refuse no finite number.
+  so the measurement gave them no kind. The owner later approved both as kinds checked by the floor alone (pull
+  request #227), so that declaring the mapping type of any number field builds; they still refuse no finite number.
 - `byte` and `short` refuse only where OpenSearch does, beyond an `integer`'s range, and carry its bounds. A `byte` kind
   that refused 128 would take away an answer the library gives without a kind (`=` finds nothing, `<=` every row), and
   there is no failure to prevent there. SQL bounds a `SmallInteger` by 16 bits and refuses 40000; OpenSearch answers it
@@ -60,8 +60,8 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
 - The library already refuses a number that is not finite as a double with `invalid_number` (PRD-F25), and a value of
   at most 255 characters that is finite as a double is accepted by a `double` or `scaled_float` field, so those columns
   need no check beyond that.
-- The two answers without an error are stated limits for an undeclared column (PRD section 5, `docs/databases.md`): a
-  declared `unsigned_long` refuses `-1`, and a `scaled_float` kind still clamps.
+- The two answers without an error are stated limits (PRD section 5, `docs/databases.md`): a declared `unsigned_long`
+  refuses `-1` where an undeclared column does not, and a `scaled_float` clamps declared or not.
 - The live test `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers` sends each edge pair
   of the table above through a declared and an undeclared column on both servers, so the exact edges the library
   carries (the `byte` and `short` edge at 2^31 and the `float` rounding edge) are checked against the server on every

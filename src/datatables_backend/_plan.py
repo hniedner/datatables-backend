@@ -336,7 +336,7 @@ class Plan:
 
 def _check_type(column: Column) -> None:
     """Raise ``SchemaError`` for a ``type`` that is none of the four: a ``Literal`` checks nothing at run time, and the
-    table would build and then fail on its first filter. The message names the column, the type written and the accepted
+    table would build and then fail on a filter. The message names the column, the type written and the accepted
     ones, all declared by the server."""
     accepted = get_args(ColumnType.__value__)
     if column.type is not None and column.type not in accepted:
@@ -348,9 +348,10 @@ def _check_type(column: Column) -> None:
 
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
-    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14) or
-    holds no whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the
-    backend's: SQL reads the type of a column it did not declare one for from the source."""
+    second would silently replace the first (PRD-D1), a ``type`` that is none of the four, or a search-value hook on a
+    column that is no string (PRD-D14) or holds no whole string to compare with (PRD-D20). The messages name only
+    declared columns. ``describe`` is the backend's: SQL reads the type of a column it did not declare one for from the
+    source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()

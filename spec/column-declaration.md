@@ -144,5 +144,5 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   raises `SchemaError` at construction, naming the column, what was written and the accepted ones. Before, the table
   built and a number filter on it failed with a `KeyError` (a `number=` or a `type=`), or a text filter was wrongly
   refused (a `text=`).
-- **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e300, -1e300, 0.5 and a
-  number of 255 digits sends each as it is.
+- **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e300, -1e300 and a
+  number of 255 digits sends each as it is (the last as an integer).
