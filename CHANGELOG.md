@@ -16,9 +16,9 @@ and on a `half_float`, a reversed `between`, and a column search with no word.
 A table that declares something that never worked as declared now raises `SchemaError` when it is built, where it
 built before and then did nothing, answered wrongly, or failed on the first request that used it (some already failed to
 build with another message, such as, on SQL, an empty or `None` column name with no `field`, which did not say the fix,
-or a misspelled `type=` on a string column), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build each table once, as
-at start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong, and a number too
-close to zero for a double now answers as `0`. Nothing else needs a change.
+or a misspelled `type=` on a string column), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build
+each table once, as at start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong,
+and a number too close to zero for a double now answers as `0`. Nothing else needs a change.
 
 **Security:** none; this release fixes no known vulnerability.
 
