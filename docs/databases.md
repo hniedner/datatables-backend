@@ -103,6 +103,19 @@ or an OpenSearch setting has an entry below.
   CI's `mariadb` job); a `mysql+` URL against a MariaDB server: READ in SQLAlchemy's `_mariadb_shim`, not run.
 - **Requirement:** PRD-Q2.
 
+### A list of two or more text constants is compared with a `DECIMAL` column as doubles
+
+- **What you see:** `IN ('12345678901234567.89', '0.30000000000000001')` over a `DECIMAL` column compares each entry as
+  a double, so it finds a row holding 12345678901234567.90 too, while `= '12345678901234567.89'` with one text constant
+  compares exactly. The library binds a number as a number (an `int` or a `Decimal`), never as text, so a list of
+  numbers is compared as a single `=` is.
+- **Example:** rows 12345678901234567.89 and 12345678901234567.90, a `multi_values` list of `12345678901234567.89`
+  and `0.30000000000000001`: the first row only. A number bound as text would also find the second.
+- **How it is known:** MEASURED 2026-11-25 on MariaDB 12.3.3: the example `decimal list of two` of
+  `tests/test_reference_properties.py`, which CI's `mariadb` job runs, failed against a mutant that bound the number as
+  text (a one-off run of the property). Not measured on MySQL.
+- **Requirement:** PRD-F20, PRD-F25.
+
 ## SQL Server
 
 ### An exact match ignores trailing spaces
@@ -132,9 +145,10 @@ or an OpenSearch setting has an entry below.
 ### A decimal holds 38 digits at most
 
 - **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
-  zeros not counted), on a `Numeric` column, or with a fraction on an integer column (not through a `TypeDecorator`,
-  whose number goes as the nearest float), is answered with `invalid_number`, whatever precision a `Numeric` column
-  declares. No other database applies this bound.
+  zeros not counted, nor a leading zero, the zero before the point of a number below one, for one; a zero between the
+  point and the first digit counts), on a `Numeric` column, or with a fraction on an integer column (not through a
+  `TypeDecorator`, whose number goes as the nearest float), is answered with `invalid_number`, whatever precision a
+  `Numeric` column declares. No other database applies this bound.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
   `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
 - **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022 with
@@ -220,8 +234,10 @@ or an OpenSearch setting has an entry below.
   SQLite (`=` 8.0000000000000000001 finds the row holding 8, and `=` 1e-16383 the row holding 0), and on PostgreSQL,
   MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on any of the four); `=` 1e-16383 finds no row
   on PostgreSQL (MySQL, MariaDB and SQL Server: see their entries); not measured on versions other than the ones CI runs
-  (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That `1e-16383` matches 0 on a `Numeric` column is INFERRED
-  from the float bind (`= 1e-400` was MEASURED there, decision 010).
+  (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That `1e-16383` matches 0 on SQLite's `Numeric` column is
+  MEASURED 2026-11-28 (UTC) by the example 'decimal one at the fraction limit' of `tests/test_reference_properties.py`
+  (sent as `1.0e-16383`), which CI's `tests` jobs run; on MySQL's and MariaDB's it is INFERRED from their comparison of
+  a fraction of more than 30 digits as a float (`= 1e-400` was MEASURED there, decision 010).
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused

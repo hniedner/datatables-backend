@@ -64,6 +64,9 @@ records of the logger `datatables_backend` (pytest's `caplog`); a record's **eve
   → `invalid_filter`, as `SPEC-E3.8` reports a condition that does not fit without reading a value. Without its
   condition (missing, empty text or `undefined`) nothing can be checked, so it adds nothing (PRD-F30): on `price`
   declared unsearchable, and on the undeclared `extra` → rows 1, 2, 3, 4.
+- **SPEC-E3.15** [all] A number that is not finite is a mistake of step 2, so it comes before the maximum date
+  (PRD-F24) as a bound, a mistake of step 3, whichever is read first: SearchBuilder `=` `1e999` on `price` and `<`
+  `9999-12-31` on `made`, in either order → `invalid_number`. (In `SPEC-E3.13` both mistakes are of step 3.)
 - **SPEC-E4.1** [all] For each user-error case, two requests that differ only in the offending value (`abc` vs
   `xyz`, `2024-13-01` vs `2025-14-02`) answer the same `error` text, and the text contains neither value. A limit
   the server holds (an integer column's bounds, the result window, the year 9999 of the last day there is) is the
