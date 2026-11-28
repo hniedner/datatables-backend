@@ -127,6 +127,8 @@ the default, means the column does not say, and a string column is then read as 
 mapping makes of a string. A `text` of any value on a column that is not a string column (a number, date or boolean
 column) raises `SchemaError` when the table is built: nothing would read it.
 
+Source: the docstring of `IndexColumn`; SPEC-D23.12 and SPEC-D23.13.
+
 ## The result window of OpenSearch
 
 OpenSearch reads at most `index.max_result_window` rows from the start of a search (10,000 by default). Give the table

@@ -28,7 +28,7 @@ and the versioning policy is in the README.
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
   table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
   carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for any SearchBuilder
-  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` (or `text=None`) had
+  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` had
   its whole-string conditions (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused.
   A table that used to build and now fails to build is the declaration being wrong.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:

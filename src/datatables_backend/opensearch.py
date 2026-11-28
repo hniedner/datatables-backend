@@ -449,11 +449,11 @@ def _check_text_fits(column: Column) -> None:
 
 
 def _held(column: Column) -> Column:
-    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
-    plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
-    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too, and so is a ``type`` that is none of the
-    four, or a ``text`` or ``number`` that is none of its kinds."""
+    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the plan
+    refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
+    the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
+    that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
+    or ``number`` that is none of its kinds, or a ``text`` on a column that is no string column."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     _check_text_fits(column)

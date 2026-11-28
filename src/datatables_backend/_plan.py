@@ -347,11 +347,14 @@ def check_type(column: Column) -> None:
 
 
 def check_name(column: Column) -> None:
-    """Raise ``SchemaError`` for an empty ``name`` or ``field``: the table would build and send an empty field name to
-    the server. The message names the column when it has a name."""
-    if not column.name or column.field == '':
-        which = f'The column "{column.name}" declares field=""' if column.name else 'A column is declared with name=""'
-        raise SchemaError(f'{which}, an empty name. Give the column a non-empty name, or a field naming the source.')
+    """Raise ``SchemaError`` for an empty ``name`` or ``field``. An empty name built a table that sent an empty field
+    name to the server; an empty ``field`` was silently read as the name. The message says which was written."""
+    if not column.name:
+        raise SchemaError(f'A column is declared with name={column.name!r}, which is empty. Give it a non-empty name.')
+    if column.field == '':
+        raise SchemaError(
+            f'The column "{column.name}" declares field="", which is empty. Drop field=, or give the source\'s name.'
+        )
 
 
 def check_hook(column: Column) -> None:
@@ -366,10 +369,10 @@ def check_hook(column: Column) -> None:
 
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
-    second would silently replace the first (PRD-D1), a ``type`` that is none of the four, or a search-value hook on a
-    column that is no string (PRD-D14) or holds no whole string to compare with (PRD-D20). The messages name only
-    declared columns. ``describe`` is the backend's: SQL reads the type of a column it did not declare one for from the
-    source."""
+    second would silently replace the first (PRD-D1), a ``type`` that is none of the four, an empty name or ``field``, a
+    search-value hook that cannot be called, or a search-value hook on a column that is no string (PRD-D14) or holds no
+    whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the backend's: SQL
+    reads the type of a column it did not declare one for from the source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()

@@ -156,4 +156,5 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   column and saying to pass a function. Before, the table built and the first request that searched the column raised
   `TypeError`.
 - **SPEC-D23.15** [OS] A column declared with an empty name, or an empty `field`, raises `SchemaError` at construction.
-  Before, the table built and sent an empty field name to the server.
+  Before, an empty name built a table that sent an empty field name to the server, and an empty `field` was silently
+  read as the name.

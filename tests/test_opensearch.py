@@ -3252,8 +3252,10 @@ def test_a_text_that_is_not_declared_is_the_default_text_and_keyword_field():
     assert 't.keyword' in json.dumps(bodies[0])
 
 
-@pytest.mark.parametrize('kind', ['number', 'date', 'boolean'])
-@pytest.mark.parametrize('text', ['text', 'text+keyword'])
+@pytest.mark.parametrize(
+    ('kind', 'text'),
+    [('number', 'keyword'), ('date', 'text'), ('boolean', 'text+keyword')],  # each kind and each text once
+)
 def test_a_text_on_a_column_that_is_no_string_column_is_a_schema_error_that_names_the_fix(kind: str, text: Any):
     """SPEC-D23.13: a string field applies to a string column only; the integrator wrote the declaration for the wrong
     column. The default text is not declared (`None`), so an explicit `text+keyword` is refused too."""
@@ -3274,10 +3276,18 @@ def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_c
 
 
 @pytest.mark.parametrize(
-    'column',
-    [pytest.param(lambda: Column(''), id='name'), pytest.param(lambda: Column('x', field=''), id='field')],
+    ('column', 'written', 'fix'),
+    [
+        pytest.param(lambda: Column(''), "name=''", 'Give it a non-empty name', id='name'),
+        pytest.param(lambda: Column(cast(Any, None)), 'name=None', 'Give it a non-empty name', id='name-none'),
+        pytest.param(lambda: Column('x', field=''), 'field=""', 'Drop field=', id='field'),
+    ],
 )
-def test_an_empty_name_or_field_is_a_schema_error_that_says_what_to_give(column: Callable[[], Column]):
-    """SPEC-D23.15: the table would build and send empty field names to the server."""
-    with pytest.raises(SchemaError, match='empty'):
+def test_an_empty_name_or_field_is_a_schema_error_that_says_what_was_written_and_what_to_do(
+    column: Callable[[], Column], written: str, fix: str
+):
+    """SPEC-D23.15: an empty name built a table that sent an empty field name; an empty `field` was read as the name."""
+    with pytest.raises(SchemaError) as raised:
         SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
+    assert written in str(raised.value)
+    assert fix in str(raised.value)
