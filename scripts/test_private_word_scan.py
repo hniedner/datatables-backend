@@ -379,7 +379,7 @@ def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path
 
 
 def test_a_list_word_with_spaces_around_it_still_matches(tmp_path: Path):
-    padded = write(tmp_path / 'padded.txt', f'  {WORD}  \n')
+    padded = write(tmp_path / 'padded.txt', f'  {WORD}\t \n')  # a tab at an end is whitespace, as a space is
     planted = write(tmp_path / 'notes.md', f'see {WORD} here\n')
     assert scan(str(planted), words=padded).returncode == 1
 
@@ -520,10 +520,14 @@ def test_a_byte_order_mark_joining_two_words_cannot_check(tmp_path: Path):
     assert 'could not check: word list line 1 holds an invisible character: retype the word' in result.stderr
 
 
-@pytest.mark.parametrize('invisible', ['\u200b', '\u00ad'], ids=['zero-width space', 'soft hyphen'])
+@pytest.mark.parametrize(
+    'invisible',
+    ['\u200b', '\u00ad', '\t', '\x1b'],
+    ids=['zero-width space', 'soft hyphen', 'tab', 'escape'],
+)
 def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, invisible: str):
-    """A format character (Unicode Cf) inside a word misses the text typed without it: refuse, do not guess. Two
-    different characters, so the rule is the category and not one character."""
+    """A format (Unicode Cf) or control (Cc) character inside a word misses the text typed without it: refuse, do not
+    guess. A tab is `word<TAB>note` from a spreadsheet. Two characters of each category, so the rule is the category."""
     listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}{invisible}{WORD[3:]}\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout

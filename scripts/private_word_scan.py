@@ -84,9 +84,10 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no usable word list (none readable, not UTF-8, a format character (Unicode Cf) in a
-    word, or no word in it), a ``--message`` call that does not name exactly one file, or an object could not be
-    read. (A failing git or file system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
+    """The scan cannot check: no usable word list (none readable, not UTF-8, a format or control character (Unicode
+    Cf, Cc) in a word, or no word in it), a ``--message`` call that does not name exactly one file, or an object could
+    not be read. (A failing git or file system raises CalledProcessError or OSError, which ``main`` answers the same
+    way.)"""
 
 
 def load_words() -> Words:
@@ -112,12 +113,15 @@ def load_words() -> Words:
 
 
 def _word(number: int, line: str) -> str:
-    """The folded word of a list line. Raises CouldNotCheckError on an invisible character (Unicode category Cf, such
-    as a zero-width space pasted from a web page): a word holding one misses the text typed without it, so the list
-    is refused for its owner to fix, not guessed at. The message names the line and never the word."""
-    if any(unicodedata.category(character) == 'Cf' for character in line):
+    """The folded word of a list line. Raises CouldNotCheckError on an invisible character inside it (Unicode category
+    Cf, such as a zero-width space pasted from a web page, or Cc, such as the tab of ``word<TAB>note``): a word
+    holding one misses the text typed without it, so the list is refused for its owner to fix, not guessed at. The
+    message names the line and never the word. A word that needs U+200C or U+200D (Persian, Indic) is refused too, so
+    it cannot be listed; the default-ignorable characters outside Cf and Cc (variation selectors) are not checked."""
+    word = line.strip()
+    if any(unicodedata.category(character) in {'Cf', 'Cc'} for character in word):
         raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
-    return fold(line.strip())
+    return fold(word)
 
 
 def _read_list(path: Path) -> str:
