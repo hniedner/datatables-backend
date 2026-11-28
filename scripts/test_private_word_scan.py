@@ -83,7 +83,7 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     word_file = {
         'unset': None,
         'missing file': tmp_path / 'absent.txt',
-        'no words': write(tmp_path / 'empty.txt', '# only a comment\n\n'),
+        'no words': write(tmp_path / 'empty.txt', '# only a comment\n  # an indented one\n \t\n\n'),
     }[case]
     result = scan(str(clean), words=word_file)
     assert result.returncode == 2
