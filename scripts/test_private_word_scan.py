@@ -993,7 +993,7 @@ def test_an_object_git_cannot_read_cannot_check(
     assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
     shown = capsys.readouterr().err
     assert 'could not check: an object could not be read' in shown  # not the generic git failure
-    assert 'git fsck' in shown  # and it says what to do
+    assert 'run it again, and if it repeats, check the repository with git fsck' in shown  # and the fix
     assert WORD.casefold() not in shown.casefold()
 
 
