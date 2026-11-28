@@ -27,9 +27,12 @@ def scan(
     env = {key: value for key, value in os.environ.items() if key != 'DTB_PRIVATE_WORDS'} | (extra or {})
     if words is not None:
         env['DTB_PRIVATE_WORDS'] = str(words)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(SCRIPT), *args], env=env, cwd=cwd, capture_output=True, text=True, check=False
     )
+    # Python exits 1 on an uncaught exception, the status of a finding: a crash must not pass a test of a refusal
+    assert 'Traceback' not in result.stderr, result.stderr
+    return result
 
 
 @pytest.fixture
@@ -295,6 +298,7 @@ def test_a_tag_named_with_a_word_that_wraps_a_tag_with_one_is_found_and_never_pr
     git(repo, 'tag', '-a', f'outer-{WORD}', '-m', 'wrapped', 'inner')
     result = scan('--refs', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
+    assert '(brought by ref' in result.stderr  # the inner tag's message is found, not only the outer name
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
@@ -303,6 +307,7 @@ def test_a_tag_on_a_tree_named_with_a_word_is_found_and_never_printed(repo: Path
     git(repo, 'tag', f'tree-{WORD}', 'HEAD^{tree}')
     result = scan('--refs', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
+    assert '/***:*** (path)' in result.stderr  # the whole path under the tree is found, not only the tag's name
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
