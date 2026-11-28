@@ -391,7 +391,7 @@ def main(argv: list[str]) -> int:
     except CouldNotCheckError as error:
         print(f'private-word scan could not check: {error}', file=sys.stderr)
         return COULD_NOT_CHECK
-    except (subprocess.CalledProcessError, OSError):  # no command line or path: either could hold a word
+    except (subprocess.CalledProcessError, OSError):  # not the command that ran or a path: either could hold a word
         print(
             'private-word scan could not check: git or the file system failed: check that git runs here (git fsck '
             'in the repository) and that the word list and every file given to the scan can be read',

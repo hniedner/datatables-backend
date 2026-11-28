@@ -93,7 +93,7 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
         'no words': 'add the private words, one per line',
     }[case]
     assert 'could not check: ' in result.stderr
-    assert fix in result.stderr  # the message names the fix, as the rule for an error says
+    assert fix in result.stderr  # the message names the fix
 
 
 def test_a_word_list_under_an_unknown_home_cannot_check(tmp_path: Path):
@@ -174,7 +174,7 @@ def test_a_message_scan_of_two_files_cannot_check(tmp_path: Path, words: Path):
     second = write(tmp_path / 'second.txt', f'A message with {WORD}\n')
     result = scan('--message', str(first), str(second), words=words)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'could not check: --message needs exactly one message file' in result.stderr
 
 
 def test_an_indented_comment_line_of_a_message_is_kept_as_git_keeps_it(repo: Path, words: Path):
