@@ -228,11 +228,17 @@ def all_objects() -> Iterator[tuple[str, str, bytes]]:
 
 
 def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
-    """The objects of ``git cat-file --batch`` output: id, kind and raw bytes."""
+    """The objects of ``git cat-file --batch`` output: id, kind and raw bytes.
+
+    Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
+    a push), so the scan cannot say it read every object."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
-        sha, kind, size = out[at:end].split()
+        parts = out[at:end].split()
+        if len(parts) != 3:  # `<id> missing`
+            raise CouldNotCheckError('an object vanished while it was being read')
+        sha, kind, size = parts
         start = end + 1
         at = start + int(size) + 1
         yield sha.decode(), kind.decode(), out[start : start + int(size)]

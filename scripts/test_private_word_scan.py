@@ -918,6 +918,18 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
     assert not leaked(output, *listed_words), output
 
 
+def test_an_object_gone_between_the_listing_and_the_read_cannot_check(
+    words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    """A `gc` that prunes an object after it was listed makes `cat-file --batch` answer `<id> missing`.
+
+    In process, with git's answer given: a real race cannot be staged."""
+    scanner = load_scanner(monkeypatch, words)
+    monkeypatch.setattr(scanner, 'git', lambda *args, **_: b'0' * 40 + b' missing\n' if 'cat-file' in args else b'')
+    assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
+    assert 'could not check' in capsys.readouterr().err
+
+
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
 def test_a_tag_message_in_another_encoding_fails_the_ref_scan(
     tmp_path: Path, repo: Path, non_ascii_words: Path, encoding: str
