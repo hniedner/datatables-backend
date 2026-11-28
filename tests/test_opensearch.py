@@ -3348,7 +3348,8 @@ def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_c
 def test_an_empty_name_or_field_is_a_schema_error_that_says_what_was_written_and_what_to_do(
     column: Callable[[], Column], written: str, fix: str
 ):
-    """SPEC-D23.15: an empty name built a table that sent an empty field name; an empty `field` was read as the name."""
+    """SPEC-D23.15: an empty name (with no `field`) built a table that sent an empty field name, or a `null` one for
+    `None`; an empty `field` was read as the name."""
     with pytest.raises(SchemaError) as raised:
         SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
     assert written in str(raised.value)

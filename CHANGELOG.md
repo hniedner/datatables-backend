@@ -22,9 +22,9 @@ and the versioning policy is in the README.
 - A table that declared a `text=` on a column that is not a string column, a `search_value` that is not callable, or an
   empty column name or `field` now raises `SchemaError` when it is built, naming what was written and the fix. Before,
   the `text=` was ignored, a non-callable `search_value` raised `TypeError` on the first request that searched the
-  column, an empty `field` was read as the name, and an empty name sent an empty field name to OpenSearch (on SQL it was
-  refused only as a missing column, with no fix, and a name of `None` raised SQLAlchemy's `ArgumentError`). A table that
-  used to build and now fails to build is the declaration being wrong.
+  column, an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
+  OpenSearch (on SQL it was refused only as a missing column, with no fix, and a name of `None` raised SQLAlchemy's
+  `ArgumentError`). A table that used to build and now fails to build is the declaration being wrong.
 - A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
   table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
