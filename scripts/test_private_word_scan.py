@@ -257,6 +257,15 @@ def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
+def test_a_symlink_target_in_latin_1_is_read_in_that_encoding_too(tmp_path: Path):
+    latin_1_words = write(tmp_path / 'latin1-words.txt', 'Grünspecht\n')
+    link = tmp_path / 'link'
+    os.symlink(b'../Gr\xfcnspecht/target', link)  # the target's bytes are Latin-1, which is no UTF-8
+    result = scan(str(link), words=latin_1_words)
+    assert result.returncode == 1
+    assert 'grünspecht' not in (result.stdout + result.stderr).casefold()
+
+
 def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path, words: Path):
     link = tmp_path / f'{WORD}-link'
     link.symlink_to('clean-target')
