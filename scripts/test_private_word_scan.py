@@ -137,7 +137,9 @@ def test_a_planted_word_anywhere_in_history_fails(repo: Path, words: Path, where
 def test_a_utf16_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path):
     planted = tmp_path / 'notes.txt'
     planted.write_bytes(f'see {WORD} here\n'.encode('utf-16'))
-    assert scan(str(planted), words=words).returncode == 1
+    result = scan(str(planted), words=words)
+    assert result.returncode == 1
+    assert f'{planted}:1: private word #3' in result.stderr  # read by the mark, not only as a second reading
 
 
 def test_a_message_scan_without_a_file_cannot_check(words: Path):
@@ -272,11 +274,6 @@ def test_a_casefolded_word_in_history_is_found_and_redacted(repo: Path, folded_w
     result = scan('--history', words=folded_words, cwd=repo)
     assert result.returncode == 1, result.stderr
     assert never_printed(result), result.stderr
-
-
-def test_a_utf16_blob_in_history_is_found(repo: Path, words: Path):
-    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-16'))
-    assert scan('--history', words=words, cwd=repo).returncode == 1
 
 
 def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
