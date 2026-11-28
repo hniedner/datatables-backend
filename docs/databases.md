@@ -210,8 +210,10 @@ or an OpenSearch setting has an entry below.
 - **Example:** a `Numeric(30, 0)` column holding 18446744073709551616 (2^64): `=` 18446744073709551617 finds that row on
   SQLite and no row on the other three. On SQLite, `=` 1e-16383 on an integer column finds the row holding 0.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
-  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`); the integer-column fraction on SQLite is
-  RUN by `test_sqlite_compares_a_fraction_on_an_integer_column_as_a_float`, and not measured on the other engines.
+  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`); the integer-column fraction is RUN by
+  `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-27 (UTC), on
+  SQLite (it finds the row holding 8), and on PostgreSQL, MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds
+  no row), not measured on the other versions of them.
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused

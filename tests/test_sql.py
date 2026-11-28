@@ -3024,10 +3024,10 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
 
 def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it(session: Session):
     """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
-    the `Decimal` as it is (INFERRED for PostgreSQL, MySQL, MariaDB and SQL Server until CI's live legs run it). SQLite
-    is the stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding
-    8, and `1e-16383`, which no float holds, is bound as zero and finds the row holding 0. Those are today's results on
-    SQLite, pinned so the stated limit is not forgotten if it changes."""
+    the `Decimal` as it is (RUN by CI, 2026-11-27 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
+    stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8, and
+    `1e-16383`, which no float holds, is bound as zero and finds the row holding 0. Those are today's results on SQLite,
+    pinned so the stated limit is not forgotten if it changes."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
     session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
