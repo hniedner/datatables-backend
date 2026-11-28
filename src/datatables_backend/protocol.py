@@ -396,6 +396,10 @@ class SchemaError(RuntimeError):
     server's mistake, not the user's, raised when the table is built."""
 
 
+#: The most digits of a list index in a flat key (PRD-P7): it bounds the indexes a key may hold
+_MAX_INDEX_DIGITS = 9
+#: A key and a value: an item of a list of pairs
+_PAIR = 2
 _HEAD = re.compile(r'[^.\[\]]*')
 _KEY = re.compile(r'[^.\[\]]+(?:\[[^.\[\]]*\]|\.[^.\[\]]+)*')
 _PART = re.compile(r'\[([^.\[\]]*)\]|\.([^.\[\]]+)')
@@ -540,7 +544,7 @@ def _draw(data: object) -> int | None:
 
 
 def _is_pair(item: object) -> bool:
-    return isinstance(item, (tuple, list)) and len(cast(Any, item)) == 2
+    return isinstance(item, (tuple, list)) and len(cast(Any, item)) == _PAIR
 
 
 def _is_flat(data: Mapping[str, Any] | Iterable[tuple[str, Any]]) -> bool:
@@ -621,7 +625,7 @@ def _assign(node: dict[str, Any], path: list[str], value: Any) -> None:
 
 def _index(key: str) -> bool:
     """Whether ``key`` is a list index: ``0``, or at most 9 ASCII digits without a leading zero."""
-    return key == '0' or (key.isascii() and key.isdigit() and len(key) <= 9 and not key.startswith('0'))
+    return key == '0' or (key.isascii() and key.isdigit() and len(key) <= _MAX_INDEX_DIGITS and not key.startswith('0'))
 
 
 def _lists(node: Any) -> Any:

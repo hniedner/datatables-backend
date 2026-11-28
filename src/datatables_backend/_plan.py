@@ -9,10 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from collections.abc import Iterable
-from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from datetime import time
@@ -130,6 +128,28 @@ def mistake(event: str, reason: str, column: Column | None = None) -> InvalidFil
     return InvalidFilter(reason, code=code, step=step, event=event, column=column.name if column else None)
 
 
+class _Part:
+    """The ``with`` of ``Mistakes.part``: keeps an ``InvalidFilter`` raised inside it and lets any other exception go.
+
+    A class and not a ``@contextmanager`` generator, because ``__exit__`` is declared ``-> bool``: a type checker takes
+    such a ``with`` to possibly swallow an exception, so it reads the code after ``with mistakes.part(): return ...``
+    as reachable. A generator's ``__exit__`` is typed ``bool | None``, which it takes to never swallow, and it calls
+    that code unreachable.
+    """
+
+    def __init__(self, found: list[InvalidFilter]) -> None:
+        self._found = found
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type: object, exc: BaseException | None, traceback: object) -> bool:
+        if isinstance(exc, InvalidFilter):
+            self._found.append(exc)
+            return True
+        return False
+
+
 class Mistakes:
     """The user's mistakes in one request.
 
@@ -142,12 +162,8 @@ class Mistakes:
     def __init__(self) -> None:
         self._found: list[InvalidFilter] = []
 
-    @contextmanager
-    def part(self) -> Iterator[None]:
-        try:
-            yield
-        except InvalidFilter as found:
-            self._found.append(found)
+    def part(self) -> _Part:
+        return _Part(self._found)
 
     def raise_first(self) -> None:
         if self._found:
@@ -177,6 +193,11 @@ _CONDITIONS: Mapping[ColumnType, frozenset[str]] = {
     'boolean': _EQUALITY_AND_EMPTY,
 }
 _BOOLEANS: Mapping[str, bool] = {'true': True, '1': True, 'false': False, '0': False}
+#: The values `between` and `!between` take: the two ends of a range
+_BETWEEN_VALUES = 2
+#: The quotes that enclose a phrase, opening and closing: a word shorter than this holds no pair
+_QUOTE_MARKS = 2
+_DECEMBER = 12
 _REGEX_SPECIAL = frozenset('.*+?[]{}()^$|')
 #: The characters a categorical filter's regex may escape: the set of DataTables' ``util.escapeRegex`` (PRD-F19)
 _REGEX_ESCAPED = frozenset('/.*+?|()[]{}\\$^-')
@@ -578,7 +599,7 @@ def _words(text: str) -> list[tuple[str, bool]]:
         negated = token.startswith('!')
         word = token[1:] if negated else token
         for opening, closing in (('"', '"'), ('“', '”')):
-            if len(word) >= 2 and word.startswith(opening) and word.endswith(closing):
+            if len(word) >= _QUOTE_MARKS and word.startswith(opening) and word.endswith(closing):
                 word = word[1:-1]
                 break
         if negated:
@@ -860,7 +881,7 @@ def _criterion(
     condition = item.condition
     if condition is None or not item.origData:
         return None
-    needed = 0 if condition in ('null', '!null') else 2 if condition in ('between', '!between') else 1
+    needed = 0 if condition in ('null', '!null') else _BETWEEN_VALUES if condition in ('between', '!between') else 1
     # A blank value is the empty text, which SearchBuilder's own client does not apply either (PRD-F30); one space is
     # a value. Kept out here, it counts as missing below
     texts = [text for text in item.value[:needed] if text]
@@ -897,13 +918,13 @@ def _criterion(
     if kind == 'string':
         values = [hooked(column, text) for text in texts]
     elif kind == 'number':
-        values = [parse_number(text, column, listed=needed == 2) for text in texts]
+        values = [parse_number(text, column, listed=needed == _BETWEEN_VALUES) for text in texts]
     elif kind == 'boolean':
         values = [parse_boolean(text, column) for text in texts]
     elif condition in ('contains', '!contains'):
         values = [_day_span(text, column) for text in texts]
     else:
-        values = parse_days(texts, column, listed=needed == 2)
+        values = parse_days(texts, column, listed=needed == _BETWEEN_VALUES)
     if needed and len(item.value) > needed:  # the values beyond those the condition takes are never read
         raise mistake(
             'datatables_value_surplus',
@@ -913,7 +934,9 @@ def _criterion(
         )
     if len(texts) < needed:  # after the values there are, so that an unreadable one is the mistake answered
         return None
-    if needed == 2 and values[1] < values[0]:  # a range in either order, as SearchBuilder's own filter takes it
+    if (
+        needed == _BETWEEN_VALUES and values[1] < values[0]
+    ):  # a range in either order, as SearchBuilder's own filter takes it
         values = [values[1], values[0]]
     positive = _positive(column, kind, condition, values)
     return Not(positive) if condition.startswith('!') else positive
@@ -1133,10 +1156,10 @@ def _day_span(text: str, column: Column) -> tuple[date, date]:
         if start == date.max:
             raise _last_day(column)
         return start, next_day(start)
-    last = start.month if form['month'] else 12
-    if (start.year, last) == (date.max.year, 12):
+    last = start.month if form['month'] else _DECEMBER
+    if (start.year, last) == (date.max.year, _DECEMBER):
         raise _last_day(column)
-    return start, date(start.year + 1, 1, 1) if last == 12 else date(start.year, last + 1, 1)
+    return start, date(start.year + 1, 1, 1) if last == _DECEMBER else date(start.year, last + 1, 1)
 
 
 def _column_search(
