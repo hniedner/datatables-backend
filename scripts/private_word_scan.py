@@ -236,12 +236,12 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
     """The objects of ``git cat-file --batch`` output: id, kind and raw bytes.
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
-    a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object. It does the same when a header is not ``<id> <kind> <size>`` with a size of digits, or the
-    byte after the declared size is not the newline git writes (a corrupt object whose size is wrong): reading on
-    would take the next bytes for a header and skip an object, or, at the end of the output, pass an object git could
-    not read whole. A wrong size whose declared end falls on a newline passes when that newline ends the output or
-    comes before a line that is a valid header. The id and the kind are git's own and are not checked."""
+    a push), or is corrupt (git exits 0 and prints ``missing`` for an object whose header it cannot unpack), so the
+    scan cannot say it read every object. It does the same when a header is not ``<id> <kind> <size>`` with a size of
+    digits, or the byte after the declared size is not the newline git writes (a corrupt object whose size is wrong):
+    reading on would take the next bytes for a header and skip an object, or, at the end of the output, pass an
+    object git could not read whole. A wrong size whose declared end falls on a newline passes when that newline ends
+    the output or comes before a line that is a valid header. The id and the kind are git's own and are not checked."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
@@ -390,8 +390,8 @@ def main(argv: list[str]) -> int:
         return COULD_NOT_CHECK
     except (subprocess.CalledProcessError, OSError):  # no command line or path: either could hold a word
         print(
-            'private-word scan could not check: git or the file system failed: run git fsck in the repository and '
-            'check that the word list file can be read',
+            'private-word scan could not check: git or the file system failed: check that git runs here (git fsck '
+            'in the repository) and that every file given to the scan can be read',
             file=sys.stderr,
         )
         return COULD_NOT_CHECK

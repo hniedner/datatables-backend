@@ -920,7 +920,7 @@ MIXED = {  # list words and a two-part path: (words, first part, second part)
 def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
     """The script as a module, to patch it in process: for a file name the file system here may refuse to create
     (APFS takes UTF-8 only), for an answer from git that only a race or a corrupt object gives, or for git output
-    fed straight to `batch()`, such as a SHA-256 repository's ids."""
+    fed straight to `batch()`, such as an unreadable object's answer."""
     spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -959,7 +959,7 @@ _UNREADABLE = {  # what batch() may get
     'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
     'size one past the end': f'{_ID} blob 6\nshort\n',  # the body is 5 bytes, the output ends on its newline
     'size past the end': f'{_ID} blob 200\nshort\n',  # a valid zlib stream whose object header declares too much
-    # (a byte flipped inside the stream makes git exit 128 instead, which main answers as a git failure)
+    # (a byte flipped in the body's part of the stream makes git exit 128 instead, which main answers as a git failure)
     'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # a body longer than its size: no newline
     # lines git never prints, read as a header after a wrong declared end
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
@@ -1090,6 +1090,14 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
     assert result.returncode == 2
     assert 'could not check: git or the file system failed' in result.stderr
     assert 'git fsck' in result.stderr  # and it says what to do
+
+
+def test_a_file_that_cannot_be_read_cannot_check(tmp_path: Path, words: Path):
+    unreadable = tmp_path / 'a-directory'  # read_bytes on it raises OSError, as a file with no read permission does
+    unreadable.mkdir()
+    result = scan(str(unreadable), words=words)
+    assert result.returncode == 2
+    assert 'every file given to the scan can be read' in result.stderr  # the word list was read fine
 
 
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
