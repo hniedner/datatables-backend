@@ -84,7 +84,8 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no word list, git or the file system failed, or an object vanished while it was read."""
+    """The scan cannot check: no word list, a ``--message`` call without one file, git or the file system failed, or an
+    object vanished while it was read."""
 
 
 def load_words() -> Words:
@@ -149,7 +150,7 @@ def fold(text: str) -> str:
     that casefolding keeps NFKD. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then
     compare equal, and the form is decomposed so that a combining mark after a word cannot merge with its last
     letter."""
-    # Defensive: on Unicode 15.0-16.0 (Python 3.12-3.15) casefolding NFKD text always gives NFKD, so dropping the outer
+    # Defensive: on Python 3.12-3.15 (Unicode 15.0-17.0) casefolding NFKD text always gives NFKD, so dropping the outer
     # NFKD changes nothing today and that mutant is equivalent.
     return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
 
