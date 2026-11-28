@@ -17,9 +17,8 @@ yet measured: first in CI.
 
 PRD-O6, the order of text, is the database's collation. Each leg measures it once: the values of `STRINGS`, stored in
 `s`, ranked by `DENSE_RANK() OVER (ORDER BY s)` on the table's own column, written without any COLLATE, so the rank is
-the column's collation and a library that added a COLLATE of its own would be found. On SQLite the rank must be
-code-point order (its `BINARY` collation), the evaluator's default, which the leg keeps; elsewhere the measured rank is
-the evaluator's sort key.
+the column's collation and a library that added a COLLATE of its own would be found. On SQLite the measured rank must
+equal code-point order (its `BINARY` collation); on every database the measured rank is the evaluator's sort key.
 
 PRD-F23, a decimal's search text, is the database's own spelling. Each leg measures it once: the values of `DECIMALS`,
 stored in `m`, read back by the dialect's own `CAST(m AS ...)` written in raw SQL (`measured_decimal_text`, never the
@@ -248,7 +247,8 @@ DECIMALS = [Decimal('12345678901234567.89'), Decimal('12345678901234567.90'), De
             Decimal('0.30'), Decimal('0.31'), Decimal('0.00')]  # fmt: skip
 #: Numbers sent to `m`: the pool's own, spelled otherwise (trailing zeros, an exponent, `-0.00`), and numbers the
 #: comparison tells apart: 0.305 and 0.30000000000000001 hold more digits than the column, 12345678901234567 is whole
-#: and the integer neighbour that a float cannot tell from the first three; `1.5e3` is an exponent above every cell
+#: and the integer neighbour that a float cannot tell from the first three; `1.5e3` is an exponent, between the small
+#: cells and the large ones
 DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '12345678901234567.90', '12345678901234568',
                     '0.305', '12345678901234567', '12345678901234567.8900', '-0.00', '3.1e-1', '0.3', '0.31', '0.3000',
                     '0', '00.31', '1.5e3']  # fmt: skip
@@ -886,8 +886,6 @@ def engine_for(
             typed_search=True, empty_string_is_empty=False, pad_space=pads, order_key=order_key, numeric='double'
         )
     spelled = decimal_text or DECIMAL_TEXT[dialect]
-    if dialect == 'sqlite' and not pads and spelled is sqlite_text and order_key in (None, code_points):
-        return SQLITE
     return Engine(
         pad_space=pads,
         order_key=order_key or (code_points if dialect == 'sqlite' else None),
@@ -1650,7 +1648,7 @@ EXAMPLES |= {
                       request_of({'data': 'm'}, order=[{'column': 0, 'dir': 'asc'}])),
     # PRD-F25, PRD-E3: `0.` and 39 digits is over SQL Server's 38 (step 3.5), so the last day (step 3) answers there
     # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3); the count of the zero before the
-    # point is pinned by `0.` and 38 ones in `DECIMAL_BOUNDS` and by the hand tests of SPEC-F25.12
+    # point is drawn from `DECIMAL_BOUNDS` (`0.` and 38 ones) and pinned by the hand tests of SPEC-F25.12
     'decimal 39 digits then the last day': (rows_of('m', *DECIMALS), DECLARED,
                                             request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
                                                 ('m', '<', ['0.' + '1' * 39]), ('d', '<', [LAST])))),

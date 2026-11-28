@@ -15,9 +15,10 @@ what another backend reads differently, as properties with their PRD clauses; a 
 beyond ASCII is not among them: the evaluator's text is ASCII.
 
 A declaration is a tuple of `(name, type, searchable, orderable)`; the first column is the table's unique key, the
-tie-breaker of PRD-O3, and every row holds every declared name. The type `number` is an SQL `BigInteger` (whole
-numbers only); `decimal` is a number column the evaluator alone names, a `Numeric` column on SQL (a `double` field on
-OpenSearch) whose cells are `Decimal`s (#217), which a test declares to the library as `type='number'`.
+tie-breaker of PRD-O3, and every row holds every declared name. The type `number` is an integer column, read with a
+`BigInteger`'s range (whole numbers only); `decimal` is a number column the evaluator alone names, a `Numeric` column on
+SQL (a `double` field on OpenSearch) whose cells are `Decimal`s (#217), which a test declares to the library as
+`type='number'`.
 """
 
 from collections.abc import Callable
@@ -81,7 +82,7 @@ def sqlite_text(value: Decimal) -> str:
     """PRD-F23 on SQLite: a decimal's search text is the text of what SQLite stores (`_stored_on_sqlite`), an integer
     as its digits and a floating-point number with every significant digit, so 0.30 reads `0.3` and 0.00 reads `0`
     (`docs/decisions/006-number-search-text.md`). `repr` is that text for the values of `m`, none of which needs an
-    exponent (SQLite writes `1.0e+20` where `repr` writes `1e+20`); each leg measures the text and asserts it."""
+    exponent (SQLite writes `1.0e+20` where `repr` writes `1e+20`); each SQL leg measures the text and asserts it."""
     stored = _stored_on_sqlite(value)
     return str(stored) if isinstance(stored, int) else repr(stored)
 
@@ -122,7 +123,7 @@ class Engine:
     #: PRD-F25, PRD-E3: on SQL Server a number of more than this many digits in all, a fraction's trailing zeros and
     #: the zero before the point of a number below one not counted, is the column's own step-3 mistake; None elsewhere.
     decimal_digits: int | None = None
-    #: PRD-F23: a decimal cell's search text, the database's own spelling; each leg measures it and passes it here.
+    #: PRD-F23: a decimal cell's search text, the database's own spelling; each SQL leg measures it and passes it here.
     decimal_text: Callable[[Decimal], str] = sqlite_text
 
 
