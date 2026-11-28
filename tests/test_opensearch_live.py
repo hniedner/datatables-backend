@@ -887,19 +887,10 @@ def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition
     assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
 
 
-def test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float(client: OpenSearch):
-    """SPEC-D23.1 on a real server: `65519.999` is 65504 rounded straight to half but 65520.0 through a 32-bit float,
-    which overflows half, and a `half_float` field reads a number through a float first: the server answered it with a
-    400 (`[half_float] supports only finite values, but got [65520.0]`, CI run 46091503895, on both servers) when the
-    library sent it. The library refuses it as `invalid_number` before the query."""
-    params = request('id', 'n', **criterion('n', '=', '65519.999'))
-    assert numbers_in('n_half', 'half_float').fetch_sync(params, client).error_code == 'invalid_number'
-
-
 def test_greater_than_a_negative_number_beyond_a_double_finds_no_zero(client: OpenSearch):
     """SPEC-F25.15 on a real server: b2 holds the only 0.0 in the `double` field. `-1e-400` is -0.0 as a double, and
-    PRD-F25 compares the nearest double, a signed zero being zero, so the library sends `0` and `> -1e-400` finds
-    nothing, as `> -0.00` does. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a
+    the nearest double is compared, as PRD-F25 reads a SQL `Float` column, so the library sends `0` and `> -1e-400`
+    finds nothing, as `> -0.00` does. Sent as -0.0 the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a
     number below zero, which the nearest double does not give, TINY_NUMBER_COUNTS). It catches a lower bound that goes as
     -0.0."""
     params = request('id', 'n', **criterion('n', '>', '-1e-400'))
@@ -929,11 +920,11 @@ TINY_NUMBER_COUNTS = [
 def test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is(
     client: OpenSearch, field: str, number: float, counts: tuple[int, ...]
 ):
-    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. A `term` and a
-    `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which is not 0.0, and a
-    tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so `lt` and `gte` with 1e-10
-    answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range rounds to the nearest first.
-    The counts of each row are the whole result: a mismatch shows which cell differs."""
+    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. A `term` and
+    a `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which is not 0.0,
+    and a tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so `lt` and `gte`
+    with 1e-10 answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range rounds to the
+    nearest first. The counts of each row are the whole result: a mismatch shows which cell differs."""
     queries = [
         {'term': {field: number}},
         {'terms': {field: [number, 7]}},

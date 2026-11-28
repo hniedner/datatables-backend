@@ -8,14 +8,16 @@ and the versioning policy is in the README.
 ### Fixed
 
 - On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
-  `-1e-400`, is sent as `0`, as `0` is (PRD-F25 compares a number as the nearest double, and a signed zero is zero, as
-  on a SQL `Float` column). Before, a negative one was sent as -0.0, which a `double`, `float` or `half_float` field
-  keeps apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a column search of it
-  and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for `0`. For a document
-  holding -0.0, `=`, `>=`, a column search and a list entry with `-0.00` no longer find it, and `<` and `!=` now do;
-  `between` and `!between` with it as a bound answer as for `0` too. For `-1e-400` that changes answers that were
-  exact: `>` and `!=` with it no longer find a document holding 0.0, as with `-0.00`. A number that is tiny only in
-  a `float` or `half_float` field's own format (`-1e-50`, `-1e-10`) is sent as it is, as before.
+  `-1e-400`, is sent as `0`, as `0` is: the nearest double, as on a SQL `Float` column, where a zero written with a
+  sign is zero (PRD-F25). Before, a negative one was sent as -0.0, which a `double`, `float` or `half_float` field keeps
+  apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a column search of it and a
+  list entry of it missed the document, while `>` and `!=` found it. Each now answers as for `0`. For `-0.00`, which
+  is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer for the nearest
+  double's: `=`, `<=`, a column search and a list entry now find the document where they found none, and `>` and `!=`
+  no longer find it. For a document holding -0.0 in a `double` or a `float` field, `=`, `>=`, a column search and a
+  list entry with either no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a bound
+  answer as for `0` too. A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`,
+  `-1e-10`) is sent as it is, as before.
 - On OpenSearch, a column declared `half_float` (`IndexColumn(number='half_float')`) answers `invalid_number` for
   `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with
   the server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).

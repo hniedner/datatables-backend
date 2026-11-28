@@ -76,7 +76,8 @@ type NumberKind = Literal['byte', 'short', 'integer', 'long', 'unsigned_long', '
 
 #: What OpenSearch accepts for each ``NumberKind`` (decision 011): the lowest and the highest number, as the message
 #: names them. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The floats'
-#: range is where a number rounds to infinity in their format, which ``_accepted`` asks of ``struct``.
+#: range is where a number rounds to infinity in their format, as the field reads it (``_FLOAT_FORMATS``), which
+#: ``_accepted`` asks of ``struct``: ``half_float`` takes 65519.99, which is 65504 in half.
 _INTEGER_BOUNDS = (-(2**31), 2**31 - 1)
 _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'byte': _INTEGER_BOUNDS,
@@ -610,8 +611,8 @@ def _accepted(kind: str, sent: int | float) -> bool:
     """Whether OpenSearch answers ``sent`` on a field of ``kind``. A float field refuses a number that rounds to
     infinity in its format, as it reads the number: through each of ``_FLOAT_FORMATS``, so a ``half_float`` field's
     ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. ``struct.pack``
-    raises ``OverflowError`` there; ``float`` makes it always get a float, since a whole number would be refused as it
-    is, though it is never too large for a double here (at most 255 characters)."""
+    raises ``OverflowError`` there. It is given a float: a whole number too large for one would raise ``struct.error``
+    in ``struct``, which is not caught, but a request holds at most 255 characters, so ``float`` never fails here."""
     if kind in _FLOAT_FORMATS:
         # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
         # refused here, where the server might round it straight to a float it holds: a conservative refusal
@@ -646,9 +647,9 @@ def _number(column: Column, value: Any) -> Any:
 
 def _json(value: Any) -> Any:
     """``value`` as the request body carries it: a number with a point or an exponent is a float, which is what
-    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1). A number whose float is zero is
-    ``0``, as ``0`` is sent: ``-0.00`` or ``-1e-400`` would be the float -0.0, which a ``double`` field keeps apart
-    from 0.0 (PRD-F25, docs/databases.md)."""
+    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1). A number whose double is zero is
+    ``0``, as ``0`` is sent: ``-0.00`` or ``-1e-400`` would be the float -0.0, which a ``double``, ``float`` or
+    ``half_float`` field keeps apart from 0.0 (PRD-F25, docs/databases.md)."""
     if not isinstance(value, Decimal):
         return value
     return float(value) or 0  # a falsy float is 0.0 or -0.0

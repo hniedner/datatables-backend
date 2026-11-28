@@ -456,7 +456,9 @@ KIND_BOUNDS = {
     'half_float': '-65504 and 65504',
 }
 #: (kind, the last value OpenSearch answers, the first it refuses). `float`'s are the two floats either side of the one
-#: that rounds to infinity, and `half_float`'s 65519 and 65520, which the measurement found on both servers.
+#: that rounds to infinity, and `half_float`'s 65519 and 65520, which the measurement found on both servers, and 65519.99
+#: and 65519.999: a `half_float` field reads a number as a 32-bit float first, so the second is the float 65520.0 (the
+#: server's 400 on both, CI run 46091503895), where rounded straight to half it would be 65504.
 NUMBER_EDGES = [
     pytest.param('byte', '2147483647', '2147483648', id='byte-high'),
     pytest.param('byte', '-2147483648', '-2147483649', id='byte-low'),
@@ -472,6 +474,7 @@ NUMBER_EDGES = [
     pytest.param('float', '-3.4028235677973362e38', '-3.4028235677973366e38', id='float-low'),
     pytest.param('half_float', '65519', '65520', id='half_float-high'),
     pytest.param('half_float', '-65519', '-65520', id='half_float-low'),
+    pytest.param('half_float', '65519.99', '65519.999', id='half_float-through-float'),
 ]
 
 

@@ -3122,22 +3122,28 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
             for path in ('equals', 'greater-or-equal', 'less', 'less-or-equal')
         ),
         (None, 'multi-values', '-0.00'),  # a `terms` list, built apart from a bound or a `term`
-        # `_json` runs before the kind check, so a column without a kind stands for every kind
         *(
             (None, path, text)
             for text in ('-1e-400', '1e-400')
             for path in ('equals', 'less', 'less-or-equal', 'greater', 'multi-values')
         ),
+        # a column that declares a float kind: its numbers could be converted apart from `_json`
+        ('float', 'equals', '-0.00'),
+        ('float', 'equals', '-1e-400'),
+        ('half_float', 'equals', '-0.00'),
+        ('half_float', 'equals', '-1e-400'),
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
     """SPEC-F25.15: `-0.00` is the number zero, and `-1e-400` is not zero but its double is -0.0, which a `double`
-    field keeps apart from 0.0 in a `term` and a `range`; PRD-F25 compares a number as the nearest double and a signed
-    zero is zero, so every number whose double is zero is sent as `0`, in an equality, a bound and a list, on a column
-    without a kind (a `double` field); `-0.00` also on a `long`. The bodies are compared as JSON, since Python's -0.0
-    equals 0. It catches a number sent as the float -0.0; the `1e-400` rows pin the one spelling `0` (OpenSearch reads
-    0.0 the same). The `less-or-equal` and `greater` rows are not the `less` rows again: a rule skipped for an inclusive
-    upper bound alone, or for a lower bound alone, passes every `less` row and fails these."""
+    field keeps apart from 0.0 in a `term` and a `range`; the nearest double is compared, as PRD-F25 reads a SQL `Float`
+    column, where a signed zero is zero, so every number whose double is zero is sent as `0`, in an equality, a bound
+    and a list, on a column without a kind (a `double` field); `-0.00` also on a `long`, and `-0.00` and `-1e-400` on a
+    column declared `float` or `half_float`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches
+    a number sent as the float -0.0, also one converted for a float kind apart from `_json`; the `1e-400` rows pin the
+    one spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` and `greater` rows are not the `less` rows
+    again: a rule skipped for an inclusive upper bound alone, or for a lower bound alone, passes every `less` row and
+    fails these."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
@@ -3148,25 +3154,13 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
     [('float', '-1e-50'), ('float', '1e-50'), ('half_float', '-1e-10'), ('half_float', '1e-10')],
 )
 def test_a_number_that_is_zero_only_in_the_format_of_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
-    """SPEC-F25.15: `-1e-50` is a nonzero double that a `float` field rounds to -0.0 (`-1e-10` on a `half_float`), and
-    the library sends it as it is, as a column without a kind does, not as `0`: the field's own rounding gives the
-    answers of docs/databases.md (the matrix of CI run 46093367670), and the true one for a tiny negative, where `0` would
-    give the false one. It catches a rule that sends such a number as `0`."""
+    """SPEC-F25.15: `-1e-50` is a nonzero double that a `float` field rounds to -0.0 in a `term` (`-1e-10` on a
+    `half_float`), and the library sends it as it is, as a column without a kind does, not as `0`: the field's own
+    rounding gives the answers of docs/databases.md (the matrix of CI run 46093367670), the exact one for a tiny
+    negative, where `0` would give the false one. It catches a rule that sends such a number as `0`."""
     kept = asked(kind, **criterion('n', '=', text))[1].searches
     assert json.dumps(kept) == json.dumps(asked(None, **criterion('n', '=', text))[1].searches)
     assert json.dumps(kept) != json.dumps(asked(None, **criterion('n', '=', '0'))[1].searches)
-
-
-def test_a_half_float_number_is_refused_where_the_server_reads_it_as_infinity():
-    """SPEC-D23.1: a `half_float` field reads a number as a 32-bit float first, so `65519.999` is 65520.0, which
-    overflows half, though rounded straight to half it is 65504; the server answers it with a 400 (CI run 46091503895,
-    on OpenSearch 3.10.0 and 2.19.7), so it is `invalid_number` before the query. `65519.99` is a float below 65520
-    (65519.98828125), which rounds to 65504 in half, so it is sent. It catches a refusal that rounds the double
-    straight to half."""
-    response, client = asked('half_float', **criterion('n', '=', '65519.999'))
-    refused(response, 'invalid_number')
-    assert client.searches == []
-    assert asked('half_float', **criterion('n', '=', '65519.99'))[0].error is None
 
 
 def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():
