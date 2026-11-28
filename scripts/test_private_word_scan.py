@@ -945,9 +945,9 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
 
 
 _ID = '0' * 40
-_UNREADABLE = {  # what `cat-file --batch` prints for an object it cannot read as it is stored
+_UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, or (last row) later bytes as a header
     'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
-    'size past the body': f'{_ID} blob 200\nshort\n{_ID} blob 5\nhello\n',  # a corrupt object that declares too much
+    'size into the next header': f'{_ID} blob 7\nshort\n{_ID} blob 5\nhello\n',  # a corrupt object declares too much
     'size past the end': f'{_ID} blob 200\nshort\n',
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
 }
