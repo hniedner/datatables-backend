@@ -1663,7 +1663,19 @@ EXAMPLES |= {
     'decimal list of two': (rows_of('m', DECIMALS[0], None, None, DECIMALS[1]), DECLARED, request_of(
         {'data': 'm', 'search': {'value': '', 'regex': False,
                                  'multi_values': ['12345678901234567.89', '0.30000000000000001']}})),
+    # PRD-F25: the 16,383 limit is of the value, and zero has no fraction: `0e-16384` is answered, as zero, on every
+    # engine
+    'decimal zero past the fraction limit': (rows_of('m', *DECIMALS), DECLARED, request_of(
+        {'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0e-16384'])))),
 }  # fmt: skip
+if os.environ.get('DTB_SQL_DIALECT', 'sqlite') in ('postgresql', 'mssql'):
+    # PRD-F25: `1.0e-16383` is the number 1e-16383, answered (PostgreSQL: no row, exact) or refused by its 38 digits
+    # (SQL Server); no engine that compares a number that small as a double sees it (`DECIMAL_BOUNDS`)
+    EXAMPLES['decimal one at the fraction limit'] = (
+        rows_of('m', *DECIMALS),
+        DECLARED,
+        request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['1.0e-16383']))),
+    )
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
 #: declaration, which OpenSearch's leg pins as well; those the shared plan answers alike on every backend (`%` alone
 #: over number text, the decimal refusals, `0.` and 39 digits then the last day) are left out
