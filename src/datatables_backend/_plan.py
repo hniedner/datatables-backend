@@ -924,10 +924,10 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     is also what decides whether a backend that compares as a float can take it, and has at most 16,383 digits after
     the decimal point (16,383 is the most PostgreSQL's ``numeric`` takes, so ``1e-20000`` is refused). The limit is of
     the value: a fraction's trailing zeros are not counted and zero has no fraction, so ``1.0e-16383`` and
-    ``0e-16384`` are answered, with their zeros dropped (a number within the limit is returned as written, which no
+    ``0e-16384`` are accepted here, with their zeros dropped (a number within the limit is returned as written, which no
     backend can tell: each drops the zeros again, sends a whole number as an integer, or sends a float). An exponent
-    beyond what a ``Decimal`` holds is refused, zero included: a nonzero number with a negative one for its digits
-    after the point (the limit's reason), any other as no number a filter can use."""
+    beyond what a ``Decimal`` holds is refused, zero included: with the limit's reason when the number is not zero and
+    its exponent is negative, and as no number a filter can use otherwise."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)

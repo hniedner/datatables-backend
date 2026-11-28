@@ -63,13 +63,13 @@ SPEC-F25.12 pin.
   the same number. An exponent is left as written: a `Decimal` of `1.5e3` answered on SQL Server (RUN, sync and async),
   so nothing needs it rewritten. A column behind a `TypeDecorator` is compared through its own type, which converts
   the number as it does any other (a `TypeDecorator` over an integer gets a fraction as a float of its own). An
-  integer column gets the whole number or, for a fraction, a `Decimal` typed `Numeric()` (a float of 8.0000000000000000001 is 8.0, which an integer column holds); a list leaves such a fraction
-  out. A `Float` column and an expression without a type get a float. OpenSearch gets a float in its request body
-  (SPEC-A8.1); it parses a query's number as a double for its float types (not measured).
+  integer column gets the whole number or, for a fraction, a `Decimal` typed `Numeric()` (a float of
+  8.0000000000000000001 is 8.0, which an integer column holds); a list leaves such a fraction out. A `Float` column
+  and an expression without a type get a float. OpenSearch gets a float in its request body (SPEC-A8.1); it parses a
+  query's number as a double for its float types (not measured).
 - On SQL Server a number of more than 38 digits in all, before and after the point, on a `Numeric` column or with a
-  fraction on an integer column (not through a `TypeDecorator`), is refused as `invalid_number`
-  for every condition, with the limit and the fix in the reason, never the driver's error. The advisor's ruling of
-  2026-11-24.
+  fraction on an integer column (not through a `TypeDecorator`), is refused as `invalid_number` for every condition,
+  with the limit and the fix in the reason, never the driver's error. The advisor's ruling of 2026-11-24.
 - Not done: carrying the written text in the plan (more plumbing than a `Decimal` for the same information), and a
   `Decimal` only above 15 digits (two representations by digit count, and a column holding more digits than the query
   is still cast to a float on PostgreSQL).
