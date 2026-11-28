@@ -207,10 +207,8 @@ or an OpenSearch setting has an entry below.
 - **What you see:** a whole number outside the signed 64-bit range can match a neighbouring value on a `Numeric` column,
   and a fraction can match a neighbouring value, or zero when it is too small for a float, on a `Numeric` or an integer
   column. SQLite stores no exact decimal, and SQLAlchemy sends it a decimal as a floating-point number, a fraction for
-  an integer column too. PostgreSQL compares the number exactly, MySQL and MariaDB except a fraction
-  of more than 30 digits after the point (below), and SQL Server up to 38 digits (it refuses a longer one). OpenSearch
-  gets the same float, so there too `1e-16383` is the number zero (INFERRED from the float the body carries; neither the
-  body nor the server is pinned for this value).
+  an integer column too. PostgreSQL compares the number exactly, MySQL and MariaDB except a fraction of more than 30
+  digits after the point (below), and SQL Server up to 38 digits (it refuses a longer one).
 - **Example:** a `Numeric(30, 0)` column holding 18446744073709551616 (2^64): `=` 18446744073709551617 finds that row on
   SQLite and no row on PostgreSQL, MySQL or SQL Server. On SQLite, `=` 1e-16383 on an integer column finds the row
   holding 0.
@@ -219,10 +217,10 @@ or an OpenSearch setting has an entry below.
   MEASURED 2026-11-24 on SQLite (`docs/decisions/010-decimal-numbers.md`); the integer-column fraction is RUN by
   `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-28 (UTC), on
   SQLite (`=` 8.0000000000000000001 finds the row holding 8, and `=` 1e-16383 the row holding 0), and on PostgreSQL,
-  MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on all four), and `=` 1e-16383 finds no row on
-  PostgreSQL, finds the row holding 0 on MySQL and MariaDB, and is refused on SQL Server by its 38 digits; not measured
-  on other versions than the ones CI runs (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That `1e-16383`
-  matches 0 on a `Numeric` column is INFERRED from the float bind.
+  MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row on any of the four); `=` 1e-16383 finds no row
+  on PostgreSQL, finds the row holding 0 on MySQL and MariaDB, and is refused on SQL Server by its 38 digits; not
+  measured on versions other than the ones CI runs (PostgreSQL 18, MySQL 8.4, MariaDB 12.3, SQL Server 2022). That
+  `1e-16383` matches 0 on a `Numeric` column is INFERRED from the float bind.
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused
@@ -299,16 +297,18 @@ or an OpenSearch setting has an entry below.
 
 This is a limit of the databases, not of the library: the library sends the number exactly.
 
-- **What you see:** a number with more digits after the decimal point than a MySQL or MariaDB `DECIMAL` holds (30)
-  is compared as a floating-point number there (INFERRED), so a number such as `1e-400` equals zero and `=` finds a
-  row holding 0.00 on a `Numeric` column (and 0 on an integer column, RUN 2026-11-28 UTC by CI). PostgreSQL answers
-  exactly (no row), and SQL Server refuses the number (more than 38 digits). On SQLite, on a `Float` column and on
-  OpenSearch the number is a float, which is zero there too.
+- **What you see:** a number with more digits after the decimal point than a MySQL or MariaDB `DECIMAL` holds (30) is
+  compared as a floating-point number there (INFERRED), so a number such as `1e-400` equals zero and `=` finds a row
+  holding 0.00 on a `Numeric` column (and 0 on an integer column). PostgreSQL answers exactly (no row), and SQL Server
+  refuses the number (more than 38 digits). On SQLite, on a `Float` column and on OpenSearch the number is a float,
+  which is zero there too (INFERRED for OpenSearch, from the float the body carries; neither the body nor the server is
+  pinned for this value).
 - **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
-- **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and
-  MariaDB 12.3.3 (`docs/decisions/010-decimal-numbers.md`); the rule is INFERRED from MySQL's manual, which gives a
-  `DECIMAL` at most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>,
-  fetched 2026-11-24).
+- **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB
+  12.3.3 (`docs/decisions/010-decimal-numbers.md`); on an integer column `= 1e-16383` finds the row holding 0 on MySQL
+  8.4 and MariaDB 12.3, RUN by CI on 2026-11-28 (UTC); the rule is INFERRED from MySQL's manual, which gives a `DECIMAL`
+  at most 30 digits after the point (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>, fetched
+  2026-11-24).
 - **Requirement:** PRD-F25.
 
 ### A fraction on a `TypeDecorator` over an integer is compared as a float

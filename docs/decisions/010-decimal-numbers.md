@@ -53,7 +53,8 @@ SPEC-F25.12 pin.
   negative, and is refused, below). So is a number of more than 16,383 digits after the point, the most PostgreSQL's
   `numeric` takes (its manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED
   2026-11-24), which would otherwise reach the database as a driver error. The limit is of the value, not of how it is
-  written: a fraction's trailing zeros are not counted and zero has no fraction, so `1.0e-16383` is answered like
+  written (the reviewer's ruling of 2026-11-25 on #221, after a probe showed `1.0e-16383` refused while `1e-16383` was
+  answered): a fraction's trailing zeros are not counted and zero has no fraction, so `1.0e-16383` is answered like
   `1e-16383`, and `parse_number` returns it without those zeros (a number within the limit is returned as written, which
   no backend can tell: each drops the zeros again, sends a whole number as an integer, or sends a float). An exponent
   beyond what a `Decimal` holds is refused with this reason when the number is not zero and the exponent is negative,

@@ -332,7 +332,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`;
-  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column, or on an integer column
+  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column or on an integer column
   not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative exponent beyond what a
   decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason; `1e9999999999999999999` and
   `0e-9999999999999999999` (zero has no fraction) get
@@ -347,11 +347,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code `invalid_number` (the
   last digit is past the limit, whatever the first; the plain spellings `1e-16383` and `1e-16384` are those of
   `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they are checked on
-  `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of those answered, the first
-  three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is answered. [PostgreSQL] The number
-  reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound as
-  `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a number of 31 significant digits
-  with all 31 (`Decimal.normalize` would round it to 28).
+  `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of the four answered above, the
+  first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is answered. [PostgreSQL] The
+  number reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound
+  as `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a number of 31 significant digits
+  with all 31 (`Decimal.normalize` would round it to 28). [OpenSearch] A single-value column search (`value_search`)
+  reads the same limit: `1.0e-16383` is answered and `1e-16384` → `invalid_number`; the `=` list rests on the one
+  `parse_number`, which the SQL tests check.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a

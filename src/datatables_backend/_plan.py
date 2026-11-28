@@ -967,8 +967,8 @@ def _too_many_fraction_digits(column: Column, *, listed: bool) -> InvalidFilter:
 
 def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilter:
     """The mistake of ``text``, a number whose exponent no ``Decimal`` holds: a nonzero one with a negative exponent has
-    more than 16,383 digits after the point; any other is too large for a ``Decimal`` to read, a zero included (it has
-    no fraction to count, so the limit's reason would be untrue)."""
+    more than 16,383 digits after the point; any other has an exponent too large for a ``Decimal`` to read, a zero's
+    included (it has no fraction to count, so the limit's reason would be untrue)."""
     mantissa, _, exponent = text.lower().partition('e')
     if exponent.startswith('-') and mantissa.strip('+-.0'):
         return _too_many_fraction_digits(column, listed=listed)
@@ -991,7 +991,8 @@ def without_trailing_zeros(value: Decimal) -> Decimal:
 
 
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
-    """The mistake of a value in a filter on ``column`` that is no number, or no finite one."""
+    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or one whose exponent no
+    ``Decimal`` holds."""
     needed = (
         f'Each value in the filter on "{column.name}" must be a number'
         if listed

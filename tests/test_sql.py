@@ -3112,10 +3112,10 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
 def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
     """SPEC-F25.14: a nonzero number whose negative exponent is beyond what a `Decimal` holds is one of more than 16383
     digits after the point, so the refusal says that, as it does for `1e-16384`; one with a positive exponent is too
-    large, as `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between`
-    gets the wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a
-    number, a zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a `between`
-    bound."""
+    large, as `1e400`, and zero has no fraction, so both get 'needs one number', the reason for a number no filter can
+    use. A bound of a `between` gets the wording for a value among several. It catches the first kind told 'needs one
+    number', which says nothing of the limit it is past, a zero told it is past the limit, a spelling with `E` missed,
+    and the wording of one value for a `between` bound."""
     reasons = {
         True: (
             'needs a number with at most 16383 digits after the decimal point.',
