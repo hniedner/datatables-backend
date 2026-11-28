@@ -7,9 +7,9 @@ list is never committed, and a finding never prints the word: it names the word'
 path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
 ``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
-The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, it
-cannot check, and says so with exit status 2, which blocks like a finding (exit status 1). That message names no
-command and no path, since either could hold a word.
+The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, or an
+object vanishes while it is read, it cannot check, and says so with exit status 2, which blocks like a finding
+(exit status 1). That message names no command and no path, since either could hold a word.
 
 Usage:
     private_word_scan.py --files FILE... paths and contents of the given files (the pre-commit stage; without
@@ -84,7 +84,7 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no word list, or git or the file system failed."""
+    """The scan cannot check: no word list, git or the file system failed, or an object vanished while it was read."""
 
 
 def load_words() -> Words:
@@ -145,10 +145,12 @@ def content_hits(data: bytes, words: Words) -> list[int]:
 
 
 def fold(text: str) -> str:
-    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since casefolding can leave text
-    outside NFKD. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then compare equal,
-    and the form is decomposed so that a combining mark after a word cannot merge with its last letter."""
-    # The outer NFKD is defensive: dropping it changes no single code point tried, so that mutant is equivalent.
+    """Text in the one form words are compared in: NFKD, casefolded, then NFKD again, since Unicode does not promise
+    that casefolding keeps NFKD. Canonically or compatibly equal spellings (a decomposed `ü`, fullwidth letters) then
+    compare equal, and the form is decomposed so that a combining mark after a word cannot merge with its last
+    letter."""
+    # Defensive: on Unicode 15.0-16.0 (Python 3.12-3.15) casefolding NFKD text always gives NFKD, so dropping the outer
+    # NFKD changes nothing today and that mutant is equivalent.
     return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
 
 
