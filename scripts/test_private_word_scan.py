@@ -306,7 +306,7 @@ def test_a_symlink_to_a_file_that_exists_is_scanned_as_a_link(tmp_path: Path, wo
     (tmp_path / f'{WORD}-notes').mkdir()
     write(tmp_path / f'{WORD}-notes' / 'target', 'clean\n')
     link = tmp_path / 'link'
-    link.symlink_to(f'{WORD}-notes/target')  # the target exists and holds nothing, only its path has the word
+    link.symlink_to(f'{WORD}-notes/target')  # the target exists and holds no word; only its path has one
     result = scan(str(link), words=words)
     assert result.returncode == 1
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
@@ -803,7 +803,7 @@ def test_a_latin1_word_is_found(tmp_path: Path, repo: Path, non_ascii_words: Pat
 
 
 def test_a_latin_1_word_spanning_two_parts_of_a_path_is_never_printed(tmp_path: Path, repo: Path):
-    """Only the whole path, read in Latin-1, holds the word, so the name is hidden whole."""
+    """Only the whole path, read one byte per letter (`ü` is one byte), holds the word, so the name is hidden whole."""
     spanning = write(tmp_path / 'spanning.txt', 'Grün/Specht\n')
     blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
     inner = git(repo, 'mktree', input=f'100644 blob {blob}\tSpecht.txt\n').strip()
