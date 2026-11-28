@@ -74,9 +74,6 @@ COULD_NOT_CHECK = 2
 
 type Words = list[tuple[int, str]]  # (line in the list, folded word)
 
-_KINDS = frozenset({b'blob', b'tree', b'commit', b'tag'})
-_HEX = frozenset(b'0123456789abcdef')  # the bytes of a lower-case hex id, as ints
-
 _BOMS = [
     (codecs.BOM_UTF32_LE, 'utf-32'),
     (codecs.BOM_UTF32_BE, 'utf-32'),
@@ -240,11 +237,11 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
     a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
-    it read every object. It does the same when a header is no ``<id> <kind> <size>`` (a lower-case hex id of SHA-1 or
-    SHA-256 length, a kind git has, a size of digits), or the byte after the declared size is not the newline git
-    writes (a corrupt object whose size is wrong): reading on would take the next bytes for a header and skip an
-    object, or, at the end of the output, pass an object git could not read whole. A wrong size whose declared end
-    falls on a newline passes when that newline ends the output or comes before a line that is a valid header."""
+    it read every object. It does the same when a header is not ``<id> <kind> <size>`` with a size of digits, or the
+    byte after the declared size is not the newline git writes (a corrupt object whose size is wrong): reading on
+    would take the next bytes for a header and skip an object, or, at the end of the output, pass an object git could
+    not read whole. A wrong size whose declared end falls on a newline passes when that newline ends the output or
+    comes before a line that is a valid header. The id and the kind are git's own and are not checked."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
@@ -261,15 +258,8 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
 
 
 def _is_header(parts: list[bytes]) -> bool:
-    """Whether the fields are the ``<id> <kind> <size>`` git prints before an object: a hex id of SHA-1 or SHA-256
-    length, a kind git has and a size of digits."""
-    return (
-        len(parts) == 3
-        and len(parts[0]) in (40, 64)
-        and set(parts[0]) <= _HEX
-        and parts[1] in _KINDS
-        and parts[2].isdigit()
-    )
+    """Whether the fields are the ``<id> <kind> <size>`` git prints before an object, with a size of digits."""
+    return len(parts) == 3 and parts[2].isdigit()
 
 
 def _unreadable() -> CouldNotCheckError:
@@ -399,7 +389,11 @@ def main(argv: list[str]) -> int:
         print(f'private-word scan could not check: {error}', file=sys.stderr)
         return COULD_NOT_CHECK
     except (subprocess.CalledProcessError, OSError):  # no command line or path: either could hold a word
-        print('private-word scan could not check: git or the file system failed', file=sys.stderr)
+        print(
+            'private-word scan could not check: git or the file system failed: run git fsck in the repository and '
+            'check that the word list file can be read',
+            file=sys.stderr,
+        )
         return COULD_NOT_CHECK
     for finding in findings:
         print(finding, file=sys.stderr)

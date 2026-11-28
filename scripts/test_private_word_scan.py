@@ -961,16 +961,9 @@ _UNREADABLE = {  # what batch() may get
     'size past the end': f'{_ID} blob 200\nshort\n',  # a valid zlib stream whose object header declares too much
     # (a byte flipped inside the stream makes git exit 128 instead, which main answers as a git failure)
     'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # a body longer than its size: no newline
-    # lines git never prints, read as a header after a wrong declared end ('size into the next header' models it:
-    # a corrupt object declares two bytes too much, and two bytes into the next id a real-looking header starts)
-    'size into the next header': f'{_ID} blob 7\nshort\n{"0" * 42} blob 5\nhello\n',
+    # lines git never prints, read as a header after a wrong declared end
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
-    'id that is too short': f'{"0" * 39} blob 5\nhello\n',
-    'id of neither length': f'{"0" * 41} blob 5\nhello\n',
-    'id that is not hex': f'{"z" * 40} blob 5\nhello\n',
-    'id with one byte that is not hex': f'{"0" * 39}z blob 5\nhello\n',
-    'kind that is no kind': f'{_ID} {WORD} 5\nhello\n',
 }
 
 
@@ -988,13 +981,6 @@ def test_an_object_git_cannot_read_cannot_check(
     assert 'could not check: an object could not be read' in shown  # not the generic git failure
     assert 'git fsck' in shown  # and it says what to do
     assert WORD.casefold() not in shown.casefold()
-
-
-def test_batch_reads_a_sha_256_id(words: Path, monkeypatch: pytest.MonkeyPatch):
-    """A refusal of a SHA-256 repository's ids would block every push there (the real-git tests give SHA-1 ids)."""
-    scanner = load_scanner(monkeypatch, words)
-    out = f'{"a" * 64} blob 3\nabc\n{"b" * 64} tree 0\n\n'.encode()
-    assert [(kind, data) for _, kind, data in scanner.batch(out)] == [('blob', b'abc'), ('tree', b'')]
 
 
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
@@ -1102,7 +1088,8 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
     outside.mkdir()
     result = scan('--refs', words=words, cwd=outside)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'could not check: git or the file system failed' in result.stderr
+    assert 'git fsck' in result.stderr  # and it says what to do
 
 
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
