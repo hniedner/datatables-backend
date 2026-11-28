@@ -683,6 +683,7 @@ def test_a_loose_commit_pushed_as_a_second_refspec_is_refused_by_the_hook(tmp_pa
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode != 0, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also blocks the push
     assert git(remote, 'for-each-ref') == ''  # nothing reached the remote
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
@@ -770,6 +771,7 @@ def test_a_message_given_on_the_command_line_is_scanned_whole(repo: Path, words:
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode == 1, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also aborts the commit
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'First'
 
 
@@ -1025,6 +1027,7 @@ def test_a_lightweight_tag_on_an_unpushed_commit_is_refused_by_the_pre_push_hook
         cwd=repo, env={**os.environ, 'DTB_PRIVATE_WORDS': str(words)}, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert result.returncode != 0, result.stdout + result.stderr
+    assert 'private word #3' in result.stdout + result.stderr  # found, not a crash that also blocks the push
     assert git(remote, 'tag') == ''  # nothing reached the remote
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
