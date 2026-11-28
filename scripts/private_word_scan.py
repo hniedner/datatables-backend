@@ -244,7 +244,7 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
     SHA-256 length, a kind git has, a size of digits), or the byte after the declared size is not the newline git
     writes (a corrupt object whose size is wrong): reading on would take the next bytes for a header and skip an
     object, or, at the end of the output, pass an object git could not read whole. A wrong size whose declared end
-    falls on a newline before a line that is a valid header passes."""
+    falls on a newline passes when that newline ends the output or comes before a line that is a valid header."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)

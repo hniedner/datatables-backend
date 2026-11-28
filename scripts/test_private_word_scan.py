@@ -911,7 +911,8 @@ MIXED = {  # list words and a two-part path: (words, first part, second part)
 
 def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
     """The script as a module, to patch it in process: for a file name the file system here may refuse to create
-    (APFS takes UTF-8 only), or for an answer from git that only a race or a corrupt object gives."""
+    (APFS takes UTF-8 only), for an answer from git that only a race or a corrupt object gives, or for git output
+    fed straight to `batch()`, such as a SHA-256 repository's ids."""
     spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -952,7 +953,7 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
     'size past the end': f'{_ID} blob 200\nshort\n',
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
-    'id that is no id': f'{WORD} blob 5\nhello\n',  # a line laid out like a header, read after a wrong declared end
+    # the rows below are lines laid out like a header, read after a wrong declared end
     'id that is too short': f'{"0" * 39} blob 5\nhello\n',
     'id of neither length': f'{"0" * 41} blob 5\nhello\n',
     'id that is not hex': f'{"z" * 40} blob 5\nhello\n',
