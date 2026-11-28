@@ -459,27 +459,17 @@ def _check_text_fits(column: Column) -> None:
 
 
 def _check_document_id(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``search_value``, a ``text`` or a ``number`` on a column that reads the document id:
-    the id is read from the hit and is never searched or ordered, so the hook would never run and no string field or
-    number range would be read. Not the messages of ``check_hook_is_searched`` and ``_check_unused_kinds``, which tell
-    the integrator to declare the column searchable: ``searchable`` is ignored on the id. An empty name and a hook that
-    cannot be called are raised first, as for any column; ``check_declaration`` has not run yet."""
+    """Raise ``SchemaError`` for a ``search_value`` on a column that reads the document id: the id is read from the hit
+    and is never searched, so the hook would never run. Not the message of ``check_hook_is_searched``, which tells the
+    integrator to declare the column searchable: ``searchable`` is ignored on the id. An empty name and a hook that
+    cannot be called are raised first, as for any column, because ``check_declaration`` has not run yet. A ``text`` or a
+    ``number`` on the id is refused later, by ``_check_unused_kinds``, after the refusals to order or key on it."""
     check_name(column)
     check_hook(column)
     if column.search_value is not None:
         raise SchemaError(
             f'The column "{column.name}" has a search_value hook but shows the document id, which is never searched, '
             'so the hook never runs. Remove the hook.'
-        )
-    if isinstance(column, IndexColumn) and column.text is not None:
-        raise SchemaError(
-            f'The column "{column.name}" declares text={column.text!r} but shows the document id, which is read from '
-            'the hit and never searched or ordered, so no string field is read for it. Drop text=.'
-        )
-    if isinstance(column, IndexColumn) and column.number is not None:
-        raise SchemaError(
-            f'The column "{column.name}" declares number={column.number!r} but shows the document id, which is never '
-            'searched, so no number range applies. Drop number=.'
         )
 
 
@@ -501,34 +491,66 @@ def _held(column: Column) -> Column:
         )
     if column.source != _DOCUMENT_ID:
         return column
-    _check_document_id(column)
     if column.orderable:
         raise SchemaError(
             f'The column "{column.name}" shows the document id and cannot be orderable: OpenSearch deprecates sorting '
             'on `_id` (field data). Order by a `keyword` field instead.'
         )
+    _check_document_id(column)
     return replace(column, searchable=False, orderable=False)
 
 
+def _unused_on_document_id(column: IndexColumn) -> str | None:
+    """The message for a ``text`` or a ``number`` on a column that reads the document id, which is read from the hit and
+    never searched or ordered; None for neither. ``searchable`` is ignored on the id, so the only fix is to drop it."""
+    if column.text is not None:
+        return (
+            f'The column "{column.name}" declares text={column.text!r} but shows the document id, which is read from '
+            'the hit and never searched or ordered, so no string field is read for it. Drop text=.'
+        )
+    if column.number is not None:
+        return (
+            f'The column "{column.name}" declares number={column.number!r} but shows the document id, which is never '
+            'searched, so no number range applies. Drop number=.'
+        )
+    return None
+
+
+def _unused_on_unsearchable(column: IndexColumn, key: Sequence[Column]) -> str | None:
+    """The message for a ``number`` on a column declared unsearchable, or a ``text`` on one that is also declared
+    ``orderable=False`` and is not in the ``key``; None for neither."""
+    if column.number is not None:
+        return (
+            f'The column "{column.name}" declares number={column.number!r} but is declared searchable=False, so no '
+            'filter reaches it and no number range applies. Drop number=, or declare the column searchable.'
+        )
+    if column.text is not None and column.orderable is False and column not in key:
+        return (
+            f'The column "{column.name}" declares text={column.text!r} but is not searched, not ordered and not the '
+            'key, so no string field is read for it. Drop text=, or let the column be searched or ordered.'
+        )
+    return None
+
+
+def _unused_kind(column: Column, key: Sequence[Column]) -> str | None:
+    """The message for a ``number`` or a ``text`` of ``column`` that nothing reads, or None. A ``number`` bounds the
+    numbers a filter sends, and no filter reaches a column declared unsearchable. A ``text`` also picks the field a
+    column is sorted by and decides its default ``orderable``, so it is unused only on a column that is not searched, is
+    declared ``orderable=False`` and is not in the ``key``, whose sort ends every order. A ``text`` on a column with the
+    default ``orderable`` is left alone, though ``text='text'`` then only turns its ordering off."""
+    if not isinstance(column, IndexColumn):
+        return None
+    if column.source == _DOCUMENT_ID:
+        return _unused_on_document_id(column)
+    return None if column.searchable else _unused_on_unsearchable(column, key)
+
+
 def _check_unused_kinds(columns: Sequence[Column], key: Sequence[Column]) -> None:
-    """Raise ``SchemaError`` for a ``number`` or a ``text`` that nothing reads. A ``number`` bounds the numbers a filter
-    sends, and no filter reaches a column declared unsearchable. A ``text`` also picks the field a column is sorted by
-    and decides its default ``orderable``, so it is unused only on a column that is not searched, is declared
-    ``orderable=False`` and is not in the ``key``, whose sort ends every order. A ``text`` on a column with the default
-    ``orderable`` is left alone, though ``text='text'`` then only turns its ordering off."""
+    """Raise ``SchemaError`` for a ``number`` or a ``text`` that nothing reads (``_unused_kind``). It runs after the
+    refusals to order or key on the document id, so a ``text`` on the id is told that first."""
     for column in columns:
-        if not isinstance(column, IndexColumn) or column.searchable:
-            continue
-        if column.number is not None:
-            raise SchemaError(
-                f'The column "{column.name}" declares number={column.number!r} but is declared searchable=False, so no '
-                'filter reaches it and no number range applies. Drop number=, or declare the column searchable.'
-            )
-        if column.text is not None and column.orderable is False and column not in key:
-            raise SchemaError(
-                f'The column "{column.name}" declares text={column.text!r} but is not searched, not ordered and not '
-                'the key, so no string field is read for it. Drop text=, or let the column be searched or ordered.'
-            )
+        if (message := _unused_kind(column, key)) is not None:
+            raise SchemaError(message)
 
 
 # -- query building ---

@@ -3385,6 +3385,27 @@ def test_a_text_on_the_document_id_is_a_schema_error_that_says_to_drop_it():
     with pytest.raises(SchemaError, match=r'"_id".*text=\'keyword\'.*document id') as raised:
         SearchTable('docs', [KEY, IndexColumn('_id', text='keyword')], unique_key='id')
     assert 'Drop text=' in str(raised.value)
+    assert 'let the column be searched' not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'unique_key', 'message'),
+    [
+        pytest.param(
+            {'orderable': True, 'text': 'keyword'}, 'id', r'cannot be orderable.*deprecates sorting', id='order'
+        ),
+        pytest.param({'orderable': True, 'search_value': str.upper}, 'id', r'cannot be orderable', id='order-hook'),
+        pytest.param({'text': 'keyword'}, '_id', r'deprecates sorting on `_id`.*name that column as the key', id='key'),
+    ],
+)
+def test_the_document_id_is_told_that_it_cannot_be_ordered_or_the_key_before_what_nothing_reads(
+    kwargs: dict[str, Any], unique_key: str, message: str
+):
+    """SPEC-D23.17: a `text=` on `_id` is how someone tries to sort or key on it, so the more basic refusal, which says
+    to use a `keyword` field, comes first; dropping `text=` alone would only lead to it on the next build."""
+    columns = [KEY, IndexColumn('_id', **kwargs)]
+    with pytest.raises(SchemaError, match=message):
+        SearchTable('docs', columns, unique_key=unique_key)
 
 
 def test_a_number_kind_on_the_document_id_does_not_say_it_was_declared_unsearchable():
@@ -3473,9 +3494,23 @@ def test_the_documented_key_declaration_builds_and_its_text_picks_the_tie_break_
     assert 'id.keyword' not in sort
 
 
-def test_a_hook_on_an_unsearchable_number_column_is_told_it_is_no_string_column_first():
+@pytest.mark.parametrize(
+    ('column', 'message'),
+    [
+        pytest.param(
+            IndexColumn('n', type='number', searchable=False, search_value=str.upper),
+            r'"n".*search_value.*number column',
+            id='number-column',
+        ),
+        pytest.param(
+            IndexColumn('s', text='text', searchable=False, search_value=str.upper),
+            r'"s".*search_value.*analysed text only',
+            id='analysed-text-only',
+        ),
+    ],
+)
+def test_a_hook_on_an_unsearchable_column_that_cannot_hold_one_is_told_that_first(column: IndexColumn, message: str):
     """SPEC-D23.16: the refusal that says to declare the column searchable would lead to a second error here, since a
-    number column takes no hook either; the number-column message comes first."""
-    column = IndexColumn('n', type='number', searchable=False, search_value=str.upper)
-    with pytest.raises(SchemaError, match=r'"n".*search_value.*number column'):
+    number column and a column of analysed text only take no hook either; their own messages come first."""
+    with pytest.raises(SchemaError, match=message):
         SearchTable('docs', [KEY, column], unique_key='id')

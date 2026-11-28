@@ -181,15 +181,17 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   called are.
 - **SPEC-D23.17** [OS] A `text` kind on a column that reads the document id, and on a column declared
   `searchable=False` and `orderable=False` that is not in `unique_key`, raises `SchemaError` at construction, naming the
-  column and saying to drop `text=`. Before, the table built and no string field of the column was read. A `text` on the
-  key stays (its sort ends every order), and so does one on a `searchable=False` column with the default `orderable`:
+  column and saying to drop `text=`. Before, the table built and no string field of the column was read. On the document
+  id, a request to order by it (`orderable=True`) or to key on it is refused first, by its own message that says to use
+  a `keyword` field. A `text` on the key stays (its sort ends every order), and so does one on a `searchable=False` column with the default `orderable`:
   `text=` picks the field the column is sorted by and decides whether it can be sorted at all. A stated limit:
   `searchable=False`, the default `orderable` and `text='text'` builds, though `text='text'` then only turns ordering
   off; to say so, drop `text=` and declare `orderable=False` (with `text='text'` kept, that column is refused).
 - **SPEC-D23.18** [OS] A `number` kind on a column declared `searchable=False` raises `SchemaError` at construction,
-  naming the column and saying to drop `number=` or declare the column searchable; on a column that reads the document
-  id, whose message only says to drop `number=`, since `searchable` is ignored on the id. Before, the table built and
-  the kind, which only bounds the numbers a filter sends, was never read.
+  naming the column and saying to drop `number=` or declare the column searchable; on a number column that reads the
+  document id, whose message only says to drop `number=`, since `searchable` is ignored on the id (a `number=` on an id
+  column of another type is refused first, as on any column that is no number column, with that check's own message).
+  Before, the table built and the kind, which only bounds the numbers a filter sends, was never read.
 - **SPEC-D23.19** [OS] Each of these builds: `text='keyword'` on a `searchable=False` column with the default
   `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column with
   the default `orderable`; and a key declared `IndexColumn('id', text='keyword', searchable=False, orderable=False)`,
