@@ -929,15 +929,36 @@ def test_greater_than_a_tiny_negative_finds_no_zero(client: OpenSearch, field: s
     assert ids(numbers_in(field, kind).fetch_sync(params, client)) == []
 
 
-@pytest.mark.parametrize(('bound', 'count'), [('lt', 1), ('gte', 0)])
-def test_a_half_float_range_rounds_its_bound_in_the_direction_of_the_range(client: OpenSearch, bound: str, count: int):
-    """A measurement of the server, no library: b2 holds the only 0.0 in the `half_float` field `n_half`. Whether a range
-    rounds its bound to the nearest half, as a `term` does, or in the direction of the range (a lower bound up, an upper
-    bound down) decides what the library may send for 1e-10, which is 0 as a `half_float`: if it is the direction,
-    `lt` 1e-10 finds b2 and `gte` 1e-10 does not, and the reverse if it is the nearest. The counts are for the direction;
-    a red run means the nearest."""
-    body = {'query': {'range': {'n_half': {bound: 1e-10}}}}
-    assert client.count(index=INDEX, body=body)['count'] == count
+#: What each field finds of the one 0.0 (b2) for a tiny number sent as it is: the counts of `term`, `terms`, and the
+#: ranges `lt`, `lte`, `gt`, `gte`. The truth for a negative tiny number is (0, 0, 0, 0, 1, 1), for a positive one
+#: (0, 0, 1, 1, 0, 0). A `double` field takes -0.0 and 0.0, which is what a number beyond a double becomes; a `float`
+#: field, -1e-50 and 1e-50, which round to -0.0 and 0.0; a `half_float` field, -1e-10 and 1e-10.
+TINY_NUMBER_COUNTS = [
+    ('n_double', -0.0, (0, 0, 0, 0, 1, 1)),
+    ('n_double', 0.0, (1, 1, 0, 1, 0, 1)),
+    ('n_float', -1e-50, (0, 0, 0, 0, 1, 1)),
+    ('n_float', 1e-50, (1, 1, 0, 1, 0, 1)),
+    ('n_half', -1e-10, (0, 0, 0, 0, 1, 1)),
+    ('n_half', 1e-10, (1, 1, 1, 1, 0, 0)),
+]
+
+
+@pytest.mark.parametrize(('field', 'number', 'counts'), TINY_NUMBER_COUNTS)
+def test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is(
+    client: OpenSearch, field: str, number: float, counts: tuple[int, ...]
+):
+    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. A `term` and a
+    `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which is not 0.0, and a
+    tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so `lt` and `gte` with 1e-10
+    answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range rounds to the nearest first.
+    The counts of each row are the whole result: a mismatch shows which cell differs."""
+    queries = [
+        {'term': {field: number}},
+        {'terms': {field: [number, 7]}},
+        *({'range': {field: {bound: number}}} for bound in ('lt', 'lte', 'gt', 'gte')),
+    ]
+    found = tuple(client.count(index=INDEX, body={'query': query})['count'] for query in queries)
+    assert found == counts
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):

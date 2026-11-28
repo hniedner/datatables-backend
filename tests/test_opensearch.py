@@ -3135,7 +3135,8 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
     field keeps apart from 0.0 in a `term` and a `range`; every number whose double is zero is sent as `0`, in an
     equality, a bound and a list, on a column without a kind (a `double` field); `-0.00` also on a `long`. The bodies
     are compared as JSON, since Python's -0.0 equals 0. It catches a number sent as the float -0.0; the `1e-400` rows
-    pin the one spelling `0` (OpenSearch reads 0.0 the same)."""
+    pin the one spelling `0` (OpenSearch reads 0.0 the same). The `less-or-equal` rows are not the `less` rows again:
+    a rule that sends the float for an inclusive upper bound alone passes every `less` row and fails these."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
@@ -3161,7 +3162,9 @@ def test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero(ki
     as `0`, and a `half_float` field rounds to a 32-bit float before it rounds to half. The bodies are compared as JSON,
     since Python's -0.0 equals 0. It catches the number sent as the double, which the field then reads as -0.0 (CI's live
     run, 2026-11-26 UTC, found `= -1e-50` on a `float` field missing a 0.0), and a rounding straight to half, which
-    sends `-2.98023224e-8` for the field to read as -0.0 (CI run 46091503895, on OpenSearch 3.10.0 and 2.19.7)."""
+    sends `-2.98023224e-8` for the field to read as -0.0 (CI run 46091503895, on OpenSearch 3.10.0 and 2.19.7). The
+    `less-or-equal` and `greater` rows are not the `less` rows again: a zero rule skipped for an inclusive upper bound
+    alone, or for a lower bound alone, passes every `less` row and fails these."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
