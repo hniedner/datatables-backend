@@ -126,7 +126,7 @@ Generator restrictions, each with its reason:
   with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3). `1.0e-16383`, the
   number 1e-16383, is within the limit and is sent on SQLite (the evaluator models its float reading, PRD section 5),
   PostgreSQL (exact) and SQL Server (refused by its 38 digits), not on MySQL and MariaDB, nor on OpenSearch, where
-  `tests/test_opensearch.py` pins it.
+  `tests/test_opensearch.py` pins that it is accepted.
 - No exponent beyond what a `Decimal` holds: the evaluator does not read one (it raises `OutOfScope`).
 - A request column's `name` is always empty, so its name is its `data` (PRD-P15), and an order entry sends no `name`:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
@@ -257,7 +257,8 @@ DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '123456789012
 #: `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3).
 #: `1.0e-16383` is the same number as `1e-16383`, so it is within the 16,383 limit; an engine that reads it as a double
 #: finds the row holding 0.00 (PRD section 5): the evaluator models that for SQLite, not for MySQL and MariaDB, so it
-#: is not sent there, nor on OpenSearch (`tests/test_opensearch.py` pins it); SQL Server refuses it by its 38 digits
+#: is not sent there, nor on OpenSearch (`tests/test_opensearch.py` pins that it is accepted); SQL Server refuses it by
+#: its 38 digits
 DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '0e-16384', '1e400', '1e999']
 TINY_NUMBER_MODELLED = os.environ.get('DTB_SQL_DIALECT', 'sqlite') in (
     'sqlite',
@@ -870,8 +871,9 @@ def engine_for(
     - `pad_space` (PRD section 5, `docs/databases.md`, `docs/decisions/004-numbers-and-the-empty-string-on-the-sql-
       servers.md`): SQL Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3); not PostgreSQL,
       SQLite or MySQL's default collation (NO PAD).
-    - `order_key` (PRD-O6): SQLite's `BINARY` is code-point order; every other backend's collation is measured by the
-      leg that runs on it and passed as ``order_key``, else ordering by text is out of scope there.
+    - `order_key` (PRD-O6): the collation the leg measures on its backend, passed as ``order_key`` (on SQLite it must
+      equal code-point order, its `BINARY`, the default when none is passed); without one, ordering by text is out of
+      scope there.
     - `numeric` (PRD-F25, PRD section 5, `docs/decisions/010-decimal-numbers.md`): `exact` on PostgreSQL, MySQL,
       MariaDB and SQL Server; `sqlite` on SQLite; `double` on OpenSearch, whose `m` is a `double` field.
     - `decimal_digits` (PRD-F25, PRD-E3): 38 on SQL Server, no bound elsewhere.
@@ -1683,7 +1685,7 @@ if TINY_NUMBER_MODELLED:
     # PRD-F25: `1.0e-16383` is the number 1e-16383, within the 16,383 limit: no row on PostgreSQL (exact), the row
     # holding 0.00 on SQLite (as a float, PRD section 5), refused by SQL Server's 38 digits (step 3.5; SPEC-F25.16's
     # hand test pins the refusal, not its step); not sent on MySQL and MariaDB, whose double reading the evaluator does
-    # not model, nor on OpenSearch, which the hand test pins (`DECIMAL_BOUNDS`)
+    # not model, nor on OpenSearch, where the hand test pins that it is accepted (`DECIMAL_BOUNDS`)
     EXAMPLES['decimal one at the fraction limit'] = (
         rows_of('m', *DECIMALS),
         DECLARED,

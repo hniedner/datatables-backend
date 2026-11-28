@@ -324,11 +324,11 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   row and every row below it, through `fetch` and `fetch_sync`; `=` `0.305` → no row. On SQLite, which stores the
   column as a float or an integer, the three rows are one number and are found together (PRD section 5).
 - **SPEC-F25.12** [SQL] With the same `n`: a number of 38 digits in all (before and after the point, a fraction's
-  trailing zeros not counted, nor a leading zero, the zero before the point of a number below one, for one; a zero after
-  the point counts: `0.` followed by 38 digits) is answered on every database. [SQL Server] A number of 39 or more
-  digits (`0.` followed by 39) → error_code `invalid_number` for every condition, never the driver's own error; so is a
-  fraction of 39 or more digits in all (`8.` followed by 38 ones) on `i`, a plain `Integer` column that compares it
-  exactly.
+  trailing zeros not counted, nor a leading zero, the zero before the point of a number below one, for one; a zero
+  between the point and the first digit counts: `0.` followed by 38 digits) is answered on every database. [SQL Server]
+  A number of 39 or more digits (`0.` followed by 39) → error_code `invalid_number` for every condition, never the
+  driver's own error; so is a fraction of 39 or more digits in all (`8.` followed by 38 ones) on `i`, a plain `Integer`
+  column that compares it exactly.
 - **SPEC-F25.13** [SQLite] With `n`, a `TypeDecorator` over `Numeric` that stores hundredths (1.5 as 150), given rows
   1.5 and 2: `=` `1.5` → the first row, `=` `2` and `=` `2.0` → the second, `=` `3.5` → none: the number goes through
   the column's own type.

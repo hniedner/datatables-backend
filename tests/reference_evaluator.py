@@ -82,7 +82,7 @@ def sqlite_text(value: Decimal) -> str:
     """PRD-F23 on SQLite: a decimal's search text is the text of what SQLite stores (`_stored_on_sqlite`), an integer
     as its digits and a floating-point number with every significant digit, so 0.30 reads `0.3` and 0.00 reads `0`
     (`docs/decisions/006-number-search-text.md`). `repr` is that text for the values of `m`, none of which needs an
-    exponent (SQLite writes `1.0e+20` where `repr` writes `1e+20`); each SQL leg measures the text and asserts it."""
+    exponent (SQLite writes `1.0e+20` where `repr` writes `1e+20`); the SQLite leg measures the text and asserts it."""
     stored = _stored_on_sqlite(value)
     return str(stored) if isinstance(stored, int) else repr(stored)
 
