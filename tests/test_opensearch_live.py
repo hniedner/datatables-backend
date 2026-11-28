@@ -878,60 +878,41 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
         numbers_in('n_float', None).fetch_sync(params, client)
 
 
-@pytest.mark.parametrize('condition', ['=', '<='])
-def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition: str):
-    """SPEC-F25.15 on a real server: b2 holds 0.0 in a `double` field, which keeps -0.0 apart from 0.0 in a `term` and
-    a `range` (docs/databases.md), so `= -0.00` and `<= -0.00` found nothing while the library sent -0.0. `-1e-400`
-    sends the same body as `-0.00` (the recording test), so this run shows its result too."""
-    params = request('id', 'n', **criterion('n', condition, '-0.00'))
-    assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
-
-
-def test_greater_than_a_negative_number_beyond_a_double_finds_no_zero(client: OpenSearch):
-    """SPEC-F25.15 on a real server: b2 holds the only 0.0 in the `double` field. `-1e-400` is -0.0 as a double, and
-    PRD-F25 sends a number whose double is zero as `0`, so `> -1e-400` finds nothing, as `> -0.00` does. Sent as -0.0
-    the lower bound found b2 (`gt` -0.0 finds 0.0: the exact answer for a number below zero, which the nearest double
-    does not give, TINY_NUMBER_COUNTS). It catches a lower bound that goes as -0.0."""
-    params = request('id', 'n', **criterion('n', '>', '-1e-400'))
-    assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == []
-
-
-#: What each field finds of the one 0.0 (b2) for a tiny number sent as it is: the counts of `term`, `terms`, and the
-#: ranges `lt`, `lte`, `gt`, `gte`. The truth for a negative tiny number is (0, 0, 0, 0, 1, 1), for a positive one
-#: (0, 0, 1, 1, 0, 0). Each field takes -0.0 and 0.0, which is what a number beyond a double becomes (`-1e-400`,
-#: `1e-400`); a `float` field also -1e-50 and 1e-50, which round to -0.0 and 0.0 as a float; a `half_float` field
-#: -1e-10 and 1e-10. The exact zero `-0.00` is the number 0, which is the row of 0.0.
+#: What a number finds of the one 0.0 (b2) through the library: the counts for `=`, a `multi_values` list, `<`, `<=`, `>`
+#: and `>=`. A number whose double is zero (`-0.00`, `-1e-400`, `1e-400`) goes as `0`, so it has the answers of 0.0; a
+#: nonzero one goes as it is, so the field's own rounding answers, as docs/databases.md records from the raw queries.
+ZERO_COUNTS = (1, 1, 0, 1, 0, 1)
 TINY_NUMBER_COUNTS = [
-    ('n_double', -0.0, (0, 0, 0, 0, 1, 1)),
-    ('n_double', 0.0, (1, 1, 0, 1, 0, 1)),
-    ('n_float', -0.0, (0, 0, 0, 0, 1, 1)),
-    ('n_float', 0.0, (1, 1, 0, 1, 0, 1)),
-    ('n_float', -1e-50, (0, 0, 0, 0, 1, 1)),
-    ('n_float', 1e-50, (1, 1, 0, 1, 0, 1)),
-    ('n_half', -0.0, (0, 0, 0, 0, 1, 1)),
-    ('n_half', 0.0, (1, 1, 0, 1, 0, 1)),
-    ('n_half', -1e-10, (0, 0, 0, 0, 1, 1)),
-    ('n_half', 1e-10, (1, 1, 1, 1, 0, 0)),
+    *(
+        (field, kind, text, ZERO_COUNTS)
+        for field, kind in [('n_double', None), ('n_float', 'float'), ('n_half', 'half_float')]
+        for text in ('-0.00', '-1e-400', '1e-400')
+    ),
+    ('n_float', 'float', '-1e-50', (0, 0, 0, 0, 1, 1)),
+    ('n_float', 'float', '1e-50', (1, 1, 0, 1, 0, 1)),
+    ('n_half', 'half_float', '-1e-10', (0, 0, 0, 0, 1, 1)),
+    ('n_half', 'half_float', '1e-10', (1, 1, 1, 1, 0, 0)),
 ]
 
 
-@pytest.mark.parametrize(('field', 'number', 'counts'), TINY_NUMBER_COUNTS)
-def test_what_a_float_field_finds_of_a_zero_for_a_tiny_number_sent_as_it_is(
-    client: OpenSearch, field: str, number: float, counts: tuple[int, ...]
+@pytest.mark.parametrize(('field', 'kind', 'text', 'counts'), TINY_NUMBER_COUNTS)
+def test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field(
+    client: OpenSearch, field: str, kind: NumberKind | None, text: str, counts: tuple[int, ...]
 ):
-    """A measurement of the server, no library (docs/databases.md): b2 holds the only 0.0 in each field. It is the one
-    live test that sends its own query, the exception to testing through the public API: a body of -0.0 is one the
-    library never sends, so no library call reaches these cells, and docs/databases.md cites them as engine facts. A
-    `term` and a `terms` read the number as the field does, rounded to the nearest, so a tiny negative is -0.0, which
-    is not 0.0, and a tiny positive is 0.0; a `half_float` range rounds its bound in the direction of the range, so
-    `lt` and `gte` with 1e-10 answer as the exact number does (`lt` finds b2, `gte` does not), where a `float` range
-    rounds to the nearest first. The counts of each row are the whole result: a mismatch shows which cell differs."""
-    queries = [
-        {'term': {field: number}},
-        {'terms': {field: [number, 7]}},
-        *({'range': {field: {bound: number}}} for bound in ('lt', 'lte', 'gt', 'gte')),
+    """SPEC-F25.15 on a real server: b2 holds the only 0.0 in each of `n_double`, `n_float` and `n_half`. A number
+    whose double is zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep
+    `=`, `<=` and a list from finding b2 and `>` and `>=` from missing it. A nonzero number is sent as it is and the
+    field rounds it: a `float` or `half_float` field reads `-1e-50` or `-1e-10` as -0.0, which is not 0.0, and `1e-50`
+    or `1e-10` as 0.0, in `=` and a list; a `half_float` range rounds its bound in the direction of the range, so `<`
+    and `>=` with `1e-10` answer as the exact number does, where a `float` range rounds to the nearest float first. The
+    counts of a row are the whole result, so a mismatch shows which cell differs."""
+    table = numbers_in(field, kind)
+    params = [
+        request('id', 'n', **criterion('n', '=', text)),
+        request('id', 'n', column_search={'n': {'multi_values': [text, '7']}}),
+        *(request('id', 'n', **criterion('n', condition, text)) for condition in ('<', '<=', '>', '>=')),
     ]
-    found = tuple(client.count(index=INDEX, body={'query': query})['count'] for query in queries)
+    found = tuple(len(ids(table.fetch_sync(one, client))) for one in params)
     assert found == counts
 
 

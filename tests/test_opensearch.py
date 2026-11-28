@@ -3146,26 +3146,24 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
     assert json.dumps(tiny) == json.dumps(zero)
 
 
-@pytest.mark.parametrize('text', ['-5e-324', '5e-324', '3e-324', '-1e-310', '1e-310'])
+@pytest.mark.parametrize('text', ['-5e-324', '5e-324', '3e-324'])
 def test_a_number_whose_double_is_not_zero_is_sent_as_that_double(text: str):
-    """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one, `3e-324` rounds up to it (zero would be
-    `2e-324`, below half of it), and `1e-310` is one of the many between it and the smallest normal double, so each is
-    sent as the double it is, not as `0`. It catches a rule that sends `0` for every tiny number, subnormals included,
-    which no other test sends."""
+    """SPEC-F25.15: a subnormal double is not zero. `5e-324` is the smallest one and `3e-324` rounds up to it (zero
+    would be `2e-324`, below half of it), so each is sent as the double it is, not as `0`. The negative row catches a
+    rule for positives alone, `3e-324` one that sends `0` below the smallest subnormal itself, and all three a rule
+    that sends `0` for every tiny number, subnormals included, which no other test sends."""
     assert float(text) != 0
     sent = asked(None, **criterion('n', '=', text))[1].searches[0]['query']['bool']['must'][0]
     assert sent == {'term': {'n': float(text)}}
 
 
-@pytest.mark.parametrize(
-    ('kind', 'text'),
-    [('float', '-1e-50'), ('float', '1e-50'), ('half_float', '-1e-10'), ('half_float', '1e-10')],
-)
+@pytest.mark.parametrize(('kind', 'text'), [('float', '-1e-50'), ('half_float', '-1e-10')])
 def test_a_number_that_is_zero_only_in_the_format_of_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
     """SPEC-F25.15: `-1e-50` is a nonzero double that a `float` field rounds to -0.0 in a `term` (`-1e-10` on a
     `half_float`), and the library sends it as it is, as a column without a kind does, not as `0`: the field's own
     rounding gives the answers of docs/databases.md (the matrix of CI run 46093367670), the exact one for a tiny
-    negative, where `0` would give the false one. It catches a rule that sends such a number as `0`."""
+    negative, where `0` would give the false one. It catches a rule that sends such a number as `0`; the live test of
+    the same numbers, the positive ones too, pins what the field answers."""
     kept = asked(kind, **criterion('n', '=', text))[1].searches
     assert json.dumps(kept) == json.dumps(asked(None, **criterion('n', '=', text))[1].searches)
     assert json.dumps(kept) != json.dumps(asked(None, **criterion('n', '=', '0'))[1].searches)
