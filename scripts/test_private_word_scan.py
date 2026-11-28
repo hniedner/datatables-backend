@@ -522,8 +522,8 @@ def test_a_byte_order_mark_joining_two_words_cannot_check(tmp_path: Path):
 
 @pytest.mark.parametrize(
     'invisible',
-    ['\u200b', '\u00ad', '\t', '\x1b', '\x0c', '\u2028'],
-    ids=['zero-width space', 'soft hyphen', 'tab', 'escape', 'form feed', 'line separator'],
+    ['\u200b', '\u00ad', '\t', '\x1b', '\x0c', '\u2028', '\u2029'],
+    ids=['zero-width space', 'soft hyphen', 'tab', 'escape', 'form feed', 'line separator', 'paragraph separator'],
 )
 def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, invisible: str):
     """A format (Cf), control (Cc) or separator (Zl, Zp) character inside a word misses the text typed without it:
