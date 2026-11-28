@@ -401,6 +401,10 @@ An OpenSearch string column's kind is `keyword`, `text+keyword` (the default, th
 gives a string, with the keyword field `<field>.keyword`) or text-only; the keyword field is used for sorting and exact
 matches.
 
+A `text` kind raises `SchemaError` on a column that reads the document id, and on a column declared `searchable=False`
+and `orderable=False` that is not in `unique_key`: no string field of such a column is read. On the key, and on an
+unsearchable column with the default `orderable`, it stays, since it picks the field the column is sorted by.
+
 - **Reason:** The backend never reads the index mapping at request time (PRD-D8, PRD-A3), so the sort (PRD-O5, PRD-O7)
   and exact-match (PRD-F16, PRD-F20, PRD-F27, PRD-D19) rules need the field kinds declared.
 - **Priority:** must
@@ -408,6 +412,9 @@ matches.
 #### PRD-D14
 
 A column with a search-value hook must be of string type; declaring a hook on another type raises `SchemaError`.
+
+A hook on a column declared `searchable=False`, or on the OpenSearch document id, raises `SchemaError` too: no search
+reaches such a column, so the hook would never run.
 
 - **Reason:** The hook transforms text the user types.
 - **Priority:** must
@@ -512,7 +519,8 @@ A `scaled_float` still clamps a number whose scaled value passes a `long`, becau
 mapping, which is never read (PRD-D8). A column that declares no kind is checked as before, by the floor every number
 column has: at most 255 characters (PRD-F14) and finite as a double (PRD-F25). `number=` on a column that is no number
 column raises `SchemaError` when the table is built, and so does a `number=`, `text=` or `type=` outside its accepted
-values, naming the column, what was written and the accepted values. The mapping is still never read (PRD-D8).
+values, naming the column, what was written and the accepted values; so does a `number=` on a column declared
+`searchable=False` or on a column that reads the document id, which no filter reaches. The mapping is still never read (PRD-D8).
 
 - **Reason:** A number the field refuses fails the whole request with the client's error, where PRD-E7 wants a user's
   mistake answered before the query; it also wrongly answers `-1` in a list on an `unsigned_long`, which OpenSearch reads

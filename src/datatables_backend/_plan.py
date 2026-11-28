@@ -372,12 +372,23 @@ def check_hook(column: Column) -> None:
         )
 
 
+def check_hook_is_searched(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``search_value`` on a column that is declared unsearchable. No search reaches such a
+    column (a column search and a criterion on it are refused, and the global search leaves it out), so the hook would
+    never run. OpenSearch holds its document id unsearchable too, but its own check says so first."""
+    if column.search_value is not None and not column.searchable:
+        raise SchemaError(
+            f'The column "{column.name}" has a search_value hook but is declared searchable={column.searchable!r}, so '
+            'no search reaches it and the hook never runs. Remove the hook, or declare the column searchable.'
+        )
+
+
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
     second would silently replace the first (PRD-D1), a ``type`` that is none of the four, an empty name or ``field``, a
-    search-value hook that cannot be called, or a search-value hook on a column that is no string (PRD-D14) or holds no
-    whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the backend's: SQL
-    reads the type of a column it did not declare one for from the source."""
+    search-value hook that cannot be called, or a search-value hook on a column that is no string (PRD-D14), holds no
+    whole string to compare with (PRD-D20) or is declared unsearchable. The messages name only declared columns.
+    ``describe`` is the backend's: SQL reads the type of a column it did not declare one for from the source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()
@@ -401,10 +412,17 @@ def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Ca
                 'takes one: remove the hook.'
             )
         if not able.whole_string:
+            # On an unsearchable column a keyword field would only lead to ``check_hook_is_searched``: say the one fix
+            fix = (
+                'Declare it text="keyword" or "text+keyword", or remove the hook.'
+                if column.searchable
+                else 'Remove the hook.'
+            )
             raise SchemaError(
                 f'The column "{column.name}" has a search_value hook but holds analysed text only, which a hook '
-                'compares by equality. Declare it text="keyword" or "text+keyword", or remove the hook.'
+                f'compares by equality. {fix}'
             )
+        check_hook_is_searched(column)
 
 
 def declared_key(columns: Sequence[Column], key: str | Sequence[str]) -> tuple[Column, ...]:
