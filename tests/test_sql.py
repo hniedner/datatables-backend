@@ -1925,6 +1925,13 @@ def test_a_type_outside_the_four_is_a_schema_error_on_a_sql_table_too():
         SQLTable(people, [Column('id', type=misspelled)])
 
 
+def test_a_search_value_that_cannot_be_called_is_a_schema_error_on_a_sql_table_too():
+    """SPEC-D23.14: the check is the core's, shared with OpenSearch."""
+    hook: Any = 'x'
+    with pytest.raises(SchemaError, match=r'"secret".*search_value.*callable'):
+        SQLTable(people, [Column('id'), Column('secret', search_value=hook)])
+
+
 HOOKED = SQLTable(people, [Column('id'), Column('secret', search_value=lambda text: f's{text}')])
 
 

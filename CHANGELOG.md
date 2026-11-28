@@ -11,8 +11,19 @@ and the versioning policy is in the README.
   are checked as a column with no kind is: at most 255 characters and finite as a double. A `scaled_float` still clamps
   a number whose scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
 
+### Changed
+
+- On OpenSearch, `IndexColumn.text` is `None` when it is not declared, where it was `'text+keyword'`. A string column
+  that does not declare it is still read as `text+keyword`, so no answer changes; a `text` of any value, `text+keyword`
+  included, on a column that is not a string column is refused.
+
 ### Fixed
 
+- A table that declared a `text=` on a column that is not a string column, a `search_value` that is not callable, or an
+  empty column name or `field` used to build, and now raises `SchemaError` when it is built, naming the column and the
+  fix. Before, the `text=` was ignored, a non-callable `search_value` raised `TypeError` on the first request that
+  searched the column, and an empty name sent an empty field name to OpenSearch. A table that used to build and now
+  fails to build is the declaration being wrong.
 - A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
   table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that

@@ -147,3 +147,13 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e308, -1e308 and a
   number of 255 digits on `double` (the last as an integer), and with 1e300 and -1e300 on `scaled_float`, sends each as
   it is.
+
+- **SPEC-D23.12** [OS] `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same request sends the same
+  body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
+- **SPEC-D23.13** [OS] A `text` of any value, `text+keyword` included, on a number, date or boolean column raises
+  `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
+- **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
+  column and saying to pass a function. Before, the table built and the first request that searched the column raised
+  `TypeError`.
+- **SPEC-D23.15** [OS] A column declared with an empty name, or an empty `field`, raises `SchemaError` at construction.
+  Before, the table built and sent an empty field name to the server.

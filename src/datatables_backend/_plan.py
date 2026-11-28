@@ -346,6 +346,24 @@ def check_type(column: Column) -> None:
         )
 
 
+def check_name(column: Column) -> None:
+    """Raise ``SchemaError`` for an empty ``name`` or ``field``: the table would build and send an empty field name to
+    the server. The message names the column when it has a name."""
+    if not column.name or column.field == '':
+        which = f'The column "{column.name}" declares field=""' if column.name else 'A column is declared with name=""'
+        raise SchemaError(f'{which}, an empty name. Give the column a non-empty name, or a field naming the source.')
+
+
+def check_hook(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``search_value`` that cannot be called: the table would build and raise
+    ``TypeError`` on the first request that searches the column."""
+    if column.search_value is not None and not callable(column.search_value):
+        raise SchemaError(
+            f'The column "{column.name}" declares a search_value that is not callable. Pass a function that takes the '
+            'search text and returns the value to compare.'
+        )
+
+
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
     second would silently replace the first (PRD-D1), a ``type`` that is none of the four, or a search-value hook on a
@@ -357,6 +375,8 @@ def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Ca
     names: set[str] = set()
     for column in columns:
         check_type(column)
+        check_name(column)
+        check_hook(column)
         if column.name in names:
             raise SchemaError(
                 f'Two columns are declared with the name "{column.name}". Give each its own name: '

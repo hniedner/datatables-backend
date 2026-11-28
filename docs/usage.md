@@ -120,6 +120,13 @@ Three names serve code that sits beside a table, not inside `fetch`:
 
 Source: the docstrings of `partial_answer`, `parse_request` and `DTResponse`.
 
+## How an OpenSearch string column is mapped
+
+`IndexColumn.text` says how the field of a string column is mapped: `'keyword'`, `'text'` or `'text+keyword'`. `None`,
+the default, means the column does not say, and a string column is then read as `text+keyword`, which is what dynamic
+mapping makes of a string. A `text` of any value on a column that is not a string column (a number, date or boolean
+column) raises `SchemaError` when the table is built: nothing would read it.
+
 ## The result window of OpenSearch
 
 OpenSearch reads at most `index.max_result_window` rows from the start of a search (10,000 by default). Give the table

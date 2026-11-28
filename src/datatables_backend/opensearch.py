@@ -112,6 +112,9 @@ _DOCUMENT_ID = '_id'
 class IndexColumn(Column):
     """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
 
+    ``text`` says how a string column's field is mapped; ``None`` means it does not say, and a string column is then
+    read as ``text+keyword``. A ``text`` of any value on a column that is not a string column raises ``SchemaError``.
+
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
     ``orderable=True`` on it raises ``SchemaError``.
@@ -124,7 +127,7 @@ class IndexColumn(Column):
     alone (see ``NumberKind``).
     """
 
-    text: TextKind = 'text+keyword'
+    text: TextKind | None = None
     number: NumberKind | None = None
 
 
@@ -428,11 +431,21 @@ def _check_kinds(column: Column) -> None:
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
     for field_name, written, accepted in kinds:
-        if written not in accepted and not (field_name == 'number' and written is None):  # only number may be None
+        if written is not None and written not in accepted:  # None: not declared
             raise SchemaError(
                 f'The column "{column.name}" declares {field_name}={written!r}, which is not a kind. Declare one of '
                 f'{", ".join(accepted)}.'
             )
+
+
+def _check_text_fits(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` on a column that is no string column: the declaration is for another
+    column, and nothing would read it. Run after ``check_type``, which makes the type one of the four."""
+    if isinstance(column, IndexColumn) and column.text is not None and _type_of(column) != 'string':
+        raise SchemaError(
+            f'The column "{column.name}" declares text={column.text!r} but is not a string column, so no string field '
+            f'applies to it. Drop text=, or declare the column type="string".'
+        )
 
 
 def _held(column: Column) -> Column:
@@ -443,6 +456,7 @@ def _held(column: Column) -> Column:
     four, or a ``text`` or ``number`` that is none of its kinds."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
+    _check_text_fits(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
@@ -467,7 +481,7 @@ def _type_of(column: Column) -> ColumnType:
 
 
 def _kind(column: Column) -> TextKind:
-    return column.text if isinstance(column, IndexColumn) else 'text+keyword'
+    return column.text or 'text+keyword' if isinstance(column, IndexColumn) else 'text+keyword'
 
 
 def _keyword(column: Column) -> str | None:

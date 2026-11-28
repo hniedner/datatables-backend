@@ -3195,7 +3195,6 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
             id='number',
         ),
         pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), "'Keyword'", 'text+keyword', id='text'),
-        pytest.param(lambda: IndexColumn('n', text=cast(Any, None)), 'None', 'text+keyword', id='text-none'),
         pytest.param(
             lambda: IndexColumn('n', type=cast(Any, ['number']), number='long'),
             "['number']",
@@ -3238,3 +3237,47 @@ def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_i
     assert response.error is None
     sent = int(text) if text.isdigit() else float(text)  # a whole number goes as an int, any other as a float
     assert [client.searches[0]['query']] == [{'bool': {'must': [{'term': {'n': sent}}]}}]
+
+
+def test_a_text_that_is_not_declared_is_the_default_text_and_keyword_field():
+    """SPEC-D23.12: `text=None` means not declared, and answers as an explicit `text+keyword` and as a plain `Column`
+    do, so a column that says nothing about its string field is read as dynamic mapping makes it."""
+    bodies = []
+    for column in (IndexColumn('t', text=None), IndexColumn('t', text='text+keyword'), Column('t')):
+        table = SearchTable('docs', [IndexColumn('id', text='keyword'), column], unique_key='id')
+        client = Client()
+        table.fetch_sync(request('id', 't', **criterion('t', '=', 'Ann')), client)
+        bodies.append(client.searches[0])
+    assert bodies[0] == bodies[1] == bodies[2]
+    assert 't.keyword' in json.dumps(bodies[0])
+
+
+@pytest.mark.parametrize('kind', ['number', 'date', 'boolean'])
+@pytest.mark.parametrize('text', ['text', 'text+keyword'])
+def test_a_text_on_a_column_that_is_no_string_column_is_a_schema_error_that_names_the_fix(kind: str, text: Any):
+    """SPEC-D23.13: a string field applies to a string column only; the integrator wrote the declaration for the wrong
+    column. The default text is not declared (`None`), so an explicit `text+keyword` is refused too."""
+    with pytest.raises(SchemaError, match=r'"n".*text.*not a string column') as raised:
+        SearchTable(
+            'docs',
+            [IndexColumn('id', text='keyword'), IndexColumn('n', type=cast(Any, kind), text=text)],
+            unique_key='id',
+        )
+    assert 'Drop text=' in str(raised.value)
+
+
+def test_a_search_value_that_cannot_be_called_is_a_schema_error_that_names_the_column():
+    """SPEC-D23.14: the table would build and raise `TypeError` on the first request that searches the column."""
+    hook: Any = 'x'
+    with pytest.raises(SchemaError, match=r'"n".*search_value.*callable'):
+        SearchTable('docs', [IndexColumn('id', text='keyword'), Column('n', search_value=hook)], unique_key='id')
+
+
+@pytest.mark.parametrize(
+    'column',
+    [pytest.param(lambda: Column(''), id='name'), pytest.param(lambda: Column('x', field=''), id='field')],
+)
+def test_an_empty_name_or_field_is_a_schema_error_that_says_what_to_give(column: Callable[[], Column]):
+    """SPEC-D23.15: the table would build and send empty field names to the server."""
+    with pytest.raises(SchemaError, match='empty'):
+        SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
