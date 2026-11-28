@@ -3028,8 +3028,8 @@ def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_
     the `Decimal` as it is (RUN by CI, 2026-11-28 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
     stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8.
     `1e-16383`, which no float holds, is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row,
-    MySQL and MariaDB are INFERRED to find it (a fraction of more than 30 digits after the point is compared as a double
-    there, docs/databases.md) until CI's live legs run it, and SQL Server refuses it by its 38 digits. These are today's
+    MySQL and MariaDB find it too (RUN by CI, 2026-11-28 UTC: a fraction of more than 30 digits after the point is
+    compared as a double there, docs/databases.md), and SQL Server refuses it by its 38 digits. These are today's
     results, pinned so the stated limits are not forgotten if they change."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
@@ -3042,7 +3042,7 @@ def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_
     if engine == 'mssql':
         refused(tiny, 'invalid_number')
     else:
-        assert ids(tiny) == ([1] if engine in ('sqlite', 'mysql') else [])
+        assert ids(tiny) == ([1] if engine in ('sqlite', 'mysql', 'mariadb') else [])
 
 
 @pytest.mark.parametrize('dialect', [postgresql.psycopg.dialect, postgresql.asyncpg.dialect])
