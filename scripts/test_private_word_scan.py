@@ -401,7 +401,7 @@ def test_a_missing_message_file_cannot_check_and_is_not_printed(tmp_path: Path, 
     'saved',
     [
         'Gärtner\n'.encode('latin-1'),
-        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with a NUL between the letters: a word would pass
+        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with NULs: the message must say to save it as UTF-8
         f'{WORD}\n'.encode('utf-16-le'),
         f'{WORD}\n'.encode('utf-16-be'),  # starts with a NUL, where the little-endian text ends with one
     ],
@@ -499,7 +499,8 @@ def test_a_utf32_blob_in_history_is_found(repo: Path, words: Path):
 
 @pytest.mark.parametrize('where', ['first line', 'joined lists'])
 def test_a_byte_order_mark_in_a_word_list_does_not_hide_a_word(tmp_path: Path, where: str):
-    """A joined list (`cat a.txt b.txt`) keeps the second file's mark in the middle: a mark is a file artifact."""
+    """A joined list (`cat a.txt b.txt`) keeps the second file's mark at the start of a line in the middle of the file:
+    a mark there is a file artifact."""
     listed = tmp_path / 'bom.txt'
     if where == 'first line':
         listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
@@ -542,6 +543,16 @@ def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'word list line 2 holds an invisible character' in result.stderr
+
+
+def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
+    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was: no scanned text
+    produces it, so the word would silently never match. The scan's own advice (save it as UTF-8) leads here."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\nG\ufffdrtner\n')
+    result = scan(str(write(tmp_path / 'notes.md', 'see Gärtner\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'word list line 2 holds a replacement character' in result.stderr
+    assert ': retype the word' in result.stderr  # the fix
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])

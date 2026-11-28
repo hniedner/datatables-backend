@@ -85,10 +85,10 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no usable word list (none readable, not UTF-8, a format or control character (Unicode
-    Cf, Cc) in a word, or no word in it), a ``--message`` call that does not name exactly one file, or an object could
-    not be read. (A failing git or file system raises CalledProcessError or OSError, which ``main`` answers the same
-    way.)"""
+    """The scan cannot check: no usable word list (none readable, not UTF-8, a format, control or separator character
+    (Unicode Cf, Cc, Zl, Zp) or a replacement character U+FFFD in a word, or no word in it), a ``--message`` call that
+    does not name exactly one file, or an object could not be read. (A failing git or file system raises
+    CalledProcessError or OSError, which ``main`` answers the same way.)"""
 
 
 def load_words() -> Words:
@@ -119,10 +119,18 @@ def _word(number: int, line: str) -> str:
     paragraph separators Zl and Zp): a word holding one misses the text typed without it, so the list is refused for
     its owner to fix, not guessed at. The message names the line and never the word. A word that needs U+200C or
     U+200D (Persian, Indic) is refused too, so it cannot be listed; the default-ignorable characters outside these
-    categories (variation selectors) are not checked."""
+    categories (variation selectors) are not checked.
+
+    It also refuses U+FFFD, which a list converted to UTF-8 from another encoding holds where each accented letter
+    was: no scanned text produces it, so the word would silently never match."""
     word = line.strip()
     if any(unicodedata.category(character) in {'Cf', 'Cc', 'Zl', 'Zp'} for character in word):
         raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
+    if '\ufffd' in word:
+        raise CouldNotCheckError(
+            f'word list line {number} holds a replacement character (a letter lost when the list was converted to '
+            'UTF-8): retype the word'
+        )
     return fold(word)
 
 
