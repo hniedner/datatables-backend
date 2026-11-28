@@ -1322,9 +1322,10 @@ fixed; (2) a value whose format a date or number column cannot read is `invalid_
 several words, `!` or quotes on an OpenSearch date column (PRD-F34) or number column (PRD-F33); (3) a readable value
 outside the range is `invalid_date` for the maximum date (PRD-F24) and `invalid_number` for a number its SQL column does
 not take (PRD-F25: outside an integer's range, signed or unsigned, or of more than 38 digits in all on SQL Server, on a
-`Numeric` column or with a fraction on an integer column (other than through a `TypeDecorator`, which gets a float));
-(4) every other filter error, a boolean value outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page
-of PRD-C12 is `page_out_of_range`, since it needs a valid count.
+`Numeric` column or with a fraction on an integer column (other than through a `TypeDecorator`, which gets a float), or
+of more than 16,383 digits after the decimal point on any backend); (4) every other filter error, a boolean value
+outside PRD-F43's set included, is `invalid_filter`; (5) only then, a page of PRD-C12 is `page_out_of_range`, since it
+needs a valid count.
 
 Within each of steps 2 to 4, the first mistake is the one found first in step 1's read order: the global search, then
 the column searches in the request's order (within one column the plain search, then the ColumnControl search, then
@@ -1903,7 +1904,7 @@ where a database decides. Each difference is stated here; every other answer is 
   0): SQLite stores the column as an integer or a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is
   stored as 12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there, so the number can match
   a neighbouring value. PostgreSQL, MySQL, MariaDB and SQL Server compare it exactly (MEASURED 2026-11-24 for a
-  `Numeric` column, `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column was not measured there),
+  `Numeric` column, `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column: RUN 2026-11-28 UTC by CI),
   MySQL and MariaDB except a fraction of more than 30 digits (docs/databases.md).
   - **Between:** SQLite and PostgreSQL, MySQL, MariaDB, SQL Server
   - **Requirement:** PRD-F25
