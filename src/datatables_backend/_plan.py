@@ -348,8 +348,8 @@ def check_type(column: Column) -> None:
 
 def check_name(column: Column) -> None:
     """Raise ``SchemaError`` for an empty ``name`` or ``field``. On OpenSearch an empty name with no ``field`` built a
-    table that sent an empty field name; an empty ``field`` was silently read as the name. The message says which was
-    written."""
+    table that sent an empty field name (``null`` for ``None``); an empty ``field`` was silently read as the name. The
+    message says which was written."""
     if not column.name:
         raise SchemaError(f'A column is declared with name={column.name!r}, which is empty. Give it a non-empty name.')
     if column.field == '':

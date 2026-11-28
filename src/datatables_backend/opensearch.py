@@ -128,9 +128,9 @@ class IndexColumn(Column):
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
-    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
-    ``text`` or a ``number`` other than ``None`` that is none of the kinds. A ``double`` or ``scaled_float`` kind is
-    checked by the floor alone (see ``NumberKind``).
+    is: finite as a double. A ``number`` other than ``None`` on a column that is not a number column raises
+    ``SchemaError``, and so does a ``text`` or a ``number`` other than ``None`` that is none of the kinds. A ``double``
+    or ``scaled_float`` kind is checked by the floor alone (see ``NumberKind``).
     """
 
     text: TextKind | None = None
@@ -431,9 +431,9 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 
 def _check_kinds(column: Column) -> None:
     """Raise ``SchemaError`` for a ``text`` or a ``number`` other than ``None`` that is none of the kinds: a ``Literal``
-    checks nothing at run time, and the table would build and fail, or wrongly refuse, a filter or an order. The message
-    names the column, what was written and the accepted kinds; the name and the value are the server's, never the
-    client's."""
+    checks nothing at run time, and the table would build and fail, wrongly refuse, or answer as analysed text only, a
+    filter or an order. The message names the column, what was written and the accepted kinds; the name and the value
+    are the server's, never the client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))

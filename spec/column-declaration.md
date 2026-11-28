@@ -151,7 +151,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   and a `type=` that is none of the four, raises `SchemaError` at construction, naming the column, what was written and
   the accepted ones. Before, the table usually built and a filter that carries a number failed with a `KeyError` (a
   `number=`), or any SearchBuilder condition did (a `type=`), or a whole-string condition or an order was wrongly
-  refused (a `text=` on a string column).
+  refused, and contains, a column search and the global search matched analysed text only, with no substring inside a
+  word (a `text=` on a string column).
 - **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e308, -1e308 and a
   number of 255 digits on `double` (the last as an integer), and with 1e300 and -1e300 on `scaled_float`, sends each as
   it is.
@@ -167,6 +168,6 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   with the text unchanged.
 - **SPEC-D23.15** [OS, SQL] A column declared with an empty name (or a name of `None`), or an empty `field`, raises
   `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
-  `field` built a table that sent an empty field name, and an empty `field` was silently read as the name on both
-  backends; on SQL an empty name with no `field` was refused only as a missing column, with no fix, and a name of `None`
-  with no `field` raised SQLAlchemy's `ArgumentError`.
+  `field` built a table that sent an empty field name (`null` for a name of `None`), and an empty `field` was silently
+  read as the name on both backends; on SQL an empty name with no `field` was refused only as a missing column, with no
+  fix, and a name of `None` with no `field` raised SQLAlchemy's `ArgumentError`.
