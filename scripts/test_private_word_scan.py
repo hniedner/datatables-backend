@@ -457,7 +457,7 @@ def test_an_unreadable_file_cannot_check(tmp_path: Path, words: Path):
     finally:
         locked.chmod(0o600)
     assert result.returncode == 2
-    assert 'could not check' in result.stderr
+    assert 'every file given to the scan can be read' in result.stderr  # says what to check, not only that it failed
 
 
 def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path):
@@ -1090,14 +1090,6 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
     assert result.returncode == 2
     assert 'could not check: git or the file system failed' in result.stderr
     assert 'git fsck' in result.stderr  # and it says what to do
-
-
-def test_a_file_that_cannot_be_read_cannot_check(tmp_path: Path, words: Path):
-    unreadable = tmp_path / 'a-directory'  # read_bytes on it raises OSError, as a file with no read permission does
-    unreadable.mkdir()
-    result = scan(str(unreadable), words=words)
-    assert result.returncode == 2
-    assert 'every file given to the scan can be read' in result.stderr  # the word list was read fine
 
 
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
