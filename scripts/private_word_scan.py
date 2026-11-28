@@ -111,13 +111,20 @@ def load_words() -> Words:
 
 
 def _read_list(path: Path) -> str:
-    """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8."""
+    """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8.
+
+    A NUL counts as not UTF-8: ASCII text saved as UTF-16 with no byte order mark is valid UTF-8 with a NUL between
+    its letters, and no word read that way would match anything."""
+    not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
-        return path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
+        text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
     except UnicodeDecodeError:
-        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8') from None
+        raise not_utf8 from None
     except OSError:
         raise CouldNotCheckError('the word list cannot be read: check its permissions') from None
+    if '\0' in text:
+        raise not_utf8
+    return text
 
 
 def decode(data: bytes) -> str:

@@ -397,11 +397,20 @@ def test_a_missing_message_file_cannot_check_and_is_not_printed(tmp_path: Path, 
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
-def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path):
-    latin1 = tmp_path / 'latin1.txt'
-    latin1.write_bytes('Gärtner\n'.encode('latin-1'))
-    result = scan(str(write(tmp_path / 'clean.md', 'clean\n')), words=latin1)
-    assert result.returncode == 2
+@pytest.mark.parametrize(
+    'saved',
+    [
+        'Gärtner\n'.encode('latin-1'),
+        # ASCII text saved as UTF-16 with no mark is valid UTF-8 with a NUL between the letters: no word would match
+        f'{WORD}\n'.encode('utf-16-le'),
+    ],
+    ids=['latin-1', 'utf-16 without a mark'],
+)
+def test_a_word_list_that_is_not_utf8_cannot_check(tmp_path: Path, saved: bytes):
+    listed = tmp_path / 'list.txt'
+    listed.write_bytes(saved)
+    result = scan(str(write(tmp_path / 'clean.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
     assert 'is not UTF-8: save it as UTF-8' in result.stderr
 
 
