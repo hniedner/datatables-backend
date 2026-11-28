@@ -897,7 +897,8 @@ MIXED = {  # list words and a two-part path: (words, first part, second part)
 
 
 def load_scanner(monkeypatch: pytest.MonkeyPatch, listed: Path):
-    """The script as a module, for a file name the file system here may refuse to create (APFS takes UTF-8 only)."""
+    """The script as a module, to patch it in process: for a file name the file system here may refuse to create
+    (APFS takes UTF-8 only), or for an answer from git that cannot be staged."""
     spec = importlib.util.spec_from_file_location('private_word_scan', SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -939,7 +940,7 @@ def test_an_object_gone_between_the_listing_and_the_read_cannot_check(
     scanner = load_scanner(monkeypatch, words)
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: b'0' * 40 + b' missing\n' if 'cat-file' in args else b'')
     assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
-    assert 'could not check' in capsys.readouterr().err
+    assert 'could not check: an object vanished' in capsys.readouterr().err  # not the generic git failure
 
 
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
@@ -1053,6 +1054,7 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
     'utf-16 mark before ascii': (WORD, codecs.BOM_UTF16_LE + f'hello {WORD}\n'.encode()),
     'utf-8 mark before latin-1': (NON_ASCII, codecs.BOM_UTF8 + b'see ' + NON_ASCII.encode('latin-1') + b'\n'),
+    'utf-16 mark before utf-8': (NON_ASCII, codecs.BOM_UTF16_LE + b'see ' + NON_ASCII.encode() + b'\n'),
 }
 
 
