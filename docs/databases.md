@@ -304,10 +304,11 @@ This is a limit of the databases, not of the library: the library sends the numb
   which is zero there too (INFERRED for OpenSearch, from the float the body carries; neither the body nor the server is
   pinned for this value).
 - **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
-- **How it is known:** only `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB
+- **How it is known:** `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB
   12.3.3 (`docs/decisions/010-decimal-numbers.md`); on an integer column `= 1e-16383` finds the row holding 0 on MySQL
-  8.4 and MariaDB 12.3, MEASURED 2026-11-28 (UTC) by that test's CI jobs; the rule is INFERRED from MySQL's manual,
-  which gives a `DECIMAL` at most 30 digits after the point
+  8.4 and MariaDB 12.3, MEASURED 2026-11-28 (UTC) by
+  `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it` in CI's MySQL and MariaDB jobs;
+  the rule is INFERRED from MySQL's manual, which gives a `DECIMAL` at most 30 digits after the point
   (<https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html>, fetched 2026-11-24).
 - **Requirement:** PRD-F25.
 
