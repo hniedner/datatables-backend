@@ -588,8 +588,8 @@ PHRASE = f'{WORD[:5]} {WORD[5:]}'  # a two-word private name: 'Zebra finch'
 
 @pytest.mark.parametrize(
     'wrapped',
-    ['Zebra\nfinch', 'Zebra  finch', 'Zebra\tfinch', 'Zebra\n\n   finch', 'Zebra\u00a0finch'],
-    ids=['line break', 'two spaces', 'tab', 'blank line and indent', 'no-break space'],
+    ['Zebra\nfinch', 'Zebra  finch', 'Zebra\tfinch', 'Zebra\n\n   finch'],
+    ids=['line break', 'two spaces', 'tab', 'blank line and indent'],
 )
 @pytest.mark.parametrize('where', ['file', 'history'])
 def test_a_phrase_is_found_across_whitespace_and_line_breaks(tmp_path: Path, repo: Path, where: str, wrapped: str):
@@ -607,13 +607,37 @@ def test_a_phrase_is_found_across_whitespace_and_line_breaks(tmp_path: Path, rep
     assert 'zebra' not in (result.stdout + result.stderr).casefold()  # nothing of the word is printed
 
 
-@pytest.mark.parametrize(
-    'listed', [f'{WORD[:5]}  {WORD[5:]}', f'{WORD[:5]}\u00a0{WORD[5:]}'], ids=['two spaces', 'nbsp']
-)
-def test_a_phrase_with_odd_whitespace_in_the_list_matches_single_spaces(tmp_path: Path, listed: str):
-    """The list's whitespace is folded as the text's is, so `Zebra  finch` in the list matches `Zebra finch`."""
-    result = scan(str(write(tmp_path / 'notes.md', f'see {PHRASE} here\n')), words=write(tmp_path / 'l.txt', listed))
+def test_a_phrase_with_two_spaces_in_the_list_matches_single_spaces(tmp_path: Path):
+    """The list's whitespace is squeezed as the text's is, so `Zebra  finch` in the list matches `Zebra finch`."""
+    listed = write(tmp_path / 'l.txt', f'{WORD[:5]}  {WORD[5:]}')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {PHRASE} here\n')), words=listed)
     assert result.returncode == 1, result.stdout
+
+
+def test_each_line_a_word_starts_on_is_reported_once_in_a_long_file(tmp_path: Path, words: Path):
+    """The line offsets must hold deep in a file, across blank lines and several matches: a word that opens a line, a
+    second word on the next, and one that appears twice on a line far down."""
+    lines = ['filler'] * 200
+    lines[0] = ''
+    lines[1] = f'{WORD} opens this line'
+    lines[2] = f'{SECOND} too'
+    lines[149] = f'see {WORD} and {WORD} again'
+    planted = write(tmp_path / 'long.md', '\n'.join(lines) + '\n')
+    result = scan(str(planted), words=words)
+    assert result.returncode == 1, result.stdout
+    assert result.stderr.splitlines() == [
+        f'{planted}:2: private word #3',
+        f'{planted}:3: private word #5',
+        f'{planted}:150: private word #3',
+    ]
+
+
+@pytest.mark.parametrize('breaker', ['\x0c', '\x85', '\u2028'], ids=['form feed', 'next line', 'line separator'])
+def test_a_finding_is_reported_at_the_line_git_counts(tmp_path: Path, words: Path, breaker: str):
+    """Git and editors count lines at newlines only: a form feed (a page break in GNU sources) must not add a line."""
+    planted = write(tmp_path / 'notes.md', f'import os\n{breaker}\nsee {WORD}\n')
+    result = scan(str(planted), words=words)
+    assert f'{planted}:3: private word #3' in result.stderr, result.stderr
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])

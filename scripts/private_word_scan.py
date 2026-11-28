@@ -77,7 +77,7 @@ VARIABLE = 'DTB_PRIVATE_WORDS'
 FOUND = 1
 COULD_NOT_CHECK = 2
 
-type Words = list[tuple[int, str]]  # (line in the list, folded word)
+type Words = list[tuple[int, str]]  # (line in the list, squeezed word)
 
 _BOMS = [
     (codecs.BOM_UTF32_LE, 'utf-32'),
@@ -118,7 +118,7 @@ def load_words() -> Words:
 
 
 def _word(number: int, line: str) -> str:
-    """The folded word of a list line. Raises CouldNotCheckError on an invisible character inside it (Unicode category
+    """The squeezed word of a list line. Raises CouldNotCheckError on an invisible character inside it (Unicode category
     Cf, such as a zero-width space pasted from a web page, Cc, such as the tab of ``word<TAB>note``, or the line and
     paragraph separators Zl and Zp): a word holding one misses the text typed without it, so the list is refused for
     its owner to fix, not guessed at. The message names the line and never the word. A word that needs U+200C or
@@ -219,9 +219,10 @@ def hits(text: str, words: Words) -> list[int]:
 
 
 def line_hits(text: str, words: Words) -> dict[int, set[int]]:
-    """The list lines of the words ``text`` contains, by the line of ``text`` each match starts on, so a word that
-    a line break splits is found and reported at its first line."""
-    kept = [(number, piece) for number, line in enumerate(text.splitlines(), 1) if (piece := squeeze(line))]
+    """The list lines of the words ``text`` contains, by the line of ``text`` each match starts on, so a phrase whose
+    words a line break separates is found and reported at the line it starts on. Lines are counted at newlines only,
+    as git and editors count them, not at the form feed or U+2028 that ``str.splitlines()`` also breaks at."""
+    kept = [(number, piece) for number, line in enumerate(text.split('\n'), 1) if (piece := squeeze(line))]
     squeezed = ' '.join(piece for _, piece in kept)
     starts = list(itertools.accumulate((len(piece) + 1 for _, piece in kept), initial=0))
     found: dict[int, set[int]] = {}
@@ -282,7 +283,8 @@ def _file_findings(name: str, words: Words) -> list[str]:
 
 
 def _content_findings(shown: str, data: bytes, words: Words) -> list[str]:
-    """What a file's bytes hold, line by line as ``decode`` reads them, then in the other encodings."""
+    """What a file's bytes hold as ``decode`` reads them, by the line each match starts on, then in the other
+    encodings."""
     findings: list[str] = []
     for number, found in sorted(line_hits(decode(data), words).items()):
         findings.append(report(f'{shown}:{number}', sorted(found)))
