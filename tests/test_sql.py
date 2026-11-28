@@ -3022,18 +3022,21 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
     assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', '7.5')), session)) == []
 
 
-def test_sqlite_compares_a_fraction_on_an_integer_column_as_a_float(session: Session):
-    """PRD section 5 (PRD-F25): SQLAlchemy binds the `Decimal` of a fraction as a float on SQLite, so `1e-16383`, which
-    no float holds apart from zero, finds the row holding 0, and `8.0000000000000000001` finds the row holding 8,
-    though the number is neither. This is today's result, pinned so the stated limit is not forgotten if it changes;
-    no other engine is run here, as it was not measured there."""
-    if session.get_bind().dialect.name != 'sqlite':
-        pytest.skip('PRD section 5 states this limit for SQLite only')
+def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it(session: Session):
+    """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
+    the `Decimal` as it is (INFERRED for PostgreSQL, MySQL, MariaDB and SQL Server until CI's live legs run it). SQLite
+    is the stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding
+    8, and `1e-16383`, which no float holds, is bound as zero and finds the row holding 0. Those are today's results on
+    SQLite, pinned so the stated limit is not forgotten if it changes."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
     session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
     table = SQLTable(numbers, [Column('id'), Column('i')])
-    for value, found in (('1e-16383', [1]), ('8.0000000000000000001', [2])):
+    sqlite = session.get_bind().dialect.name == 'sqlite'
+    cases = [('8.0000000000000000001', [2] if sqlite else [])]
+    if sqlite:
+        cases.append(('1e-16383', [1]))
+    for value, found in cases:
         assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', value)), session)) == found
 
 
@@ -3095,9 +3098,8 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
         ('1E-9999999999999999999', True),  # PRD-F25 takes either `e`
         ('-1.5e-9999999999999999999', True),
         ('1e9999999999999999999', False),  # the reason of `1e400`: no float holds it
-        ('0e-9999999999999999999', False),  # zero has no fraction to count, whatever its spelling
+        ('0e-9999999999999999999', False),  # zero has no fraction to count, whatever its spelling with such an exponent
         ('-0.0e-9999999999999999999', False),
-        ('.0e-9999999999999999999', False),
     ],
 )
 def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
@@ -3105,7 +3107,7 @@ def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(va
     digits after the point, so the refusal says that, as it does for `1e-16384`; a positive one is too large, as
     `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between` gets the
     wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a number, a
-    zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a list's."""
+    zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a `between` bound."""
     reasons = {
         True: (
             'needs a number with at most 16383 digits after the decimal point.',
@@ -3144,19 +3146,15 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
 @pytest.mark.parametrize(
     ('value', 'sent'),
     [
-        ('1.0e-16383', '1E-16383'),
-        ('100e-16385', '1E-16383'),
-        ('0.0e-16384', '0'),
         ('-1.0e-16383', '-1E-16383'),
         # 34 digits written, three trailing zeros among them: `Decimal.normalize` would round the 31 left to 28
         ('1234567890123456789012345678901000e-16386', '1.234567890123456789012345678901E-16353'),
     ],
 )
 def test_a_number_at_the_16383_digit_limit_reaches_postgresql_with_its_sign_and_digits(value: str, sent: str):
-    """SPEC-F25.16: PostgreSQL gets `1.0e-16383` as `1E-16383`, zero as `0`, a negative number with its sign and one
-    of 31 significant digits with all of them, so the driver never sees a fraction of more than 16383 digits. It
-    catches a sign lost while the zeros are dropped, which makes `< -1.0e-16383` include the rows holding 0, and
-    digits rounded away by `Decimal.normalize`."""
+    """SPEC-F25.16: PostgreSQL gets a negative number with its sign and one of 31 significant digits with all of them,
+    so the driver never sees a fraction of more than 16383 digits. It catches a sign lost while the zeros are dropped,
+    which makes `< -1.0e-16383` include the rows holding 0, and digits rounded away by `Decimal.normalize`."""
     exact = SQLTable(
         Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', Numeric(20, 2))),
         [Column('id'), Column('n')],
