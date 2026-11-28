@@ -888,7 +888,12 @@ def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition
 
 
 @pytest.mark.parametrize(
-    ('field', 'kind', 'text'), [('n_float', 'float', '-1e-50'), ('n_half', 'half_float', '-1e-10')]
+    ('field', 'kind', 'text'),
+    [
+        ('n_float', 'float', '-1e-50'),
+        ('n_half', 'half_float', '-1e-10'),
+        ('n_half', 'half_float', '-2.98023224e-8'),
+    ],
 )
 @pytest.mark.parametrize('condition', ['=', '<='])
 def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
@@ -900,6 +905,15 @@ def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
     number that rounds to zero in the field's own kind, which finds b2."""
     params = request('id', 'n', **criterion('n', condition, text))
     assert ids(numbers_in(field, kind).fetch_sync(params, client)) == ['b2']
+
+
+def test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float(client: OpenSearch):
+    """SPEC-D23.1 on a real server: `65519.999` is 65504 rounded straight to half but 65520.0 through a 32-bit float,
+    which overflows half. If the server reads a number through a float first (the case of `-2.98023224e-8` above, a
+    hair beyond -2^-25), the library has to refuse it as `invalid_number`; a red run means `_accepted` has to round
+    through '<f' then '<e'."""
+    params = request('id', 'n', **criterion('n', '=', '65519.999'))
+    assert numbers_in('n_half', 'half_float').fetch_sync(params, client).error_code == 'invalid_number'
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):
