@@ -13,7 +13,7 @@ and the versioning policy is in the README.
   `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal holds
   (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason.
   On SQL Server, on a `Numeric` column (behind a `TypeDecorator` too) or a plain integer column, of the numbers
-  answered above only `0e-16384` still is: its limit of 38 digits refuses the others.
+  answered above only `0e-16384` is answered there: its limit of 38 digits refuses the others.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken
