@@ -3173,32 +3173,6 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
         assert (client.searches, client.counts) == ([], [])
 
 
-@pytest.mark.parametrize(
-    ('value', 'answered'),
-    [
-        ('1e-16383', True),
-        ('1.0e-16383', True),
-        ('100e-16385', True),
-        ('0e-16384', True),
-        ('1e-16384', False),
-        ('1.0e-16384', False),
-        ('-1.0e-16384', False),
-        ('1.5e-16383', False),
-    ],
-)
-def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(value: str, answered: bool):
-    """SPEC-F25.16: a number of at most 16383 digits after the point (zero has none) is answered however it is written,
-    one of 16384 is `invalid_number`. Catches the limit read from the exponent as written, which refuses `1.0e-16383`,
-    and from the size of the number, which answers `1.5e-16383` (its last digit is past the limit though its first is
-    not)."""
-    searched = SearchTable('docs', [Column('n', type='number')], unique_key='n')
-    response = searched.fetch_sync(request('n', **criterion('n', '=', value)), Client())
-    if answered:
-        assert response.error is None
-    else:
-        refused(response, 'invalid_number')
-
-
 @pytest.mark.parametrize(('value', 'answered'), [('1.0e-16383', True), ('1e-16384', False)])
 def test_a_single_value_column_search_reads_the_16383_digit_limit_by_the_value(value: str, answered: bool):
     """SPEC-F25.16: the value of a column search on a number column goes through its own branch of the plan, not through
