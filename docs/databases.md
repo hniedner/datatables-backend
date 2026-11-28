@@ -10,6 +10,7 @@ and the entry gives one line and a link. How an entry is known is one of:
   holds the numbers, or the test that pins it and the CI job that runs that test.
 - **documented, not run:** the vendor's documentation says so (its URL is given) and no run of this project checked it.
 - **READ:** read in this project's code (file and line), not run on a server.
+- **INFERRED:** reasoning, to be checked before relying on it (as PRD.md defines it).
 - **unknown:** nobody has measured it or found a source for it; it is listed so that nobody assumes.
 
 PRD section 5 lists the same differences from the requirements' side. Each of its differences that names an engine
@@ -321,9 +322,10 @@ number to give it.
   integer is compared as a float, without the decorator's conversion. Bound as the decorator's type, psycopg 3 and
   asyncpg would cast it to the impl's `INTEGER`, which rounds it (`> 7.5` would miss 8).
 - **Example:** a decorator over `Integer` holding 8: `> 7.5` finds it, `= 7.5` finds nothing.
-- **How it is known:** MEASURED 2026-11-24 as a compile: psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg `col >
-  $1::INTEGER` for the decorator's own bind, and no cast for a float bound as `Float`; the rounding of PostgreSQL's cast
-  is INFERRED, and CI's psycopg 3 leg shows it (`tests/test_sql.py`,
+- **How it is known:** MEASURED 2026-11-24 as a compile (SQLAlchemy 2.1.9, psycopg 3.3.9 and asyncpg 0.32.0, the
+  versions locked at the time): psycopg 3 renders `col > %(p)s::INTEGER` and asyncpg `col > $1::INTEGER` for the
+  decorator's own bind, and no cast for a float bound as `Float`; the rounding of PostgreSQL's cast is INFERRED, and
+  CI's psycopg 3 leg shows it (`tests/test_sql.py`,
   `test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float`).
 - **Requirement:** PRD-F25.
 
