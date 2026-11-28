@@ -3062,9 +3062,9 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
 @pytest.mark.parametrize('kind', [Counted, Float])
 @pytest.mark.parametrize('value', ['8.' + '1' * 38, '1e-16383'])
 def test_sql_servers_38_digits_do_not_bound_a_column_that_compares_a_float(kind: Any, value: str):
-    """SPEC-F25.12, SPEC-F25.14: only a `Numeric` column and a fraction on an integer column are refused there, so a
-    `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest float. It
-    catches the check moved before the float is chosen, which refuses valid filters on these columns."""
+    """SPEC-F25.12, SPEC-F25.14: only a number on a `Numeric` column and a fraction on an integer column are bounded
+    there, so a `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest
+    float. It catches the check moved before the float is chosen, which refuses valid filters on these columns."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', kind))
     source: Any = Compiling(mssql.dialect())
     response = SQLTable(numbers, [Column('id'), Column('n')]).fetch_sync(

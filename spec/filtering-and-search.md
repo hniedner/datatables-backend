@@ -345,15 +345,15 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   float, or `0` for zero): the limit of 16383 digits after the point is of the value, not of how it is written: `=`
   `1e-16383`, `1.0e-16383`, `100e-16385` and `0e-16384` are answered (a fraction's trailing zeros are not counted and
   zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code `invalid_number` (the
-  last digit is past the limit, whatever the first; the plain spellings `1e-16383` and `1e-16384` are those of
-  `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they are checked on
-  `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of the four answered above, the
-  first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is answered. [PostgreSQL] The
-  number reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound
-  as `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a number of 31 significant digits
-  with all 31 (`Decimal.normalize` would round it to 28). [OpenSearch] A single-value column search (`value_search`)
-  reads the same limit: `1.0e-16383` is answered and `1e-16384` → `invalid_number`; the `=` list rests on the one
-  `parse_number`, which the SQL tests check.
+  last digit of `1.5e-16383` is past the limit though its first is not; the plain spellings `1e-16383` and `1e-16384`
+  are those of `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they
+  are checked on `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of the four
+  answered above, the first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is
+  answered. [PostgreSQL] The number reaches the database with its sign and its digits, its fraction's trailing zeros
+  left out: `-1.0e-16383` is bound as `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a
+  number of 31 significant digits with all 31 (`Decimal.normalize` would round it to 28). [OpenSearch] A single-value
+  column search (`value_search`) reads the same limit: `1.0e-16383` is answered and `1e-16384` → `invalid_number`; the
+  `=` cases above rest on the one `parse_number`, which the SQL tests check.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
