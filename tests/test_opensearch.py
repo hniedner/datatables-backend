@@ -3267,7 +3267,7 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_what_wa
 ):
     """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
     table builds, and a filter that carries a number (a number kind) or any SearchBuilder condition (a type) fails with
-    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind, `None` too). A misspelled
+    a `KeyError`, or a whole-string condition or an order is wrongly refused (a text kind). A misspelled
     type beside a kind (the list row) was refused as no number column, so the type is checked first. The message names
     the column, what was written and what is accepted, all declared by the server."""
     with pytest.raises(SchemaError) as raised:

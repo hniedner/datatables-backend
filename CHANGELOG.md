@@ -28,8 +28,8 @@ and the versioning policy is in the README.
   column search or the global search) (a falsy one, such as `''` or `0`, silently made the column compare by whole
   value), an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
   OpenSearch (`null` for a name of `None`; on SQL it was refused only as a missing column, with no fix, and a name of
-  `None` with no `field` raised SQLAlchemy's `ArgumentError`). A table that used to
-  build and now fails to build is the declaration being wrong.
+  `None` with no `field` raised SQLAlchemy's `ArgumentError`). A table that used to build and now fails to build is the
+  declaration being wrong.
 - A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
   `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
   table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that

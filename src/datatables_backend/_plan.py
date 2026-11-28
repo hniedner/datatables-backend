@@ -349,7 +349,8 @@ def check_type(column: Column) -> None:
 def check_name(column: Column) -> None:
     """Raise ``SchemaError`` for an empty ``name`` or ``field``. On OpenSearch an empty name with no ``field`` built a
     table that sent an empty field name (``null`` for ``None``); on both backends an empty ``field`` was silently read
-    as the name, and on SQL an empty name was refused only as a missing column. The message says which was written."""
+    as the name, and on SQL an empty name with no ``field`` was refused only as a missing column (``None`` raised
+    SQLAlchemy's ``ArgumentError``). The message says which was written."""
     if not column.name:
         raise SchemaError(f'A column is declared with name={column.name!r}, which is empty. Give it a non-empty name.')
     if column.field == '':
