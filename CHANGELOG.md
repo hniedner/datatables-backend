@@ -7,9 +7,9 @@ and the versioning policy is in the README.
 
 ### Added
 
-- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both are checked as a double, which
-  every number of at most 255 characters passes, so they refuse nothing. A `scaled_float` still clamps a number whose
-  scaled form passes a `long`, because its scaling factor lives in the mapping, which is never read.
+- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite
+  number, so they are checked by the floor alone, as a column with no kind. A `scaled_float` still clamps a number whose
+  scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
 
 ### Fixed
 

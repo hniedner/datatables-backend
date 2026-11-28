@@ -71,9 +71,9 @@ log = logging.getLogger('datatables_backend')
 type TextKind = Literal['keyword', 'text', 'text+keyword']
 
 #: The mapping type of a number field (decision 011). ``byte`` and ``short`` are refused by OpenSearch only beyond an
-#: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse nothing a request can send, so they
-#: are checked as a double, which every number of at most 255 characters passes. A ``scaled_float`` still clamps
-#: a number whose scaled form passes a ``long``, because its scaling factor lives in the mapping, which is never read.
+#: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse no finite number, so they are
+#: checked by the floor alone. A ``scaled_float`` still clamps a number whose scaled value passes a ``long``, because
+#: its scaling factor lives in the mapping, which is never read.
 type NumberKind = Literal[
     'byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float', 'double', 'scaled_float'
 ]
@@ -117,9 +117,9 @@ class IndexColumn(Column):
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
     is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
-    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind refuses nothing (it is
-    checked as a double, which every number of at most 255 characters passes); a ``scaled_float`` still clamps a number
-    whose scaled form passes a ``long``, because its scaling factor lives in the mapping, which is never read.
+    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind refuses no finite
+    number, so it is checked by the floor alone; a ``scaled_float`` still clamps a number whose scaled value passes a
+    ``long``, because its scaling factor lives in the mapping, which is never read.
     """
 
     text: TextKind = 'text+keyword'
