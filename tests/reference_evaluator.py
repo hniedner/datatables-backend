@@ -193,10 +193,9 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
     is an `int` of any size, any other number a `Decimal` that keeps every digit written, its fraction's trailing zeros
     dropped. Not finite: step 2. More than 16,383 digits after the point: a limit of every column, step 3 (PRD-E3).
     More than ``engine.decimal_digits`` digits in all (SQL Server's 38; a fraction's trailing zeros and the zero before
-    the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). An exponent beyond what
-    a `Decimal` holds is out of scope (the generator does not send one), and so is a number whose written exponent
-    passes the 16,383 limit while its fraction without trailing zeros does not (zero included): PRD-F25 does not say
-    which way they count."""
+    the point of a number below one not counted): the column's own mistake, step 3.5 (PRD-E3). The limit is of the
+    value: a fraction's trailing zeros are not counted and zero has no fraction (PRD-F25). An exponent beyond what a
+    `Decimal` holds is out of scope (the generator does not send one)."""
 
     def read(text: str) -> int | Decimal:
         written = text.strip()
@@ -208,13 +207,10 @@ def _decimal_reader(engine: 'Engine') -> Callable[[str], int | Decimal]:
         except InvalidOperation:
             raise OutOfScope('a number a Decimal cannot read') from None
         assert isinstance(exponent, int)
-        written_exponent = exponent
         while exponent < 0 and len(digits) > 1 and digits[-1] == 0:  # a fraction's trailing zeros dropped, no rounding
             digits, exponent = digits[:-1], exponent + 1
         number = Decimal(0) if not any(digits) else Decimal((sign, digits, exponent))
         fraction = max(0, -exponent) if any(digits) else 0
-        if (written_exponent < -_FRACTION_DIGITS) != (fraction > _FRACTION_DIGITS):
-            raise OutOfScope('trailing zeros or zero beyond the 16,383rd digit: PRD-F25 does not say how they count')
         if fraction > _FRACTION_DIGITS:
             raise _Refused(3, 'invalid_number')
         if engine.decimal_digits is not None:

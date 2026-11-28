@@ -248,9 +248,10 @@ DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '123456789012
                     '0.305', '12345678901234567', '12345678901234567.8900', '-0.00', '3.1e-1', '0.3', '0.31', '0.3000',
                     '0', '00.31', '1.5e3']  # fmt: skip
 #: Numbers at a bound: 39 digits and `0.` with 39 digits are over SQL Server's 38, `0.` with 38 digits is not (the
-#: zero before the point is not counted); `1e-16384` holds more digits after the point than any column (step 3);
-#: `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3)
-DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '1e400', '1e999']
+#: zero before the point is not counted); `1e-16384` holds more digits after the point than any column (step 3), while
+#: `1.0e-16383` is the same number as `1e-16383` and `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are
+#: not finite (step 2) (PRD-F25, PRD-E3)
+DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '1.0e-16383', '0e-16384', '1e400', '1e999']
 #: Search words over a decimal's text (PRD-F23), each found in one spelling and not the other when a row holds the
 #: value it names (the scenario sets the first, one of the next two and the fourth; `68.00`, `.9` and `7.90` need the
 #: draw to give a row that value): `4568` in SQLite's text of the first three (`12345678901234568`) and in the fixed-scale one of
