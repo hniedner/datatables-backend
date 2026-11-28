@@ -476,14 +476,15 @@ float 65520.0, which overflows half) as `invalid_number`, where the server answe
   -0.0 and 0.0 for the `float` and `half_float` fields, with the cells of the `double` rows, so a `half_float` field
   keeps them apart too. That test is not kept: a measurement is a record here, and the library's answers for the same
   numbers are pinned through the public API by `test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field`,
-  which is INFERRED to give the cells above (a number whose double is zero as the row of 0.0, a nonzero one as its own
-  row) until CI has run it. The results for `<`, `>=`, `!=`, `between` and `!between` of `-1e-400` are INFERRED from the
-  `term` and `range` measurements above. CI's first live run (2026-11-26 UTC) had found `= -1e-50` on a `float` field
-  and `<= -1e-10` on a `half_float` field missing a 0.0: that was the exact answer. `!=` is the complement of `=` by
-  construction (INFERRED). RUN by CI (run 46091503895, 2026-11-27) on 3.10.0 and 2.19.7, against a `half_float` field:
-  `= 65519.999` is refused by the server with a 400 (`[half_float] supports only finite values, but got [65520.0]`)
-  where the library sent it. With the library refusing it, the `half_float-through-float` pair of `NUMBER_EDGES`
-  (`65519.99` answered, `65519.999` refused before the query and a `RequestError` through an undeclared column,
+  which gives the cells above (a number whose double is zero as the row of 0.0, a nonzero one as its own row): RUN by CI
+  (run 46095780308, 2026-11-27) on 3.10.0 and 2.19.7, all 13 cases. That run holds `=`, a list, `<`, `<=`, `>` and `>=`
+  of `-1e-400` too; the results for `!=`, `between` and `!between` of it are INFERRED from the `term` and `range`
+  measurements above. CI's first live run (2026-11-26 UTC) had found `= -1e-50` on a `float` field and `<= -1e-10` on a
+  `half_float` field missing a 0.0: that was the exact answer. `!=` is the complement of `=` by construction (INFERRED).
+  RUN by CI (run 46091503895, 2026-11-27) on 3.10.0 and 2.19.7, against a `half_float` field: `= 65519.999` is refused
+  by the server with a 400 (`[half_float] supports only finite values, but got [65520.0]`) where the library sent it.
+  With the library refusing it, the `half_float-through-float` pair of `NUMBER_EDGES` (`65519.99` answered, `65519.999`
+  refused before the query and a `RequestError` through an undeclared column,
   `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers`) is RUN by CI (run 46094665855,
   2026-11-27) on 3.10.0 and 2.19.7: it passes on both.
 - **Requirement:** PRD-F25, PRD-D23.
