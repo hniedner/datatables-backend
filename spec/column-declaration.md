@@ -140,3 +140,9 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   (a range mistake, step 3) is answered `invalid_date`.
 - **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
   column and, for the text column, `type="number"`.
+- **SPEC-D23.10** [OS] [SQL] A `number=` or a `text=` that is none of its kinds, and a `type=` that is none of the four,
+  raises `SchemaError` at construction, naming the column, what was written and the accepted ones. Before, the table
+  built and a number filter on it failed with a `KeyError` (a `number=` or a `type=`), or a text filter was wrongly
+  refused (a `text=`).
+- **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e300, -1e300, 0.5 and a
+  number of 255 digits sends each as it is.

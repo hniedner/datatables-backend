@@ -48,7 +48,8 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
 
 - A value outside a kind's range is refused with `invalid_number` before the query for `integer`, `long`,
   `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing,
-  so they have no kind.
+  so the measurement gave them no kind. The owner later approved both as kinds checked as a double, so that declaring
+  the mapping type of any number field builds; they still refuse nothing.
 - `byte` and `short` refuse only where OpenSearch does, beyond an `integer`'s range, and carry its bounds. A `byte` kind
   that refused 128 would take away an answer the library gives without a kind (`=` finds nothing, `<=` every row), and
   there is no failure to prevent there. SQL bounds a `SmallInteger` by 16 bits and refuses 40000; OpenSearch answers it

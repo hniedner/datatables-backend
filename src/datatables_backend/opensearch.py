@@ -24,6 +24,7 @@ from typing import Any
 from typing import Literal
 from typing import Protocol
 from typing import cast
+from typing import get_args
 
 from ._plan import Bound
 from ._plan import Capabilities
@@ -69,10 +70,13 @@ log = logging.getLogger('datatables_backend')
 #: which is what dynamic mapping creates for a string
 type TextKind = Literal['keyword', 'text', 'text+keyword']
 
-#: The mapping type of a number field, for the kinds that refuse a number (decision 011). ``byte`` and ``short`` are
-#: refused by OpenSearch only beyond an ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float``
-#: refuse nothing, so they have no kind.
-type NumberKind = Literal['byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float']
+#: The mapping type of a number field (decision 011). ``byte`` and ``short`` are refused by OpenSearch only beyond an
+#: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse nothing a request can send, so they
+#: are checked as a double, which every number of at most 255 characters passes. A ``scaled_float`` still clamps
+#: a number whose scaled form passes a ``long``, because its scaling factor lives in the mapping, which is never read.
+type NumberKind = Literal[
+    'byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float', 'double', 'scaled_float'
+]
 
 #: What OpenSearch accepts for each ``NumberKind`` (decision 011): the lowest and the highest number, as the message
 #: names them. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The floats'
@@ -86,7 +90,11 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'unsigned_long': (0, 2**64 - 1),
     'float': (-3.4028234663852886e38, 3.4028234663852886e38),
     'half_float': (-65504, 65504),
+    'double': (-1.7976931348623157e308, 1.7976931348623157e308),
+    'scaled_float': (-1.7976931348623157e308, 1.7976931348623157e308),
 }
+_TEXT_KINDS = get_args(TextKind.__value__)
+_NUMBER_KINDS = get_args(NumberKind.__value__)
 _FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
 _AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 
@@ -108,7 +116,10 @@ class IndexColumn(Column):
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
-    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``.
+    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``, and so does a
+    ``text`` or a ``number`` that is none of the kinds. A ``double`` or ``scaled_float`` kind refuses nothing (it is
+    checked as a double, which every number of at most 255 characters passes); a ``scaled_float`` still clamps a number
+    whose scaled form passes a ``long``, because its scaling factor lives in the mapping, which is never read.
     """
 
     text: TextKind = 'text+keyword'
@@ -407,11 +418,26 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
     return isinstance(total, Mapping) and total.get('relation') == 'gte'
 
 
+def _check_kinds(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
+    run time, and the table would build and fail on its first filter. The message names the column, what was written
+    and the accepted kinds, all of which the server declared."""
+    if not isinstance(column, IndexColumn):
+        return
+    for field_name, written, accepted in (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS)):
+        if written is not None and written not in accepted:
+            raise SchemaError(
+                f'The column "{column.name}" declares {field_name}="{written}", which is not a kind. Declare one of '
+                f'{", ".join(accepted)}.'
+            )
+
+
 def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
     plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
     unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too."""
+    declared on a column that is no number column is the server's mistake too, and so is a kind that is none of them."""
+    _check_kinds(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '

@@ -3183,3 +3183,37 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
             [IndexColumn('id', text='keyword'), IndexColumn('created', type='date', number='long')],
             unique_key='id',
         )
+
+
+@pytest.mark.parametrize(
+    ('column', 'written', 'accepted'),
+    [
+        pytest.param(
+            lambda: IndexColumn('n', type='number', number=cast(Any, 'decimal')), 'decimal', 'scaled_float', id='number'
+        ),
+        pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), 'Keyword', 'text+keyword', id='text'),
+        pytest.param(lambda: Column('n', type=cast(Any, 'numbr')), 'numbr', 'boolean', id='type'),
+    ],
+)
+def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kind_and_the_accepted_ones(
+    column: Callable[[], Column], written: str, accepted: str
+):
+    """SPEC-D23.10: the declaration is the integrator's mistake, found when the table is built. Without the check the
+    table builds and every filter on the column fails with a `KeyError` (a number kind or a type) or is wrongly refused
+    (a text kind). The message names the column, what was written and what is accepted, all declared by the server."""
+    with pytest.raises(SchemaError) as raised:
+        SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
+    message = str(raised.value)
+    assert '"n"' in message
+    assert f'"{written}"' in message
+    assert accepted in message
+
+
+@pytest.mark.parametrize('kind', ['double', 'scaled_float'])
+@pytest.mark.parametrize('text', ['1e300', '-1e300', '9' * 255, '0.5'])
+def test_a_double_or_a_scaled_float_kind_checks_a_number_as_a_double_and_sends_it(kind: NumberKind, text: str):
+    """SPEC-D23.11: the field refuses nothing, and a number of at most 255 characters is finite as a double, so the
+    kind builds and every such number is sent as it is. Without the kind the table did not build."""
+    response, client = asked(kind, **criterion('n', '=', text))
+    assert response.error is None
+    assert len(client.searches) == 1
