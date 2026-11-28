@@ -533,6 +533,28 @@ def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, w
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize(
+    'template',
+    [
+        f'Fix\n# Do not modify or remove the line above.\n{WORD}\n',  # the warning line alone is no scissors pair
+        f'Fix\n{SCISSORS} and more\n# Do not modify or remove the line above.\n{WORD}\n',  # git writes the line whole
+    ],
+    ids=['warning line alone', 'scissors line with more on it'],
+)
+def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, words: Path, template: str):
+    result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
+    assert result.returncode == 1, result.stderr
+
+
+def test_the_scissors_pair_uses_git_s_comment_character(repo: Path, words: Path):
+    git(repo, 'config', 'core.commentChar', ';')
+    warning = 'Do not modify or remove the line above.'
+    cut = write(repo / 'cut', f'Fix\n; ------------------------ >8 ------------------------\n; {warning}\n{WORD}\n')
+    uncut = write(repo / 'uncut', f'Fix\n{SCISSORS}\n# {warning}\n{WORD}\n')  # `#` lines: not git's pair here
+    assert scan('--message', str(cut), words=words, cwd=repo).returncode == 0
+    assert scan('--message', str(uncut), words=words, cwd=repo).returncode == 1
+
+
 def test_the_message_comment_character_is_git_s(repo: Path, words: Path):
     git(repo, 'config', 'core.commentChar', ';')
     dropped = write(repo / 'dropped', f'Remove a file\n{editor_hint(";")};\tdeleted: {WORD}.txt\n')
