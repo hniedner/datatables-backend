@@ -2971,7 +2971,8 @@ def test_a_fraction_on_an_integer_column_is_compared_as_the_number_written(diale
 
 def test_a_fraction_of_more_than_38_digits_on_an_integer_column_is_refused_on_sql_server():
     """SPEC-F25.12, SPEC-F25.14: the count of SQL Server's digits holds on an integer column too, for a fraction it
-    compares, `1e-16383` included (16383 digits after the point)."""
+    compares, `1e-16383` included (16383 digits after the point). That value catches a count of significant digits only,
+    which skips the zeros at the start of a fraction."""
     for value in ('8.' + '1' * 38, '1e-16383'):
         source: Any = Compiling(mssql.dialect())
         response = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '<', value)), source)
@@ -3097,9 +3098,11 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
         ('1e-9999999999999999999', True),
         ('1E-9999999999999999999', True),  # PRD-F25 takes either `e`
         ('-1.5e-9999999999999999999', True),
+        ('0.5e-9999999999999999999', True),  # nonzero though it starts with a zero
         ('1e9999999999999999999', False),  # no Decimal holds it; told the reason of `1e400`
         ('0e-9999999999999999999', False),  # zero has no fraction to count, whatever its spelling with such an exponent
         ('-0.0e-9999999999999999999', False),
+        ('+0e-9999999999999999999', False),
     ],
 )
 def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
