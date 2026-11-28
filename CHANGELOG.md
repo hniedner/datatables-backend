@@ -7,17 +7,18 @@ and the versioning policy is in the README.
 
 ## [0.2.0] - 2026-11-28
 
-This release makes a table refuse at construction several declarations that never worked, changes the default of
-`IndexColumn.text` to `None`, adds the `double` and `scaled_float` number kinds for OpenSearch columns, and changes a
-few answers (see Fixed): a number written as minus zero or too close to zero, the limits on a number's digits and on a
-`half_float`, a reversed `between`, and a column search with no word.
+This release makes a table refuse at construction several declarations that never worked as declared, changes the
+default of `IndexColumn.text` to `None`, adds the `double` and `scaled_float` number kinds for OpenSearch columns, and
+changes a few answers (see Fixed): a number written as minus zero or too close to zero, the limits on a number's digits
+and on a `half_float`, a reversed `between`, and a column search with no word.
 
 **Upgrade impact:** this is a minor release and it breaks the Python API in two ways; read Changed before upgrading.
-A table that declares something that never worked now raises `SchemaError` when it is built, where it built before and
-then did nothing or failed on its first request (an empty or `None` column name on SQL already failed to build, without
-saying the fix), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build each table once, as at
-start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong, and a number too close
-to zero for a double now answers as `0`. Nothing else needs a change.
+A table that declares something that never worked as declared now raises `SchemaError` when it is built, where it
+built before and then did nothing, answered wrongly, or failed on the first request that used it (on SQL, an empty or
+`None` column name with no `field`, and a misspelled `type=` on a string column, already failed to build, the first
+without saying the fix), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build each table once, as
+at start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong, and a number too
+close to zero for a double now answers as `0`. Nothing else needs a change.
 
 **Security:** none; this release fixes no known vulnerability.
 
@@ -29,9 +30,9 @@ to zero for a double now answers as `0`. Nothing else needs a change.
 
 ### Changed
 
-- **A table now raises `SchemaError` when it is built, for a declaration that never worked.** The message names the
-  column or what was written, and the fix. If your table declares one of these, it built before, or failed to build
-  without the fix, and raises this now:
+- **A table now raises `SchemaError` when it is built, for a declaration that never worked as declared.** The message
+  names the column or what was written, and the fix. If your table declares one of these, it built before, or failed to
+  build without the fix, and raises this now:
   - **`text=` on a column that is not a string column** (OpenSearch): `text='keyword'`, `'text'` or `'text+keyword'` on
     a number, date or boolean column was ignored. Remove the `text=`.
   - **A `search_value` that is not callable** (both backends), such as `'x'`, `''` or `0`: on a string column that holds
@@ -48,14 +49,16 @@ to zero for a double now answers as `0`. Nothing else needs a change.
     `KeyError`, and a misspelled `type=` failed the first SearchBuilder condition on it, both a 500 through the FastAPI
     adapter (on SQL, unless the check that a declared `type=` fits the column's SQL type refused a `type=` first). A
     misspelled `text=` on a string column had its whole-string conditions (`=`, `!=`, starts with, ends with and their
-    negations) and its ordering wrongly refused, and matched contains, a column search and the global search as
-    analysed text only (no substring inside a word). Use one of the accepted values, which the message lists.
+    negations), its lists of exact values (a `multi_values` list, a categorical regex, a ColumnControl list) and its
+    ordering wrongly refused, and matched contains, a column search and the global search as analysed text only (no
+    substring inside a word). Use one of the accepted values, which the message lists.
 - **`IndexColumn.text` is `None` when it is not declared** (OpenSearch), where it was `'text+keyword'`. If your code
   reads `column.text`, or compares an `IndexColumn` with one built with `text='text+keyword'` (`IndexColumn('x') ==
   IndexColumn('x', text='text+keyword')` is now false), read `None` as `'text+keyword'` on a string column; a string
   column that does not declare it is still read as `text+keyword`, so its answers do not change. An explicit
-  `text=None` (which the type did not allow) now behaves as not declaring it: 0.1.3 refused `=`, `!=`, starts with, ends
-  with and ordering on it, and matched contains, a column search and the global search as analysed text only.
+  `text=None` (which the type did not allow) now behaves as not declaring it: 0.1.3 refused its whole-string conditions
+  (`=`, `!=`, starts with, ends with and their negations), its lists of exact values and its ordering, and matched
+  contains, a column search and the global search as analysed text only.
 
 ### Fixed
 
