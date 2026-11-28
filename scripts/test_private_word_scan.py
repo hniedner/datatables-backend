@@ -232,6 +232,20 @@ def test_a_symlink_target_is_scanned(tmp_path: Path, words: Path):
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
+def test_a_symlink_named_with_a_word_is_found_whatever_its_target(tmp_path: Path, words: Path):
+    link = tmp_path / f'{WORD}-link'
+    link.symlink_to('clean-target')
+    result = scan(str(link), words=words)
+    assert result.returncode == 1
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
+
+
+def test_a_list_word_with_spaces_around_it_still_matches(tmp_path: Path):
+    padded = write(tmp_path / 'padded.txt', f'  {WORD}  \n')
+    planted = write(tmp_path / 'notes.md', f'see {WORD} here\n')
+    assert scan(str(planted), words=padded).returncode == 1
+
+
 def test_a_symlink_target_in_history_is_scanned(repo: Path, words: Path):
     (repo / 'link').symlink_to(f'../{WORD}/target')
     git(repo, 'add', '.')
