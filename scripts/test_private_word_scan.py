@@ -553,6 +553,12 @@ def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, word
     assert result.returncode == 1, result.stderr
 
 
+def test_a_message_is_cut_at_git_s_scissors_pair_and_not_above_it(tmp_path: Path, words: Path):
+    template = f'Fix {WORD}\n{SCISSORS}\n# Do not modify or remove the line above.\ndiff --git a/a.txt b/a.txt\n'
+    result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
+    assert result.returncode == 1, result.stderr  # the word above the pair is the message
+
+
 def test_the_scissors_pair_uses_git_s_comment_character(repo: Path, words: Path):
     git(repo, 'config', 'core.commentChar', ';')
     warning = 'Do not modify or remove the line above.'
@@ -958,6 +964,7 @@ def test_an_object_git_cannot_read_cannot_check(
     assert scanner.main(['--history']) == scanner.COULD_NOT_CHECK
     shown = capsys.readouterr().err
     assert 'could not check: an object could not be read' in shown  # not the generic git failure
+    assert 'git fsck' in shown  # and it says what to do
     assert WORD.casefold() not in shown.casefold()
 
 
