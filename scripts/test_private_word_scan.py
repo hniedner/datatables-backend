@@ -143,6 +143,31 @@ def test_a_message_scan_without_a_file_cannot_check(words: Path):
     assert 'could not check' in result.stderr
 
 
+@pytest.mark.parametrize('args', [(), ('--files',)])
+def test_a_scan_of_no_file_still_needs_the_word_list(args: tuple[str, ...]):
+    result = scan(*args, words=None)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_a_broken_git_config_cannot_check_a_message(tmp_path: Path, words: Path):
+    broken = write(tmp_path / 'gitconfig', '[core\n')
+    message = write(tmp_path / 'message.txt', 'A clean message\n')
+    result = scan('--message', str(message), words=words, extra={'GIT_CONFIG_GLOBAL': str(broken)})
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
+def test_a_ref_whose_objects_cannot_be_listed_cannot_check(repo: Path, words: Path):
+    git(repo, 'tag', 'tree-tag', 'HEAD^{tree}')
+    blob = git(repo, 'rev-parse', 'HEAD:a.txt').strip()
+    (repo / '.git' / 'objects' / blob[:2] / blob[2:]).chmod(0o644)
+    (repo / '.git' / 'objects' / blob[:2] / blob[2:]).unlink()  # the tree names a blob that is gone
+    result = scan('--refs', words=words, cwd=repo)
+    assert result.returncode == 2
+    assert 'could not check' in result.stderr
+
+
 def test_a_history_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Path):
     outside = tmp_path / 'not-a-repo'
     outside.mkdir()
