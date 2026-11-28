@@ -977,7 +977,7 @@ _UNREADABLE = {  # what batch() may get
     'size ending on a space': f'{_ID} blob 5\nhello {_ID} blob 1\nx\n',  # a body longer than its size: no newline
     # lines git never prints, read as a header after a wrong declared end
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
-    'a fourth field': f'{_ID} blob 5 5\nhello\n',  # ends in digits, so only the field count refuses it
+    'a fourth field': f'{_ID} blob 5 5\nhello\n',  # its size field is digits, so only the field count refuses it
 }
 
 
@@ -1103,7 +1103,8 @@ def test_a_ref_scan_outside_a_repository_cannot_check(tmp_path: Path, words: Pat
     result = scan('--refs', words=words, cwd=outside)
     assert result.returncode == 2
     assert 'could not check: git or the file system failed' in result.stderr
-    assert 'git fsck' in result.stderr  # and it says what to do
+    fix = 'check that git runs here (git fsck in the repository) and that the word list and every file given to the'
+    assert f'{fix} scan can be read' in result.stderr  # and it says what to do
 
 
 BOMMED = {  # list word and planted bytes: a byte order mark in front of text in another encoding
