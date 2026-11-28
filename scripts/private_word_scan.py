@@ -60,7 +60,6 @@ refuses it.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 import os
@@ -252,7 +251,8 @@ def scan_refs(words: Words) -> list[str]:
 
 
 def _ref_findings(line: bytes, words: Words) -> list[str]:
-    """What one ref holds: its name, and unless it names a commit, the objects it brings."""
+    """What one ref holds: its name, and unless it names a commit, the whole paths under a tree it names and the objects
+    it brings."""
     findings: list[str] = []
     kind, peeled, ref = line.split(b' ', 2)
     shown = redact(ref, words)
@@ -326,22 +326,15 @@ def scan_history(words: Words) -> list[str]:
     return list(dict.fromkeys(findings))  # a commit a tag brings is also in the store: report it once
 
 
-# The modes that take no argument, matched exactly, so a file named like a mode, given without the `--files` marker,
-# stays a file
-_EXACT_MODES: dict[tuple[str, ...], tuple[Callable[[Words], list[str]], str]] = {
-    ('--refs',): (scan_refs, 'every local ref'),
-    ('--history',): (scan_history, 'every object in the repository'),
-}
-
-
 def _scan(argv: list[str], words: Words) -> tuple[list[str], str]:
     """The findings of the mode ``argv`` asks for, and what was scanned. Raises what ``main`` turns into "could not
     check": CouldNotCheckError, and the CalledProcessError and OSError of git and the file system."""
     if argv[:1] == ['--files']:  # the hook's marker: whatever follows is a path, even one named like a mode
         return scan_files(argv[1:], words), f'{len(argv) - 1} file(s)'
-    if tuple(argv) in _EXACT_MODES:
-        scan, scanned = _EXACT_MODES[tuple(argv)]
-        return scan(words), scanned
+    if argv == ['--refs']:  # exactly, so a file named like a mode, given without the marker, stays a file
+        return scan_refs(words), 'every local ref'
+    if argv == ['--history']:
+        return scan_history(words), 'every object in the repository'
     if argv[:1] == ['--message']:
         return _message_scan(argv, words), 'the commit message'
     return scan_files(argv, words), f'{len(argv)} file(s)'
