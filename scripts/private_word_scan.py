@@ -251,8 +251,8 @@ def scan_refs(words: Words) -> list[str]:
 
 
 def _ref_findings(line: bytes, words: Words) -> list[str]:
-    """What one ref holds: its name, and unless it names a commit, the whole paths under a tree it names and the objects
-    it brings."""
+    """What one ref holds: its name, and unless it names a commit, the whole paths under a tree it names (or a tag
+    on one peels to) and the objects it brings."""
     findings: list[str] = []
     kind, peeled, ref = line.split(b' ', 2)
     shown = redact(ref, words)
