@@ -20,8 +20,8 @@ and the versioning policy is in the README.
   bound answer as for `0` too. A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`,
   `-1e-10`) is sent as it is, as before.
 - On OpenSearch, a column declared `half_float` (`IndexColumn(number='half_float')`) answers `invalid_number` for
-  `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with
-  the server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).
+  `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with the
+  server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken

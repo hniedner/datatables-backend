@@ -334,7 +334,7 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.15** [OS] With `n`, a number column declared a `long`: SearchBuilder `=` with `-0.00` sends the body of `0`
   on the `long`. PRD-F25 sends a whole number as written, and one written with a point or an exponent as the nearest
   double, or as `0` when that double is zero: `-1e-400`, a number whose double is -0.0, sends the body of `0` on a
-  column without a kind in `=`, `<`, `<=`, `>`, `>=` and a `multi_values` list, `-2e-324` and `1e-400` in `=`, and
+  column without a kind in `<`, `<=`, `>`, `>=` and a `multi_values` list, `-2e-324` and `1e-400` in `=`, and
   `-1e-400` in `=` on a column declared `float` or `half_float`; `-5e-324` and `3e-324`, which are nonzero doubles, go
   in `=` as the doubles they are on the column without a kind. On a column declared `float` or `half_float`, `-1e-50` on
   `float` and `-1e-10` on `half_float`, which are nonzero doubles that the field rounds to -0.0 in a `term`, go in `=`

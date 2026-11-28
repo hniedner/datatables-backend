@@ -89,7 +89,7 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'half_float': (-65504, 65504),
 }
 #: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
-#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (run by CI, run 46091503895,
+#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (CI run 46091503895,
 #: OpenSearch 3.10.0 and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is
 #: computed from that).
 _FLOAT_FORMATS = {'float': ('<f',), 'half_float': ('<f', '<e')}
@@ -614,8 +614,8 @@ def _accepted(kind: str, sent: int | float) -> bool:
     ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. ``struct.pack``
     raises ``OverflowError`` there. It is given a float: ``struct`` would raise ``struct.error`` for an int too large to
     convert. ``float(sent)``, outside the ``try``, would raise ``OverflowError`` for one too large for a double, which
-    a number never is: a whole number has at most 255 digits (PRD-F14) and any other is the finite
-    double ``_json`` made of what ``parse_number`` allowed."""
+    a number never is: a whole number has at most 255 digits (PRD-F14) and any other is the finite double
+    ``_json`` made of what ``parse_number`` allowed."""
     if kind in _FLOAT_FORMATS:
         # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
         # refused here, where the server might round it straight to a float it holds: a conservative refusal

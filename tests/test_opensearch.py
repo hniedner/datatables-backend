@@ -3120,11 +3120,9 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
     [
         # the exact zero, where no `-1e-400` row stands for it: an integer kind
         ('long', 'equals', '-0.00'),
-        # `-1e-400` covers an equality, each bound and a list: a `terms` list is built apart from a bound or a `term`
-        *(
-            (None, path, '-1e-400')
-            for path in ('equals', 'less', 'less-or-equal', 'greater', 'greater-or-equal', 'multi-values')
-        ),
+        # `-1e-400` covers each bound and a list (a `terms` list is built apart from a bound or a `term`), and its
+        # equality is the `-2e-324` row and the two float kinds below
+        *((None, path, '-1e-400') for path in ('less', 'less-or-equal', 'greater', 'greater-or-equal', 'multi-values')),
         (None, 'equals', '1e-400'),  # its double is 0.0, which goes as the integer `0` too, not as `0.0`
         (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
         # a column that declares a float kind: its numbers could be converted apart from `_json`
