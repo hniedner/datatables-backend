@@ -523,7 +523,8 @@ def _number(
         else f'The filter on "{declared.name}" needs a number'
     )
     if isinstance(sql_type, Integer):
-        if _fraction(value):  # no integer equals it: an exact decimal compares as it is, a converting type's as a float
+        # No integer equals a fraction: a decimal compares as it is (a float on SQLite), a converting type's as a float
+        if _fraction(value):
             if isinstance(column.type, TypeDecorator):
                 # Bound as a float of its own: as the decorator's type, psycopg 3 and asyncpg would cast it to the
                 # impl's INTEGER, which rounds 7.5 to 8

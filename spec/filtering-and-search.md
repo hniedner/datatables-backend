@@ -332,9 +332,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`;
-  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column, or on an integer
-  column not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative exponent beyond
-  what a decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason; `1e9999999999999999999` and
+  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column, or on an integer column
+  not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative exponent beyond what a
+  decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason; `1e9999999999999999999` and
   `0e-9999999999999999999` (zero has no fraction) get
   `The filter on "i" needs one number, written like 42 or -3.5.`
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`

@@ -3028,9 +3028,9 @@ def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_
     the `Decimal` as it is (RUN by CI, 2026-11-28 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
     stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8.
     `1e-16383`, which no float holds, is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row,
-    MySQL and MariaDB find it too (RUN by CI, 2026-11-28 UTC: a fraction of more than 30 digits after the point is
-    compared as a double there, docs/databases.md), and SQL Server refuses it by its 38 digits. These are today's
-    results, pinned so the stated limits are not forgotten if they change."""
+    MySQL and MariaDB find it too (RUN by CI, 2026-11-28 UTC; INFERRED: a fraction of more than 30 digits after the
+    point is compared as a double there, docs/databases.md), and SQL Server refuses it by its 38 digits. These are
+    today's results, pinned so the stated limits are not forgotten if they change."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
     session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
