@@ -466,6 +466,12 @@ def test_a_utf32_file_is_read_by_its_byte_order_mark(tmp_path: Path, words: Path
     assert scan(str(planted), words=words).returncode == 1
 
 
+def test_a_utf32_blob_in_history_is_found(repo: Path, words: Path):
+    """No other reading covers UTF-32, so only the byte order mark finds the word in a blob."""
+    commit(repo, 'notes.txt', f'see {WORD} here\n'.encode('utf-32'))
+    assert scan('--history', words=words, cwd=repo).returncode == 1
+
+
 def test_a_word_list_saved_with_a_byte_order_mark_keeps_its_first_word(tmp_path: Path):
     listed = tmp_path / 'bom.txt'
     listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
@@ -538,8 +544,9 @@ def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, w
     [
         f'Fix\n# Do not modify or remove the line above.\n{WORD}\n',  # the warning line alone is no scissors pair
         f'Fix\n{SCISSORS} and more\n# Do not modify or remove the line above.\n{WORD}\n',  # git writes the line whole
+        f'Fix\n{SCISSORS}\n# Do not modify or remove the line above. And more.\n{WORD}\n',  # and the warning too
     ],
-    ids=['warning line alone', 'scissors line with more on it'],
+    ids=['warning line alone', 'scissors line with more on it', 'warning line with more on it'],
 )
 def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, words: Path, template: str):
     result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
