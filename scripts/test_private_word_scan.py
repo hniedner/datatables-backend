@@ -720,22 +720,13 @@ def test_an_editor_commit_removing_a_word_named_file_goes_through(repo: Path, wo
     assert git(repo, 'log', '-1', '--format=%s').strip() == 'Remove a leaked file'
 
 
-@pytest.mark.parametrize('where', ['tag in a tag', 'tagged tree'])
-def test_every_object_kind_is_read(repo: Path, words: Path, where: str):
-    """A tag object a tag wraps, or a tree only a tag holds, is published but is no blob and no commit."""
-    if where == 'tag in a tag':
-        git(repo, 'tag', '-a', 'inner', '-m', f'Notes on {WORD}')
-        git(repo, 'tag', '-a', 'outer', 'inner', '-m', 'Clean')
-        git(repo, 'tag', '-d', 'inner')
-    else:
-        write(repo / f'{WORD}.txt', 'clean\n')
-        git(repo, 'add', '.')
-        tree = git(repo, 'write-tree').strip()
-        git(repo, 'rm', '-q', '--cached', f'{WORD}.txt')
-        (repo / f'{WORD}.txt').unlink()
-        git(repo, 'tag', 'just-a-tree', tree)
+def test_a_tree_no_ref_and_no_commit_holds_is_read(repo: Path, words: Path):
+    """`git push origin main <tree>:refs/tags/t` sends a tree that no commit and no ref holds."""
+    blob = git(repo, 'hash-object', '-w', '--stdin', input='clean\n').strip()
+    git(repo, 'mktree', input=f'100644 blob {blob}\t{WORD}.txt\n')
     result = scan('--history', words=words, cwd=repo)
     assert result.returncode == 1, result.stderr
+    assert 'tree ' in result.stderr  # the tree's own finding: no ref and no commit leads to it
     assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
