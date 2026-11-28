@@ -5,8 +5,61 @@ and the versioning policy is in the README.
 
 ## [Unreleased]
 
+### Added
+
+- On OpenSearch, `IndexColumn(number=...)` accepts `double` and `scaled_float`. Both refuse no finite number, so they
+  are checked as a column with no kind is: at most 255 characters and finite as a double. A `scaled_float` still clamps
+  a number whose scaled value passes a `long`, because its scaling factor lives in the mapping, which is never read.
+
+### Changed
+
+- On OpenSearch, `IndexColumn.text` is `None` when it is not declared, where it was `'text+keyword'`. A string column
+  that does not declare it is still read as `text+keyword`, so no answer changes (an explicit `text=None`, whose
+  whole-string conditions and ordering 0.1.3 wrongly refused and whose contains, column search and global search it
+  matched as analysed text only, now answers as `text+keyword` too); a `text` other than `None`, `text+keyword`
+  included, on a column that is not a string column is refused.
+
 ### Fixed
 
+- A table that declared a `text=` other than `None` on a column that is not a string column, a `search_value` that is
+  not callable, or an empty column name or `field` now raises `SchemaError` when it is built, naming the column or what
+  was written, and the fix. Before, the `text=` was ignored, a non-callable `search_value` on a string column that holds
+  a whole string raised `TypeError` on the first request that compared a search value with the column (`=`, `!=`, a
+  column search or the global search) (a falsy one, such as `''` or `0`, silently made the column compare by whole
+  value), an empty `field` was read as the name, and an empty name with no `field` sent an empty field name to
+  OpenSearch (`null` for a name of `None`; on SQL it was refused only as a missing column, with no fix, and a name of
+  `None` with no `field` raised SQLAlchemy's `ArgumentError`). A table that used to build and now fails to build is the
+  declaration being wrong.
+- A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values now raises
+  `SchemaError` when the table is built, naming the column, what was written and the accepted values. Before, such a
+  table built: a table with `number='double'` (then no kind, as is any other name outside them) answered a filter that
+  carries a number on that column with a 500 (`KeyError`), a misspelled `type=` did the same for any SearchBuilder
+  condition on it (on SQL, unless the older SQL-type check refused it), and a misspelled `text=` on a string column had
+  its whole-string conditions (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused,
+  and matched contains, a column search and the global search as analysed text only (no substring inside a word).
+  A table that used to build and now fails to build is the declaration being wrong.
+- On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
+  `-1e-400`, is sent as `0`, as `0` is: a whole number goes as written, and one written with a point or an exponent as
+  the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it (PRD-F25). Before, such a
+  number with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or
+  `half_float` field keeps apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a
+  column search of it and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for
+  `0`. For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
+  for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none, and
+  `>` and `!=` no longer find it. For a document holding -0.0 in a `double` or a `float` field, `=`, `>=`, a column
+  search and a list entry with either no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a
+  bound answer as for `0` too. A number that is tiny only in a `float` or `half_float` field's own format (`-1e-50`,
+  `-1e-10`) is sent as it is, as before.
+- On OpenSearch, a column declared `half_float` (`IndexColumn(number='half_float')`) answers `invalid_number` for
+  `65519.999`, which the field reads through a 32-bit float as 65520.0 and refuses; before, the request failed with the
+  server's own 400 (`[half_float] supports only finite values, but got [65520.0]`).
+- The limit of 16,383 digits after the decimal point is read from the number's value, not from how it is written:
+  `1e-16383` and `1.0e-16383` are the same number, and the second is now answered too (it was refused for having too
+  many digits after the point), as are `100e-16385` and `0e-16384`; `1e-16384` and its spellings are still
+  `invalid_number`, and so is a nonzero number with a negative exponent beyond what a decimal holds
+  (`1e-9999999999999999999`), which used to be told "needs one number" and now gets this limit's reason.
+  On SQL Server, on a `Numeric` column (behind a `TypeDecorator` too) or a plain integer column, of the numbers
+  answered above only `0e-16384` is answered there: its limit of 38 digits refuses the others.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken
@@ -18,10 +71,6 @@ and the versioning policy is in the README.
   with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
   with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
   refused with `invalid_character`.
-- On OpenSearch, a number written as zero with a sign, such as `-0.00`, is sent as `0`, as `0` is. On a document
-  holding 0.0 in a `double` or `float` field, the library sent -0.0, which such a field keeps apart from 0.0: so
-  SearchBuilder `=` and `<=` with `-0.00`, a column search of `-0.00` and a list entry of `-0.00` missed the document,
-  and `>` and `!=` with `-0.00` wrongly found it. Each now answers as for `0`.
 
 ## [0.1.3] - 2026-11-25
 

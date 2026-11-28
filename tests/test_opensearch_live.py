@@ -72,10 +72,11 @@ MAPPING = {
         'n_short': {'type': 'short'},
         'n_long': {'type': 'long'},
         'n_unsigned': {'type': 'unsigned_long'},
+        # `n_float`, `n_half` and `n_double` keep -0.0 apart from 0.0; b2 holds 0.0 in each
         'n_float': {'type': 'float'},
         'n_half': {'type': 'half_float'},
         'n_scaled': {'type': 'scaled_float', 'scaling_factor': 100},
-        'n_double': {'type': 'double'},  # which keeps -0.0 apart from 0.0; b2 holds 0.0
+        'n_double': {'type': 'double'},
         'label': KEYWORD_TEXT,  # declared only by the table `labelled` below
         # A whole string the server folds to ASCII and to small letters; declared only by the table `folded` below
         'folded': {'type': 'keyword', 'normalizer': 'to_ascii'},
@@ -112,7 +113,8 @@ DOCUMENTS: list[dict[str, Any]] = [
     {'id': 'a1', 'title': 'Apple pie', 'body': 'granny smith apples', 'pages': 12, 'created': '2026-07-15',
      'meta': {'author': 'Ann'}, 'active': True, 'label': ESCAPED, 'folded': 'a*b'},
     {'id': 'b2', 'title': 'Banana bread', 'body': 'ripe bananas and green tea', 'pages': 30, 'created': '2026-07-16',
-     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b', 'n_double': 0.0},
+     'meta': {'author': 'Bob'}, 'active': False, 'label': DECOY, 'folded': f'a{ASTERISK}b', 'n_double': 0.0,
+     'n_float': 0.0, 'n_half': 0.0},
     {'id': 'c3', 'title': 'Cherry tart 100%', 'body': 'sour cherries', 'label': LONGEST, 'folded': 'a?b',
      'n_unsigned': 2**64 - 1, 'n_scaled': (2**63 - 1) / 100},  # the largest of each, for the two silent answers below
     {'id': 'd4', 'title': 'apple crumble', 'body': 'green apples', 'pages': 12, 'created': '2025-01-01',
@@ -829,10 +831,11 @@ def numbers_in(field: str, kind: NumberKind | None) -> SearchTable:
 def test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers(
     client: OpenSearch, kind: NumberKind, last: str, first: str
 ):
-    """SPEC-D23.1 on a real server: the last value of each edge is answered through the declared column, the first is
-    `invalid_number` before the query, and the same value through an undeclared column is the server's own 400. So the
-    edge the kind carries is the server's, including the exact edge of `byte` and `short` (an integer's) and the
-    rounding edge of `float`, which the measurement of decision 011 only bracketed."""
+    """SPEC-D23.1 on a real server: a value the server answers is answered through the declared column, a value it
+    refuses is `invalid_number` before the query, and the same value through an undeclared column is the server's own
+    400. So the edge the kind carries is the server's, including the exact edge of `byte` and `short` (an integer's)
+    and the rounding edge of `float`, which the measurement of decision 011 only bracketed; the `half_float` pair
+    through a float straddles its edge."""
     field = NUMBER_FIELDS[kind]
     assert numbers_in(field, kind).fetch_sync(request('id', 'n', **criterion('n', '=', last)), client).error is None
     params = request('id', 'n', **criterion('n', '=', first))
@@ -861,8 +864,9 @@ def test_a_declared_unsigned_long_refuses_minus_one_in_a_list_where_the_server_a
 
 
 def test_a_scaled_float_answers_a_number_beyond_its_range_as_its_largest(client: OpenSearch):
-    """PRD section 5, decision 011: no request fails on a `scaled_float`, so there is no kind for it; 1e300 finds the
-    document that holds the largest value, which is a wrong match without an error."""
+    """PRD section 5, decision 011: no request fails on a `scaled_float` (a declared one sends the same body, so it is
+    INFERRED to answer alike); 1e300 finds the document that holds the largest value, which is a wrong match without an
+    error."""
     response = numbers_in('n_scaled', None).fetch_sync(request('id', 'n', **criterion('n', '=', '1e300')), client)
     assert ids(response) == ['c3']
 
@@ -876,12 +880,42 @@ def test_a_255_digit_number_is_answered_by_a_double_and_refused_by_a_float_field
         numbers_in('n_float', None).fetch_sync(params, client)
 
 
-@pytest.mark.parametrize('condition', ['=', '<='])
-def test_minus_zero_finds_a_zero_on_a_double_field(client: OpenSearch, condition: str):
-    """SPEC-F25.15 on a real server: b2 holds 0.0 in a `double` field, which keeps -0.0 apart from 0.0 in a `term` and
-    a `range` (docs/databases.md), so `= -0.00` and `<= -0.00` found nothing while the library sent -0.0."""
-    params = request('id', 'n', **criterion('n', condition, '-0.00'))
-    assert ids(numbers_in('n_double', None).fetch_sync(params, client)) == ['b2']
+#: What a number finds of b2, the only document with a value (0.0) in `n_double`, `n_float` and `n_half`, through the
+#: library: the counts for `=`, a `multi_values` list, `<`, `<=`, `>` and `>=`. A number whose double is zero
+#: (`-1e-400`, which the unit tests show sends the body of `0`) goes as `0`, so it has the answers of 0.0; a nonzero one
+#: goes as it is, so the field's own rounding answers, as docs/databases.md records from the raw queries. `-1e-400` is
+#: not run on `n_float`: the answers of `1e-50` there are the same, and the unit tests show it sent as `0`.
+ZERO_COUNTS = (1, 1, 0, 1, 0, 1)
+TINY_NUMBER_COUNTS = [
+    ('n_double', None, '-1e-400', ZERO_COUNTS),
+    ('n_half', 'half_float', '-1e-400', ZERO_COUNTS),
+    ('n_float', 'float', '-1e-50', (0, 0, 0, 0, 1, 1)),
+    ('n_float', 'float', '1e-50', (1, 1, 0, 1, 0, 1)),
+    ('n_half', 'half_float', '-1e-10', (0, 0, 0, 0, 1, 1)),
+    ('n_half', 'half_float', '1e-10', (1, 1, 1, 1, 0, 0)),
+]
+
+
+@pytest.mark.parametrize(('field', 'kind', 'text', 'counts'), TINY_NUMBER_COUNTS)
+def test_what_a_tiny_number_finds_of_a_zero_through_each_kind_of_field(
+    client: OpenSearch, field: str, kind: NumberKind | None, text: str, counts: tuple[int, ...]
+):
+    """SPEC-F25.15 on a real server: b2 is the only document with a value, 0.0, in each of `n_double`, `n_float` and
+    `n_half`, so the counts are its answers (another document with one would change them). A number whose double is
+    zero is sent as `0` and has the answers of 0.0, `-1e-400` too, where it would be -0.0 and keep `=`, `<=` and a
+    list from finding b2 and let `>` find it. A nonzero number is sent as it is and the field rounds it:
+    a `float` field reads `-1e-50`, and a `half_float` field `-1e-10`, as -0.0, which is not 0.0, and `1e-50` and
+    `1e-10` as 0.0, in `=` and a list; a `half_float` range rounds its bound in the direction of the range, so `<` and
+    `>=` with `1e-10` answer as the exact number does, where a `float` range rounds to the nearest float first. The
+    counts of a row are the whole result, so a mismatch shows which cell differs."""
+    table = numbers_in(field, kind)
+    params = [
+        request('id', 'n', **criterion('n', '=', text)),
+        request('id', 'n', column_search={'n': {'multi_values': [text, '7']}}),
+        *(request('id', 'n', **criterion('n', condition, text)) for condition in ('<', '<=', '>', '>=')),
+    ]
+    found = tuple(len(ids(table.fetch_sync(one, client))) for one in params)
+    assert found == counts
 
 
 def test_a_date_field_declared_as_a_string_fails_a_global_search_with_the_clients_error(client: OpenSearch):

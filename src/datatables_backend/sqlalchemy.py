@@ -71,11 +71,13 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import check_name
 from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
 from ._plan import plan
 from ._plan import refused
+from ._plan import without_trailing_zeros
 from .cache import AsyncTotalStore
 from .cache import TotalStore
 from .cache import key_digest
@@ -153,6 +155,7 @@ class SQLTable:
                     f'The column "{column.name}" is an IndexColumn, which declares an OpenSearch field, and a SQL '
                     f'table ignores what it adds. Declare it as Column("{column.name}", ...) instead.'
                 )
+            check_name(column)  # before the missing-column check, which cannot say what an empty name is
         self.base_filter = base_filter
         self.rows = rows or RowHooks()
         self.total_cache = total_cache
@@ -498,21 +501,24 @@ def _number(
 ) -> Any:
     """``value`` as the column compares it, by the type the column stores (PRD-F25).
 
-    An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a
-    ``SmallInteger``, 64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is
-    unsigned (MySQL's). On SQL Server a ``Numeric`` column takes a number of at most 38 digits in all, before and after
-    the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses a
-    longer one. A number outside either is the user's mistake. No other database bounds a ``Numeric`` column here: a
-    filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they answer it.
+    An integer column has a range (as SQL Server's and PostgreSQL's integers have it): 16 bits for a ``SmallInteger``,
+    64 for a ``BigInteger``, 32 for any other ``Integer``, from zero up where the type says it is unsigned (MySQL's). On
+    SQL Server a ``Numeric`` column, and an integer column given a number with a fraction (not through a
+    ``TypeDecorator``, whose number goes as the nearest float), take a number of at most 38 digits in all, before and
+    after the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses
+    a longer one (measured on a ``Numeric`` column). A number outside the integer range or past the 38 digits is the
+    user's mistake. No other database bounds a ``Numeric`` column here: ``< 1000`` on a ``Numeric(5, 2)`` is a fair
+    question, and they answer it.
 
     A number goes as the column compares. To an exact ``Numeric`` column it goes as a ``Decimal`` with every digit
-    written, when it has a point or an exponent or lies outside the signed 64-bit range that a driver sends a whole
-    number in. To an integer column a number with a fraction goes as the nearest float, and a whole number written
-    with a point (``8.0``) as that whole number. To any other column (a ``Float``, an expression without a type) it
-    goes as the nearest float, which holds every number a request may carry (at most 255 characters, below 1.8e308).
+    written but a fraction's trailing zeros, when it has a point or an exponent or lies outside the signed 64-bit range
+    that a driver sends a whole number in. To an integer column a number with a fraction goes as a ``Decimal`` too (the
+    nearest float through a ``TypeDecorator``), and a whole number written with a point (``8.0``) as that whole number.
+    To any other column (a ``Float``, an expression without a type) it goes as the nearest float, which holds every
+    number a request may carry (at most 255 characters, below 1.8e308).
 
-    The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value
-    is one of several (a list, or the two of a ``between``), as for ``parse_number``."""
+    The reason names ``declared`` and the bounds, which are the column's, not the user's; ``listed`` says the value is
+    one of several (a list, or the two of a ``between``), as for ``parse_number``."""
     sql_type = _sql_type(column)
     needed = (
         f'Each value in the filter on "{declared.name}" must be a number'
@@ -520,7 +526,8 @@ def _number(
         else f'The filter on "{declared.name}" needs a number'
     )
     if isinstance(sql_type, Integer):
-        if _fraction(value):  # no integer equals it: an exact decimal compares as it is, a converting type's as a float
+        # No integer equals a fraction: a decimal compares as it is (a float on SQLite), a converting type's as a float
+        if _fraction(value):
             if isinstance(column.type, TypeDecorator):
                 # Bound as a float of its own: as the decorator's type, psycopg 3 and asyncpg would cast it to the
                 # impl's INTEGER, which rounds 7.5 to 8
@@ -547,11 +554,11 @@ def _fraction(value: int | Decimal) -> bool:
 def _decimal(
     column: ColumnElement[Any], value: int | Decimal, needed: str, declared: Column, dialect: Dialect
 ) -> int | Decimal | ColumnElement[Any]:
-    """``value`` for a column that compares exactly: a whole number within 64 bits as an ``int`` (the driver's own
-    integer), any other as a ``Decimal`` with every digit written. SQL Server refuses a number of more than 38 digits
-    in all, which is the user's mistake here (``_number``)."""
+    """``value`` for a column that compares exactly: an ``int`` within 64 bits as that ``int`` (the driver's own
+    integer), any other number as a ``Decimal`` with every digit written but a fraction's trailing zeros. SQL Server
+    refuses a number of more than 38 digits in all, which is the user's mistake here (``_number``)."""
     if isinstance(value, Decimal):
-        value = _without_trailing_zeros(value)
+        value = without_trailing_zeros(value)
     if dialect.name == 'mssql' and _digits(value) > _MSSQL_DECIMAL_DIGITS:
         raise mistake(
             'datatables_number_out_of_range',
@@ -566,20 +573,6 @@ def _decimal(
     # Bound as a scale-free NUMERIC: asyncpg would cast a Decimal compared with the column to the column's own
     # NUMERIC(p, s), and a number with more digits than that overflowed it
     return literal(Decimal(value), Numeric())
-
-
-def _without_trailing_zeros(value: Decimal) -> Decimal:
-    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and zero is
-    zero. The count of SQL Server's 38 digits needs it (a number is no longer for the zeros it is written with), and
-    every database then gets the same number. A whole number stays as written: ``1E+2`` is not turned into ``100``,
-    nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would), which changes nothing for a database."""
-    sign, digits, point = value.as_tuple()
-    exponent = int(point)  # a finite number's
-    if not any(digits):  # zero has no digits to keep, however long its fraction is written
-        return Decimal(0)
-    while exponent < 0 and len(digits) > 1 and digits[-1] == 0:
-        digits, exponent = digits[:-1], exponent + 1
-    return Decimal((sign, digits, exponent))
 
 
 def _digits(value: int | Decimal) -> int:

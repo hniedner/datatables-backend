@@ -114,20 +114,27 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D22.2** [SQL] Each of these constructs and answers as before: an `Integer` and a `Boolean` column declared
   `string`, a `Boolean` declared `number`, an expression without a type declared `number`, a `Uuid` declared
   `string`.
-- **SPEC-D23.1** [OS] A number column declared with each kind, SearchBuilder `=`: the last value OpenSearch answers is
-  sent and answered, and the first it refuses is answered with `invalid_number` and nothing sent. The pairs: `byte`,
-  `short` and `integer` 2147483647 and 2147483648, -2147483648 and -2147483649; `long` 2^63-1 and 2^63, -2^63 and
-  -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0 and -1; `float` 3.4028235677973362e38 and 3.4028235677973366e38 and
-  their negatives; `half_float` 65519 and 65520 and their negatives. Live, on both servers: the same value through an
-  undeclared column is the server's own 400, and `byte` and `short` are refused at 2^31 as the integer is.
-- **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query
-  is checked, and the value just past the edge is refused by every one: SearchBuilder `=`, `!=`, `<`, `>=`, `between`
-  and `!between`, a column search, a `multi_values` list, and ColumnControl's `equal` and its list. Live: a list of -1
-  on an undeclared `unsigned_long` answers the document holding 2^64-1, and a declared one refuses it.
+- **SPEC-D23.1** [OS] A number column declared with each kind that refuses a number (all but `double` and
+  `scaled_float`), SearchBuilder `=`: a value OpenSearch answers is sent and answered, and one it refuses is answered
+  with `invalid_number` and nothing sent. The pairs are the last value answered and the first refused (the last and
+  first whole numbers for `half_float`), but for the `half_float` pair of `65519.99` and `65519.999`, which straddles
+  its edge: `byte`, `short` and `integer` 2147483647 and 2147483648, -2147483648 and -2147483649; `long` 2^63-1 and
+  2^63, -2^63 and -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0 and -1; `float` 3.4028235677973362e38 and
+  3.4028235677973366e38 and their negatives; `half_float` 65519 and 65520 and their negatives, and `65519.99` and
+  `65519.999`. Live, on both servers: the same value through an undeclared column is the server's own 400, and `byte`
+  and `short` are refused at 2^31 as the integer is. A `half_float` field reads a number as a 32-bit float before it
+  rounds to half, so between 65519 and 65520 its edge is, computed from that, 65519.998046875, the tie that rounds to
+  65520.0: `65519.99` is sent and `65519.999`, which reads as the float 65520.0, is refused with `invalid_number` and
+  nothing sent, where the server's own answer is a 400 (`[half_float] supports only finite values, but got [65520.0]`).
+- **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query is
+  checked, and the first value refused of the high whole-number pair of `SPEC-D23.1` (the low one for `unsigned_long`)
+  is refused by every one: SearchBuilder `=`, `!=`, `<`, `<=`, `>`, `>=`, `between` and `!between`, a column search, a
+  `multi_values` list, and ColumnControl's `equal` and its list. Live: a list of -1 on an undeclared `unsigned_long`
+  answers the document holding 2^64-1, and a declared one refuses it.
 - **SPEC-D23.3** [OS] A `byte` and a `short` answer `<=` with 128, 40000 and -129: they refuse only beyond an
   `integer`'s range.
-- **SPEC-D23.4** [OS] The refusal of a number of 47 digits, for each kind, names the field type, says `within that
-  range`, and holds no part of the value.
+- **SPEC-D23.4** [OS] The refusal of a number of 47 digits, for each kind that refuses one (all but `double` and
+  `scaled_float`), names the field type, says `within that range`, and holds no part of the value.
 - **SPEC-D23.5** [OS] On a `long`, `=` 9223372036854775807.5 and 9223372036854775806.5 are refused (each is sent as
   the float 2^63, which the server refuses), and 9223372036854774784.5 is sent.
 - **SPEC-D23.6** [OS] A number column with no kind: `=` 2^64 is sent as it is and answered with no error from the
@@ -140,3 +147,27 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   (a range mistake, step 3) is answered `invalid_date`.
 - **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
   column and, for the text column, `type="number"`.
+- **SPEC-D23.10** [OS, SQL] (on SQL, the `type=`) A `number=` or a `text=` other than `None` that is none of its kinds,
+  and a `type=` that is none of the four, raises `SchemaError` at construction, naming the column, what was written and
+  the accepted ones. Before, the table usually built and a filter that carries a number failed with a `KeyError` (a
+  `number=`), or any SearchBuilder condition did (a `type=`), or a whole-string condition or an order was wrongly
+  refused, and contains, a column search and the global search matched analysed text only, with no substring inside a
+  word (a `text=` on a string column).
+- **SPEC-D23.11** [OS] A number column declared `double` or `scaled_float` builds, and `=` with 1e308, -1e308 and a
+  number of 255 digits on `double` (the last as an integer), and with 1e300 and -1e300 on `scaled_float`, sends each as
+  it is.
+
+- **SPEC-D23.12** [OS] On a string column, `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same
+  request sends the same body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
+- **SPEC-D23.13** [OS] A `text` kind (`keyword`, `text` or `text+keyword`) on a number, date or boolean column raises
+  `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
+- **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
+  column and saying to pass a function. Before, a non-callable `search_value` on a string column that holds a whole
+  string built; the first request that compared a search value with the column (`=`, `!=`, a column search or the global
+  search) raised `TypeError`, or, for a falsy value such as `''` or `0`, the column was silently compared by whole value
+  with the text unchanged.
+- **SPEC-D23.15** [OS, SQL] A column declared with an empty name (or a name of `None`), or an empty `field`, raises
+  `SchemaError` at construction, naming what was written and the fix. Before, on OpenSearch an empty name with no
+  `field` built a table that sent an empty field name (`null` for a name of `None`), and an empty `field` was silently
+  read as the name on both backends; on SQL an empty name with no `field` was refused only as a missing column, with no
+  fix, and a name of `None` with no `field` raised SQLAlchemy's `ArgumentError`.

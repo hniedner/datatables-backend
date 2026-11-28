@@ -24,6 +24,7 @@ import math
 import re
 from typing import Any
 from typing import Literal
+from typing import get_args
 import unicodedata
 
 from .columns import Column
@@ -187,8 +188,8 @@ _SPLIT = re.compile(r'!?["\u201C][^"\u201D]+["\u201D]|[^ ]+')
 # How a number and a day are written (PRD-F25, PRD-F21, PRD-F22). `[0-9]`, not `\d`, which takes the digits of
 # every script. Each pattern matches a text in one way only, so one that does not fit is refused in linear time.
 #: The most digits after the decimal point a database takes in a number: PostgreSQL's `numeric` (its manual, Table 8.2,
-#: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a longer exponent is the user's
-#: mistake, never the driver's error
+#: https://www.postgresql.org/docs/current/datatype-numeric.html, fetched 2026-11-24); a number with more, a fraction's
+#: trailing zeros not counted and zero having none, is the user's mistake, never the driver's error
 _MAX_FRACTION_DIGITS = 16383
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?')
 _DAY = re.compile(
@@ -226,7 +227,7 @@ class Contains:
 
 @dataclass(frozen=True)
 class Equals:
-    """The column equals ``value``: text after the hook, a number (``int`` or ``float``) or a ``bool``."""
+    """The column equals ``value``: text after the hook, a number (``int`` or ``Decimal``) or a ``bool``."""
 
     column: Column
     type: ColumnType
@@ -333,15 +334,57 @@ class Plan:
         return bool(self.global_search or self.column_searches or self.search_builder)
 
 
+def check_type(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``type`` that is none of the four: a ``Literal`` checks nothing at run time, and the
+    table would build and then fail on a filter. The message names the column, the type written and the accepted ones;
+    the name and the value are the server's, never the client's."""
+    accepted = get_args(ColumnType.__value__)
+    if column.type is not None and column.type not in accepted:
+        raise SchemaError(
+            f'The column "{column.name}" declares type={column.type!r}, which is not a type. Declare one of '
+            f'{", ".join(accepted)}.'
+        )
+
+
+def check_name(column: Column) -> None:
+    """Raise ``SchemaError`` for an empty ``name`` or ``field``. On OpenSearch an empty name with no ``field`` built a
+    table that sent an empty field name (``null`` for ``None``); on both backends an empty ``field`` was silently read
+    as the name, and on SQL an empty name with no ``field`` was refused only as a missing column (``None`` raised
+    SQLAlchemy's ``ArgumentError``). The message says which was written."""
+    if not column.name:
+        raise SchemaError(f'A column is declared with name={column.name!r}, which is empty. Give it a non-empty name.')
+    if column.field == '':
+        raise SchemaError(
+            f'The column "{column.name}" declares field="", which is empty. Drop field=, or give the source\'s name.'
+        )
+
+
+def check_hook(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``search_value`` that cannot be called. On a string column that holds a whole
+    string the table would build, and the first request that compared a search value with the column (``=``, ``!=``, a
+    column search or the global search) would raise ``TypeError``, or, for a falsy value such as ``''`` or ``0``, the
+    column would silently be compared by whole value with the text unchanged; on any other column the hook was already
+    refused (PRD-D14, PRD-D20)."""
+    if column.search_value is not None and not callable(column.search_value):
+        raise SchemaError(
+            f'The column "{column.name}" declares a search_value that is not callable. Pass a function that takes the '
+            'search text and returns the value to compare.'
+        )
+
+
 def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Capabilities]) -> None:
     """Raise ``SchemaError`` for a declaration the table cannot answer from: no column (PRD-D1), two of one name, whose
-    second would silently replace the first (PRD-D1), or a search-value hook on a column that is no string (PRD-D14) or
-    holds no whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the
-    backend's: SQL reads the type of a column it did not declare one for from the source."""
+    second would silently replace the first (PRD-D1), a ``type`` that is none of the four, an empty name or ``field``, a
+    search-value hook that cannot be called, or a search-value hook on a column that is no string (PRD-D14) or holds no
+    whole string to compare with (PRD-D20). The messages name only declared columns. ``describe`` is the backend's: SQL
+    reads the type of a column it did not declare one for from the source."""
     if not columns:
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()
     for column in columns:
+        check_type(column)
+        check_name(column)
+        check_hook(column)
         if column.name in names:
             raise SchemaError(
                 f'Two columns are declared with the name "{column.name}". Give each its own name: '
@@ -913,15 +956,20 @@ def _positive(
 
 
 def parse_number(text: str, column: Column, *, listed: bool = False) -> int | Decimal:
-    """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a
-    point, else a ``Decimal``, which keeps every digit written. ``listed`` says the text is one of several values (a
-    list, or the two of a ``between``), where the reason must not ask for one number.
+    """The number ``text`` names in a filter on ``column``: an ``int`` when it is a whole number written without a point
+    or an exponent, else a ``Decimal``, which keeps every digit written (but see the limit below). ``listed`` says the
+    text is one of several values (a list, or the two of a ``between``), where the reason must not ask for one number.
 
     A number is written as PRD-F25 says: in ASCII, an optional sign, digits with an optional point, an optional
     exponent, white space around it ignored. Python's own parsers take more (digits of other scripts, ``1_000``,
-    ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which
-    is also what decides whether a backend that compares as a float can take it, and has at most 16,383 digits after
-    the decimal point (``1e-20000`` is refused, the most PostgreSQL's ``numeric`` takes)."""
+    ``inf``), so the spelling is checked first. A number is finite when a float holds it (``1e400`` is not), which is
+    also what decides whether a backend that compares as a float can take it (a number too small for a float reaches it
+    as 0, see docs/databases.md). It has at most 16,383 digits after the decimal point (16,383 is the most PostgreSQL's
+    ``numeric`` takes, so ``1e-20000`` is refused). The limit is of the value: a fraction's trailing zeros are not
+    counted and zero has no fraction, so ``1.0e-16383`` and ``0e-16384`` are accepted here, with their zeros dropped (a
+    number within the limit is returned as written: no backend can tell, see docs/decisions/010-decimal-numbers.md). An
+    exponent beyond what a ``Decimal`` holds is refused, zero included: with the limit's reason when the number is not
+    zero and its exponent is negative, and as no number a filter can use otherwise."""
     stripped = text.strip()
     if not _NUMBER.fullmatch(stripped):
         raise number_unreadable(column, listed=listed)
@@ -930,25 +978,64 @@ def parse_number(text: str, column: Column, *, listed: bool = False) -> int | De
     try:
         number = Decimal(stripped)
     except InvalidOperation:  # an exponent beyond what a Decimal holds
-        raise number_unreadable(column, listed=listed) from None
+        raise _beyond_a_decimal(stripped, column, listed=listed) from None
     if not math.isfinite(float(number)):
         raise number_unreadable(column, listed=listed)
+    return _within_the_fraction_limit(number, column, listed=listed)
+
+
+def _within_the_fraction_limit(number: Decimal, column: Column, *, listed: bool) -> Decimal:
+    """``number``, without its fraction's trailing zeros when it is written with more than 16,383 digits after the
+    point, if that brings it within the limit (why: decision 010); else the user's mistake."""
     if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
-        needed = (
-            f'Each value in the filter on "{column.name}" must be a number'
-            if listed
-            else f'The filter on "{column.name}" needs a number'
-        )
-        raise mistake(
-            'datatables_number_out_of_range',
-            f'{needed} with at most {_MAX_FRACTION_DIGITS} digits after the decimal point.',
-            column,
-        )
+        number = without_trailing_zeros(number)  # the limit is of the value, not of how it is written
+    if int(number.as_tuple().exponent) < -_MAX_FRACTION_DIGITS:
+        raise _too_many_fraction_digits(column, listed=listed)
     return number
 
 
+def _too_many_fraction_digits(column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of a number of more than 16,383 digits after the decimal point, in a filter on ``column``."""
+    needed = (
+        f'Each value in the filter on "{column.name}" must be a number'
+        if listed
+        else f'The filter on "{column.name}" needs a number'
+    )
+    return mistake(
+        'datatables_number_out_of_range',
+        f'{needed} with at most {_MAX_FRACTION_DIGITS} digits after the decimal point.',
+        column,
+    )
+
+
+def _beyond_a_decimal(text: str, column: Column, *, listed: bool) -> InvalidFilter:
+    """The mistake of ``text``, a number whose exponent no ``Decimal`` holds: a nonzero one with a negative exponent has
+    more than 16,383 digits after the point; any other (a positive exponent, or a zero, which has no fraction to count,
+    so the limit's reason would be untrue) is no number a filter can use."""
+    mantissa, _, exponent = text.lower().partition('e')
+    if exponent.startswith('-') and mantissa.strip('+-.0'):
+        return _too_many_fraction_digits(column, listed=listed)
+    return number_unreadable(column, listed=listed)
+
+
+def without_trailing_zeros(value: Decimal) -> Decimal:
+    """``value`` without the zeros at the end of its fraction, and no other change: ``0.310`` is ``0.31``, and any zero
+    is ``0``. The 16,383 digits after the point and SQL Server's 38 digits both count the number, not its spelling, so
+    each needs it, and every database then gets the same number. A number without fraction digits keeps its exponent:
+    ``1E+2`` is not turned into ``100``, nor ``100`` into ``1E+2`` (as ``Decimal.normalize`` would, which also rounds to
+    the context's 28 digits), which changes nothing for a database."""
+    sign, digits, point = value.as_tuple()
+    exponent = int(point)  # a finite number's
+    if not any(digits):  # zero has no digits to keep, however long its fraction is written
+        return Decimal(0)
+    while exponent < 0 and digits[-1] == 0:
+        digits, exponent = digits[:-1], exponent + 1
+    return Decimal((sign, digits, exponent))
+
+
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
-    """The mistake of a value in a filter on ``column`` that is no number, or no finite one."""
+    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or one whose exponent no
+    ``Decimal`` holds, other than a nonzero one with a negative exponent (``_beyond_a_decimal`` tells which)."""
     needed = (
         f'Each value in the filter on "{column.name}" must be a number'
         if listed

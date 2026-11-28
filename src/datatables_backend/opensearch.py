@@ -24,6 +24,7 @@ from typing import Any
 from typing import Literal
 from typing import Protocol
 from typing import cast
+from typing import get_args
 
 from ._plan import Bound
 from ._plan import Capabilities
@@ -39,6 +40,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import check_type
 from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
@@ -69,14 +71,20 @@ log = logging.getLogger('datatables_backend')
 #: which is what dynamic mapping creates for a string
 type TextKind = Literal['keyword', 'text', 'text+keyword']
 
-#: The mapping type of a number field, for the kinds that refuse a number (decision 011). ``byte`` and ``short`` are
-#: refused by OpenSearch only beyond an ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float``
-#: refuse nothing, so they have no kind.
-type NumberKind = Literal['byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float']
+#: The mapping type of a number field (decision 011). ``byte`` and ``short`` are refused by OpenSearch only beyond an
+#: ``integer``'s range, and carry its bounds. ``double`` and ``scaled_float`` refuse no finite number, so they are
+#: checked by the floor alone, which every number column has: at most 255 characters (PRD-F14) and finite as a double
+#: (PRD-F25). A ``scaled_float`` still clamps a number whose scaled value passes a ``long``, because its scaling factor
+#: lives in the mapping, which is never read.
+type NumberKind = Literal[
+    'byte', 'short', 'integer', 'long', 'unsigned_long', 'float', 'half_float', 'double', 'scaled_float'
+]
 
 #: What OpenSearch accepts for each ``NumberKind`` (decision 011): the lowest and the highest number, as the message
-#: names them. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The floats'
-#: range is where a number rounds to infinity in their format, which ``_accepted`` asks of ``struct``.
+#: names them. ``double`` and ``scaled_float`` carry a double's range, which the floor already enforces, so they are
+#: never refused here. ``byte`` and ``short`` carry an ``integer``'s, which is where OpenSearch refuses theirs. The
+#: floats' range is where a number rounds to infinity in their format, as the field reads it (``_FLOAT_FORMATS``),
+#: which ``_accepted`` asks of ``struct``: ``half_float`` takes 65519.99, which is 65504 in half.
 _INTEGER_BOUNDS = (-(2**31), 2**31 - 1)
 _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'byte': _INTEGER_BOUNDS,
@@ -86,8 +94,16 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'unsigned_long': (0, 2**64 - 1),
     'float': (-3.4028234663852886e38, 3.4028234663852886e38),
     'half_float': (-65504, 65504),
+    'double': (-1.7976931348623157e308, 1.7976931348623157e308),
+    'scaled_float': (-1.7976931348623157e308, 1.7976931348623157e308),
 }
-_FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
+_TEXT_KINDS = get_args(TextKind.__value__)
+_NUMBER_KINDS = get_args(NumberKind.__value__)
+#: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
+#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (CI run 46091503895,
+#: OpenSearch 3.10.0 and 2.19.7: its 400 for 65519.999 names the float 65520.0; the exact edge, 65519.998046875, is
+#: computed from that).
+_FLOAT_FORMATS = {'float': ('<f',), 'half_float': ('<f', '<e')}
 _AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
@@ -101,6 +117,10 @@ _DOCUMENT_ID = '_id'
 class IndexColumn(Column):
     """A ``Column`` that says how its string field is mapped. A plain ``Column`` is taken as ``text+keyword``.
 
+    ``text`` says how a string column's field is mapped; ``None`` means it does not say, and a string column is then
+    read as ``text+keyword``. A ``text`` other than ``None`` on a column that is not a string column raises
+    ``SchemaError``.
+
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
     ``orderable=True`` on it raises ``SchemaError``.
@@ -108,10 +128,12 @@ class IndexColumn(Column):
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
     fail the request with the client's ``RequestError``. Without it nothing is checked beyond what every number column
-    is: finite as a double. ``number`` on a column that is not a number column raises ``SchemaError``.
+    is: finite as a double. A ``number`` other than ``None`` on a column that is not a number column raises
+    ``SchemaError``, and so does a ``text`` or a ``number`` other than ``None`` that is none of the kinds. A ``double``
+    or ``scaled_float`` kind is checked by the floor alone (see ``NumberKind``).
     """
 
-    text: TextKind = 'text+keyword'
+    text: TextKind | None = None
     number: NumberKind | None = None
 
 
@@ -407,11 +429,42 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
     return isinstance(total, Mapping) and total.get('relation') == 'gte'
 
 
+def _check_kinds(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` or a ``number`` other than ``None`` that is none of the kinds: a ``Literal``
+    checks nothing at run time, and the table would build and fail, wrongly refuse, or answer as analysed text only, a
+    filter or an order. The message names the column, what was written and the accepted kinds; the name and the value
+    are the server's, never the client's."""
+    if not isinstance(column, IndexColumn):
+        return
+    kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
+    for field_name, written, accepted in kinds:
+        if written is not None and written not in accepted:  # None: not declared
+            raise SchemaError(
+                f'The column "{column.name}" declares {field_name}={written!r}, which is not a kind. Declare one of '
+                f'{", ".join(accepted)}.'
+            )
+
+
+def _check_text_fits(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``text`` other than ``None`` on a column that is no string column: the declaration is
+    for another column, and nothing would read it. Run after ``check_type``, which makes the type one of the four."""
+    if isinstance(column, IndexColumn) and column.text is not None and _type_of(column) != 'string':
+        raise SchemaError(
+            f'The column "{column.name}" declares text={column.text!r} but is not a string column, so no string field '
+            f'applies to it. Drop text=, or declare the column type="string".'
+        )
+
+
 def _held(column: Column) -> Column:
-    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the
-    plan refuses a filter or an order on it by its rules for any column the server declares unsearchable or
-    unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
-    declared on a column that is no number column is the server's mistake too."""
+    """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the plan
+    refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
+    the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
+    that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
+    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is
+    no string column."""
+    check_type(column)  # first: what follows reads the type
+    _check_kinds(column)
+    _check_text_fits(column)
     if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
@@ -436,7 +489,7 @@ def _type_of(column: Column) -> ColumnType:
 
 
 def _kind(column: Column) -> TextKind:
-    return column.text if isinstance(column, IndexColumn) else 'text+keyword'
+    return column.text or 'text+keyword' if isinstance(column, IndexColumn) else 'text+keyword'
 
 
 def _keyword(column: Column) -> str | None:
@@ -605,13 +658,19 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
 
 def _accepted(kind: str, sent: int | float) -> bool:
     """Whether OpenSearch answers ``sent`` on a field of ``kind``. A float field refuses a number that rounds to
-    infinity in its format, which is where ``struct.pack`` raises ``OverflowError``. It is given a float: a whole number
-    too large for one raises ``OverflowError`` in ``float`` itself, where ``struct`` would raise ``struct.error``."""
+    infinity in its format, as it reads the number: through each of ``_FLOAT_FORMATS``, so a ``half_float`` field's
+    ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. ``struct.pack``
+    raises ``OverflowError`` there. It is given a float: ``struct`` would raise ``struct.error`` for an int too large to
+    convert. ``float(sent)``, outside the ``try``, would raise ``OverflowError`` for one too large for a double, which
+    a number never is: a whole number has at most 255 digits (PRD-F14) and any other is the finite double
+    ``_json`` made of what ``parse_number`` allowed."""
     if kind in _FLOAT_FORMATS:
         # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
         # refused here, where the server might round it straight to a float it holds: a conservative refusal
+        number = float(sent)
         try:
-            struct.pack(_FLOAT_FORMATS[kind], float(sent))
+            for form in _FLOAT_FORMATS[kind]:
+                number = struct.unpack(form, struct.pack(form, number))[0]
         except OverflowError:
             return False
         return True
@@ -622,7 +681,7 @@ def _accepted(kind: str, sent: int | float) -> bool:
 def _number(column: Column, value: Any) -> Any:
     """``value`` as the request body carries it (``_json``), checked against the field type the column declares: a
     number OpenSearch refuses for it is the user's mistake, answered before the query (PRD-D23). The check is on what is
-    sent: a number with a point goes as a float, which may round to the edge."""
+    sent: a number with a point or an exponent goes as a float (or as ``0``), which may round to the edge."""
     sent = _json(value)
     kind = column.number if isinstance(column, IndexColumn) else None
     if kind is None or not isinstance(sent, int | float) or _accepted(kind, sent):
@@ -639,11 +698,12 @@ def _number(column: Column, value: Any) -> Any:
 
 def _json(value: Any) -> Any:
     """``value`` as the request body carries it: a number with a point or an exponent is a float, which is what
-    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1). A zero is ``0``, as ``0`` is sent:
-    ``-0.00`` would be the float -0.0, which a ``double`` field keeps apart from 0.0 (PRD-F25, docs/databases.md)."""
+    OpenSearch reads a query's number as, so the body stays plain JSON (SPEC-A8.1). A number whose double is zero is
+    ``0``, as ``0`` is sent: ``-0.00`` or ``-1e-400`` would be the float -0.0, which a ``double``, ``float`` or
+    ``half_float`` field keeps apart from 0.0 (PRD-F25, docs/databases.md)."""
     if not isinstance(value, Decimal):
         return value
-    return 0 if value.is_zero() else float(value)
+    return float(value) or 0  # a falsy float is 0.0 or -0.0
 
 
 def _one_of(node: OneOf) -> dict[str, Any]:
