@@ -3026,19 +3026,23 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
 def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it(session: Session):
     """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
     the `Decimal` as it is (RUN by CI, 2026-11-28 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
-    stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8, and
-    `1e-16383`, which no float holds, is bound as zero and finds the row holding 0. Those are today's results on SQLite,
-    pinned so the stated limit is not forgotten if it changes."""
+    stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8.
+    `1e-16383`, which no float holds, is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row,
+    MySQL and MariaDB are INFERRED to find it (a fraction of more than 30 digits after the point is compared as a double
+    there, docs/databases.md) until CI's live legs run it, and SQL Server refuses it by its 38 digits. These are today's
+    results, pinned so the stated limits are not forgotten if they change."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
     session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
     table = SQLTable(numbers, [Column('id'), Column('i')])
-    sqlite = session.get_bind().dialect.name == 'sqlite'
-    cases = [('8.0000000000000000001', [2] if sqlite else [])]
-    if sqlite:
-        cases.append(('1e-16383', [1]))
-    for value, found in cases:
-        assert ids(table.fetch_sync(request('id', 'i', **criterion('i', '=', value)), session)) == found
+    engine = session.get_bind().dialect.name
+    fraction = table.fetch_sync(request('id', 'i', **criterion('i', '=', '8.0000000000000000001')), session)
+    assert ids(fraction) == ([2] if engine == 'sqlite' else [])
+    tiny = table.fetch_sync(request('id', 'i', **criterion('i', '=', '1e-16383')), session)
+    if engine == 'mssql':
+        refused(tiny, 'invalid_number')
+    else:
+        assert ids(tiny) == ([1] if engine in ('sqlite', 'mysql') else [])
 
 
 @pytest.mark.parametrize('dialect', [postgresql.psycopg.dialect, postgresql.asyncpg.dialect])
