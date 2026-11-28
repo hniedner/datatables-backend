@@ -139,8 +139,8 @@ or an OpenSearch setting has an entry below.
 - **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022 with
   Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`, `docs/decisions/010-decimal-numbers.md`);
-  the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the integer-column case with a compiled
-  statement; that case was not measured.
+  the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the integer-column case against a compiling
+  source with no database; that case was not measured.
 - **Requirement:** PRD-F25.
 
 ### A float's search text is written by `FORMAT`, which costs about four times a cast
@@ -205,15 +205,19 @@ or an OpenSearch setting has an entry below.
 - **What you see:** a whole number outside the signed 64-bit range can match a neighbouring value on a `Numeric` column,
   and a fraction can match a neighbouring value, or zero when it is too small for a float, on a `Numeric` or an integer
   column. SQLite stores no exact decimal, and SQLAlchemy sends a decimal to it as a floating-point number, also the one
-  a fraction on an integer column goes as. PostgreSQL compares the number exactly, MySQL except a fraction of more than
-  30 digits (below), and SQL Server up to 38 digits (it refuses a longer one).
+  a fraction on an integer column goes as. PostgreSQL compares the number exactly, MySQL and MariaDB except a fraction
+  of more than 30 digits after the point (below), and SQL Server up to 38 digits (it refuses a longer one). OpenSearch
+  gets the same float, so there too `1e-16383` is the number zero (INFERRED: the request body is pinned, not the
+  server).
 - **Example:** a `Numeric(30, 0)` column holding 18446744073709551616 (2^64): `=` 18446744073709551617 finds that row on
   SQLite and no row on the other three. On SQLite, `=` 1e-16383 on an integer column finds the row holding 0.
 - **How it is known:** MEASURED 2026-11-22 on SQLite 3.53.1, PostgreSQL 18.7, MySQL 8.4.13 and SQL Server 2022
-  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`); the integer-column fraction is RUN by
-  `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-27 (UTC), on
-  SQLite (it finds the row holding 8), and on PostgreSQL, MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds
-  no row), not measured on the other versions of them.
+  (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`), and for a fraction on a `Numeric` column
+  MEASURED 2026-11-24 on SQLite (`docs/decisions/010-decimal-numbers.md`); the integer-column fraction is RUN by
+  `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`: CI, 2026-11-28 (UTC), on
+  SQLite (`=` 8.0000000000000000001 finds the row holding 8, and `=` 1e-16383 the row holding 0), and on PostgreSQL,
+  MySQL, MariaDB and SQL Server (`=` 8.0000000000000000001 finds no row), not measured on the other versions of them.
+  That `1e-16383` matches 0 on a `Numeric` column is INFERRED from the float bind.
 - **Requirement:** PRD-F25.
 
 ### An expression deeper than 1,000 is refused

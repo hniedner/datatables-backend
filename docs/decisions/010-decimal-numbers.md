@@ -50,7 +50,7 @@ SPEC-F25.12 pin.
 - `parse_number` returns an `int` for a whole number written without a point or an exponent, as before, and a `Decimal`
   otherwise, which keeps every digit written (but see the limit of 16,383 digits below). A number is finite when a float
   holds it, so `1e400` is still `invalid_number` (an exponent beyond what a `Decimal` holds was read as zero when
-  negative, and is refused now, below). So is a number of more than 16,383 digits after the point, the most PostgreSQL's
+  negative, and is refused, below). So is a number of more than 16,383 digits after the point, the most PostgreSQL's
   `numeric` takes (its manual, Table 8.2, <https://www.postgresql.org/docs/current/datatype-numeric.html>, FETCHED
   2026-11-24), which would otherwise reach the database as a driver error. The limit is of the value, not of how it is
   written: a fraction's trailing zeros are not counted and zero has no fraction, so `1.0e-16383` is answered like
@@ -62,11 +62,12 @@ SPEC-F25.12 pin.
   so that SQL Server's count of 38 digits does not depend on how many zeros were typed and every database gets the same
   number. An exponent is left as written: a `Decimal` of `1.5e3` answered on SQL Server (RUN, sync and async), so
   nothing needs it rewritten. A column behind a `TypeDecorator` is compared through its own type, which converts the
-  number as it does any other (a `TypeDecorator` over an integer gets a fraction as a float of its own). An integer
-  column gets the whole number or, for a fraction, a `Decimal` typed `Numeric()` (a float of 8.0000000000000000001 is
-  8.0, which an integer column holds, though SQLite binds the `Decimal` as a float all the same: PRD section 5); a list
-  leaves such a fraction out. A `Float` column and an expression without a type get a float. OpenSearch gets a float in
-  its request body (SPEC-A8.1); it parses a query's number as a double for its float types (not measured).
+  number as it does any other (a `TypeDecorator` over an integer gets a fraction as a float typed `Float()`, not through
+  the decorator). An integer column gets the whole number or, for a fraction, a `Decimal` typed `Numeric()` (a float of
+  8.0000000000000000001 is 8.0, which an integer column holds, though SQLite binds the `Decimal` as a float all the
+  same: PRD section 5); a list leaves such a fraction out. A `Float` column and an expression without a type get a
+  float. OpenSearch gets a float in its request body (SPEC-A8.1); it parses a query's number as a double for its float
+  types (not measured).
 - On SQL Server a number of more than 38 digits in all, before and after the point, on a `Numeric` column or with a
   fraction on an integer column (not through a `TypeDecorator`), is refused as `invalid_number` for every condition,
   with the limit and the fix in the reason, never the driver's error. The advisor's ruling of 2026-11-24.

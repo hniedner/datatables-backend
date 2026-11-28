@@ -3024,7 +3024,7 @@ def test_a_fraction_on_a_converting_integer_type_is_compared_as_a_float(session:
 
 def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it(session: Session):
     """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
-    the `Decimal` as it is (RUN by CI, 2026-11-27 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
+    the `Decimal` as it is (RUN by CI, 2026-11-28 UTC, on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the
     stated exception: SQLAlchemy binds the `Decimal` of a fraction as a float there, so it finds the row holding 8, and
     `1e-16383`, which no float holds, is bound as zero and finds the row holding 0. Those are today's results on SQLite,
     pinned so the stated limit is not forgotten if it changes."""
@@ -3097,17 +3097,18 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
         ('1e-9999999999999999999', True),
         ('1E-9999999999999999999', True),  # PRD-F25 takes either `e`
         ('-1.5e-9999999999999999999', True),
-        ('1e9999999999999999999', False),  # the reason of `1e400`: no float holds it
+        ('1e9999999999999999999', False),  # no Decimal holds it; told the reason of `1e400`
         ('0e-9999999999999999999', False),  # zero has no fraction to count, whatever its spelling with such an exponent
         ('-0.0e-9999999999999999999', False),
     ],
 )
 def test_an_exponent_no_decimal_holds_is_refused_with_the_reason_that_is_true(value: str, past_the_limit: bool):
     """SPEC-F25.14: a nonzero number whose negative exponent is beyond what a `Decimal` holds is one of more than 16383
-    digits after the point, so the refusal says that, as it does for `1e-16384`; a positive one is too large, as
-    `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between` gets the
-    wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a number, a
-    zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a `between` bound."""
+    digits after the point, so the refusal says that, as it does for `1e-16384`; one with a positive exponent is too
+    large, as `1e400`, and zero has no fraction, so both get the reason of a number that is none. A bound of a `between`
+    gets the wording for a value among several. It catches the first kind told 'needs one number', which is untrue of a
+    number, a zero told it is past the limit, a spelling with `E` missed, and the wording of one value for a `between`
+    bound."""
     reasons = {
         True: (
             'needs a number with at most 16383 digits after the decimal point.',

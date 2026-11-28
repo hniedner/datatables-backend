@@ -330,12 +330,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
 - **SPEC-F25.13** [SQLite] With `n`, a `TypeDecorator` over `Numeric` that stores hundredths (1.5 as 150), given rows
   1.5 and 2: `=` `1.5` → the first row, `=` `2` and `=` `2.0` → the second, `=` `3.5` → none: the number goes through
   the column's own type.
-- **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with `The filter on "i" needs a number with at most
-  16383 digits after the decimal point.`; `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a
-  `Numeric` column, or on an integer column not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero
-  number with a negative exponent beyond what a decimal holds (`1e-9999999999999999999`, also with `E`) gets the same
-  reason; `1e9999999999999999999` and `0e-9999999999999999999` (zero has no fraction) get `The filter on "i" needs one
-  number, written like 42 or -3.5.`
+- **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
+  `The filter on "i" needs a number with at most 16383 digits after the decimal point.`;
+  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column, or on an integer
+  column not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative exponent beyond
+  what a decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason; `1e9999999999999999999` and
+  `0e-9999999999999999999` (zero has no fraction) get
+  `The filter on "i" needs one number, written like 42 or -3.5.`
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. With `n` over a `double` field, given a document holding 0.0: `=` and `<=`
@@ -346,10 +347,10 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code `invalid_number` (the
   last digit is past the limit, whatever the first; the plain spellings `1e-16383` and `1e-16384` are those of
   `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they are checked on
-  `i`, with compiled PostgreSQL and SQL Server statements. [SQL Server] The first three answered → error_code
-  `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is answered. [PostgreSQL] The number reaches the
-  database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound as `-1E-16383`
-  (checked on a compiled statement of `n`, a `Numeric(20, 2)`).
+  `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of those answered, the first
+  three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is answered. [PostgreSQL] The number
+  reaches the database with its sign and its digits, the zeros of its fraction left out: `-1.0e-16383` is bound as
+  `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`).
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
