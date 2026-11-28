@@ -199,9 +199,10 @@ The library does not change how a database compares values. Each rule below is s
 - OpenSearch's global search skips number and date columns, and every backend's skips boolean columns
   ([the rule][rules-types]).
 - On OpenSearch a stored `""` is not empty, where on SQL it is ([the rule][rules-opensearch]).
-- On OpenSearch a number column should declare its field's kind, `IndexColumn('pages', type='number', number='integer')`:
-  a number outside the range its mapping holds is then answered with `invalid_number` (a `scaled_float` kind still
-  clamps), and fails the request when the kind is not declared ([the entry][db-number-range]).
+- On OpenSearch a number column should declare its field's kind,
+  `IndexColumn('pages', type='number', number='integer')`: a number outside the range its mapping holds is then answered
+  with `invalid_number` (a `scaled_float` clamps, declared or not), and fails the request when the kind is not declared
+  ([the entry][db-number-range]).
 
 [prd]: https://github.com/hniedner/datatables-backend/blob/main/docs/PRD.md
 [changelog]: https://github.com/hniedner/datatables-backend/blob/main/CHANGELOG.md
