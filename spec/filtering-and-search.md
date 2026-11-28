@@ -341,9 +341,9 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   as the numbers they are, as on a column without a kind. With `n` over a `double`, a `float` and a `half_float` field,
   each given a document holding 0.0: `-1e-400` on the `double` and the `half_float` has the answers of `0` (it sends
   it): `=`, a `multi_values` list, `<=` and `>=` find that document, `<` and `>` do not; `-1e-50` and `1e-50` on
-  `float`, `-1e-10` and `1e-10` on `half_float`, which go as they are, have the answers of docs/databases.md: for a tiny
-  negative `>` and `>=` find it and the others do not, and for a tiny positive `=` and the list find it on both, `<=`
-  and `>=` on `float`, `<` and `<=` on `half_float`.
+  `float`, `-1e-10` and `1e-10` on `half_float`, which go as they are, have the answers of `docs/databases.md`: for a
+  tiny negative `>` and `>=` find it and the others do not, and for a tiny positive `=` and the list find it on both,
+  `<=` and `>=` on `float`, `<` and `<=` on `half_float`.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
