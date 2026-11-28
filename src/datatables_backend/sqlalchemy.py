@@ -108,6 +108,8 @@ type _SyncSource = Session | Connection
 
 #: The digits SQL Server's decimal type holds at most. Its ODBC driver refuses to bind a longer number (measured)
 _MSSQL_DECIMAL_DIGITS = 38
+#: The bounds of a range, lower and upper: a range with both of them set has two conditions
+_BOTH_BOUNDS = 2
 #: The databases that order NULL as the lowest value themselves. MySQL and SQL Server take no NULLS FIRST or NULLS
 #: LAST; every other database is told where NULL goes
 _NULL_IS_LOWEST = frozenset({'mysql', 'mariadb', 'mssql', 'sqlite'})
@@ -627,7 +629,7 @@ def _between(
         parts.append(column >= value(lower.value) if lower.included else column > value(lower.value))
     if upper is not None:
         parts.append(column <= value(upper.value) if upper.included else column < value(upper.value))
-    return and_(*parts) if len(parts) == 2 else parts[0]
+    return and_(*parts) if len(parts) == _BOTH_BOUNDS else parts[0]
 
 
 def _folds(declared: Column, column: ColumnElement[Any]) -> bool:

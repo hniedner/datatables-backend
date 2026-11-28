@@ -71,6 +71,7 @@ import unicodedata
 VARIABLE = 'DTB_PRIVATE_WORDS'
 FOUND = 1
 COULD_NOT_CHECK = 2
+_MESSAGE_ARGS = 2  # ``--message`` and the file that holds the message
 
 type Words = list[tuple[int, str]]  # (line in the list, folded word)
 
@@ -345,7 +346,7 @@ def _message_scan(argv: list[str], words: Words) -> list[str]:
 
     Reading the file and running git can fail too, as ``_scan`` says.
     """
-    if len(argv) != 2:
+    if len(argv) != _MESSAGE_ARGS:
         raise CouldNotCheckError('--message needs the message file')
     found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
     return [report('commit message', found)] if found else []

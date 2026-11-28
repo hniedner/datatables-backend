@@ -9,6 +9,7 @@ then open http://127.0.0.1:8000/. The page loads DataTables and ColumnControl fr
 Nothing in `examples/` ships in the wheel or the sdist.
 """
 
+from collections.abc import AsyncGenerator
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -70,7 +71,7 @@ items = SQLTable(items_table, [Column(name) for name in ('id', 'label', 'colour'
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
         await connection.execute(items_table.insert(), SEED)

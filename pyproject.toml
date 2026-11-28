@@ -118,7 +118,7 @@ quote-style = "single"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "RUF", "C4", "B", "A", "SIM", "ARG", "PL", "PERF", "S", "FURB", "T20"]
-ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
+ignore = ["PLR0911", "PLR0912", "PLR0913", "N815", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG", "E501", "PLC0415"]
@@ -126,7 +126,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR2004", "N815", "N818"]
 "scripts/trace_check.py" = ["T201"]
 "scripts/private_word_scan.py" = ["S603", "S607", "T201"]
 "scripts/check_dist.py" = ["S603", "S607", "T201"]
-"scripts/test_*.py" = ["S101", "S603"]
+"scripts/test_*.py" = ["S101", "S603", "PLR2004"]
 "scripts/test_private_word_scan.py" = ["S607"]
 "scripts/test_check_dist.py" = ["S607"]
 "scripts/test_cliff_config.py" = ["S607"]
