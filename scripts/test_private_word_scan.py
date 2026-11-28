@@ -957,7 +957,7 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
 def test_an_object_git_cannot_read_cannot_check(
     words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
 ):
-    """In process, with git's answer given: a real race, or a corrupt object, cannot be staged."""
+    """In process, with git's answer given: a real race cannot be staged; a corrupt object gives the same text."""
     scanner = load_scanner(monkeypatch, words)
     printed = _UNREADABLE[answer].encode()
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
