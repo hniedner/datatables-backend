@@ -534,7 +534,7 @@ def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path, in
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'could not check: word list line 2 holds an invisible character: retype the word' in result.stderr
-    assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # a piece the character cannot split
+    assert WORD[:3].casefold() not in (result.stdout + result.stderr).casefold()  # no piece of the word is printed
 
 
 def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
@@ -546,22 +546,28 @@ def test_a_list_line_number_counts_newlines_as_an_editor_does(tmp_path: Path):
 
 
 def test_a_word_with_a_replacement_character_cannot_check(tmp_path: Path):
-    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was: no scanned text
-    produces it, so the word would silently never match. The scan's own advice (save it as UTF-8) leads here."""
+    """A Latin-1 list opened as UTF-8 and saved again holds U+FFFD where each accented letter was: the scan never
+    decodes a byte to it, so the word would silently never match. The scan's own advice, to save the list as UTF-8,
+    leads here."""
     listed = write(tmp_path / 'list.txt', f'{SECOND}\nG\ufffdrtner\n')
     result = scan(str(write(tmp_path / 'notes.md', 'see Gärtner\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'word list line 2 holds a replacement character' in result.stderr
     assert ': retype the word' in result.stderr  # the fix
+    assert 'rtner' not in result.stdout + result.stderr  # no piece of the word is printed
 
 
-def test_a_note_after_a_word_cannot_check(tmp_path: Path):
-    """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces."""
-    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}  # the client\n')
+@pytest.mark.parametrize('gap', ['  ', '\t', '\u00a0'], ids=['spaces', 'tab', 'no-break space'])
+def test_a_note_after_a_word_cannot_check(tmp_path: Path, gap: str):
+    """`word  # note` loads as one word that never matches: it is the `word<TAB>note` mistake written with spaces.
+    After a tab the tab is refused too, but the message must be the note's: retyping the word would not remove it.
+    A no-break space (Option+Space on a Mac) is no control character: only the `\\s` of the check refuses it."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD}{gap}# the client\n')
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 2, result.stdout
     assert 'could not check: word list line 2 holds a note after the word' in result.stderr
     assert 'put the note on its own line, starting with #' in result.stderr  # the fix
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()  # the word is never printed
 
 
 @pytest.mark.parametrize(
