@@ -191,7 +191,9 @@ it raises `SchemaError` (on SQL too), and so does a `number=` on it. A `text=` a
 by, so it raises only on a column that is not searched, is declared `orderable=False` and is not in `unique_key`; on the
 key, and on an unsearchable column with the default `orderable`, it stays. One limit: `searchable=False` with the default
 `orderable` and `text='text'` builds, though `text='text'` then only turns the column's ordering off; to say so, drop
-`text=` and declare `orderable=False`.
+`text=` and declare `orderable=False`. Another: a `text=` on a column that is no string column, is not searched, is
+declared `orderable=False` and is not the key is first told to drop it or declare the column a string, and then, as a
+string, to drop it or declare the column searchable (the key is not known where the first message is built).
 
 **Paging past the window.** OpenSearch reads at most `max_result_window` rows (10,000 by default; give the table the
 index's own) from the start of a search. The first pages are read as they come, and so are the last: a page that ends

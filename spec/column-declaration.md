@@ -146,7 +146,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.8** [OS] A SearchBuilder with `created = xx` (a date mistake, step 2) and an `integer` column `=` 2147483648
   (a range mistake, step 3) is answered `invalid_date`.
 - **SPEC-D23.9** [OS] `number=` on a text column and on a date column raises `SchemaError` at construction, naming the
-  column and, for the text column, `type="number"`.
+  column and, for the text column, `type="number"`; on a column that is declared `searchable=False` or reads the
+  document id, the message says only to drop `number=` (`SPEC-D23.18`).
 - **SPEC-D23.10** [OS, SQL] (on SQL, the `type=`) A `number=` or a `text=` other than `None` that is none of its kinds,
   and a `type=` that is none of the four, raises `SchemaError` at construction, naming the column, what was written and
   the accepted ones. Before, the table usually built and a filter that carries a number failed with a `KeyError` (a
@@ -160,7 +161,8 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.12** [OS] On a string column, `IndexColumn(text=None)`, the default, is read as `text+keyword`: the same
   request sends the same body for `text=None`, an explicit `text='text+keyword'` and a plain `Column`.
 - **SPEC-D23.13** [OS] A `text` kind (`keyword`, `text` or `text+keyword`) on a number, date or boolean column raises
-  `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string.
+  `SchemaError` at construction, naming the column and saying to drop `text=` or declare the column a string; on a
+  column that reads the document id, the message says only to drop `text=` (`SPEC-D23.17`).
 - **SPEC-D23.14** [OS, SQL] A `search_value` that is not callable raises `SchemaError` at construction, naming the
   column and saying to pass a function. Before, a non-callable `search_value` on a string column that holds a whole
   string built; the first request that compared a search value with the column (`=`, `!=`, a column search or the global
@@ -174,26 +176,35 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
 - **SPEC-D23.16** [OS, SQL] A `search_value` on a column declared `searchable=False` raises `SchemaError` at
   construction, naming the column and saying to remove the hook or declare the column searchable; on OpenSearch the
   same for a column that reads the document id (`_id`), whose message only says to remove the hook, since `searchable`
-  is ignored on the id. Before, the table built and the hook never ran: a global search, a column search, a SearchBuilder
-  condition and ColumnControl's `contains` never called it on that column. On a `searchable=False` column, a hook that
+  is ignored on the id. Before, a table with a hook on a string column of that kind built and the hook never ran: a
+  global search, a column search, a SearchBuilder condition and ColumnControl's `contains` never called it on that
+  column (a hook on a column of another type, or on analysed text only, was refused already). On a `searchable=False`
+  column, a hook that
   cannot be called, one on a column that is no string, and one on analysed text only are refused first, each by its
-  own message (`SPEC-D23.14`, `SPEC-D14.1`, `SPEC-D20.1`); on the document id, an empty name and a hook that cannot be
-  called are.
+  own message (`SPEC-D23.14`, `SPEC-D14.1`, `SPEC-D20.1`; on analysed text only, that message says just to remove the
+  hook, since declaring a keyword field would lead to this refusal); on the document id, an empty name and a hook that
+  cannot be called are.
 - **SPEC-D23.17** [OS] A `text` kind on a column that reads the document id (whatever its `type`), and on a column
   declared `searchable=False` and `orderable=False` that is not in `unique_key`, raises `SchemaError` at construction,
-  naming the column and saying to drop `text=` (on the second, or to declare the column searchable). Before, the table
-  built and no string field of the column was read. On the document id, a request to order by it (`orderable=True`) or
+  naming the column and saying to drop `text=` (on the second, or to declare the column searchable). Before, a table
+  with a `text=` on a string column of that kind built and no string field of the column was read (on a column of
+  another type it was refused already, as `SPEC-D23.13` says). On the document id, a request to order by it (`orderable=True`) or
   to key on it is refused first, by its own message that says to use a `keyword` field. A `text` on the key stays (its
   sort ends every order), and so does one on a `searchable=False` column with the default `orderable`: `text=` picks
   the field the column is sorted by and decides whether it can be sorted at all. A stated limit: `searchable=False`,
   the default `orderable` and `text='text'` builds, though `text='text'` then only turns ordering off; to say so, drop
-  `text=` and declare `orderable=False` (with `text='text'` kept, that column is refused).
-- **SPEC-D23.18** [OS] A `number` kind on a column declared `searchable=False` (whatever its `type`) raises
-  `SchemaError` at construction, naming the column and saying to drop `number=` or declare the column searchable, and
-  so does one on a column that reads the document id (whatever its `type`), whose message only says to drop `number=`,
-  since `searchable` is ignored on the id. Neither message says to declare a number column, as the check for a
-  `number=` on a column that is no number column does elsewhere, since that would only lead to this refusal. Before,
-  the table built and the kind, which only bounds the numbers a filter sends, was never read.
+  `text=` and declare `orderable=False` (with `text='text'` kept, that column is refused). A second stated limit: a
+  `text=` on a column of another type than string that is declared `searchable=False` and `orderable=False` and is not
+  the key is first told to drop `text=` or declare the column a string, and then, as a string, to drop `text=` or
+  declare the column searchable; the key is not known where the first message is built.
+- **SPEC-D23.18** [OS] A `number` kind on a number column declared `searchable=False` raises `SchemaError` at
+  construction, naming the column and saying to drop `number=` or declare the column searchable, and so does one on a
+  number column that reads the document id, whose message only says to drop `number=`, since `searchable` is ignored
+  on the id. Before, the table built and the kind, which only bounds the numbers a filter sends, was never read. On a
+  column of another type that is declared `searchable=False` or reads the document id, `number=` was refused already,
+  as on any column that is no number column (`SPEC-D23.9`), and still is; that message now says only to drop
+  `number=`, since declaring a number column would lead to the refusal above. These come after the checks every
+  column gets (an empty name or `field`, a duplicate name), which are reported first.
 - **SPEC-D23.19** [OS] Each of these builds: `text='keyword'` on a `searchable=False` column with the default
   `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column
   with the default `orderable`; the document id declared `IndexColumn('_id')` with no hook, `text=` or `number=`; and a

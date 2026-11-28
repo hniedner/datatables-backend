@@ -125,7 +125,9 @@ class IndexColumn(Column):
 
     A column whose field is the document id, ``_id``, reads the hit's id. It is never searchable, whatever its
     ``searchable`` says (an id has no text to match), and never orderable: OpenSearch deprecates sorting on ``_id``, so
-    ``orderable=True`` on it raises ``SchemaError``.
+    ``orderable=True`` on it raises ``SchemaError``, and so do a ``search_value``, a ``text`` and a ``number``: nothing
+    would read them. The same holds for a ``search_value`` or a ``number`` on any column declared ``searchable=False``,
+    and for a ``text`` on one that is also ``orderable=False`` and is not the key (see ``docs/rules.md``).
 
     A number column (``type='number'``) may say the mapping type of its field with ``number``. A number that OpenSearch
     refuses for that type is then answered with ``invalid_number`` before the query (PRD-D23), where it would otherwise
@@ -465,25 +467,21 @@ def _check_text_fits(column: Column) -> None:
         )
 
 
-def _check_number(column: Column) -> None:
-    """Raise ``SchemaError`` for a ``number`` that nothing reads: on a column declared unsearchable, which no filter
-    reaches (whatever its type), or on a column that is no number column. The unsearchable message comes first, since
-    the other one says to declare ``type="number"``, which would only lead to it. Not for a column that reads the
-    document id, whose ``number`` is refused later (``_unused_on_document_id``), after the refusals to order or key on
-    it."""
-    if not isinstance(column, IndexColumn) or column.number is None or column.source == _DOCUMENT_ID:
-        return
-    if not column.searchable:
-        raise SchemaError(
-            f'The column "{column.name}" declares number={column.number!r} but is declared '
-            f'searchable={column.searchable!r}, so no filter reaches it and no number range applies. Drop number=, or '
-            'declare the column searchable.'
+def _check_number_fits(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``number`` other than ``None`` on a column that is no number column: the declaration
+    is for another column, and nothing would read it. On a column that no filter reaches (declared unsearchable, or
+    reading the document id) the message says only to drop it: declaring ``type="number"``, as it says elsewhere, would
+    only lead to the refusal of a ``number`` that nothing reads (``_unused_kind``)."""
+    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
+        unread = column.source == _DOCUMENT_ID or not column.searchable
+        fix = (
+            'Drop number=.'
+            if unread
+            else f'Declare it IndexColumn("{column.name}", type="number", number="{column.number}"), or drop number=.'
         )
-    if _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
-            f'range applies to it. Declare it IndexColumn("{column.name}", type="number", number="{column.number}"), '
-            'or drop number=.'
+            f'range applies to it. {fix}'
         )
 
 
@@ -508,12 +506,13 @@ def _held(column: Column) -> Column:
     the global search leaves it out. ``orderable=True`` on it is the server's mistake, and so is a hook; a ``text`` or a
     ``number`` on it is refused later, by ``_check_unused_kinds``. A field type declared on a column that is no number
     column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text`` or ``number`` other
-    than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is no string column, or
-    a ``number`` on a column declared unsearchable."""
+    than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is no string column. A
+    ``number`` on a column that no filter reaches is refused too, by ``_check_unused_kinds``, or by the not-a-number-
+    column message, which then says only to drop it."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     _check_text_fits(column)
-    _check_number(column)
+    _check_number_fits(column)
     if column.source != _DOCUMENT_ID:
         return column
     if column.orderable:
@@ -527,7 +526,8 @@ def _held(column: Column) -> Column:
 
 def _unused_on_document_id(column: IndexColumn) -> str | None:
     """The message for a ``text`` or a ``number`` on a column that reads the document id, which is read from the hit and
-    never searched or ordered; None for neither. ``searchable`` is ignored on the id, so the only fix is to drop it."""
+    never searched or ordered; None for neither. ``searchable`` is ignored on the id, so the only fix is to drop it. A
+    ``number`` on an id column that is no number column was refused earlier, by ``_check_number_fits``."""
     if column.text is not None:
         return (
             f'The column "{column.name}" declares text={column.text!r} but shows the document id, which is read from '
@@ -542,9 +542,16 @@ def _unused_on_document_id(column: IndexColumn) -> str | None:
 
 
 def _unused_on_unsearchable(column: IndexColumn, key: Sequence[Column]) -> str | None:
-    """The message for a ``text`` on a column declared unsearchable that is also declared ``orderable=False`` and is not
-    in the ``key``; None otherwise. A ``number`` there was refused earlier, by ``_check_number``. The fix is to let the
-    column be searched, not ordered: ``text='text'`` has no whole string to sort by."""
+    """The message for a ``number`` on a column declared unsearchable (a number column: another type was refused
+    earlier, by ``_check_number_fits``), or a ``text`` on one that is also declared ``orderable=False`` and is not in
+    the ``key``; None otherwise. The fix for a ``text`` is to let the column be searched, not ordered: ``text='text'``
+    has no whole string to sort by."""
+    if column.number is not None:
+        return (
+            f'The column "{column.name}" declares number={column.number!r} but is declared '
+            f'searchable={column.searchable!r}, so no filter reaches it and no number range applies. Drop number=, or '
+            'declare the column searchable.'
+        )
     if column.text is not None and column.orderable is False and column not in key:
         return (
             f'The column "{column.name}" declares text={column.text!r} but is not searched, not ordered and not the '
@@ -555,10 +562,10 @@ def _unused_on_unsearchable(column: IndexColumn, key: Sequence[Column]) -> str |
 
 def _unused_kind(column: Column, key: Sequence[Column]) -> str | None:
     """The message for a ``text`` or a ``number`` of ``column`` that nothing reads, or None. On the document id it is
-    any ``text`` or ``number`` (``_unused_on_document_id``). On a column that is not searched, a ``text`` is unused only
-    when the column is also declared ``orderable=False`` and is not in the ``key``, whose sort ends every order: a
-    ``text`` also picks the field a column is sorted by and decides its default ``orderable``, so one on a column with
-    the default ``orderable`` is left alone, though ``text='text'`` then only turns its ordering off."""
+    any ``text`` or ``number`` (``_unused_on_document_id``). On a column that is not searched, a ``number`` is, and a
+    ``text`` only when the column is also declared ``orderable=False`` and is not in the ``key``, whose sort ends every
+    order: a ``text`` also picks the field a column is sorted by and decides its default ``orderable``, so one on a
+    column with the default ``orderable`` is left alone, though ``text='text'`` then only turns its ordering off."""
     if not isinstance(column, IndexColumn):
         return None
     if column.source == _DOCUMENT_ID:

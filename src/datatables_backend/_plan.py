@@ -412,9 +412,15 @@ def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Ca
                 'takes one: remove the hook.'
             )
         if not able.whole_string:
+            # On an unsearchable column a keyword field would only lead to ``check_hook_is_searched``: say the one fix
+            fix = (
+                'Declare it text="keyword" or "text+keyword", or remove the hook.'
+                if column.searchable
+                else 'Remove the hook.'
+            )
             raise SchemaError(
                 f'The column "{column.name}" has a search_value hook but holds analysed text only, which a hook '
-                'compares by equality. Declare it text="keyword" or "text+keyword", or remove the hook.'
+                f'compares by equality. {fix}'
             )
         check_hook_is_searched(column)
 

@@ -24,10 +24,12 @@ and the versioning policy is in the README.
     (`_id`): the hook never ran, because no search reaches such a column (a column search, a SearchBuilder condition or
     ColumnControl's `contains` on it is refused with `invalid_filter`, and the global search leaves it out). Remove the
     hook, or (not on `_id`) declare the column searchable. The hook did change which requests were refused: a column
-    search of only `"` or `!` on such a column was refused `invalid_filter` with it and is ignored without it;
+    search of only `"` or `!` on such a column was refused `invalid_filter` with it and is ignored without it. (A hook
+    on a column that is no string column, or holds analysed text only, was refused already, and still is.);
   - (OpenSearch) a `number=` on a number column declared `searchable=False` or on `_id`: the kind only bounds the
     numbers a filter sends. Drop it, or (not on `_id`) declare the column searchable. (On a column that is no number
-    column, `number=` was refused already, and still is.);
+    column, `number=` was refused already, and still is; on a column that is not searched that message now says only
+    to drop it.);
   - (OpenSearch) a `text=` on a string column that reads `_id`, or on a string column declared `searchable=False` and
     `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it, or (on the second) declare
     the column searchable. A `text=` on the key, and on an unsearchable column with the default `orderable`, stays: it
