@@ -66,8 +66,8 @@ and a number too close to zero for a double now answers as `0`. Nothing else nee
   the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it. Before, such a number
   with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or `half_float`
   field keeps apart from 0.0. So on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a column search
-  of it and a `multi_values` entry of it (several values in one column search) missed the document, while `>` and `!=`
-  found it. Each now answers as for `0`.
+  of it and a list entry of it (a `multi_values` list, a categorical regex or a ColumnControl list) missed the
+  document, while `>` and `!=` found it. Each now answers as for `0`.
   - For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
     for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none,
     and `>` and `!=` no longer find it.
