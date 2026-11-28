@@ -32,7 +32,7 @@ close to zero for a double now answers as `0`. Nothing else needs a change.
 
 - **A table now raises `SchemaError` when it is built, for a declaration that never worked as declared.** The message
   names the column or what was written, and the fix. If your table declares one of these, it built before, or failed to
-  build without the fix, and raises this now:
+  build with another message, and raises this now:
   - **`text=` on a column that is not a string column** (OpenSearch): `text='keyword'`, `'text'` or `'text+keyword'` on
     a number, date or boolean column was ignored. Remove the `text=`.
   - **A `search_value` that is not callable** (both backends), such as `'x'`, `''` or `0`: on a string column that holds
