@@ -47,8 +47,8 @@ Three more facts:
 The owner decided on 2026-11-25, and PRD-D23 states it:
 
 - A value outside a kind's range is refused with `invalid_number` before the query for `integer`, `long`,
-  `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing,
-  so the measurement gave them no kind. The owner later approved both as kinds checked by the floor alone (pull
+  `unsigned_long`, `float` and `half_float`: the server refuses them all. `scaled_float` and `double` refuse nothing, so
+  the first decision gave them no kind. The owner later approved both as kinds checked as every number column is (pull
   request #227), so that declaring the mapping type of any number field builds; they still refuse no finite number.
 - `byte` and `short` refuse only where OpenSearch does, beyond an `integer`'s range, and carry its bounds. A `byte` kind
   that refused 128 would take away an answer the library gives without a kind (`=` finds nothing, `<=` every row), and
@@ -58,10 +58,11 @@ The owner decided on 2026-11-25, and PRD-D23 states it:
   rounds to the edge is refused, as the server does. `9223372036854775807.0`, written with a point, is therefore refused
   on a `long`; an integral decimal is not sent as an integer.
 - The library already refuses a number that is not finite as a double with `invalid_number` (PRD-F25), and a `double`
-  field answered every value measured (255 digits, 1e308 and 2^64), a `scaled_float` 255 digits and 1e300, so those
-  columns need no check beyond that (INFERRED for the values between).
+  field answered every value measured (MEASURED 2026-11-25, CI run 45639230811: 255 digits, 1e308 and 2^64), a
+  `scaled_float` 255 digits and 1e300, so those columns need no check beyond that (INFERRED for the values between).
 - The two answers without an error are stated limits (PRD section 5, `docs/databases.md`): a declared `unsigned_long`
-  refuses `-1` where an undeclared column does not, and a `scaled_float` clamps declared or not.
+  refuses `-1` where an undeclared column does not, and a `scaled_float` clamps declared or not (INFERRED for a declared
+  one: it sends the same body).
 - The live test `test_a_declared_kind_refuses_where_the_server_does_and_answers_where_it_answers` sends each edge pair
   of the table above through a declared and an undeclared column on both servers, so the exact edges the library
   carries (the `byte` and `short` edge at 2^31 and the `float` rounding edge) are checked against the server on every

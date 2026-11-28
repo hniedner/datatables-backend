@@ -3189,12 +3189,18 @@ def test_a_kind_on_a_column_that_is_no_number_column_is_a_schema_error_that_name
     ('column', 'written', 'accepted'),
     [
         pytest.param(
-            lambda: IndexColumn('n', type='number', number=cast(Any, 'decimal')), 'decimal', 'scaled_float', id='number'
+            lambda: IndexColumn('n', type='number', number=cast(Any, 'decimal')),
+            "'decimal'",
+            'scaled_float',
+            id='number',
         ),
-        pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), 'Keyword', 'text+keyword', id='text'),
+        pytest.param(lambda: IndexColumn('n', text=cast(Any, 'Keyword')), "'Keyword'", 'text+keyword', id='text'),
         pytest.param(lambda: IndexColumn('n', text=cast(Any, None)), 'None', 'text+keyword', id='text-none'),
         pytest.param(
-            lambda: IndexColumn('n', type=cast(Any, 'numbr'), number='long'), 'numbr', 'boolean', id='type-with-number'
+            lambda: IndexColumn('n', type=cast(Any, ['number']), number='long'),
+            "['number']",
+            'boolean',
+            id='type-with-number',
         ),
     ],
 )
@@ -3209,7 +3215,7 @@ def test_a_kind_or_type_outside_its_literal_is_a_schema_error_that_names_the_kin
         SearchTable('docs', [IndexColumn('id', text='keyword'), column()], unique_key='id')
     message = str(raised.value)
     assert '"n"' in message
-    assert f'"{written}"' in message
+    assert written in message
     assert accepted in message
 
 

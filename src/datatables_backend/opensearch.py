@@ -40,6 +40,7 @@ from ._plan import Part
 from ._plan import Plan
 from ._plan import Range
 from ._plan import check_declaration
+from ._plan import check_type
 from ._plan import declared_key
 from ._plan import mistake
 from ._plan import next_day
@@ -94,7 +95,6 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'double': (-1.7976931348623157e308, 1.7976931348623157e308),
     'scaled_float': (-1.7976931348623157e308, 1.7976931348623157e308),
 }
-_NOT_NUMBER = frozenset({'string', 'date', 'boolean'})  # a type that is no number; a misspelled one is _check_type's
 _TEXT_KINDS = get_args(TextKind.__value__)
 _NUMBER_KINDS = get_args(NumberKind.__value__)
 _FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
@@ -421,15 +421,15 @@ def _lower_bound(answer: Mapping[str, Any]) -> bool:
 
 def _check_kinds(column: Column) -> None:
     """Raise ``SchemaError`` for a ``text`` or a ``number`` that is none of the kinds: a ``Literal`` checks nothing at
-    run time, and the table would build and fail on a filter. The message names the column, what was written
-    and the accepted kinds; the name and the value are the server's, never the client's."""
+    run time, and the table would build and fail, or wrongly refuse, a filter. The message names the column, what was
+    written and the accepted kinds; the name and the value are the server's, never the client's."""
     if not isinstance(column, IndexColumn):
         return
     kinds = (('text', column.text, _TEXT_KINDS), ('number', column.number, _NUMBER_KINDS))
     for field_name, written, accepted in kinds:
         if written not in accepted and not (field_name == 'number' and written is None):  # only number may be None
             raise SchemaError(
-                f'The column "{column.name}" declares {field_name}="{written}", which is not a kind. Declare one of '
+                f'The column "{column.name}" declares {field_name}={written!r}, which is not a kind. Declare one of '
                 f'{", ".join(accepted)}.'
             )
 
@@ -440,8 +440,9 @@ def _held(column: Column) -> Column:
     unorderable, and the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type
     declared on a column that is no number column is the server's mistake too, and so is a ``text`` or ``number`` that
     is none of its kinds."""
+    check_type(column)  # first: what follows reads the type
     _check_kinds(column)
-    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) in _NOT_NUMBER:
+    if isinstance(column, IndexColumn) and column.number is not None and _type_of(column) != 'number':
         raise SchemaError(
             f'The column "{column.name}" declares number="{column.number}" but is not a number column, so no number '
             f'range applies to it. Declare it IndexColumn("{column.name}", type="number", number="{column.number}"), '

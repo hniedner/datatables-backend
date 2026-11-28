@@ -1921,7 +1921,7 @@ def test_a_type_outside_the_four_is_a_schema_error_on_a_sql_table_too():
     """SPEC-D23.10: the check is the core's, so both backends refuse the misspelled type when the table is built, where
     it used to build and fail on every SearchBuilder condition with a `KeyError`."""
     misspelled: Any = 'numbr'
-    with pytest.raises(SchemaError, match=r'"id".*"numbr".*boolean'):
+    with pytest.raises(SchemaError, match=r'"id".*\'numbr\'.*boolean'):
         SQLTable(people, [Column('id', type=misspelled)])
 
 

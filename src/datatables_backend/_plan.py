@@ -334,14 +334,14 @@ class Plan:
         return bool(self.global_search or self.column_searches or self.search_builder)
 
 
-def _check_type(column: Column) -> None:
+def check_type(column: Column) -> None:
     """Raise ``SchemaError`` for a ``type`` that is none of the four: a ``Literal`` checks nothing at run time, and the
     table would build and then fail on a filter. The message names the column, the type written and the accepted
     ones; the name and the value are the server's, never the client's."""
     accepted = get_args(ColumnType.__value__)
     if column.type is not None and column.type not in accepted:
         raise SchemaError(
-            f'The column "{column.name}" declares type="{column.type}", which is not a type. Declare one of '
+            f'The column "{column.name}" declares type={column.type!r}, which is not a type. Declare one of '
             f'{", ".join(accepted)}.'
         )
 
@@ -356,7 +356,7 @@ def check_declaration(columns: Sequence[Column], describe: Callable[[Column], Ca
         raise SchemaError('No column is declared. Declare at least one Column.')
     names: set[str] = set()
     for column in columns:
-        _check_type(column)
+        check_type(column)
         if column.name in names:
             raise SchemaError(
                 f'Two columns are declared with the name "{column.name}". Give each its own name: '
