@@ -8,14 +8,16 @@ and the versioning policy is in the README.
 ## [0.2.0] - 2026-11-28
 
 This release makes a table refuse at construction several declarations that never worked, changes the default of
-`IndexColumn.text` to `None`, adds the `double` and `scaled_float` number kinds for OpenSearch columns, and corrects
-a few answers: a number written as minus zero, a reversed `between`, and a column search with no word.
+`IndexColumn.text` to `None`, adds the `double` and `scaled_float` number kinds for OpenSearch columns, and changes a
+few answers (see Fixed): a number written as minus zero or too close to zero, the limits on a number's digits and on a
+`half_float`, a reversed `between`, and a column search with no word.
 
 **Upgrade impact:** this is a minor release and it breaks the Python API in two ways; read Changed before upgrading.
 A table that declares something that never worked now raises `SchemaError` when it is built, where it built before and
-then did nothing or failed on its first request, and `IndexColumn.text` reads `None` where it read `'text+keyword'`.
-Build each table once, as at start-up, to find the declarations to change. A few answers that were wrong now change
-(see Fixed). Nothing else needs a change.
+then did nothing or failed on its first request (an empty or `None` column name on SQL already failed to build, without
+saying the fix), and `IndexColumn.text` reads `None` where it read `'text+keyword'`. Build each table once, as at
+start-up, to find the declarations to change. A few answers change (see Fixed): most were wrong, and a number too close
+to zero for a double now answers as `0`. Nothing else needs a change.
 
 **Security:** none; this release fixes no known vulnerability.
 
@@ -28,7 +30,8 @@ Build each table once, as at start-up, to find the declarations to change. A few
 ### Changed
 
 - **A table now raises `SchemaError` when it is built, for a declaration that never worked.** The message names the
-  column, what was written and the fix. If your table declares one of these, it built before and raises now:
+  column or what was written, and the fix. If your table declares one of these, it built before, or failed to build
+  without the fix, and raises this now:
   - **`text=` on a column that is not a string column** (OpenSearch): `text='keyword'`, `'text'` or `'text+keyword'` on
     a number, date or boolean column was ignored. Remove the `text=`.
   - **A `search_value` that is not callable** (both backends), such as `'x'`, `''` or `0`: on a string column that holds
@@ -40,12 +43,13 @@ Build each table once, as at start-up, to find the declarations to change. A few
     as a missing column, with no fix, and a `None` name with no `field` raised SQLAlchemy's `ArgumentError`. Give the
     column a non-empty name, and drop an empty `field=` or give it the source's name.
   - **A `number=` or `text=` on an `IndexColumn`, or a `type=` on a `Column`, that is none of its accepted values**: a
-    name this library did not know (`number='double'`, until it was added above) or a misspelling failed the first
-    SearchBuilder filter on it with a `KeyError` (HTTP 500 through the FastAPI adapter; on SQL, unless the older
-    SQL-type check refused a `type=`), and a misspelled `text=` on a string column had its whole-string conditions
-    (`=`, `!=`, starts with, ends with and their negations) and its ordering wrongly refused, and matched contains, a
-    column search and the global search as analysed text only (no substring inside a word). Use one of the accepted
-    values, which the message lists.
+    number kind this library did not know (`number='double'`, until it was added above) or a misspelled one failed the
+    first filter that carried a number to that column (a SearchBuilder condition, a column search or a list) with a
+    `KeyError`, and a misspelled `type=` failed the first SearchBuilder condition on it, both a 500 through the FastAPI
+    adapter (on SQL, unless the check that a declared `type=` fits the column's SQL type refused a `type=` first). A
+    misspelled `text=` on a string column had its whole-string conditions (`=`, `!=`, starts with, ends with and their
+    negations) and its ordering wrongly refused, and matched contains, a column search and the global search as
+    analysed text only (no substring inside a word). Use one of the accepted values, which the message lists.
 - **`IndexColumn.text` is `None` when it is not declared** (OpenSearch), where it was `'text+keyword'`. If your code
   reads `column.text`, or compares an `IndexColumn` with one built with `text='text+keyword'` (`IndexColumn('x') ==
   IndexColumn('x', text='text+keyword')` is now false), read `None` as `'text+keyword'` on a string column; a string
@@ -60,7 +64,8 @@ Build each table once, as at start-up, to find the declarations to change. A few
   the nearest double, or as `0` when that double is zero, as a SQL `Float` column compares it. Before, such a number
   with a minus sign (a whole `-0` was always sent as `0`) was sent as -0.0, which a `double`, `float` or `half_float`
   field keeps apart from 0.0. So on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a column search
-  of it and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for `0`.
+  of it and a `multi_values` entry of it (several values in one column search) missed the document, while `>` and `!=`
+  found it. Each now answers as for `0`.
   - For `-0.00`, which is zero, that is the fix. For `-1e-400`, which is not exactly zero, it trades the exact answer
     for the nearest double's: `=`, `<=`, a column search and a list entry now find the document where they found none,
     and `>` and `!=` no longer find it.
@@ -85,11 +90,11 @@ Build each table once, as at start-up, to find the declarations to change. A few
   as the range from 9 to 10, though `10` sorts first as text.
 - A column search whose text has no word, such as a lone `"`, a bare `!` or `!x`, adds nothing, so the request is
   answered as if it were not sent, on a column that is undeclared, nameless or declared unsearchable, and beside a
-  `multi_values` list (several values in one column search), which alone then answers. ColumnControl's `contains`, a
-  column search, is covered too. Before, each of these was refused with `invalid_filter`, and so was text of spaces only
-  beside such a list. A column search with `regex: true` is unchanged: spaces there are still a categorical value. So is
-  text other than spaces on a column with a `search_value` hook, whose text is one whole value, and text holding a
-  control character is still refused with `invalid_character`.
+  `multi_values` list, which alone then answers. ColumnControl's `contains`, a column search, is covered too. Before,
+  each of these was refused with `invalid_filter`, and so was text of spaces only beside such a list. A column search
+  with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
+  with a `search_value` hook, whose text is one whole value, and text holding a control character is still refused with
+  `invalid_character`.
 
 ## [0.1.3] - 2026-11-25
 
