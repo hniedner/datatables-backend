@@ -94,7 +94,10 @@ def load_words() -> Words:
     location = os.environ.get(VARIABLE)
     if not location:
         raise CouldNotCheckError(f'{VARIABLE} is not set')
-    path = Path(location).expanduser()
+    try:
+        path = Path(location).expanduser()  # raises RuntimeError for ``~user`` of an unknown user
+    except RuntimeError:
+        raise CouldNotCheckError(f'{VARIABLE} names no readable file') from None
     if not path.is_file():
         raise CouldNotCheckError(f'{VARIABLE} names no readable file')
     words = [

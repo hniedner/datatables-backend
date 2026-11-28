@@ -90,6 +90,15 @@ def test_the_scan_fails_closed_without_a_word_list(tmp_path: Path, case: str):
     assert 'could not check' in result.stderr
 
 
+def test_a_word_list_under_an_unknown_home_cannot_check(tmp_path: Path):
+    """A typo such as `~nosuchuser/words.txt` makes expanduser raise RuntimeError; it must be exit 2, not a crash."""
+    clean = write(tmp_path / 'clean.md', 'nothing here\n')
+    result = scan(str(clean), words=None, extra={'DTB_PRIVATE_WORDS': '~nosuchuserxyz/words.txt'})
+    assert result.returncode == 2
+    assert 'could not check: DTB_PRIVATE_WORDS names no readable file' in result.stderr
+    assert 'nosuchuserxyz' not in result.stderr  # the message names the variable, not the path
+
+
 def git(repo: Path, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:  # noqa: A002
     return subprocess.run(
         ['git', '-C', str(repo), *args],
