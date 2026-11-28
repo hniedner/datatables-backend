@@ -132,14 +132,15 @@ or an OpenSearch setting has an entry below.
 
 - **What you see:** a number of more than 38 digits in all, before and after the decimal point (a fraction's trailing
   zeros not counted), on a `Numeric` column, or with a fraction on an integer column (not through a `TypeDecorator`,
-  whose number goes as the nearest float), is answered with `invalid_number`, whatever precision the column declares.
-  No other database bounds such a column.
+  whose number goes as the nearest float), is answered with `invalid_number`, whatever precision a `Numeric` column
+  declares. No other database bounds such a column.
 - **Example:** `=` with a whole number of 39 digits, or `1e39`, or `0.` and 39 ones, on a `Numeric` column:
   `invalid_number` on SQL Server, no rows on PostgreSQL, MySQL and SQLite.
 - **How it is known:** MEASURED 2026-11-22 (whole numbers) and 2026-11-24 (numbers with a point) on SQL Server 2022
   with Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`,
-  `docs/decisions/010-decimal-numbers.md`); the boundary of 38 is pinned by `tests/test_sql.py`.
+  `docs/decisions/010-decimal-numbers.md`); the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the
+  integer-column case with a compiled statement; it was not measured.
 - **Requirement:** PRD-F25.
 
 ### A float's search text is written by `FORMAT`, which costs about four times a cast

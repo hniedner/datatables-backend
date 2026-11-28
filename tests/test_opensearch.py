@@ -3205,7 +3205,8 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(value: str,
 @pytest.mark.parametrize(('value', 'answered'), [('1.0e-16383', True), ('0e-16384', True), ('1e-16384', False)])
 def test_a_single_value_column_search_reads_the_16383_digit_limit_by_the_value(value: str, answered: bool):
     """SPEC-F25.16: the value of a column search on a number column goes through its own branch of the plan, not
-    through a filter's. It catches that branch not reading the number, or reading it without the limit, so that
+    through a filter's. On SQL a number column's text is searched by words, so that branch is OpenSearch's alone
+    (`value_search`) and has no SQL twin. It catches that branch not reading the number, or reading it without the limit, so that
     `1e-16384` reaches the server, and one that reads the limit from the spelling and refuses `1.0e-16383`."""
     client = Client()
     response = table.fetch_sync(request(*NAMES, column_search={'pages': {'value': value}}), client)

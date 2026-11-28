@@ -3036,8 +3036,22 @@ def test_a_fraction_on_a_converting_integer_type_is_not_cast_to_an_integer(diale
     assert not any('INTEGER' in condition for condition in conditions)
 
 
+@pytest.mark.parametrize('kind', [Counted, Float])
+@pytest.mark.parametrize('value', ['8.' + '1' * 38, '1e-16383'])
+def test_sql_servers_38_digits_do_not_bound_a_column_that_compares_a_float(kind: Any, value: str):
+    """SPEC-F25.12, SPEC-F25.14: only a `Numeric` column and a fraction on an integer column are refused there, so a
+    `TypeDecorator` over an integer and a `Float` column take a number of more than 38 digits as the nearest float.
+    It catches the check moved before the float is chosen, which refuses valid filters on these columns."""
+    numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('n', kind))
+    source: Any = Compiling(mssql.dialect())
+    response = SQLTable(numbers, [Column('id'), Column('n')]).fetch_sync(
+        request('id', 'n', **criterion('n', '<', value)), source
+    )
+    assert response.error is None, response.error
+
+
 def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
-    """SPEC-F25.14: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2,
+    """SPEC-F25.14, SPEC-F25.16: 1e-16383 is the smallest positive number PostgreSQL's `numeric` takes (its manual, Table 8.2,
     fetched 2026-11-24), so one with more digits after the point is `invalid_number`, never the driver's error; it was
     a float that read as zero. `1e-16383` is answered on a `Numeric` column on every database but SQL Server, as
     the live test of SPEC-F25.16 shows. `1.5e-16383` and `11e-16384` have a digit past the limit though their first
@@ -3046,7 +3060,7 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     single = 'The filter on "i" needs a number with at most 16383 digits after the decimal point.'
     among = 'Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.'
     for dialect in (postgresql.dialect, mssql.dialect):
-        for value in ('1e-16384', '1.5e-16383', '11e-16384'):
+        for value in ('1e-16384', '1.0e-16384', '10e-16385', '-1.0e-16384', '1.5e-16383', '11e-16384'):
             source: Any = Compiling(dialect())
             found = integer_numbers().fetch_sync(request('id', 'i', **criterion('i', '=', value)), source)
             assert refused(found, 'invalid_number') == single
@@ -3066,23 +3080,15 @@ def test_the_16383_digit_limit_is_read_by_the_value_not_the_spelling(
     session: Session, value: str, sql_server_answers: bool
 ):
     """SPEC-F25.16: `1e-16383`, `1.0e-16383` and `10e-16384` are one number and zero is another with no fraction, all
-    within the limit, so each is answered on every database but SQL Server, whose 38 digits refuse the first three
-    (SPEC-F25.12). `1e-16383`, the plain spelling, is the control; its live send also shows that the database takes a
-    fraction of 16383 digits. It catches the limit read from the exponent as written, which refuses the others."""
+    within the limit, so each is answered on every database, except the first three on SQL Server, whose 38 digits
+    refuse them (SPEC-F25.12). `1e-16383`, the plain spelling, is the control; on PostgreSQL its live send also shows
+    that the database takes a fraction of 16383 digits (SQLite gets a float, PRD section 5). It catches the limit read
+    from the exponent as written, which refuses the others."""
     response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
     if session.get_bind().dialect.name == 'mssql' and not sql_server_answers:
         refused(response, 'invalid_number')
     else:
         assert response.error is None
-
-
-@pytest.mark.parametrize('value', ['1e-16384', '1.0e-16384', '10e-16385', '-1.0e-16384', '1.5e-16383', '11e-16384'])
-def test_a_numeric_column_refuses_a_number_with_a_digit_past_the_16383_limit(session: Session, value: str):
-    """SPEC-F25.16: the last digit of each is the 16384th after the point, whatever its spelling or its first digit,
-    so every database refuses it with `invalid_number` before any query. The refusal is made while planning, so a
-    live run adds the proof that no driver error reaches the user."""
-    response = wide(session).fetch_sync(request(*WIDE, **criterion('exact', '=', value)), session)
-    refused(response, 'invalid_number')
 
 
 @pytest.mark.parametrize(
