@@ -963,7 +963,8 @@ _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, 
 def test_an_object_git_cannot_read_cannot_check(
     words: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
 ):
-    """In process, with git's answer given: a real race cannot be staged; a corrupt object gives the same text."""
+    """In process, with the bytes given: a race cannot be staged; a corrupt object gives the first rows' text or
+    makes later bytes read as one of the other rows."""
     scanner = load_scanner(monkeypatch, words)
     printed = _UNREADABLE[answer].encode()
     monkeypatch.setattr(scanner, 'git', lambda *args, **_: printed if 'cat-file' in args else b'')
@@ -972,6 +973,14 @@ def test_an_object_git_cannot_read_cannot_check(
     assert 'could not check: an object could not be read' in shown  # not the generic git failure
     assert 'git fsck' in shown  # and it says what to do
     assert WORD.casefold() not in shown.casefold()
+
+
+@pytest.mark.parametrize('length', [40, 64], ids=['sha-1', 'sha-256'])
+def test_batch_reads_the_ids_of_both_hash_functions(words: Path, monkeypatch: pytest.MonkeyPatch, length: int):
+    """A refusal of a SHA-256 repository's ids would block every push there."""
+    scanner = load_scanner(monkeypatch, words)
+    out = f'{"a" * length} blob 3\nabc\n{"b" * length} tree 0\n\n'.encode()
+    assert [(kind, data) for _, kind, data in scanner.batch(out)] == [('blob', b'abc'), ('tree', b'')]
 
 
 @pytest.mark.parametrize('encoding', ['latin-1', 'utf-16-le'])
