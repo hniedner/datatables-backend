@@ -584,6 +584,39 @@ def test_a_phrase_or_a_hash_inside_a_word_is_still_a_word(tmp_path: Path, listed
     assert result.returncode == 1, result.stdout
 
 
+PHRASE = f'{WORD[:5]} {WORD[5:]}'  # a two-word private name: 'Zebra finch'
+
+
+@pytest.mark.parametrize(
+    'wrapped',
+    ['Zebra\nfinch', 'Zebra  finch', 'Zebra\tfinch', 'Zebra\n\n   finch', 'Zebra\u00a0finch'],
+    ids=['line break', 'two spaces', 'tab', 'blank line and indent', 'no-break space'],
+)
+@pytest.mark.parametrize('where', ['file', 'history'])
+def test_a_phrase_is_found_across_whitespace_and_line_breaks(tmp_path: Path, repo: Path, where: str, wrapped: str):
+    """Docs are hard-wrapped, so a two-word private name can split across a line break or carry two spaces; it must
+    still be found, and reported at the line its first word is on."""
+    listed = write(tmp_path / 'list.txt', f'{PHRASE}\n')
+    data = f'first line\nsee {wrapped} here\n'
+    if where == 'file':
+        result = scan(str(write(tmp_path / 'notes.md', data)), words=listed)
+        assert 'notes.md:2: private word #1' in result.stderr
+    else:
+        commit(repo, 'notes.txt', data.encode())
+        result = scan('--history', words=listed, cwd=repo)
+    assert result.returncode == 1, result.stdout
+    assert 'zebra' not in (result.stdout + result.stderr).casefold()  # nothing of the word is printed
+
+
+@pytest.mark.parametrize(
+    'listed', [f'{WORD[:5]}  {WORD[5:]}', f'{WORD[:5]}\u00a0{WORD[5:]}'], ids=['two spaces', 'nbsp']
+)
+def test_a_phrase_with_odd_whitespace_in_the_list_matches_single_spaces(tmp_path: Path, listed: str):
+    """The list's whitespace is folded as the text's is, so `Zebra  finch` in the list matches `Zebra finch`."""
+    result = scan(str(write(tmp_path / 'notes.md', f'see {PHRASE} here\n')), words=write(tmp_path / 'l.txt', listed))
+    assert result.returncode == 1, result.stdout
+
+
 @pytest.mark.parametrize('where', ['message', 'author'])
 def test_history_reads_commits_on_every_branch(repo: Path, words: Path, where: str):
     """The word is only in the side branch's commit, not in any file, so only the commit scan can find it."""

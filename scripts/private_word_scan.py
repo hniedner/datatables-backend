@@ -1,11 +1,12 @@
 """Refuse words that must never become public, in file paths, file contents, commit messages and git history.
 
 The word list lives outside the repository, in the file the environment variable ``DTB_PRIVATE_WORDS`` names: one
-word per line, matched as a substring after both sides are folded (NFKD, casefold, NFKD), so case and canonically or
-compatibly equal spellings do not matter; blank lines and lines starting with ``#`` are skipped. The
-list is never committed, and a finding never prints the word: it names the word's line in the list (``#3``), and a
-path or ref name is printed with each ``/``-separated part that holds a word in any reading replaced by ``***``, or as
-``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
+word per line, matched as a substring after both sides are folded (NFKD, casefold, NFKD) and every run of whitespace,
+line breaks included, is one space, so case, canonically or compatibly equal spellings and the wrapping of a two-word
+name do not matter; blank lines and lines starting with ``#`` are skipped. The list is never committed, and a
+finding never prints the word: it names the word's line in the list (``#3``), and a path or ref name is printed with
+each ``/``-separated part that holds a word in any reading replaced by ``***``, or as ``***`` whole when a word spans
+parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
 The scan fails closed: without the variable, a readable UTF-8 file, or a usable word in it, or when a word in it is
 refused, or when git or the file system fails, or an object cannot be read, it cannot check, and says so with exit
@@ -60,9 +61,11 @@ refuses it.
 
 from __future__ import annotations
 
+import bisect
 import codecs
 from collections.abc import Iterable
 from collections.abc import Iterator
+import itertools
 import os
 from pathlib import Path
 import re
@@ -141,7 +144,7 @@ def _word(number: int, line: str) -> str:
             f'word list line {number} holds a replacement character (a letter lost when the list was converted to '
             'UTF-8): retype the word'
         )
-    return fold(word)
+    return squeeze(word)
 
 
 def _read_list(path: Path) -> str:
@@ -203,10 +206,37 @@ def fold(text: str) -> str:
     return unicodedata.normalize('NFKD', unicodedata.normalize('NFKD', text).casefold())
 
 
+def squeeze(text: str) -> str:
+    """The text folded, with every run of whitespace (spaces, tabs, line breaks) turned into one space and none at
+    the ends, so a private name written in two words matches however a document wraps or spaces it."""
+    return ' '.join(fold(text).split())
+
+
 def hits(text: str, words: Words) -> list[int]:
     """The list lines of the words ``text`` contains."""
-    folded = fold(text)
-    return [number for number, word in words if word in folded]
+    squeezed = squeeze(text)
+    return [number for number, word in words if word in squeezed]
+
+
+def line_hits(text: str, words: Words) -> dict[int, set[int]]:
+    """The list lines of the words ``text`` contains, by the line of ``text`` each match starts on, so a word that
+    a line break splits is found and reported at its first line."""
+    kept = [(number, piece) for number, line in enumerate(text.splitlines(), 1) if (piece := squeeze(line))]
+    squeezed = ' '.join(piece for _, piece in kept)
+    starts = list(itertools.accumulate((len(piece) + 1 for _, piece in kept), initial=0))
+    found: dict[int, set[int]] = {}
+    for number, word in words:
+        for at in _occurrences(squeezed, word):
+            found.setdefault(kept[bisect.bisect_right(starts, at) - 1][0], set()).add(number)
+    return found
+
+
+def _occurrences(text: str, word: str) -> Iterator[int]:
+    """The offsets ``word`` starts at in ``text``."""
+    at = text.find(word)
+    while at >= 0:
+        yield at
+        at = text.find(word, at + 1)
 
 
 def text_hits(data: bytes, words: Words) -> list[int]:
@@ -254,9 +284,8 @@ def _file_findings(name: str, words: Words) -> list[str]:
 def _content_findings(shown: str, data: bytes, words: Words) -> list[str]:
     """What a file's bytes hold, line by line as ``decode`` reads them, then in the other encodings."""
     findings: list[str] = []
-    for number, line in enumerate(decode(data).splitlines(), 1):
-        if found := hits(line, words):
-            findings.append(report(f'{shown}:{number}', found))
+    for number, found in sorted(line_hits(decode(data), words).items()):
+        findings.append(report(f'{shown}:{number}', sorted(found)))
     if found := content_hits(data, words):
         findings.append(report(f'{shown} (contents in another encoding)', found))
     return findings
