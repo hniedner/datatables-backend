@@ -140,8 +140,8 @@ or an OpenSearch setting has an entry below.
   Microsoft's ODBC Driver 18, which refuses to send a longer decimal with `HY104`
   (`docs/decisions/004-numbers-and-the-empty-string-on-the-sql-servers.md`, `docs/decisions/010-decimal-numbers.md`);
   the boundary of 38 is pinned by `tests/test_sql.py`, which also pins the integer-column case against a compiling
-  source with no database and, for `1e-16383`, in CI's SQL Server job
-  (`test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`); the driver's own refusal of
+  source with no database and, for `1e-16383`, in CI's SQL Server job (RUN 2026-11-28 UTC;
+  `test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_binds_it`); the driver's own refusal of
   that case was not measured.
 - **Requirement:** PRD-F25.
 

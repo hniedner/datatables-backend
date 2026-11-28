@@ -504,9 +504,9 @@ def _number(
     SQL Server a ``Numeric`` column, and an integer column given a number with a fraction (not through a
     ``TypeDecorator``, whose number goes as the nearest float), take a number of at most 38 digits in all, before and
     after the decimal point (a fraction's trailing zeros not counted), whatever the column declares: its driver refuses
-    a longer one (measured on a ``Numeric`` column). A number outside either is the user's mistake. No other database
-    bounds a ``Numeric`` column here: a filter such as ``< 1000`` on a ``Numeric(5, 2)`` is a fair question, and they
-    answer it.
+    a longer one (measured on a ``Numeric`` column). A number outside the integer range or past the 38 digits is the
+    user's mistake. No other database bounds a ``Numeric`` column here: a filter such as ``< 1000`` on a ``Numeric(5,
+    2)`` is a fair question, and they answer it.
 
     A number goes as the column compares. To an exact ``Numeric`` column it goes as a ``Decimal`` with every digit
     written but a fraction's trailing zeros, when it has a point or an exponent or lies outside the signed 64-bit range

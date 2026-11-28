@@ -992,8 +992,8 @@ def without_trailing_zeros(value: Decimal) -> Decimal:
 
 
 def number_unreadable(column: Column, *, listed: bool) -> InvalidFilter:
-    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or one whose exponent no
-    ``Decimal`` holds."""
+    """The mistake of a value in a filter on ``column`` that is no number, no finite one, or a zero or a positive
+    exponent no ``Decimal`` holds."""
     needed = (
         f'Each value in the filter on "{column.name}" must be a number'
         if listed
