@@ -542,11 +542,11 @@ def test_git_s_own_lines_in_a_message_file_are_not_the_message(tmp_path: Path, w
 @pytest.mark.parametrize(
     'template',
     [
-        f'Fix\n# Do not modify or remove the line above.\n{WORD}\n',  # the warning line alone is no scissors pair
+        f'Fix\n{SCISSORS}\n{WORD}\n# Do not modify or remove the line above.\n',  # the warning line must follow at once
         f'Fix\n{SCISSORS} and more\n# Do not modify or remove the line above.\n{WORD}\n',  # git writes the line whole
         f'Fix\n{SCISSORS}\n# Do not modify or remove the line above. And more.\n{WORD}\n',  # and the warning too
     ],
-    ids=['warning line alone', 'scissors line with more on it', 'warning line with more on it'],
+    ids=['scissors and warning apart', 'scissors line with more on it', 'warning line with more on it'],
 )
 def test_a_message_is_cut_only_at_git_s_whole_scissors_pair(tmp_path: Path, words: Path, template: str):
     result = scan('--message', str(write(tmp_path / 'COMMIT_EDITMSG', template)), words=words)
