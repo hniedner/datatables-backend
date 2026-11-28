@@ -87,7 +87,10 @@ _NUMBER_BOUNDS: dict[str, tuple[int | float, int | float]] = {
     'float': (-3.4028234663852886e38, 3.4028234663852886e38),
     'half_float': (-65504, 65504),
 }
-_FLOAT_FORMATS = {'float': '<f', 'half_float': '<e'}  # struct's IEEE 754 single and half precision
+#: The IEEE 754 formats (``struct``'s single and half precision) a float field rounds a number through, in order: a
+#: ``half_float`` field reads the number as a 32-bit float first and rounds that to half (measured, OpenSearch 3.10.0
+#: and 2.19.7)
+_FLOAT_FORMATS = {'float': ('<f',), 'half_float': ('<f', '<e')}
 _AN = frozenset({'integer', 'unsigned_long'})  # the kinds whose name takes "an"
 
 #: OpenSearch's default ``index.max_result_window``: ``from + size`` beyond it fails the whole search
@@ -603,15 +606,25 @@ def _compile(node: Filter | Group) -> dict[str, Any]:
             return _one_of(node)
 
 
+def _rounded(kind: str, sent: int | float) -> float:
+    """``sent`` as a float field of ``kind`` reads it: rounded through each of ``_FLOAT_FORMATS``, so a ``half_float``
+    field's ``65519.999`` is the float 65520.0 and overflows half, where straight to half it would be 65504. It raises
+    ``OverflowError`` where the number rounds to infinity in a format, and where ``float`` cannot hold a whole number
+    (``struct`` alone would raise ``struct.error``)."""
+    number = float(sent)
+    for form in _FLOAT_FORMATS[kind]:
+        number = struct.unpack(form, struct.pack(form, number))[0]
+    return number
+
+
 def _accepted(kind: str, sent: int | float) -> bool:
     """Whether OpenSearch answers ``sent`` on a field of ``kind``. A float field refuses a number that rounds to
-    infinity in its format, which is where ``struct.pack`` raises ``OverflowError``. It is given a float: a whole number
-    too large for one raises ``OverflowError`` in ``float`` itself, where ``struct`` would raise ``struct.error``."""
+    infinity in its format (``_rounded`` raises ``OverflowError``)."""
     if kind in _FLOAT_FORMATS:
         # A whole number of 39 digits in [M - 2^74, M), M = 2^128 - 2^103, rounds to exactly M as a double and is
         # refused here, where the server might round it straight to a float it holds: a conservative refusal
         try:
-            struct.pack(_FLOAT_FORMATS[kind], float(sent))
+            _rounded(kind, sent)
         except OverflowError:
             return False
         return True
@@ -620,14 +633,14 @@ def _accepted(kind: str, sent: int | float) -> bool:
 
 
 def _rounds_to_zero(kind: str, sent: int | float) -> bool:
-    """Whether ``sent`` is zero, or -0.0, once rounded to the format of a float field of ``kind``: ``-1e-50`` is no
-    zero as a double but is -0.0 as a ``float``, ``-1e-10`` as a ``half_float``. A number too large for the format is
-    no zero (``float`` or ``struct.pack`` raises ``OverflowError``, as in ``_accepted``)."""
+    """Whether ``sent`` is zero, or -0.0, once rounded as a float field of ``kind`` reads it: ``-1e-50`` is no zero as
+    a double but is -0.0 as a ``float``, ``-1e-10`` as a ``half_float``, and so is ``-2.98023224e-8`` (the float
+    -2^-25 ties to even, where straight to half it is the smallest half). A number too large for the format is no zero
+    (``_rounded`` raises ``OverflowError``, as in ``_accepted``)."""
     try:
-        packed = struct.pack(_FLOAT_FORMATS[kind], float(sent))
+        return _rounded(kind, sent) == 0
     except OverflowError:
         return False
-    return struct.unpack(_FLOAT_FORMATS[kind], packed)[0] == 0
 
 
 def _number(column: Column, value: Any) -> Any:

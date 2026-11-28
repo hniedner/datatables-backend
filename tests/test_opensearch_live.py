@@ -902,16 +902,19 @@ def test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero(
     """SPEC-F25.15 on a real server: b2 holds 0.0 in a `float` and a `half_float` field, and `-1e-50` is no zero as a
     double but rounds to -0.0 as a 32-bit float, `-1e-10` as a 16-bit one. Sent as the double, the field read it as
     -0.0 and kept it apart from 0.0, so `=` and `<=` found nothing (CI, before the fix); the library sends `0` for a
-    number that rounds to zero in the field's own kind, which finds b2."""
+    number that rounds to zero in the field's own kind, which finds b2. A `half_float` field rounds a number to a
+    32-bit float first: `-2.98023224e-8` is a hair beyond -2^-25, so straight to half it is no zero, but as a float it
+    is exactly -2^-25, which ties to even, zero. The library sending it as itself found nothing (CI run 46091503895,
+    on both servers); it now rounds through both formats."""
     params = request('id', 'n', **criterion('n', condition, text))
     assert ids(numbers_in(field, kind).fetch_sync(params, client)) == ['b2']
 
 
 def test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float(client: OpenSearch):
     """SPEC-D23.1 on a real server: `65519.999` is 65504 rounded straight to half but 65520.0 through a 32-bit float,
-    which overflows half. If the server reads a number through a float first (the case of `-2.98023224e-8` above, a
-    hair beyond -2^-25), the library has to refuse it as `invalid_number`; a red run means `_accepted` has to round
-    through '<f' then '<e'."""
+    which overflows half, and a `half_float` field reads a number through a float first (the case of `-2.98023224e-8`
+    above): the server answered it with a 400 (CI run 46091503895, on both servers) when the library sent it. The
+    library refuses it as `invalid_number` before the query."""
     params = request('id', 'n', **criterion('n', '=', '65519.999'))
     assert numbers_in('n_half', 'half_float').fetch_sync(params, client).error_code == 'invalid_number'
 

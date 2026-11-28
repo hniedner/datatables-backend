@@ -3021,6 +3021,7 @@ PATHS: dict[str, Callable[[str], dict[str, Any]]] = {
     'equals': lambda text: criterion('n', '=', text),
     'not-equals': lambda text: criterion('n', '!=', text),
     'less': lambda text: criterion('n', '<', text),
+    'less-or-equal': lambda text: criterion('n', '<=', text),
     'greater-or-equal': lambda text: criterion('n', '>=', text),
     'between': lambda text: criterion('n', 'between', text, text),
     'not-between': lambda text: criterion('n', '!between', text, text),
@@ -3114,10 +3115,18 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
 @pytest.mark.parametrize(
     ('kind', 'path', 'text'),
     [
-        *((kind, path, '-0.00') for kind in (None, 'long') for path in ('equals', 'greater-or-equal', 'less')),
+        *(
+            (kind, path, '-0.00')
+            for kind in (None, 'long')
+            for path in ('equals', 'greater-or-equal', 'less', 'less-or-equal')
+        ),
         (None, 'multi-values', '-0.00'),  # a `terms` list, built apart from a bound or a `term`
         # `_json` runs before the kind check, so a column without a kind stands for every kind
-        *((None, path, text) for text in ('-1e-400', '1e-400') for path in ('equals', 'less', 'multi-values')),
+        *(
+            (None, path, text)
+            for text in ('-1e-400', '1e-400')
+            for path in ('equals', 'less', 'less-or-equal', 'multi-values')
+        ),
     ],
 )
 def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind | None, path: str, text: str):
@@ -3133,28 +3142,53 @@ def test_a_number_whose_double_is_zero_sends_the_body_of_zero(kind: NumberKind |
 
 @pytest.mark.parametrize(
     ('kind', 'text'),
-    [('float', '-1e-50'), ('float', '1e-50'), ('half_float', '-1e-10'), ('half_float', '1e-10')],
+    [
+        ('float', '-1e-50'),
+        ('float', '1e-50'),
+        ('half_float', '-1e-10'),
+        ('half_float', '1e-10'),
+        # a hair beyond 2^-25, half of the smallest `half_float`: rounded straight to half it is no zero, but the server
+        # reads it as a 32-bit float first, which is exactly 2^-25 and ties to even, zero (CI run 46091503895)
+        ('half_float', '-2.98023224e-8'),
+        ('half_float', '2.98023224e-8'),
+    ],
 )
-@pytest.mark.parametrize('path', ['equals', 'less', 'multi-values'])
+@pytest.mark.parametrize('path', ['equals', 'less', 'less-or-equal', 'multi-values'])
 def test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero(kind: NumberKind, text: str, path: str):
     """SPEC-F25.15: `-1e-50` is no zero as a double but rounds to -0.0 in a `float` field (`-1e-10` in a `half_float`
     one), which keeps -0.0 apart from 0.0 like a `double` does; a number that rounds to zero in the declared kind is sent
-    as `0`. The bodies are compared as JSON, since Python's -0.0 equals 0. It catches the number sent as the double,
-    which the field then reads as -0.0 (CI's live run, 2026-11-26 UTC, found `= -1e-50` on a `float` field missing a
-    0.0)."""
+    as `0`, and a `half_float` field rounds to a 32-bit float before it rounds to half. The bodies are compared as JSON,
+    since Python's -0.0 equals 0. It catches the number sent as the double, which the field then reads as -0.0 (CI's live
+    run, 2026-11-26 UTC, found `= -1e-50` on a `float` field missing a 0.0), and a rounding straight to half, which
+    sends `-2.98023224e-8` for the field to read as -0.0 (CI run 46091503895, on OpenSearch 3.10.0 and 2.19.7)."""
     zero, tiny = (asked(kind, **PATHS[path](value))[1].searches for value in ('0', text))
     assert len(zero) == 1
     assert json.dumps(tiny) == json.dumps(zero)
 
 
-@pytest.mark.parametrize(('kind', 'text'), [('float', '-1e-30'), ('float', '1e-40'), ('half_float', '-1e-5')])
+@pytest.mark.parametrize(
+    ('kind', 'text'),
+    [('float', '-1e-30'), ('float', '1e-40'), ('half_float', '-1e-5'), ('half_float', '-2.9803e-8')],
+)
 def test_a_number_that_does_not_round_to_zero_in_a_float_field_is_sent_as_it_is(kind: NumberKind, text: str):
     """SPEC-F25.15: `-1e-30` is nonzero in a `float` field (it holds down to about 1.4e-45) and `-1e-5` in a
-    `half_float` one (about 6e-8), `1e-40` is a subnormal `float`, still nonzero, so each goes as the number it is, as a
-    column without a kind sends it. It catches a rule that sends a number that is tiny but nonzero in the kind as `0`."""
+    `half_float` one (about 6e-8), `1e-40` is a subnormal `float`, still nonzero, and `-2.9803e-8` is past the tie at
+    2^-25 even as a 32-bit float, so each goes as the number it is, as a column without a kind sends it. It catches a
+    rule that sends a number that is tiny but nonzero in the kind as `0`."""
     kept = asked(kind, **criterion('n', '=', text))[1].searches
     assert json.dumps(kept) == json.dumps(asked(None, **criterion('n', '=', text))[1].searches)
     assert json.dumps(kept) != json.dumps(asked(None, **criterion('n', '=', '0'))[1].searches)
+
+
+def test_a_half_float_number_is_refused_where_the_server_reads_it_as_infinity():
+    """SPEC-D23.1: a `half_float` field reads a number as a 32-bit float first, so `65519.999` is 65520.0, which
+    overflows half, though rounded straight to half it is 65504; the server answers it with a 400 (CI run 46091503895,
+    on OpenSearch 3.10.0 and 2.19.7), so it is `invalid_number` before the query. `65519.99` is the float below 65520, so
+    it is sent. It catches a refusal that rounds the double straight to half."""
+    response, client = asked('half_float', **criterion('n', '=', '65519.999'))
+    refused(response, 'invalid_number')
+    assert client.searches == []
+    assert asked('half_float', **criterion('n', '=', '65519.99'))[0].error is None
 
 
 def test_the_floor_is_a_finite_double_and_at_most_255_characters_whatever_the_kind():

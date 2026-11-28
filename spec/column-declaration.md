@@ -119,7 +119,10 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `short` and `integer` 2147483647 and 2147483648, -2147483648 and -2147483649; `long` 2^63-1 and 2^63, -2^63 and
   -2^63-1; `unsigned_long` 2^64-1 and 2^64, 0 and -1; `float` 3.4028235677973362e38 and 3.4028235677973366e38 and
   their negatives; `half_float` 65519 and 65520 and their negatives. Live, on both servers: the same value through an
-  undeclared column is the server's own 400, and `byte` and `short` are refused at 2^31 as the integer is.
+  undeclared column is the server's own 400, and `byte` and `short` are refused at 2^31 as the integer is. A
+  `half_float` field reads a number as a 32-bit float before it rounds to half: `65519.99` is sent and `65519.999`,
+  which reads as the float 65520.0, is refused with `invalid_number` and nothing sent, where the server's own answer is
+  a 400 (`[half_float] supports only finite values, but got [65520.0]`).
 - **SPEC-D23.2** [OS] With the kinds `integer`, `half_float` and `unsigned_long`, each way a number reaches the query
   is checked, and the value just past the edge is refused by every one: SearchBuilder `=`, `!=`, `<`, `>=`, `between`
   and `!between`, a column search, a `multi_values` list, and ColumnControl's `equal` and its list. Live: a list of -1

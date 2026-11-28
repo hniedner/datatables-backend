@@ -417,9 +417,13 @@ This is a rule of OpenSearch. The library sends `0`, as it does for `0`, for eve
 user writes as zero with a sign or a point (`-0.00`), and one too close to zero for a double (`-1e-400`, `-2e-324`
 round to -0.0, as `1e-400` rounds to zero: "`= 1e-400` finds a row holding zero on MySQL and MariaDB" above). On a
 column declared `float` or `half_float` (`IndexColumn(number=...)`) it sends `0` for a number that rounds to zero in
-that format too (`-1e-50` on a `float` column, `-1e-10` on a `half_float` one, which are no zero as a double). A column
-over such a field that declares no kind still sends the number, which the field reads as -0.0, so `= -1e-50` there
-misses a document holding 0.0: the library does not read the mapping.
+that format too (`-1e-50` on a `float` column, `-1e-10` on a `half_float` one, which are no zero as a double). A
+`half_float` field rounds a number twice, to a 32-bit float and then to half, and so does the library (`_rounded`):
+`-2.98023224e-8` is a hair beyond -2^-25, so straight to half it is no zero, but as a float it is exactly -2^-25, which
+ties to even, zero, and `65519.999` is 65504 straight to half but the float 65520.0, which overflows half (the server
+answers it with a 400, so a declared column answers `invalid_number`). A column over such a field that declares no
+kind still sends the number, which the field reads as -0.0, so `= -1e-50` there misses a document holding 0.0: the
+library does not read the mapping.
 
 - **What you see:** on a `double` or a `float` field (and on a `half_float` one, RUN by CI below), -0.0 and 0.0 are
   two values in a `term`, `terms` and `range` query: `{"term": {"m": -0.0}}` does not find a document holding 0.0, and
@@ -442,13 +446,20 @@ misses a document holding 0.0: the library does not read the mapping.
   on a `double` field, and `= -1e-400` found a stored -0.0. `tests/test_opensearch_live.py`
   (`test_minus_zero_finds_a_zero_on_a_double_field`) fails for `=` and `<=` without the library's zero and passes with
   it, for `-0.00`; `-1e-400` now sends the same body for `=`
-  (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`), so its result follows from that run, and for `<=` that is INFERRED from the shared code. The results for `<`, `>`,
-  `>=`, `!=`, `between` and `!between` are INFERRED from the `term` and `range` measurements above. CI's `opensearch`
-  job runs both live tests on 3.10 and 2.19. RUN by CI
-  (2026-11-26 UTC) on 3.10.0 and 2.19.7: before the library sent `0` for them, `= -1e-50` and `<= -1e-50` on a `float`
-  field and `= -1e-10` and `<= -1e-10` on a `half_float` field, each against a document holding 0.0, found nothing
+  (`test_a_number_whose_double_is_zero_sends_the_body_of_zero`, `=`, `<` and `<=` among its paths), so its result
+  follows from that run. The results for `<`, `>`, `>=`, `!=`, `between` and `!between` are INFERRED from the `term` and
+  `range` measurements above. CI's `opensearch` job runs all the live tests on 3.10 and 2.19. RUN by CI (2026-11-26
+  UTC) on 3.10.0 and 2.19.7: before the library sent `0` for them, `= -1e-50` and `<= -1e-50` on a `float` field and
+  `= -1e-10` and `<= -1e-10` on a `half_float` field, each against a document holding 0.0, found nothing
   (`test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero`, then red); with the library sending `0` for them
   (`test_a_number_that_rounds_to_zero_in_a_float_field_sends_the_body_of_zero`) the same live test passed on both.
+  RUN by CI (run 46091503895, 2026-11-27) on 3.10.0 and 2.19.7, against a `half_float` field holding 0.0: with the
+  library rounding straight to half, `= -2.98023224e-8` and `<= -2.98023224e-8` found nothing, and `= 65519.999` was
+  refused by the server with a 400 (`[half_float] supports only finite values, but got [65520.0]`) where the library
+  had sent it; so the field reads a number through a 32-bit float first. That the two live tests
+  (`test_a_number_that_rounds_to_zero_in_a_float_field_finds_a_zero` and
+  `test_a_half_float_field_refuses_a_number_that_rounds_to_infinity_through_a_float`) pass with the library rounding
+  through both formats is INFERRED until CI runs them.
 - **Requirement:** PRD-F25.
 
 ### A boolean field is a boolean column only when it is declared boolean

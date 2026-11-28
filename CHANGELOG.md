@@ -7,14 +7,18 @@ and the versioning policy is in the README.
 
 ### Fixed
 
-- On OpenSearch, a number too close to zero for a double, such as `-1e-400`, is sent as `0`, as `-0.00` is. Before, a
-  negative one was sent as -0.0, which a `double`, `float` or `half_float` field keeps apart from 0.0: so on a
-  document holding 0.0 there, SearchBuilder `=` and `<=` with `-1e-400`, a column search of it and a list entry of it missed the document,
-  while `>` and `!=` found it. Each now answers as for `0`, so `>` and `!=` with `-1e-400` no longer find a document
-  holding 0.0. On a document holding -0.0, `=`, `>=`, a column search and a list entry with `-1e-400` no longer find
-  it, and `<` and `!=` now do; `between` and `!between` with it as a bound answer as for `0` too. The same holds on a
-  column declared `float` or `half_float` (`IndexColumn(number=...)`) for a number that rounds to zero in that format
-  (`-1e-50`, `-1e-10`): the library sent the number, which the field read as -0.0, so it missed a document holding 0.0.
+- On OpenSearch, a number written as zero with a sign, such as `-0.00`, or too close to zero for a double, such as
+  `-1e-400`, is sent as `0`, as `0` is. Before, a negative one was sent as -0.0, which a `double`, `float` or
+  `half_float` field keeps apart from 0.0: so on a document holding 0.0 there, SearchBuilder `=` and `<=` with it, a
+  column search of it and a list entry of it missed the document, while `>` and `!=` found it. Each now answers as for
+  `0`, so `>` and `!=` no longer find a document holding 0.0. For a document holding -0.0, `=`, `>=`, a column search
+  and a list entry with `-0.00` no longer find it, and `<` and `!=` now do; `between` and `!between` with it as a bound
+  answer as for `0` too. The same holds on a column declared `float` or `half_float` (`IndexColumn(number=...)`) for
+  a number that rounds to zero in that format (`-1e-50`, `-1e-10`): the library sent the number, which the field read
+  as -0.0, so it missed a document holding 0.0. A `half_float` field reads a number as a 32-bit float before it rounds
+  to half, so `-2.98023224e-8` (which is -2^-25 as a float, a tie that rounds to zero) is sent as `0` too, and
+  `65519.999` (the float 65520.0, which overflows half) on a `half_float` column answers `invalid_number`, where it
+  failed with the server's own 400 (`[half_float] supports only finite values, but got [65520.0]`) before.
 - SearchBuilder's `between` and `!between` take their two values in either order, as SearchBuilder's own filter does:
   `between` `8` and `7` is the range from 7 to 8. Before, a reversed pair answered no row for `between` and every row,
   rows without a value too, for `!between`. Numbers are compared as numbers and dates as days, so `10` and `9` are taken
@@ -26,10 +30,6 @@ and the versioning policy is in the README.
   with `regex: true` is unchanged: spaces there are still a categorical value. So is text other than spaces on a column
   with a `search_value` hook, whose text is one whole value (PRD-D17), and text holding a control character is still
   refused with `invalid_character`.
-- On OpenSearch, a number written as zero with a sign, such as `-0.00`, is sent as `0`, as `0` is. On a document
-  holding 0.0 in a `double` or `float` field, the library sent -0.0, which such a field keeps apart from 0.0: so
-  SearchBuilder `=` and `<=` with `-0.00`, a column search of `-0.00` and a list entry of `-0.00` missed the document,
-  and `>` and `!=` with `-0.00` wrongly found it. Each now answers as for `0`.
 
 ## [0.1.3] - 2026-11-25
 
