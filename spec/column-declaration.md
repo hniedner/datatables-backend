@@ -171,3 +171,23 @@ Statements for PRD section 4.2. Form, backends, answers and the `items` fixture:
   `field` built a table that sent an empty field name (`null` for a name of `None`), and an empty `field` was silently
   read as the name on both backends; on SQL an empty name with no `field` was refused only as a missing column, with no
   fix, and a name of `None` with no `field` raised SQLAlchemy's `ArgumentError`.
+- **SPEC-D23.16** [OS, SQL] A `search_value` on a column declared `searchable=False` raises `SchemaError` at
+  construction, naming the column and saying to remove the hook or declare the column searchable; on OpenSearch the
+  same for a column that reads the document id (`_id`), whose message only says to remove the hook, since `searchable`
+  is ignored on the id. Before, the table built and the hook never ran: a global search, a column search, a SearchBuilder
+  condition and ColumnControl's `contains` never called it on that column. A hook on a column that is no string, or that
+  holds analysed text only, is refused first, by its own message (`SPEC-D14.1`, `SPEC-D20.1`).
+- **SPEC-D23.17** [OS] A `text` kind on a column that reads the document id, and on a column declared
+  `searchable=False` and `orderable=False` that is not in `unique_key`, raises `SchemaError` at construction, naming the
+  column and saying to drop `text=`. Before, the table built and no string field of the column was read. A `text` on the
+  key stays (its sort ends every order), and so does one on a `searchable=False` column with the default `orderable`:
+  `text=` picks the field the column is sorted by and decides whether it can be sorted at all. A stated limit:
+  `searchable=False`, the default `orderable` and `text='text'` builds, though `text='text'` then only turns ordering
+  off; declare `orderable=False` to say so.
+- **SPEC-D23.18** [OS] A `number` kind on a column declared `searchable=False` raises `SchemaError` at construction,
+  naming the column and saying to drop `number=` or declare the column searchable. Before, the table built and the kind,
+  which only bounds the numbers a filter sends, was never read.
+- **SPEC-D23.19** [OS] Each of these builds: `text='keyword'` on a `searchable=False` column with the default
+  `orderable`; `searchable=False` with `orderable=False` and no `text`; `text='text'` on a `searchable=False` column; a
+  hook on a searchable column; a `number` kind on a searchable column; and the key declared
+  `IndexColumn('id', text='keyword', searchable=False, orderable=False)`, whose search sorts by `id`.

@@ -18,6 +18,16 @@ and the versioning policy is in the README.
   whole-string conditions and ordering 0.1.3 wrongly refused and whose contains, column search and global search it
   matched as analysed text only, now answers as `text+keyword` too); a `text` other than `None`, `text+keyword`
   included, on a column that is not a string column is refused.
+- A table now raises `SchemaError` when it is built for a declaration on a column that no search reaches, which built
+  before and did nothing. If your table declares one of these, it raises now:
+  - a `search_value` on a column declared `searchable=False`, or (OpenSearch) on a column that reads the document id
+    (`_id`): the hook never ran, because a global search, a column search, a SearchBuilder condition and ColumnControl's
+    `contains` all skip such a column. Remove the hook, or (not on `_id`) declare the column searchable;
+  - (OpenSearch) a `number=` on a column declared `searchable=False`: the kind only bounds the numbers a filter sends.
+    Drop it, or declare the column searchable;
+  - (OpenSearch) a `text=` on a column that reads `_id`, or on a column declared `searchable=False` and
+    `orderable=False` that is not in `unique_key`: no string field of it was read. Drop it. A `text=` on the key, and on
+    an unsearchable column with the default `orderable`, stays: it picks the field the column is sorted by.
 
 ### Fixed
 

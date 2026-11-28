@@ -1942,6 +1942,14 @@ def test_an_empty_name_is_a_schema_error_that_says_what_to_give_on_a_sql_table_t
     assert 'Give it a non-empty name' in str(raised.value)
 
 
+def test_a_search_value_on_an_unsearchable_column_is_a_schema_error_on_a_sql_table_too():
+    """SPEC-D23.16: the check is the core's, shared with OpenSearch: no search reaches the column, so the hook never
+    runs."""
+    with pytest.raises(SchemaError, match=r'"secret".*search_value.*searchable=False.*never runs') as raised:
+        SQLTable(people, [Column('id'), Column('secret', searchable=False, search_value=str.upper)])
+    assert 'Remove the hook, or declare the column searchable' in str(raised.value)
+
+
 HOOKED = SQLTable(people, [Column('id'), Column('secret', search_value=lambda text: f's{text}')])
 
 

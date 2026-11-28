@@ -183,7 +183,13 @@ out of the client's controls. A table without a key raises `SchemaError`.
 ingest, which is OpenSearch's own advice, and name that column as the key. The document's own `_id` cannot be the key,
 because OpenSearch deprecates sorting on it (`docs/databases.md`); naming it raises `SchemaError`. A declared
 `Column('_id')` shows the id (it reads the hit's id, and fills `DT_RowId` through `RowHooks`) but cannot be searched or
-sorted: `searchable` is ignored on it, and `orderable=True` raises `SchemaError`.
+sorted: `searchable` is ignored on it, and `orderable=True`, a `search_value` hook and a `text=` raise `SchemaError`,
+because nothing would read them.
+
+**Declarations that nothing reads.** No search reaches a column declared `searchable=False`, so a `search_value` hook on
+it raises `SchemaError` (on SQL too), and so does a `number=` on it. A `text=` also picks the field a column is sorted
+by, so it raises only on a column that is not searched, is declared `orderable=False` and is not in `unique_key`; on the
+key, and on an unsearchable column with the default `orderable`, it stays.
 
 **Paging past the window.** OpenSearch reads at most `max_result_window` rows (10,000 by default; give the table the
 index's own) from the start of a search. The first pages are read as they come, and so are the last: a page that ends

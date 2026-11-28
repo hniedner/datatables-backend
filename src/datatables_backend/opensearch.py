@@ -225,6 +225,7 @@ class SearchTable:
             raise SchemaError(
                 f'{", ".join(unsortable)}: analysed text has no whole string to sort by, so it cannot be orderable'
             )
+        _check_unused_kinds(self.columns, self.unique_key)
 
     async def fetch(
         self, params: DTParams, client: _AsyncClient, *, scope: Mapping[str, Any] | None = None
@@ -455,13 +456,30 @@ def _check_text_fits(column: Column) -> None:
         )
 
 
+def _check_document_id(column: Column) -> None:
+    """Raise ``SchemaError`` for a ``search_value`` or a ``text`` on a column that reads the document id: the id is read
+    from the hit and is never searched or ordered, so the hook would never run and no string field would be read. Not
+    the message of ``check_hook_is_searched``, which tells the integrator to declare the column searchable:
+    ``searchable`` is ignored on the id."""
+    if column.search_value is not None:
+        raise SchemaError(
+            f'The column "{column.name}" has a search_value hook but shows the document id, which is never searched, '
+            'so the hook never runs. Remove the hook.'
+        )
+    if isinstance(column, IndexColumn) and column.text is not None:
+        raise SchemaError(
+            f'The column "{column.name}" declares text={column.text!r} but shows the document id, which is read from '
+            'the hit and never searched or ordered, so no string field is read for it. Drop text=.'
+        )
+
+
 def _held(column: Column) -> Column:
     """The column as the table holds it. One for the document id is held neither searchable nor orderable, so the plan
     refuses a filter or an order on it by its rules for any column the server declares unsearchable or unorderable, and
-    the global search leaves it out. ``orderable=True`` on it is the server's mistake. A field type declared on a column
-    that is no number column is the server's mistake too, and so is a ``type`` that is none of the four, or a ``text``
-    or ``number`` other than ``None`` that is none of its kinds, or a ``text`` other than ``None`` on a column that is
-    no string column."""
+    the global search leaves it out. ``orderable=True`` on it is the server's mistake, and so are a hook and a ``text``.
+    A field type declared on a column that is no number column is the server's mistake too, and so is a ``type`` that
+    is none of the four, or a ``text`` or ``number`` other than ``None`` that is none of its kinds, or a ``text`` other
+    than ``None`` on a column that is no string column."""
     check_type(column)  # first: what follows reads the type
     _check_kinds(column)
     _check_text_fits(column)
@@ -473,12 +491,34 @@ def _held(column: Column) -> Column:
         )
     if column.source != _DOCUMENT_ID:
         return column
+    _check_document_id(column)
     if column.orderable:
         raise SchemaError(
             f'The column "{column.name}" shows the document id and cannot be orderable: OpenSearch deprecates sorting '
             'on `_id` (field data). Order by a `keyword` field instead.'
         )
     return replace(column, searchable=False, orderable=False)
+
+
+def _check_unused_kinds(columns: Sequence[Column], key: Sequence[Column]) -> None:
+    """Raise ``SchemaError`` for a ``number`` or a ``text`` that nothing reads. A ``number`` bounds the numbers a filter
+    sends, and no filter reaches a column declared unsearchable. A ``text`` also picks the field a column is sorted by
+    and decides its default ``orderable``, so it is unused only on a column that is not searched, is declared
+    ``orderable=False`` and is not in the ``key``, whose sort ends every order. A ``text`` on a column with the default
+    ``orderable`` is left alone, though ``text='text'`` then only turns its ordering off."""
+    for column in columns:
+        if not isinstance(column, IndexColumn) or column.searchable:
+            continue
+        if column.number is not None:
+            raise SchemaError(
+                f'The column "{column.name}" declares number={column.number!r} but is declared searchable=False, so no '
+                'filter reaches it and no number range applies. Drop number=, or declare the column searchable.'
+            )
+        if column.text is not None and column.orderable is False and column not in key:
+            raise SchemaError(
+                f'The column "{column.name}" declares text={column.text!r} but is not searched, not ordered and not '
+                'the key, so no string field is read for it. Drop text=, or let the column be searched or ordered.'
+            )
 
 
 # -- query building ---
