@@ -1,4 +1,4 @@
-"""The library against a reference evaluator (issues #205 and #206): generated rows and requests, answered by
+"""The library against a reference evaluator (issues #205, #206 and #217): generated rows and requests, answered by
 `fetch_sync` and by `fetch` over the same loaded rows, and by `tests/reference_evaluator.py`, which is written from
 `docs/PRD.md` and `spec/` and never from `src`. Each of the two gives the same rows in the same order with the same
 counts as the evaluator, or the same error code. A difference is a finding (a gap in the specification, a defect in
@@ -17,48 +17,69 @@ yet measured: first in CI.
 
 PRD-O6, the order of text, is the database's collation. Each leg measures it once: the values of `STRINGS`, stored in
 `s`, ranked by `DENSE_RANK() OVER (ORDER BY s)` on the table's own column, written without any COLLATE, so the rank is
-the column's collation and a library that added a COLLATE of its own would be found. On SQLite the rank must be
-code-point order (its `BINARY` collation), the evaluator's default, which the leg keeps; elsewhere the measured rank is
-the evaluator's sort key.
+the column's collation and a library that added a COLLATE of its own would be found. On SQLite the measured rank must
+equal code-point order (its `BINARY` collation); on every database the measured rank is the evaluator's sort key.
+
+PRD-F23, a decimal's search text, is the database's own spelling. Each leg measures it once: the values of `DECIMALS`,
+stored in `m`, read back by the dialect's own `CAST(m AS ...)` written in raw SQL (`measured_decimal_text`, never the
+library's expression), and asserts it against the documented spelling (`DECIMAL_TEXT`: fixed scale on PostgreSQL,
+MySQL, MariaDB and SQL Server, `0.30`; SQLite's text of what it stores, `0.3` for 0.30, `0` for 0.00 and
+`12345678901234568` for each of the first three; PRD section 5, `docs/databases.md`). A mismatch is a finding to
+report, not to model. The measured text is the evaluator's.
 
 The table: `dtb_test_tags`, which the SQL tests own: `id` (Integer, the key), `s` and `t` (String), `n` (BigInteger),
-`d` (Date) and `b` (Boolean), 0 to 8 rows inserted in a random key order. The request: the global search, column
+`d` (Date), `b` (Boolean) and `m` (`Numeric(20, 2)`, the six values of `docs/decisions/010-decimal-numbers.md`, declared
+to the library as a number column), 0 to 8 rows inserted in a random key order. The request: the global search, column
 searches (smart, categorical, `multi_values`), ColumnControl's search and list, a SearchBuilder tree of at most 5 drawn
 criteria and up to 5 more that `joined` adds for the scenarios below, 0 to 3 order entries (often a skipped one first,
 then one applied in the other direction, now and then over rows that tie on the applied column with a short page that
 cuts the tie, half of those with no filter to thin the tie out), paging past the end included; on any column, now and
 then column search text that PRD-F6 reduces to no word, alone or beside a list; columns named twice, nameless columns
-and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of
-PRD-E3. The rates are set so that half or more of the requests are answered (65% on the `ci` seed of SQLite) and most
-outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that, and the seed
-follows the test's source, so an edit of the test changes it (`uv run pytest tests/test_reference_properties.py
---hypothesis-show-statistics` prints its events). The paths that tell known mutants apart (M4 to M10b in the events) are
-drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of SQLite M4 4%, M5b 3%, M6 4%, M7 2%
-(`between`) and 1% (`!between`), M10 1% (the last day read before a number mistake of step 2) and M10b 5%. The paths of
-`compared`, on the same seed (over 2,000 examples of another seed in brackets): a word holding `\\`, `%`, `_` or `[`
-that finds a row and leaves out another 2% (3%), `%` or `_` alone over number text only 0.4% (3%; the seed draws that
-scenario seldom, and its example carries it), PAD SPACE changing the answer 5% (3%), 2^63 on `n` as the only mistake 3%
-(2%), a column search by date text that finds a row and leaves out another 3% (3%). `n` holds 2^53 and 2^53 + 1, which a
-double cannot tell apart, so a number bound as a double finds its neighbour: about once in sixteen `outranked` puts one
-in a row and the other in a criterion, and a request sends one of them beside a row holding one in 2% of the `ci`
-examples, 7% over the 2,000 (without that scenario 5,000 `explore` examples missed the mutant that binds an integer
-column's number as a double).
+and an undeclared one; a server declaration with at least one unorderable column, and mistakes of every step of PRD-E3.
+The rates are set so that half or more of the requests are answered (60% of the valid examples on the `ci` seed of
+SQLite) and most outcomes and paths are reached at least about 30 times in 500 examples; one seed varies around that,
+and the seed follows the test's source, so an edit of the test changes it (`uv run pytest
+tests/test_reference_properties.py --hypothesis-show-statistics` prints its events). The paths that tell known mutants
+apart (M4 to M10b in the events) are drawn on purpose, each in about 1% or more of the examples; on the `ci` seed of
+SQLite M4 3%, M5b 2%, M6 1%, M7 2% (`between`) and 2% (`!between`), M10 3% (the last day read before a number mistake of
+step 2) and M10b 5%. The paths of `compared`, on the same seed (over 2,000 examples of another seed in brackets): a
+word holding `\\`, `%`, `_` or `[` that finds a row and leaves out another 1% (1%), `%` or `_` alone over number text
+only 1% (1%), PAD SPACE changing the answer 1% (3%), 2^63 on `n` as the only mistake 1% (2%), a column search by date
+text that finds a row and leaves out another 0.4% (1%); on `m` (#217), comparing a decimal exactly or as SQLite stores
+it changes the answer 5% (0.5%), the spelling of PRD-F23 changes it 3% (1%), and SQL Server's 38 digits change it 0.2%
+(1%; the hand tests of SPEC-F25.12 pin the bound). A rate moves by several points from one seed to the next, and each
+of the other paths also has its example. `n` holds 2^53 and 2^53 + 1, which a double cannot tell apart, so a number
+bound as a double finds its neighbour: about once in sixteen `outranked` puts one in a row and the other in a criterion,
+and a request sends one of them beside a row holding one in 4% of the `ci` examples, 6% over the 2,000 (without that
+scenario 5,000 `explore` examples missed the mutant that binds an integer column's number as a double).
 
 The examples live in `EXAMPLES`, one home: the smallest case of each mutant and rare case above (`NEIGHBOURS` among
-them) and one of each `compared` scenario. `TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the
-backend, its query or the 64-bit range of a `long` declaration, which `tests/test_reference_opensearch.py` imports; one
-the shared plan refuses alike on every backend (`%` alone over number text, PRD-F32 and PRD-F13) is left out.
+them), one of each `compared` scenario, and on `m` the reading of each step of PRD-E3 a decimal can fail: not finite
+(step 2) in a criterion, a categorical filter and a list, which the random draw reaches on the last two only after
+about 2,400 `explore` examples; more than 16,383 digits after the point (step 3); 39 digits on SQL Server (step 3.5),
+and 38 after a zero before the point, which it answers.
+The other examples on `m` are one for each reading the legs tell apart (a decimal compared exactly, as SQLite stores
+it and as a double; its spelling; its order). One more pins what a server leg caught: a list of two numbers, which
+MariaDB compares as doubles when they are bound as text (a mutant only `explore` caught on the servers). Two pin the
+16,383 limit read by the value, which a mutant of the library or of the evaluator breaks on every seed: `0e-16384`,
+zero having no fraction, and `1.0e-16383`, the number 1e-16383. The defect this property found on OpenSearch, `-0.00`
+kept apart from zero, is pinned by #219's tests, not here.
+`TYPED_EXAMPLES` names those whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
+declaration, which `tests/test_reference_opensearch.py` imports; those the shared plan answers alike on every backend
+(`%` alone over number text, PRD-F32 and PRD-F13; the decimal refusals; `0.` and 39 digits then the last day; `0.` and
+38 ones) are left out, and so is the example of `1.0e-16383`, which is not defined where the leg runs on OpenSearch
+(`DECIMAL_BOUNDS`).
 
 Rare cases, and what carries each:
-- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, 2 on
-  the current `ci` seed; carried by an example on the property and by the hand-written tests;
-- an entry of 256 code points on a list on the global search: about 1 or 2 in 1,000 random examples, 5 on the
+- a regex over 255 code points that is no categorical filter: drawn in about 1 to 3 of 1,000 random examples, none
+  on the current `ci` seed; carried by an example on the property and by the hand-written tests;
+- an entry of 256 code points on a list on the global search: about 1 to 3 in 1,000 random examples, none on the
   current `ci` seed; carried by an example and by the hand-written tests (`explore` found mutants of these two cases
   only after 1,200 to 1,500 examples);
-- a list of more than 256 entries on the global search: about 4% of the `ci` examples, and an example;
-- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 5 on the current `ci` seed; an
+- a list of more than 256 entries on the global search: about 3% of the `ci` examples, and an example;
+- an unfinished criterion holding a step-1 value: about 1 in 100 random examples, 7 on the current `ci` seed; an
   example;
-- ColumnControl's `contains` of more than 16 words: about 1% of the `ci` examples, and an example;
+- ColumnControl's `contains` of more than 16 words: about 3% of the `ci` examples, and an example;
 - the order within step 3 of PRD-E3 (the maximum date of PRD-F24 as a bound before a number the column's own type
   does not take): the examples and the hand-written tests, since the random draw seldom holds both mistakes at once.
 
@@ -66,13 +87,16 @@ A choice is drawn by `chance` and `rarely` of `tests/conftest.py`: Hypothesis dr
 more often than the others.
 
 Covered (PRD): the smart search's grammar (F3, F4, F6, F7 for LF and CR, F8, F35); the global and column searches (F1,
-F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding
-(F9); categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26,
-F27, F28, F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as each leg's measured collation);
-counts and paging (C1 to C3); the error codes and which one a request with several mistakes gets (E2, E3, F14, F15);
-section 5's PAD SPACE, which each SQL leg measures and asserts against the dialect's documented comparison. The
-OpenSearch leg adds typed search (F32, F33, F34), F26's reading there, where a NULL is a missing field and `''` a
-value, and D23 on a `long` field.
+F2, F11, F12, F13, F41, F44, and F23: on SQL a number or date column is searched as its text); ASCII case folding (F9);
+categorical filters and lists (F16 to F20, F33, F39, F40); SearchBuilder (F21 for days, F22, F24, F25, F26, F27, F28,
+F30, F36, F37, F43); ColumnControl (F45); ordering (O1 to O4, O8, and O6 as each leg's measured collation); counts and
+paging (C1 to C3); the error codes and which one a request with several mistakes gets (E2, E3, F14, F15); section 5's
+PAD SPACE, which each SQL leg measures and asserts against the dialect's documented comparison; on a `Numeric` column
+(#217) F25's reading of a number with a point or an exponent (a decimal; not finite at step 2, more than 16,383 digits
+after the point at step 3, more than 38 digits in all on SQL Server at the column's own step, E3), its comparison (exact
+on the four servers, as SQLite stores a decimal on SQLite, section 5) and F23's spelling, which each SQL leg measures.
+The OpenSearch leg adds typed search (F32, F33, F34), F26's reading there, where a NULL is a missing field and `''` a
+value, D23 on a `long` field, and `m` as a `double` field: a number compared as a double.
 
 A risk, not modelled: on SQL Server LIKE ignores trailing blanks of the matched non-Unicode value (Microsoft's
 documentation), so a criterion `ends` `a` over a stored `'a '` may match there while the evaluator says no
@@ -81,16 +105,30 @@ that leg reports it, it is a finding to triage (an entry in section 5 and docs/d
 narrowed generator.
 
 Left out: case folding beyond ASCII and every character outside ASCII (curly quotes, U+2028 and U+2029 included);
-datetimes and time zones, and a time of day after a day; numbers with a fraction or an exponent; hooked columns,
-`fold_case=False` and `field=`; a base filter and a scope; the size bounds (PRD-F38's, which a list on the global
-search does not meet, see below, and `request_too_large`); what is OpenSearch's only (`page_out_of_range`, PRD-C10 to
-PRD-C13, PRD-O5, PRD-O7); the total cache; the `error` texts and the log records; the types a database adds of its own.
+datetimes and time zones, and a time of day after a day; a number with a fraction or an exponent on an integer column
+(`id`, `n`) and on a `Float` column; hooked columns, `fold_case=False` and `field=`; a base filter and a scope; the size
+bounds (PRD-F38's, which a list on the global search does not meet, see below, and `request_too_large`); what is
+OpenSearch's only (`page_out_of_range`, PRD-C10 to PRD-C13, PRD-O5, PRD-O7); the total cache; the `error` texts and the
+log records; the types a database adds of its own.
 
 Generator restrictions, each with its reason:
-- A number beyond 32 bits is sent only to `n`, the BigInteger: `id` is an Integer, whose width the evaluator does not
-  model. The evaluator reads every number column with a BigInteger's range, the mistake of the column's own type that
-  PRD-E3 answers in step 3 after the maximum date of PRD-F24 as a bound.
-- No value with a fraction or an exponent, no curly quote and no character outside ASCII: out of scope above.
+- A number beyond 32 bits is sent only to `n`, the BigInteger, and to `m`, the `Numeric`; never to `id`, an Integer,
+  whose width the evaluator does not model. The evaluator reads every integer column with a BigInteger's range, the
+  mistake of the column's own type that PRD-E3 answers in step 3 after the maximum date of PRD-F24 as a bound.
+- A number with a fraction or an exponent is sent only to `m`, so a non-finite number on an integer column is never
+  compared here (the evaluator reads it as step 2 there too; the library's code for it on an integer column is pinned
+  by the test of SPEC-F25.1 and its step by the OpenSearch hand test of SPEC-E3.15, on a number column without a kind);
+  no curly quote and no character outside ASCII: out of scope above.
+- `m` holds only the six values of decision 010 and NULL: SQLite stores a `Numeric` as an integer or a floating-point
+  number and compares it inexactly beyond about 15 significant digits (PRD section 5, `docs/databases.md` "A decimal is
+  not compared exactly"), and the evaluator models its text (`sqlite_text`) for these values only.
+- On MySQL and MariaDB no number is answered on `m` whose 31 to 16,383 digits after the point a floating-point reading
+  would compare otherwise than its exact value: they compare such a number as a double (`docs/databases.md` "`= 1e-400`
+  finds a row holding zero on MySQL and MariaDB"). `0.` and 38 or 39 ones are sent (SQL Server's bound), which compare
+  with every cell of `m` as their double does; `1e-16384` is refused at step 3 (PRD-F25, PRD-E3). `1.0e-16383` is
+  within the limit and is sent only where the evaluator models the engine (see `DECIMAL_BOUNDS`).
+- No exponent beyond what a `Decimal` holds: the evaluator does not read one (it raises `OutOfScope`, unless the number
+  is not zero and the exponent positive, which is not finite and step 2).
 - A request column's `name` is always empty, so its name is its `data` (PRD-P15), and an order entry sends no `name`:
   those readings are `parse_request`'s, which the parse properties and the hand-written tests cover.
 - ColumnControl's search is always sent with `type` `text`: the date control is refused while parsing (PRD-F45), which
@@ -122,10 +160,13 @@ from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal
+from decimal import InvalidOperation
 import json
 import os
 from pathlib import Path
 from typing import Any
+from typing import Literal
 import unicodedata
 
 from hypothesis import event
@@ -139,6 +180,7 @@ from sqlalchemy import Column as SQLColumn
 from sqlalchemy import Date
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
+from sqlalchemy import Numeric
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import create_engine
@@ -169,9 +211,12 @@ from .reference_evaluator import Refusal
 from .reference_evaluator import categorical
 from .reference_evaluator import code_points
 from .reference_evaluator import evaluate
+from .reference_evaluator import fixed_scale
+from .reference_evaluator import sqlite_text
 from .reference_evaluator import words
 
-KINDS: dict[str, Kind] = {'id': 'number', 's': 'string', 't': 'string', 'n': 'number', 'd': 'date', 'b': 'boolean'}
+KINDS: dict[str, Kind] = {'id': 'number', 's': 'string', 't': 'string', 'n': 'number', 'd': 'date', 'b': 'boolean',
+                         'm': 'decimal'}  # fmt: skip
 NAMES = list(KINDS)
 
 #: The SQL tests' own table (tests/conftest.py, TEST_TABLES), dropped and created by the module fixture `leg`, which
@@ -185,6 +230,7 @@ reference_rows = Table(
     SQLColumn('n', BigInteger),
     SQLColumn('d', Date),
     SQLColumn('b', Boolean),
+    SQLColumn('m', Numeric(20, 2)),
 )
 #: The examples of the property on a SQL server leg under the `ci` profile; SQLite runs the profile's 500
 SERVER_EXAMPLES = 300
@@ -196,12 +242,44 @@ DATES = [date(2023, 1, 1), date(2024, 3, 5), date(2024, 3, 6), date(2024, 12, 31
 #: The numbers of `n`, 2^53 and 2^53 + 1 among them: a double cannot tell those two apart, so a number bound as a
 #: double finds its neighbour as well
 NUMBERS = [-7, 0, 7, 17, 70, 2**53, 2**53 + 1]
+#: The cells of `m`, a `Numeric(20, 2)`: the six values of `docs/decisions/010-decimal-numbers.md`. A float cannot tell
+#: the first three apart, so SQLite stores all three as 12345678901234568 (PRD section 5)
+DECIMALS = [Decimal('12345678901234567.89'), Decimal('12345678901234567.90'), Decimal('12345678901234568.00'),
+            Decimal('0.30'), Decimal('0.31'), Decimal('0.00')]  # fmt: skip
+#: Numbers sent to `m`: the pool's own, spelled otherwise (trailing zeros, an exponent, `-0.00`), and numbers the
+#: comparison tells apart: 0.305 and 0.30000000000000001 hold more digits than the column, 12345678901234567 is whole
+#: and the integer neighbour that a float cannot tell from the first three; `1.5e3` is an exponent, between the small
+#: cells and the large ones
+DECIMAL_OPERANDS = ['12345678901234567.89', '0.30000000000000001', '12345678901234567.90', '12345678901234568',
+                    '0.305', '12345678901234567', '12345678901234567.8900', '-0.00', '3.1e-1', '0.3', '0.31', '0.3000',
+                    '0', '00.31', '1.5e3']  # fmt: skip
+#: Numbers at a bound: 39 digits and `0.` with 39 digits are over SQL Server's 38, `0.` with 38 digits is not (the
+#: zero before the point is not counted); `1e-16384` holds more digits after the point than any column (step 3), while
+#: `0e-16384` is zero, which has no fraction; `1e400` and `1e999` are not finite (step 2) (PRD-F25, PRD-E3).
+#: `1.0e-16383` is the same number as `1e-16383`, so it is within the 16,383 limit; an engine that reads it as a double
+#: finds the row holding 0.00 (PRD section 5): the evaluator models that for SQLite, not for MySQL and MariaDB, so it
+#: is not sent there, nor on OpenSearch (`tests/test_opensearch.py` pins that a column search accepts it); SQL Server
+#: refuses it by its 38 digits
+DECIMAL_BOUNDS = ['0.' + '1' * 39, '1' * 39, '0.' + '1' * 38, '1e-16384', '0e-16384', '1e400', '1e999']
+TINY_NUMBER_MODELLED = os.environ.get('DTB_SQL_DIALECT', 'sqlite') in (
+    'sqlite',
+    'postgresql',
+    'mssql',
+) and not os.environ.get('DTB_OPENSEARCH_URL')
+if TINY_NUMBER_MODELLED:
+    DECIMAL_BOUNDS.append('1.0e-16383')
+#: Search words over a decimal's text (PRD-F23), each found in one spelling and not the other when a row holds the
+#: value it names (of `DECIMALS`, the scenario sets the first, one of the next two and the fourth; `68.00`, `.9` and
+#: `7.90` need the draw to give a row that value): `4568` in SQLite's text of the first three (`12345678901234568`) and
+#: in the fixed-scale one of 12345678901234568.00 only, the others in the fixed-scale text only
+DECIMAL_WORDS = ['.30', '4568', '68.00', '567.8', '.9', '7.90']
 CELLS: dict[str, st.SearchStrategy[Any]] = {
     's': st.none() | st.sampled_from(STRINGS),
     't': st.none() | st.sampled_from(STRINGS),
     'n': st.none() | st.sampled_from(NUMBERS),
     'd': st.none() | st.sampled_from(DATES),
     'b': st.none() | st.booleans(),
+    'm': st.none() | st.sampled_from(DECIMALS),
 }
 
 
@@ -228,12 +306,14 @@ VALUED: dict[str, st.SearchStrategy[Any]] = {
     'n': st.sampled_from(NUMBERS),
     'd': st.sampled_from(DATES),
     'b': st.booleans(),
+    'm': st.sampled_from(DECIMALS),
 }
 #: The values of a range, low to high, by column
 RANGED: dict[str, list[Any]] = {'n': NUMBERS, 'd': DATES}
 #: A word that ColumnControl's `contains` finds in some cells, by type
 CONTAINED: dict[str, list[str]] = {'string': ['a', 'red', 'b', 'x_y', '-'], 'number': ['7', '0', '1', '-'],
-                                   'date': ['2024', '03', '-', '12-31']}  # fmt: skip
+                                   'date': ['2024', '03', '-', '12-31'],
+                                   'decimal': ['.3', '0', '68', '.89']}  # fmt: skip
 BIG = '9223372036854775808'  # 2^63, one past a BigInteger (PRD-F25, step 3)
 LAST = '9999-12-31'  # the last day there is (PRD-F24)
 #: The values a filter sends, by column: most of them read, some not (`abc`, `2024-13-01`, `yes`, and seldom a
@@ -250,6 +330,7 @@ VALUES: dict[str, st.SearchStrategy[str]] = {
                 st.sampled_from(['2024-13-01', '2024', '2024-02-30', '9999-12-31']), 10),
     'b': rarely(st.sampled_from(['true', 'false', '1', '0', 'TRUE', ' 0 ', 'true', 'false', '1', '0']),
                 st.sampled_from(['yes', '   ', 'on']), 8),
+    'm': rarely(st.sampled_from(DECIMAL_OPERANDS), st.sampled_from([*DECIMAL_BOUNDS, 'abc']), 10),
 }  # fmt: skip
 VALUES['extra'] = VALUES['s']
 #: A day, a month or a year for `contains` on a date (PRD-F22), and now and then one that cannot be read
@@ -280,12 +361,14 @@ SEARCHED: dict[str, st.SearchStrategy[str]] = {
     'string': text,
     'number': st.sampled_from(['7', '17', '-', '-7', '0', '1', 'abc', '!7', '"7"', '7 0']) | text,
     'date': st.sampled_from(['2024', '2024-03', '03-05', '-', '2023', '12-31', '!2024', '2024 03']) | text,
+    'decimal': st.sampled_from([*DECIMAL_WORDS, '0.305', '!.30', '1e400']) | text,
     'boolean': rarely(st.sampled_from(['true', 'false', '1', '0', 'TRUE', ' 0 ', 'true', 'false', 'yes', '   ']),
                       st.sampled_from(['true false', '!true', '"true"', '!x']), 8),
 }  # fmt: skip
 CONDITIONS: dict[Kind, list[str]] = {
     'string': ['=', '!=', 'contains', '!contains', 'starts', '!starts', 'ends', '!ends', 'null', '!null'],
     'number': ['=', '!=', '<', '<=', '>', '>=', 'between', '!between', 'null', '!null'],
+    'decimal': ['=', '!=', '<', '<=', '>', '>=', 'between', '!between', 'null', '!null'],
     'date': ['=', '!=', '<', '<=', '>', '>=', 'between', '!between', 'contains', '!contains', 'null', '!null'],
     'boolean': ['=', '!=', 'null', '!null'],
 }
@@ -294,6 +377,8 @@ LOGICS: dict[Kind, list[str]] = {
     'string': ['contains', 'notContains', 'equal', 'notEqual', 'starts', 'ends', 'empty', 'notEmpty'],
     'number': ['contains', 'equal', 'notEqual', 'greater', 'greaterOrEqual', 'less', 'lessOrEqual', 'empty',
                'notEmpty'],
+    'decimal': ['contains', 'equal', 'notEqual', 'greater', 'greaterOrEqual', 'less', 'lessOrEqual', 'empty',
+                'notEmpty'],
     'date': ['contains', 'notContains', 'equal', 'notEqual', 'greater', 'greaterOrEqual', 'less', 'lessOrEqual',
              'empty', 'notEmpty'],
     'boolean': ['contains', 'equal', 'notEqual', 'empty', 'notEmpty'],
@@ -519,14 +604,15 @@ LIKE_WORDS = ['\\', '%', '_', '[', '[a]', 'a\\b', '5%', 'x_y']
 def compared(
     draw: st.DrawFn, rows: list[dict[str, Any]], *, server: dict[str, tuple[bool, bool]], body: dict[str, Any]
 ) -> None:
-    """Now and then a request whose answer hangs on how a database compares or searches text, each from a few rows
-    set for it, with the other filters cleared. At most one per request, so that none undoes another: about once in
-    six and a half for the LIKE words, PAD SPACE and a date's text, once in thirteen for the others. PRD-F11,
+    """Now and then a request whose answer hangs on how a database compares or searches text, each from a few rows set
+    for it, with the other filters cleared. At most one per request, so that none undoes another: about once in seven
+    and a half for the LIKE words, PAD SPACE, a date's text and a decimal, once in fifteen for the others. PRD-F11,
     PRD-F19: a search word holding `\\`, `%`, `_` or `[`, over cells holding them, is plain text. PRD-F23: `%` or `_`
-    alone as a global word over number text only matches no row. PRD section 5: a test of `''`, `' '`, `'a'` and
-    `'a '` that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake. PRD-F23: a
-    column search on a date column by a part of its `YYYY-MM-DD` text. The `%` and the 2^63 scenarios drop the order
-    entries, since one may hold a mistake of its own."""
+    alone as a global word over number text only matches no row. PRD section 5: a test of `''`, `' '`, `'a'` and `'a '`
+    that PAD SPACE answers otherwise. PRD-F25, PRD-D23: 2^63 on `n` as the request's only mistake. PRD-F23: a column
+    search on a date column by a part of its `YYYY-MM-DD` text. PRD-F23, PRD-F25, PRD section 5: a filter on `m`, over
+    rows that may hold two of the three numbers a float cannot tell apart and 0.30 (`decimal`). The `%` and the 2^63
+    scenarios drop the order entries, since one may hold a mistake of its own."""
     columns = body['columns']
     present = {column['data']: index for index, column in enumerate(columns) if isinstance(column['data'], str)}
     searchable = [name for name in present if server.get(name, (False, False))[0]]
@@ -538,7 +624,8 @@ def compared(
             column['search'], column['columnControl'] = {'value': '', 'regex': False}, {}
 
     texts = [name for name in ('s', 't') if name in searchable]
-    scenario = draw(st.sampled_from([None] * 5 + ['like', 'like', 'wildcard', 'pad', 'pad', 'beyond', 'date', 'date']))
+    scenario = draw(st.sampled_from([None] * 5 + ['like', 'like', 'decimal', 'wildcard', 'decimal', 'pad', 'pad',
+                                                  'beyond', 'date', 'date']))  # fmt: skip
     if scenario == 'like' and rows and 's' in searchable:  # PRD-F11, PRD-F19
         for row, cell in zip(rows, draw(st.permutations(LIKE_CELLS)), strict=False):
             row['s'] = cell
@@ -575,13 +662,73 @@ def compared(
         else:
             columns[present['n']]['columnControl'] = {'search': {'value': BIG, 'logic': 'equal', 'type': 'text'}}
     if scenario == 'date' and rows and 'd' in searchable:  # PRD-F23: a date searched by its text
-        for row in rows:
-            row['d'] = draw(st.sampled_from([date(2024, 3, 5), date(2024, 12, 31), date(2023, 1, 1), None]))
-        draw(st.sampled_from(rows))['d'] = date(2024, 3, 5)  # so that most words find a row and leave out another
-        draw(st.sampled_from(rows))['d'] = date(2024, 12, 31)
+        dated(draw, rows)
         clear()
         word = draw(st.sampled_from(['2024-03', '2024', '03-05', '2024-12', '-03-', '2023-01-01']))
         columns[present['d']]['search'] = {'value': word, 'regex': False}
+    if scenario == 'decimal' and rows and server['m'][0]:  # PRD-F23, PRD-F25, PRD section 5
+        clear()
+        decimal(draw, rows, columns=columns, present=present, orderable=server['m'][1], body=body)
+
+
+def dated(draw: st.DrawFn, rows: list[dict[str, Any]]) -> None:
+    """Days for `d` that a search by date text tells apart: 2024-03-05 and 2024-12-31 among them, so that most words
+    find a row and leave out another."""
+    for row in rows:
+        row['d'] = draw(st.sampled_from([date(2024, 3, 5), date(2024, 12, 31), date(2023, 1, 1), None]))
+    draw(st.sampled_from(rows))['d'] = date(2024, 3, 5)
+    draw(st.sampled_from(rows))['d'] = date(2024, 12, 31)
+
+
+def decimal(
+    draw: st.DrawFn,
+    rows: list[dict[str, Any]],
+    *,
+    columns: list[dict[str, Any]],
+    present: dict[str, int],
+    orderable: bool,
+    body: dict[str, Any],
+) -> None:
+    """Rows that may hold two of the three numbers a float cannot tell apart and 0.30, and a filter on `m` whose answer
+    hangs on how a number is compared with a `Numeric` or how a decimal is spelled: a criterion, a list or
+    ColumnControl's comparison with a number of `DECIMAL_OPERANDS` (half the time one of the first five, one in four
+    one of the others and one in four one of `DECIMAL_BOUNDS`), or a column or global search with a word of
+    `DECIMAL_WORDS`."""
+    if 'm' not in present:  # the request names `m` last, after the columns its order entries point at
+        present['m'] = len(columns)
+        columns.append({'data': 'm', 'name': '', 'searchable': True, 'orderable': orderable,
+                        'search': {'value': '', 'regex': False}, 'columnControl': {}})  # fmt: skip
+    for row in rows:
+        row['m'] = draw(st.sampled_from([*DECIMALS, None]))
+    # two of the three a float cannot tell apart, and 0.30, whose text differs most between the spellings
+    draw(st.sampled_from(rows))['m'] = DECIMALS[0]
+    draw(st.sampled_from(rows))['m'] = draw(st.sampled_from(DECIMALS[1:3]))
+    draw(st.sampled_from(rows))['m'] = DECIMALS[3]
+    # half the time one of the first five, which an exact comparison and SQLite's tell apart over the rows set above,
+    # or which a rounding to the column's scale would find (`0.305`, SPEC-F25.11)
+    common = rarely(st.sampled_from(DECIMAL_OPERANDS[:5]), st.sampled_from(DECIMAL_OPERANDS[5:]), 3)
+    operand = rarely(common, st.sampled_from(DECIMAL_BOUNDS), 4)
+    form = draw(st.sampled_from(['criterion', 'column', 'global', 'criterion', 'list', 'column', 'control']))
+    column = columns[present['m']]
+    if form == 'criterion':
+        condition = draw(st.sampled_from(['=', '!=', '<', '<=', '>', '>=', 'between', '!between']))
+        count = 2 if condition in ('between', '!between') else 1
+        joined(body, {'origData': 'm', 'data': 'm', 'condition': condition,
+                      'value': draw(st.lists(operand, min_size=count, max_size=count))})  # fmt: skip
+    elif form == 'list':
+        column['search'] = {
+            'value': '',
+            'regex': False,
+            'multi_values': draw(st.lists(operand, min_size=1, max_size=2)),
+        }
+    elif form == 'control':
+        logic = draw(st.sampled_from(['equal', 'notEqual', 'greater', 'lessOrEqual']))
+        column['columnControl'] = {'search': {'value': draw(operand), 'logic': logic, 'type': 'text'}}
+    elif form == 'column':
+        column['search'] = {'value': draw(st.sampled_from(DECIMAL_WORDS)), 'regex': False}
+    else:
+        column['searchable'] = True
+        body['search'] = {'value': draw(st.sampled_from(DECIMAL_WORDS)), 'regex': False}
 
 
 def padded(draw: st.DrawFn, column: dict[str, Any], body: dict[str, Any]) -> None:
@@ -711,7 +858,12 @@ def focused(
         columns[index]['columnControl'] = {'search': {'value': word, 'logic': 'contains', 'type': 'text'}}
 
 
-def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None, pad_space: bool | None = None) -> Engine:
+def engine_for(
+    dialect: str,
+    order_key: Callable[[str], Any] | None = None,
+    pad_space: bool | None = None,
+    decimal_text: Callable[[Decimal], str] | None = None,
+) -> Engine:
     """The evaluator's reading of a backend, by the name SQLAlchemy gives its dialect, or `opensearch`. The flags
     follow the requirements and the measured engine facts:
     - `typed_search` (PRD-F32, PRD-F33, PRD-F34): OpenSearch only; SQL searches a number or a date as its text
@@ -720,23 +872,53 @@ def engine_for(dialect: str, order_key: Callable[[str], Any] | None = None, pad_
     - `pad_space` (PRD section 5, `docs/databases.md`, `docs/decisions/004-numbers-and-the-empty-string-on-the-sql-
       servers.md`): SQL Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3); not PostgreSQL,
       SQLite or MySQL's default collation (NO PAD).
-    - `order_key` (PRD-O6): SQLite's `BINARY` is code-point order; every other backend's collation is measured by the
-      leg that runs on it and passed as ``order_key``, else ordering by text is out of scope there.
+    - `order_key` (PRD-O6): the collation the leg measures on its backend, passed as ``order_key`` (on SQLite it must
+      equal code-point order, its `BINARY`, the default when none is passed); without one, ordering by text is out of
+      scope there.
+    - `numeric` (PRD-F25, PRD section 5, `docs/decisions/010-decimal-numbers.md`): `exact` on PostgreSQL, MySQL,
+      MariaDB and SQL Server; `sqlite` on SQLite; `double` on OpenSearch, whose `m` is a `double` field.
+    - `decimal_digits` (PRD-F25, PRD-E3): 38 on SQL Server, no bound elsewhere.
+    - `decimal_text` (PRD-F23, PRD section 5): the leg's measured spelling, passed as ``decimal_text``; on a SQL
+      dialect, by default its documented one (`DECIMAL_TEXT`).
     A leg that measured PAD SPACE passes it as ``pad_space``, which then wins over the dialect's documented one."""
     if dialect not in PAD_SPACE:
         raise ValueError(f'no reading of the backend {dialect}')
     pads = PAD_SPACE[dialect] if pad_space is None else pad_space
-    if dialect == 'sqlite' and not pads:
-        return SQLITE
     if dialect == 'opensearch':
-        return Engine(typed_search=True, empty_string_is_empty=False, pad_space=pads, order_key=order_key)
-    return Engine(pad_space=pads, order_key=order_key or (code_points if dialect == 'sqlite' else None))
+        return Engine(
+            typed_search=True, empty_string_is_empty=False, pad_space=pads, order_key=order_key, numeric='double'
+        )
+    spelled = decimal_text or DECIMAL_TEXT[dialect]
+    return Engine(
+        pad_space=pads,
+        order_key=order_key or (code_points if dialect == 'sqlite' else None),
+        numeric='sqlite' if dialect == 'sqlite' else 'exact',
+        decimal_digits=38 if dialect == 'mssql' else None,
+        decimal_text=spelled,
+    )
 
 
 #: PRD section 5 and `docs/databases.md`: whether a backend's default comparison of text ignores trailing spaces. SQL
 #: Server (MEASURED on 2022) and MariaDB's default collation (MEASURED on 12.3) are PAD SPACE; MySQL's default
 #: collation is NO PAD; PostgreSQL and SQLite tell `'a '` from `'a'`; OpenSearch compares a `keyword` as stored.
 PAD_SPACE = {'sqlite': False, 'postgresql': False, 'mysql': False, 'mariadb': True, 'mssql': True, 'opensearch': False}
+#: PRD-F23 and PRD section 5 ("a decimal keeps its trailing zeros except on SQLite"), `docs/databases.md`: a decimal's
+#: search text as each SQL dialect documents it
+DECIMAL_TEXT: dict[str, Callable[[Decimal], str]] = {
+    'sqlite': sqlite_text,
+    'postgresql': fixed_scale,
+    'mysql': fixed_scale,
+    'mariadb': fixed_scale,
+    'mssql': fixed_scale,
+}
+#: Each dialect's own SQL that reads `m` back as text, for `measured_decimal_text`
+DECIMAL_AS_TEXT = {
+    'sqlite': 'SELECT id, CAST(m AS TEXT) FROM dtb_test_tags',
+    'postgresql': 'SELECT id, CAST(m AS VARCHAR) FROM dtb_test_tags',
+    'mysql': 'SELECT id, CAST(m AS CHAR) FROM dtb_test_tags',
+    'mariadb': 'SELECT id, CAST(m AS CHAR) FROM dtb_test_tags',
+    'mssql': 'SELECT id, CAST(m AS VARCHAR(60)) FROM dtb_test_tags',
+}
 
 
 def answer_of(response: DTResponse) -> Answer | Refusal:
@@ -753,6 +935,16 @@ def measured_pad_space(connection: Connection) -> bool:
     found = connection.execute(sql_text("SELECT COUNT(*) FROM dtb_test_tags WHERE s = ''")).scalar_one()
     connection.execute(reference_rows.delete())
     return found == 2
+
+
+def measured_decimal_text(connection: Connection, dialect: str) -> dict[Decimal, str]:
+    """PRD-F23, measured: the text of each value of `DECIMALS` stored in `m`, read back by the dialect's own `CAST`
+    written in raw SQL here, never the library's expression, so that a library that spelled a decimal otherwise than
+    the database would be found."""
+    connection.execute(reference_rows.insert(), [{'id': key, 'm': value} for key, value in enumerate(DECIMALS, 1)])
+    texts = {DECIMALS[key - 1]: text for key, text in connection.execute(sql_text(DECIMAL_AS_TEXT[dialect]))}
+    connection.execute(reference_rows.delete())
+    return texts
 
 
 def collation_ranks(connection: Connection) -> dict[str, int]:
@@ -798,9 +990,16 @@ def leg(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Leg]:
             with sync.begin() as connection:
                 pads = measured_pad_space(connection)
                 ranks = collation_ranks(connection)
+                spelled = measured_decimal_text(connection, dialect)
             assert pads == PAD_SPACE[dialect], (
                 f'{dialect} compares trailing spaces otherwise than PRD section 5 and docs/databases.md say (PAD SPACE '
                 f'documented {PAD_SPACE[dialect]}, measured {pads}): a finding to report, not to model'
+            )
+            documented = {value: DECIMAL_TEXT[dialect](value) for value in DECIMALS}
+            assert spelled == documented, (
+                f'{dialect} spells a decimal otherwise than PRD-F23, PRD section 5 and docs/databases.md say '
+                f'(documented {sorted(documented.values())}, measured {sorted(spelled.values())}): a finding to '
+                'report, not to model'
             )
             if dialect == 'sqlite':
                 # SQLite's BINARY collation is code-point order, the evaluator's default
@@ -808,7 +1007,7 @@ def leg(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Leg]:
             async_ = async_engine(urls[1])  # its connections are opened inside `runner`'s loop, on first use
             runner = asyncio.Runner()
             try:
-                yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__, pads))
+                yield Leg(sync, async_, runner, engine_for(dialect, ranks.__getitem__, pads, spelled.__getitem__))
             finally:
                 runner.run(async_.dispose())
                 runner.close()
@@ -826,7 +1025,7 @@ def library(
     table = SQLTable(
         reference_rows,
         [
-            Column(name, type=kind, searchable=searchable, orderable=orderable)
+            Column(name, type=declared_type(kind), searchable=searchable, orderable=orderable)
             for name, kind, searchable, orderable in decl
         ],
     )
@@ -842,6 +1041,11 @@ def library(
             return await table.fetch(params, session)
 
     return synced, answer_of(leg.runner.run(fetched()))
+
+
+def declared_type(kind: Kind) -> Literal['string', 'number', 'date', 'boolean']:
+    """The library's type of a declared kind: the evaluator's `decimal` is a number column (PRD-D3)."""
+    return 'number' if kind == 'decimal' else kind
 
 
 def outcome(rows: list[dict[str, Any]], answer: Answer | Refusal) -> str:
@@ -864,17 +1068,19 @@ def criteria_of(node: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def reversed_bounds(leaf: dict[str, Any]) -> bool:
-    """Whether a criterion's two values are a range written high to low (PRD-F27): numbers as numbers, days as days."""
-    if len(leaf['value']) != 2 or KINDS.get(leaf['origData']) not in ('number', 'date'):
+    """Whether a criterion's two values are a range written high to low (PRD-F27): numbers and decimals as numbers, days
+    as days."""
+    kind = KINDS.get(leaf['origData'])
+    if len(leaf['value']) != 2 or kind not in ('number', 'decimal', 'date'):
         return False
     low, high = (value.strip() for value in leaf['value'])
     try:
-        return (
-            int(low) > int(high)
-            if KINDS[leaf['origData']] == 'number'
-            else date.fromisoformat(low) > date.fromisoformat(high)
-        )
-    except ValueError:
+        if kind == 'number':
+            return int(low) > int(high)
+        if kind == 'decimal':
+            return Decimal(low) > Decimal(high)
+        return date.fromisoformat(low) > date.fromisoformat(high)
+    except (ValueError, InvalidOperation):
         return False
 
 
@@ -1082,11 +1288,13 @@ def compared_paths(
     finds a row and leaves another out. PRD-F23: `%` or `_` alone as the global search over number or date text only,
     with a value there that a wildcard would match. PRD-F25, PRD-D23: 2^63 is the only mistake, so the answer is that
     of the request with 7 in its place but for it. PRD-F23: a column search on a date column finds a row and leaves out
-    another that holds a day."""
+    another that holds a day. PRD-F23, PRD-F25, PRD section 5: the paths of `decimal_paths` on `m`."""
     reached: list[str] = []
+    params = parse_request(body)
     flipped = replace(engine, pad_space=not engine.pad_space)
-    if evaluate(decl, rows, engine=flipped, params=parse_request(body)) != answer:
+    if evaluate(decl, rows, engine=flipped, params=params) != answer:
         reached.append('path: PAD SPACE would change the answer')
+    reached.extend(decimal_paths(rows, decl, params, answer, engine))
     kinds = {name: kind for name, kind, _, _ in decl}
     searchable = {name for name, _, flag, _ in decl if flag}
     plain = [column for column in body['columns'] if not column['search']['regex'] and column['search']['value']]
@@ -1101,7 +1309,7 @@ def compared_paths(
                 and column['searchable'] and column['data'] in searchable and kinds[column['data']] != 'boolean'}  # fmt: skip
     positive, negated = words(body['search']['value'])
     if (isinstance(answer, Answer) and positive and set(positive) <= {'%', '_'} and not negated and globally
-            and all(kinds[name] in ('number', 'date') for name in globally)
+            and all(kinds[name] in ('number', 'decimal', 'date') for name in globally)
             and any(row[name] is not None for row in rows for name in globally)):  # fmt: skip
         reached.append('path: % or _ alone as the global search over number or date text only')
     if answer == Refusal('invalid_number') and BIG in json.dumps(body):
@@ -1115,6 +1323,25 @@ def compared_paths(
         and any(column['data'] == 'd' and words(column['search']['value'])[0] for column in plain)
     ):
         reached.append('path: a column search by date text finds a row and leaves out another')
+    return reached
+
+
+def decimal_paths(
+    rows: list[dict[str, Any]], decl: tuple[Declared, ...], params: DTParams, answer: Answer | Refusal, engine: Engine
+) -> list[str]:
+    """The paths of a request on `m`, each read from the evaluator with one reading of the engine flipped (PRD-F25,
+    PRD section 5): an exact comparison against SQLite's (OpenSearch's doubles against an exact one); the fixed-scale
+    spelling against SQLite's (PRD-F23); SQL Server's 38 digits against no bound."""
+    reached: list[str] = []
+    numeric = 'sqlite' if engine.numeric == 'exact' else 'exact'
+    if evaluate(decl, rows, params, engine=replace(engine, numeric=numeric)) != answer:
+        reached.append('path: comparing a decimal exactly or as stored changes the answer')
+    spelled = fixed_scale if engine.numeric == 'sqlite' else sqlite_text
+    if evaluate(decl, rows, params, engine=replace(engine, decimal_text=spelled)) != answer:
+        reached.append("path: a decimal's spelling changes the answer")
+    digits = None if engine.decimal_digits else 38
+    if evaluate(decl, rows, params, engine=replace(engine, decimal_digits=digits)) != answer:
+        reached.append("path: SQL Server's 38 digits change the answer")
     return reached
 
 
@@ -1402,13 +1629,80 @@ EXAMPLES |= {
     # typed-search engine): row 1
     'date text': (rows_of('d', date(2024, 3, 5), date(2024, 12, 31), None), DECLARED,
                   request_of({'data': 'd', 'search': {'value': '2024-03', 'regex': False}})),
+    # PRD-F25 and PRD section 5, over the six values of decision 010 in rows 1 to 6: `= 12345678901234567.89` is row 1
+    # where a decimal is compared exactly, rows 1 to 3 on SQLite and as doubles
+    'decimal equal': (rows_of('m', *DECIMALS, None), DECLARED,
+                      request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['12345678901234567.89'])))),
+    # 0.30000000000000001 has more digits than the column: no row where it is exact, row 4 (0.30) as a float
+    'decimal finer than the column': (
+        rows_of('m', *DECIMALS, None), DECLARED,
+        request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0.30000000000000001'])))),
+    # 12345678901234567 is whole and fits 64 bits: no row on SQL (SQLite compares it as an integer with
+    # 12345678901234568); a double cannot tell it from the first three, rows 1 to 3
+    'decimal whole neighbour': (rows_of('m', *DECIMALS, None), DECLARED,
+                                request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['12345678901234567'])))),
+    # PRD-F23: `.30` is in the fixed-scale text of 0.30 (row 4) and not in SQLite's `0.3`; on OpenSearch it is the
+    # number 0.3 (PRD-F33): row 4
+    'decimal spelling': (rows_of('m', *DECIMALS, None), DECLARED,
+                         request_of({'data': 'm', 'search': {'value': '.30', 'regex': False}})),
+    # PRD-O2, PRD-O3: rows 1 to 3 hold 12345678901234568.00, .90 and .89, ascending: 3, 2, 1 compared exactly; a tie
+    # broken by the key, 1, 2, 3, on SQLite and as doubles
+    'decimal order': (rows_of('m', DECIMALS[2], DECIMALS[1], DECIMALS[0]), DECLARED,
+                      request_of({'data': 'm'}, order=[{'column': 0, 'dir': 'asc'}])),
+    # PRD-F25, PRD-E3: `0.` and 39 digits is over SQL Server's 38 (step 3.5), so the last day (step 3) answers there
+    # though read later: `invalid_date` everywhere. It pins the step (3.5 after 3), not the count of the zero before
+    # the point, which the next example and the hand tests of SPEC-F25.12 pin
+    'decimal 39 digits then the last day': (rows_of('m', *DECIMALS), DECLARED,
+                                            request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
+                                                ('m', '<', ['0.' + '1' * 39]), ('d', '<', [LAST])))),
+    # PRD-F25: `0.` and 38 ones is 38 digits, the zero before the point not counted, so it is answered on SQL Server
+    # too: no row on every engine. An oracle that counted that zero would refuse it there
+    'decimal 38 digits after a zero': (rows_of('m', *DECIMALS), DECLARED, request_of(
+        {'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0.' + '1' * 38])))),
+    # Not finite (step 2) after the last day (step 3): `invalid_number` (PRD-E3)
+    'decimal not finite': (rows_of('m', *DECIMALS), DECLARED,
+                           request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
+                               ('d', '<', [LAST]), ('m', '=', ['1e400'])))),
+    # More than 16,383 digits after the point is a limit of every column (step 3), read before the last day here:
+    # `invalid_number`
+    'decimal fraction limit': (rows_of('m', *DECIMALS), DECLARED,
+                               request_of({'data': 'm'}, {'data': 'd'}, searchBuilder=tree_of(
+                                   ('m', '=', ['1e-16384']), ('d', '<', [LAST])))),
+    # PRD-F25, PRD-E3: a value that is not finite is one its column cannot read (step 2), also as a categorical filter
+    # (PRD-F16) or a list entry (PRD-F20), which read a number as `=` does: `invalid_number`
+    'decimal not finite in a categorical filter': (three_rows(), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '^(1e400)$', 'regex': True}})),
+    'decimal not finite in a list': (three_rows(), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '', 'regex': False, 'multi_values': ['1e400']}})),
+    # PRD-F20, PRD-F25: a list of two numbers matches each exactly where a decimal is compared exactly: row 1 only
+    # (0.30000000000000001 is no value of the column); rows 1 and 4 on SQLite and as doubles, where 12345678901234567.89
+    # and .90 are one number. Catches a number bound as text, which MariaDB compares as doubles in a list of two or more
+    # (`docs/databases.md`, "A list of two or more text constants is compared with a `DECIMAL` column as doubles")
+    'decimal list of two': (rows_of('m', DECIMALS[0], None, None, DECIMALS[1]), DECLARED, request_of(
+        {'data': 'm', 'search': {'value': '', 'regex': False,
+                                 'multi_values': ['12345678901234567.89', '0.30000000000000001']}})),
+    # PRD-F25: the 16,383 limit is of the value, and zero has no fraction: `0e-16384` is answered, as zero, on every
+    # engine
+    'decimal zero past the fraction limit': (rows_of('m', *DECIMALS), DECLARED, request_of(
+        {'data': 'm'}, searchBuilder=tree_of(('m', '=', ['0e-16384'])))),
 }  # fmt: skip
+if TINY_NUMBER_MODELLED:
+    # PRD-F25: `1.0e-16383` is the number 1e-16383, within the 16,383 limit: no row on PostgreSQL (exact), the row
+    # holding 0.00 on SQLite (as a float, PRD section 5), refused by SQL Server's 38 digits (step 3.5; SPEC-F25.16's
+    # hand test pins the refusal, not its step); where it is not sent, see `DECIMAL_BOUNDS`
+    EXAMPLES['decimal one at the fraction limit'] = (
+        rows_of('m', *DECIMALS),
+        DECLARED,
+        request_of({'data': 'm'}, searchBuilder=tree_of(('m', '=', ['1.0e-16383']))),
+    )
 #: The examples whose answer on OpenSearch hangs on the backend, its query or the 64-bit range of a `long`
-#: declaration, which OpenSearch's leg pins as well; one the shared plan refuses alike on every backend is left out
+#: declaration, which OpenSearch's leg pins as well; the others are left out for the reasons in the module docstring
 TYPED_EXAMPLES = [
     EXAMPLES[name]
     for name in ('neighbours', 'beyond 64 bits', 'm4', 'm5b', 'm6', 'm7', 'step3 big first', 'step3 last first',
-                 'skipped first order', 'backslash', 'pad space', 'date text')
+                 'skipped first order', 'backslash', 'pad space', 'date text', 'decimal equal',
+                 'decimal finer than the column', 'decimal whole neighbour', 'decimal spelling', 'decimal order',
+                 'decimal list of two', 'decimal zero past the fraction limit')
 ]  # fmt: skip
 
 

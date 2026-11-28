@@ -799,24 +799,25 @@ A number is parsed and bounded: a non-finite or non-numeric value is refused, an
 integer range. A number with a fraction is compared as that number against an integer column (`> 7.5` finds 8, `= 7.5`
 finds nothing), never cut to a whole one (see section 5 for SQLite). An unsigned MySQL integer column is bounded by its
 unsigned range. On SQL Server a number with more than 38 digits in all, before and after the decimal point (a fraction's
-trailing zeros not counted), is out of range on a `Numeric` column, whatever precision the column declares (MEASURED
-2026-11-22 for a whole number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary of 38 is
-pinned by the tests, not measured), and so is one with a fraction on an integer column (that its driver refuses it is
-INFERRED, from the same `Decimal` bind as a `Numeric` column; the library's own refusal is MEASURED 2026-11-28 UTC in
-CI's SQL Server job; not through a `TypeDecorator`, whose number goes as the nearest float); no other database bounds a
-`Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a number written with
-a decimal point or an exponent, and a whole number outside the signed 64-bit range, is compared as the column compares:
-exactly on a `Numeric` column (see section 5 for SQLite), and as the nearest floating-point number on a `Float` column
-and on an expression without a type. A number is finite when a floating-point number holds it, so `1e400` is refused,
-and so is a number whose exponent is beyond what a decimal holds, or one of more than 16,383 digits after the point
-(PostgreSQL's limit), a fraction's trailing zeros being left out and zero having no digits after the point. A number is
-a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written in ASCII:
-an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent (`1e3`); white
-space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a digit separator
-(`1_000`, `1,000`) and a second sign. A zero written with a sign (`-0.00`) is the number zero. On OpenSearch a whole
-number is sent as written, and one written with a point or an exponent as the nearest double, or as `0` when that double
-is zero, as a SQL `Float` column compares it; a `float` or `half_float` field then rounds it to its own format
-(`docs/databases.md`).
+trailing zeros not counted, nor a leading zero, the zero before the point of a number below one, for one; a zero between
+the point and the first digit counts), is out of range on a `Numeric` column, whatever precision the column declares
+(MEASURED 2026-11-22 for a whole number and 2026-11-24 for a fraction: its driver refuses a longer number; the boundary
+of 38 is pinned by the tests, not measured), and so is one with a fraction on an integer column (that its driver refuses
+it is INFERRED, from the same `Decimal` bind as a `Numeric` column; the library's own refusal is MEASURED 2026-11-28 UTC
+in CI's SQL Server job; not through a `TypeDecorator`, whose number goes as the nearest float); no other database bounds
+a `Numeric` column, and a declared precision bounds nothing. On a SQL column that is not an integer, a number written
+with a decimal point or an exponent, and a whole number outside the signed 64-bit range, is compared as the column
+compares: exactly on a `Numeric` column (see section 5 for SQLite), and as the nearest floating-point number on a
+`Float` column and on an expression without a type. A number is finite when a floating-point number holds it, so `1e400`
+is refused, and so is a number whose exponent is beyond what a decimal holds, or one of more than 16,383 digits after
+the point (PostgreSQL's limit), a fraction's trailing zeros being left out and zero having no digits after the point. A
+number is a value like any other (PRD-F14), so one of more than 255 characters is `value_too_long`. A number is written
+in ASCII: an optional sign, digits with an optional decimal point (`7`, `7.5`, `.5`, `5.`) and an optional exponent
+(`1e3`); white space around it is ignored. Any other spelling is `invalid_number`, among them a digit outside ASCII, a
+digit separator (`1_000`, `1,000`) and a second sign. A zero written with a sign (`-0.00`) is the number zero. On
+OpenSearch a whole number is sent as written, and one written with a point or an exponent as the nearest double, or as
+`0` when that double is zero, as a SQL `Float` column compares it; a `float` or `half_float` field then rounds it to its
+own format (`docs/databases.md`).
 
 - **Reason:** A database error on an out-of-range number is a user mistake surfacing late. One stated spelling is
   answered alike on every backend. The reading and the comparison with the earlier behaviour are in
@@ -1354,6 +1355,7 @@ SQL integer column's range or more than 38 digits on SQL Server (PRD-F25), or a 
 (PRD-D23), in read order.
 A refused order entry (PRD-O1, PRD-D6) is a mistake of step 4, so a mistake of step 1, 2 or 3 anywhere in the request
 is answered before it.
+A number that is not finite, such as `1e400`, is a value its column cannot read: a mistake of step 2.
 
 - **Reason:** One code per kind of mistake, decidable when a request holds several.
 - **Priority:** must
@@ -1926,12 +1928,12 @@ where a database decides. Each difference is stated here; every other answer is 
   - **Requirement:** PRD-F25, PRD-D23
 - On SQLite a number is not compared exactly with a `Numeric` column, nor a fraction with an integer column, beyond
   about 15 significant digits, or at all when the number is too small for a floating-point number (`1e-16383` matches 0:
-  MEASURED 2026-11-28 UTC on an integer column, INFERRED on a `Numeric` one): SQLite stores the column as an integer or
-  a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is stored as 12345678901234568), and SQLAlchemy
-  binds a decimal as a floating-point number there, so the number can match a neighbouring value. PostgreSQL, MySQL,
-  MariaDB and SQL Server compare it exactly (MEASURED 2026-11-24 for a `Numeric` column,
-  `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column: MEASURED 2026-11-28 UTC by CI), MySQL and
-  MariaDB except a fraction of more than 30 digits (docs/databases.md).
+  MEASURED 2026-11-28 UTC on an integer column and on SQLite's `Numeric` one; INFERRED on MySQL's and MariaDB's
+  `Numeric` ones): SQLite stores the column as an integer or a floating-point number (MEASURED 2026-11-24:
+  12345678901234567.89 is stored as 12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there,
+  so the number can match a neighbouring value. PostgreSQL, MySQL, MariaDB and SQL Server compare it exactly (MEASURED
+  2026-11-24 for a `Numeric` column, `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column: MEASURED
+  2026-11-28 UTC by CI), MySQL and MariaDB except a fraction of more than 30 digits (docs/databases.md).
   - **Between:** SQLite and PostgreSQL, MySQL, MariaDB, SQL Server
   - **Requirement:** PRD-F25
 - On SQL Server, on MariaDB with its default collation (`utf8mb4_uca1400_ai_ci`) and on MySQL with a PAD SPACE
