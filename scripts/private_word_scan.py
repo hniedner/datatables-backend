@@ -8,8 +8,8 @@ path or ref name is printed with each ``/``-separated part that holds a word in 
 ``***`` whole when a word spans parts; nothing of such a part is printed, so no word shows with a letter dropped.
 
 The scan fails closed: without the variable, the file or a word in it, or when git or the file system fails, or an
-object vanishes while it is read, it cannot check, and says so with exit status 2, which blocks like a finding
-(exit status 1). That message names no command and no path, since either could hold a word.
+object cannot be read, it cannot check, and says so with exit status 2, which blocks like a finding
+(exit status 1). That message names no path and no command that ran, since either could hold a word.
 
 Usage:
     private_word_scan.py --files FILE... paths and contents of the given files (the pre-commit stage; without
@@ -85,7 +85,7 @@ _BOMS = [
 
 class CouldNotCheckError(Exception):
     """The scan cannot check: no readable word list or no word in it, a ``--message`` call that does not name exactly
-    one file, or an object vanished while it was read. (A failing git or file system raises CalledProcessError or
+    one file, or an object could not be read. (A failing git or file system raises CalledProcessError or
     OSError, which ``main`` answers the same way.)"""
 
 
@@ -236,13 +236,17 @@ def batch(out: bytes) -> Iterator[tuple[str, str, bytes]]:
     """The objects of ``git cat-file --batch`` output: id, kind and raw bytes.
 
     Raises CouldNotCheckError on ``<id> missing``: an object listed a moment ago was pruned (a ``gc`` running beside
-    a push), so the scan cannot say it read every object."""
+    a push), or is corrupt (git exits 0 and prints ``missing`` for an object it cannot unpack), so the scan cannot say
+    it read every object."""
     at = 0
     while at < len(out):
         end = out.index(b'\n', at)
         parts = out[at:end].split()
         if len(parts) != 3:  # `<id> missing`
-            raise CouldNotCheckError('an object vanished while it was being read')
+            raise CouldNotCheckError(
+                'an object could not be read (pruned while the scan ran, or corrupt): run it again, and if it repeats, '
+                'check the repository with git fsck'
+            )
         sha, kind, size = parts
         start = end + 1
         at = start + int(size) + 1
