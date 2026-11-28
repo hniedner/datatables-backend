@@ -3124,7 +3124,9 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
         # equality is the `-2e-324` row and the two float kinds below
         *((None, path, '-1e-400') for path in ('less', 'less-or-equal', 'greater', 'greater-or-equal', 'multi-values')),
         (None, 'equals', '1e-400'),  # its double is 0.0, which goes as the integer `0` too, not as `0.0`
-        (None, 'equals', '-0.0e-16384'),  # zero with a sign and an exponent past the limit of 16383: it has no fraction
+        # zero with a sign and an exponent past the limit of 16383: accepted, since zero has no fraction, and the plan
+        # drops its sign, so this row pins the acceptance and not a signed zero of `_json`
+        (None, 'equals', '-0.0e-16384'),
         (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
         # a column that declares a float kind: its numbers could be converted apart from `_json`
         ('float', 'equals', '-1e-400'),

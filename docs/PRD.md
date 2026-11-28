@@ -1904,9 +1904,9 @@ where a database decides. Each difference is stated here; every other answer is 
   docs/decisions/011-opensearch-number-kinds.md.
   - **Between:** SQL and OpenSearch
   - **Requirement:** PRD-F25, PRD-E7, PRD-D23
-- On OpenSearch a `float` or `half_float` field rounds a number too small for its format to zero, so `=` and a list with
-  such a number (`1e-50` on `float`) find a document holding 0.0; a range is answered as the number reads (#226,
-  docs/databases.md).
+- On OpenSearch a `float` or `half_float` field rounds a tiny positive number (`1e-50` on `float`) to zero, so `=` and a
+  list with it find a document holding 0.0; a `float` range rounds the bound to the nearest float, a `half_float` range
+  in the direction of the range (#226, docs/databases.md).
   - **Between:** OpenSearch fields by their format
   - **Requirement:** PRD-F25, PRD-D23
 - On SQLite a number is not compared exactly with a `Numeric` column, nor a fraction with an integer column, beyond

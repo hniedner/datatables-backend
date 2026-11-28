@@ -301,9 +301,9 @@ This is a limit of the databases, not of the library: the library sends the numb
 - **What you see:** a number with more digits after the decimal point than a MySQL or MariaDB `DECIMAL` holds (30) is
   compared as a floating-point number there (INFERRED), so a number such as `1e-400` equals zero and `=` finds a row
   holding 0.00 on a `Numeric` column (and 0 on an integer column). PostgreSQL answers exactly (no row), and SQL Server
-  refuses the number (more than 38 digits). On SQLite, on a `Float` column and on OpenSearch the number is a float,
-  which is zero there too (INFERRED for OpenSearch, from the float the body carries; neither the body nor the server is
-  pinned for this value).
+  refuses the number (more than 38 digits). On SQLite and on a `Float` column the number is a float, which is zero there
+  too; on OpenSearch the library sends `0` for it (PRD-F25; the body is pinned by
+  `test_a_number_whose_double_is_zero_sends_the_body_of_zero`, and the server's answer to it is INFERRED).
 - **Example:** a `Numeric(20, 2)` column holding 0.00: `= 1e-400` finds it on MySQL 8.4 and MariaDB 12.3.
 - **How it is known:** `= 1e-400` was MEASURED, on 2026-11-24 on MySQL 8.4.13 (PyMySQL and mysqlclient) and MariaDB
   12.3.3 (`docs/decisions/010-decimal-numbers.md`); on an integer column `= 1e-16383` finds the row holding 0 on MySQL
