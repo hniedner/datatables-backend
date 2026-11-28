@@ -497,11 +497,26 @@ def test_a_utf32_blob_in_history_is_found(repo: Path, words: Path):
     assert scan('--history', words=words, cwd=repo).returncode == 1
 
 
-def test_a_word_list_saved_with_a_byte_order_mark_keeps_its_first_word(tmp_path: Path):
+@pytest.mark.parametrize('where', ['first line', 'joined lists'])
+def test_a_byte_order_mark_in_a_word_list_does_not_hide_a_word(tmp_path: Path, where: str):
+    """A joined list (`cat a.txt b.txt`) keeps the second file's mark in the middle: a mark is a file artifact."""
     listed = tmp_path / 'bom.txt'
-    listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
+    if where == 'first line':
+        listed.write_bytes(f'{WORD}\n'.encode('utf-8-sig'))
+    else:
+        listed.write_bytes(f'{SECOND}\n'.encode() + f'{WORD}\n'.encode('utf-8-sig'))
     result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
     assert result.returncode == 1, result.stdout
+    assert f'private word #{1 if where == "first line" else 2}' in result.stderr
+
+
+def test_a_word_list_with_an_invisible_character_cannot_check(tmp_path: Path):
+    """A zero-width space inside a word is a word that never matches the text it stands for: refuse, do not guess."""
+    listed = write(tmp_path / 'list.txt', f'{SECOND}\n{WORD[:3]}\u200b{WORD[3:]}\n')
+    result = scan(str(write(tmp_path / 'notes.md', f'see {WORD}\n')), words=listed)
+    assert result.returncode == 2, result.stdout
+    assert 'could not check: word list line 2 holds an invisible character: retype the word' in result.stderr
+    assert WORD.casefold() not in (result.stdout + result.stderr).casefold()
 
 
 @pytest.mark.parametrize('where', ['message', 'author'])

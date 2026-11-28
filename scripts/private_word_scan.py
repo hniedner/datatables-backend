@@ -84,9 +84,9 @@ _BOMS = [
 
 
 class CouldNotCheckError(Exception):
-    """The scan cannot check: no readable word list or no word in it, a ``--message`` call that does not name exactly
-    one file, or an object could not be read. (A failing git or file system raises CalledProcessError or
-    OSError, which ``main`` answers the same way.)"""
+    """The scan cannot check: no usable word list (none readable, not UTF-8, an invisible character in a word, or no
+    word in it), a ``--message`` call that does not name exactly one file, or an object could not be read. (A failing
+    git or file system raises CalledProcessError or OSError, which ``main`` answers the same way.)"""
 
 
 def load_words() -> Words:
@@ -101,13 +101,22 @@ def load_words() -> Words:
     if not path.is_file():
         raise CouldNotCheckError(f'{VARIABLE} names no readable file: point it at the word list')
     words = [
-        (number, fold(line.strip()))
+        (number, _word(number, line))
         for number, line in enumerate(_read_list(path).splitlines(), 1)
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
         raise CouldNotCheckError(f'the file {VARIABLE} names holds no word: add the private words, one per line')
     return words
+
+
+def _word(number: int, line: str) -> str:
+    """The folded word of a list line. Raises CouldNotCheckError on an invisible character (Unicode category Cf, such
+    as a zero-width space pasted from a web page): the word would never match the text it stands for, so the list is
+    refused for its owner to fix, not guessed at. The message names the line and never the word."""
+    if any(unicodedata.category(character) == 'Cf' for character in line):
+        raise CouldNotCheckError(f'word list line {number} holds an invisible character: retype the word')
+    return fold(line.strip())
 
 
 def _read_list(path: Path) -> str:
@@ -118,7 +127,8 @@ def _read_list(path: Path) -> str:
     match every file that holds one)."""
     not_utf8 = CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8: save it as UTF-8')
     try:
-        text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
+        # a byte order mark is a file artifact, first or in the middle of lists joined with ``cat``: it hides no word
+        text = path.read_text(encoding='utf-8').replace('\ufeff', '')
     except UnicodeDecodeError:
         raise not_utf8 from None
     except OSError:
