@@ -95,20 +95,24 @@ def load_words() -> Words:
     path = Path(location).expanduser()
     if not path.is_file():
         raise CouldNotCheckError(f'{VARIABLE} names no readable file')
-    try:
-        text = path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
-    except UnicodeDecodeError:
-        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
-    except OSError:
-        raise CouldNotCheckError('the word list cannot be read') from None
     words = [
         (number, fold(line.strip()))
-        for number, line in enumerate(text.splitlines(), 1)
+        for number, line in enumerate(_read_list(path).splitlines(), 1)
         if line.strip() and not line.strip().startswith('#')
     ]
     if not words:
         raise CouldNotCheckError(f'the file {VARIABLE} names holds no word')
     return words
+
+
+def _read_list(path: Path) -> str:
+    """The word list's text. Raises CouldNotCheckError when the file cannot be read, or is not UTF-8."""
+    try:
+        return path.read_text(encoding='utf-8-sig')  # an editor's byte order mark must not hide word #1
+    except UnicodeDecodeError:
+        raise CouldNotCheckError(f'the file {VARIABLE} names is not UTF-8') from None
+    except OSError:
+        raise CouldNotCheckError('the word list cannot be read') from None
 
 
 def decode(data: bytes) -> str:
@@ -177,23 +181,32 @@ def report(where: str, numbers: Iterable[int]) -> str:
 
 
 def scan_files(names: list[str], words: Words) -> list[str]:
+    return [finding for name in names for finding in _file_findings(name, words)]
+
+
+def _file_findings(name: str, words: Words) -> list[str]:
+    """What one file's path, and its contents or link target, hold."""
     findings: list[str] = []
-    for name in names:
-        raw = os.fsencode(name)  # the name's bytes, as git stores them, whatever their encoding
-        shown = redact(raw, words)
-        if found := text_hits(raw, words):
-            findings.append(report(f'{shown} (path)', found))
-        path = Path(name)
-        if path.is_symlink():  # the link's own text: its target, which is what git stores and publishes
-            if found := text_hits(os.fsencode(os.readlink(path)), words):
-                findings.append(report(f'{shown} (link target)', found))
-            continue
-        data = path.read_bytes()
-        for number, line in enumerate(decode(data).splitlines(), 1):
-            if found := hits(line, words):
-                findings.append(report(f'{shown}:{number}', found))
-        if found := content_hits(data, words):
-            findings.append(report(f'{shown} (contents in another encoding)', found))
+    raw = os.fsencode(name)  # the name's bytes, as git stores them, whatever their encoding
+    shown = redact(raw, words)
+    if found := text_hits(raw, words):
+        findings.append(report(f'{shown} (path)', found))
+    path = Path(name)
+    if path.is_symlink():  # the link's own text: its target, which is what git stores and publishes
+        if found := text_hits(os.fsencode(os.readlink(path)), words):
+            findings.append(report(f'{shown} (link target)', found))
+        return findings
+    return findings + _content_findings(shown, path.read_bytes(), words)
+
+
+def _content_findings(shown: str, data: bytes, words: Words) -> list[str]:
+    """What a file's bytes hold, line by line as ``decode`` reads them, then in the other encodings."""
+    findings: list[str] = []
+    for number, line in enumerate(decode(data).splitlines(), 1):
+        if found := hits(line, words):
+            findings.append(report(f'{shown}:{number}', found))
+    if found := content_hits(data, words):
+        findings.append(report(f'{shown} (contents in another encoding)', found))
     return findings
 
 
@@ -232,24 +245,37 @@ def scan_refs(words: Words) -> list[str]:
     sends no object. A tag (on a tag, a blob, a tree or a commit) or a ref to a blob or tree can be pushed with no new
     commit, so the objects it brings are read here: a tag's tagger and message, a tag it wraps, a blob, a tree's names
     and every whole path under a tree."""
-    findings: list[str] = []
     refs = git('for-each-ref', '--format=%(objecttype) %(*objecttype) %(refname)')
-    for line in filter(None, refs.split(b'\n')):  # no newline in a name
-        kind, peeled, ref = line.split(b' ', 2)
-        shown = redact(ref, words)
-        if found := text_hits(ref, words):
-            findings.append(report(f'ref {shown} (name)', found))
-        if kind == b'commit':
-            continue
-        if kind == b'tree' or peeled == b'tree':  # no commit holds the tree, so no commit shows its whole paths
-            findings.extend(path_findings(shown, ref, words))
-        listed = git('rev-list', '--objects', ref, '--not', '--remotes')
-        ids = b''.join(entry.split(b' ', 1)[0] + b'\n' for entry in listed.splitlines())  # `<id> [<path>]`
-        for sha, object_kind, data in batch(git('cat-file', '--batch', input=ids)):
-            if found := text_hits(data, words):
-                findings.append(report(f'{object_kind} {sha[:12]} (brought by ref {shown})', found))
-            if object_kind == 'commit':
-                findings.extend(path_findings(sha[:12], sha, words))
+    lines = filter(None, refs.split(b'\n'))  # no newline in a name
+    return [finding for line in lines for finding in _ref_findings(line, words)]
+
+
+def _ref_findings(line: bytes, words: Words) -> list[str]:
+    """What one ref holds: its name, and unless it names a commit, the objects it brings and, when it names or
+    peels to a tree, the whole paths under that tree."""
+    findings: list[str] = []
+    kind, peeled, ref = line.split(b' ', 2)
+    shown = redact(ref, words)
+    if found := text_hits(ref, words):
+        findings.append(report(f'ref {shown} (name)', found))
+    if kind == b'commit':
+        return findings
+    if kind == b'tree' or peeled == b'tree':  # no commit holds the tree, so no commit shows its whole paths
+        findings.extend(path_findings(shown, ref, words))
+    return findings + _brought_findings(ref, shown, words)
+
+
+def _brought_findings(ref: bytes, shown: str, words: Words) -> list[str]:
+    """What the objects that ``ref`` brings and no remote-tracking ref holds contain, and the whole paths of each such
+    commit."""
+    findings: list[str] = []
+    listed = git('rev-list', '--objects', ref, '--not', '--remotes')
+    ids = b''.join(entry.split(b' ', 1)[0] + b'\n' for entry in listed.splitlines())  # `<id> [<path>]`
+    for sha, object_kind, data in batch(git('cat-file', '--batch', input=ids)):
+        if found := text_hits(data, words):
+            findings.append(report(f'{object_kind} {sha[:12]} (brought by ref {shown})', found))
+        if object_kind == 'commit':
+            findings.extend(path_findings(sha[:12], sha, words))
     return findings
 
 
@@ -300,27 +326,34 @@ def scan_history(words: Words) -> list[str]:
     return list(dict.fromkeys(findings))  # a commit a tag brings is also in the store: report it once
 
 
+def _scan(argv: list[str], words: Words) -> tuple[list[str], str]:
+    """The findings of the mode ``argv`` asks for, and what was scanned. Raises what ``main`` turns into "could not
+    check": CouldNotCheckError, and the CalledProcessError and OSError of git and the file system."""
+    if argv[:1] == ['--files']:  # the hook's marker: whatever follows is a path, even one named like a mode
+        return scan_files(argv[1:], words), f'{len(argv) - 1} file(s)'
+    if argv == ['--refs']:  # exactly, so a file named like a mode, given without the marker, stays a file
+        return scan_refs(words), 'every local ref'
+    if argv == ['--history']:
+        return scan_history(words), 'every object in the repository'
+    if argv[:1] == ['--message']:
+        return _message_scan(argv, words), 'the commit message'
+    return scan_files(argv, words), f'{len(argv)} file(s)'
+
+
+def _message_scan(argv: list[str], words: Words) -> list[str]:
+    """The findings of a commit message file. Raises CouldNotCheckError unless ``argv`` names exactly one file.
+
+    Reading the file and running git can fail too, as ``_scan`` says.
+    """
+    if len(argv) != 2:
+        raise CouldNotCheckError('--message needs the message file')
+    found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
+    return [report('commit message', found)] if found else []
+
+
 def main(argv: list[str]) -> int:
     try:
-        words = load_words()
-        if argv[:1] == ['--files']:  # the hook's marker: whatever follows is a path, even one named like a mode
-            findings = scan_files(argv[1:], words)
-            scanned = f'{len(argv) - 1} file(s)'
-        elif argv == ['--refs']:  # exactly, so a file named like a mode, given without the marker, stays a file
-            findings = scan_refs(words)
-            scanned = 'every local ref'
-        elif argv == ['--history']:
-            findings = scan_history(words)
-            scanned = 'every object in the repository'
-        elif argv[:1] == ['--message']:
-            if len(argv) != 2:
-                raise CouldNotCheckError('--message needs the message file')
-            found = text_hits(message_text(Path(argv[1]).read_bytes()), words)
-            findings = [report('commit message', found)] if found else []
-            scanned = 'the commit message'
-        else:
-            findings = scan_files(argv, words)
-            scanned = f'{len(argv)} file(s)'
+        findings, scanned = _scan(argv, load_words())
     except CouldNotCheckError as error:
         print(f'private-word scan could not check: {error}', file=sys.stderr)
         return COULD_NOT_CHECK

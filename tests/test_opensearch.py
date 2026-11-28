@@ -3124,6 +3124,7 @@ def test_a_column_without_a_kind_sends_what_the_plan_lets_through():
         # equality is the `-2e-324` row and the two float kinds below
         *((None, path, '-1e-400') for path in ('less', 'less-or-equal', 'greater', 'greater-or-equal', 'multi-values')),
         (None, 'equals', '1e-400'),  # its double is 0.0, which goes as the integer `0` too, not as `0.0`
+        (None, 'equals', '-0.0e-16384'),  # zero with a sign and an exponent past the limit of 16383: it has no fraction
         (None, 'equals', '-2e-324'),  # below half of the smallest subnormal double, so its double is -0.0
         # a column that declares a float kind: its numbers could be converted apart from `_json`
         ('float', 'equals', '-1e-400'),
@@ -3210,6 +3211,22 @@ def test_within_step_3_the_last_day_comes_before_a_number_the_field_type_refuses
         refused(
             searched.fetch_sync(request('created', 'n', searchBuilder={'criteria': criteria}), client), 'invalid_date'
         )
+        assert (client.searches, client.counts) == ([], [])
+
+
+@pytest.mark.parametrize(('value', 'answered'), [('1.0e-16383', True), ('1e-16384', False)])
+def test_a_single_value_column_search_reads_the_16383_digit_limit_by_the_value(value: str, answered: bool):
+    """SPEC-F25.16: the value of a column search on a number column goes through its own branch of the plan, not through
+    a filter's. On SQL a number column's text is searched by words, so that branch is OpenSearch's alone
+    (`value_search`) and has no SQL twin. It catches that branch not reading the number, or reading it without the
+    limit, so that `1e-16384` reaches the server, and one that reads the limit from the spelling and refuses
+    `1.0e-16383`."""
+    client = Client()
+    response = table.fetch_sync(request(*NAMES, column_search={'pages': {'value': value}}), client)
+    if answered:
+        assert response.error is None, response.error
+    else:
+        refused(response, 'invalid_number')
         assert (client.searches, client.counts) == ([], [])
 
 

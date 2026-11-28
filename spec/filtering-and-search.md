@@ -325,12 +325,20 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   column as a float or an integer, the three rows are one number and are found together (PRD section 5).
 - **SPEC-F25.12** [SQL] With the same `n`: a number of 38 digits in all (before and after the point, a fraction's
   trailing zeros not counted) is answered on every database. [SQL Server] A number of 39 or more digits → error_code
-  `invalid_number` for every condition, never the driver's own error.
+  `invalid_number` for every condition, never the driver's own error; so is a fraction of 39 or more digits in all (`8.`
+  followed by 38 ones) on `i`, a plain `Integer` column that compares it exactly.
 - **SPEC-F25.13** [SQLite] With `n`, a `TypeDecorator` over `Numeric` that stores hundredths (1.5 as 150), given rows
   1.5 and 2: `=` `1.5` → the first row, `=` `2` and `=` `2.0` → the second, `=` `3.5` → none: the number goes through
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
-  `The filter on "i" needs a number with at most 16383 digits after the decimal point.`; `1e-16383` is answered.
+  `The filter on "i" needs a number with at most 16383 digits after the decimal point.`;
+  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column (behind a
+  `TypeDecorator` too) or on a plain integer column (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative
+  exponent beyond what a decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason;
+  `1e9999999999999999999` and `0e-9999999999999999999` (zero has no fraction) get
+  `The filter on "i" needs one number, written like 42 or -3.5.` A list entry or a `between` bound gets the limit's
+  reason worded for a value among several:
+  `Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.`
 - **SPEC-F25.15** [OS] With `n`, a number column declared a `long`: SearchBuilder `=` with `-0.00` sends the body of `0`
   on the `long`. PRD-F25 sends a whole number as written, and one written with a point or an exponent as the nearest
   double, or as `0` when that double is zero: `-1e-400`, a number whose double is -0.0, sends the body of `0` on a
@@ -344,6 +352,19 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   `float`, `-1e-10` and `1e-10` on `half_float`, which go as they are, have the answers of `docs/databases.md`: for a
   tiny negative `>` and `>=` find it and the others do not, and for a tiny positive `=` and the list find it on both,
   `<=` and `>=` on `float`, `<` and `<=` on `half_float`.
+- **SPEC-F25.16** [all] With a number column (`exact`, a `Numeric`, on SQL; on OpenSearch a number column, which gets a
+  float, or `0` for zero): the limit of 16383 digits after the point is of the value, not of how it is written: `=`
+  `1e-16383`, `1.0e-16383`, `100e-16385` and `0e-16384` are answered (a fraction's trailing zeros are not counted and
+  zero has no fraction), and `1e-16384`, `1.0e-16384`, `-1.0e-16384` and `1.5e-16383` → error_code `invalid_number` (the
+  last digit of `1.5e-16383` is past the limit though its first is not; the plain spellings `1e-16383` and `1e-16384`
+  are those of `SPEC-F25.14`, here as the control for the others). The refusals hold whatever the column; on SQL they
+  are checked on `i`, against compiling PostgreSQL and SQL Server sources (no database). [SQL Server] Of the four
+  answered above, the first three → error_code `invalid_number`, by its 38 digits (`SPEC-F25.12`); `0e-16384` is
+  answered. [PostgreSQL] The number reaches the database with its sign and its digits, its fraction's trailing zeros
+  left out: `-1.0e-16383` is bound as `-1E-16383` (checked against a compiling source of `n`, a `Numeric(20, 2)`), and a
+  number of 31 significant digits is bound with all 31 (`Decimal.normalize` would round it to 28). [OpenSearch] A
+  single-value column search (`value_search`) reads the same limit: `1.0e-16383` is answered and `1e-16384` →
+  `invalid_number`; the `=` cases above rest on the one `parse_number`, which the SQL tests check.
 - **SPEC-F26.1** [SQL] SearchBuilder `null` on `note` → rows 1, 2; `!null` → rows 3, 4.
 - **SPEC-F26.2** [OS] SearchBuilder `null` on `note` → rows 1 (a stored `''` is not missing); `!null` → rows 2, 3, 4.
 - **SPEC-F26.3** [SQL] `null` finds the rows holding `''` beside those holding NULL on: a column behind a
