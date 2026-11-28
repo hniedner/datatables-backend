@@ -947,7 +947,8 @@ def test_a_path_mixing_encodings_hides_every_part_with_a_word(
 _ID = '0' * 40
 _UNREADABLE = {  # what batch() may get: git's answer for an unreadable object, or later bytes read as a header
     'missing': f'{_ID} missing\n',  # pruned after it was listed (a `gc` beside a push), or corrupt
-    'size into the next header': f'{_ID} blob 7\nshort\n{_ID} blob 5\nhello\n',  # a corrupt object declares too much
+    # a corrupt object declares one byte too much; two bytes into the next id a real-looking header starts
+    'size into the next header': f'{_ID} blob 7\nshort\n{"0" * 42} blob 5\nhello\n',
     'size past the end': f'{_ID} blob 200\nshort\n',
     'size that is no number': f'{_ID} blob {WORD}\nshort\n',
     'a fourth field': f'{_ID} blob 5 more\nhello\n',
