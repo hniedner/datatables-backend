@@ -1920,12 +1920,12 @@ where a database decides. Each difference is stated here; every other answer is 
   - **Requirement:** PRD-F25, PRD-D23
 - On SQLite a number is not compared exactly with a `Numeric` column, nor a fraction with an integer column, beyond
   about 15 significant digits, or at all when the number is too small for a floating-point number (`1e-16383` matches 0:
-  MEASURED 2026-11-28 UTC on an integer column, INFERRED on a `Numeric` one): SQLite stores the column as an integer or
-  a floating-point number (MEASURED 2026-11-24: 12345678901234567.89 is stored as 12345678901234568), and SQLAlchemy
-  binds a decimal as a floating-point number there, so the number can match a neighbouring value. PostgreSQL, MySQL,
-  MariaDB and SQL Server compare it exactly (MEASURED 2026-11-24 for a `Numeric` column,
-  `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column: MEASURED 2026-11-28 UTC by CI), MySQL and
-  MariaDB except a fraction of more than 30 digits (docs/databases.md).
+  MEASURED 2026-11-28 UTC on an integer column and on SQLite's `Numeric` one; INFERRED on MySQL's and MariaDB's
+  `Numeric` ones): SQLite stores the column as an integer or a floating-point number (MEASURED 2026-11-24:
+  12345678901234567.89 is stored as 12345678901234568), and SQLAlchemy binds a decimal as a floating-point number there,
+  so the number can match a neighbouring value. PostgreSQL, MySQL, MariaDB and SQL Server compare it exactly (MEASURED
+  2026-11-24 for a `Numeric` column, `docs/decisions/010-decimal-numbers.md`; a fraction on an integer column: MEASURED
+  2026-11-28 UTC by CI), MySQL and MariaDB except a fraction of more than 30 digits (docs/databases.md).
   - **Between:** SQLite and PostgreSQL, MySQL, MariaDB, SQL Server
   - **Requirement:** PRD-F25
 - On SQL Server, on MariaDB with its default collation (`utf8mb4_uca1400_ai_ci`) and on MySQL with a PAD SPACE
