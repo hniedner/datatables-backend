@@ -332,11 +332,13 @@ Statements for PRD section 4.3. Form, backends, answers and the `items` fixture:
   the column's own type.
 - **SPEC-F25.14** [all] `=` `1e-16384` → error_code `invalid_number` with
   `The filter on "i" needs a number with at most 16383 digits after the decimal point.`;
-  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column or on an integer column
-  not behind a `TypeDecorator` (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative exponent beyond what a
-  decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason; `1e9999999999999999999` and
-  `0e-9999999999999999999` (zero has no fraction) get
-  `The filter on "i" needs one number, written like 42 or -3.5.`
+  `1e-16383` is answered, except on SQL Server, whose 38 digits refuse it on a `Numeric` column (behind a
+  `TypeDecorator` too) or on a plain integer column (`SPEC-F25.12`, `SPEC-F25.16`). A nonzero number with a negative
+  exponent beyond what a decimal holds (`1e-9999999999999999999`, also with `E`) gets the same reason;
+  `1e9999999999999999999` and `0e-9999999999999999999` (zero has no fraction) get
+  `The filter on "i" needs one number, written like 42 or -3.5.` A list entry or a `between` bound gets the limit's
+  reason worded for a value among several:
+  `Each value in the filter on "i" must be a number with at most 16383 digits after the decimal point.`
 - **SPEC-F25.15** [OS] With `n`, a number column without a kind and then declared a `long`: SearchBuilder `=`, `>=`
   and `<` with `-0.00` send the body of `0`, and a `multi_values` list of `-0.00` and `7` sends that of `0` and
   `7` on the column without a kind. With `n` over a `double` field, given a document holding 0.0: `=` and `<=`

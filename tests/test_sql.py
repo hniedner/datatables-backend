@@ -3027,10 +3027,10 @@ def test_a_fraction_on_an_integer_column_is_compared_as_exactly_as_the_database_
     """PRD section 5 (PRD-F25): `8.0000000000000000001` is no whole number, so `=` finds no row on any engine that binds
     the `Decimal` as it is (on PostgreSQL, MySQL, MariaDB and SQL Server). SQLite is the stated exception: SQLAlchemy
     binds the `Decimal` of a fraction as a float there, so it finds the row holding 8. `1e-16383`, which no float holds,
-    is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row, MySQL and MariaDB find it too
-    (INFERRED: a fraction of more than 30 digits after the point is compared as a double there, docs/databases.md), and
-    SQL Server refuses it by its 38 digits. These are today's results, pinned so the stated limits are not forgotten if
-    they change."""
+    is bound as zero on SQLite and finds the row holding 0; PostgreSQL finds no row, MySQL and MariaDB find it too (the
+    reason is INFERRED: a fraction of more than 30 digits after the point is compared as a double there,
+    docs/databases.md), and SQL Server refuses it by its 38 digits. These are today's results, pinned so the stated
+    limits are not forgotten if they change."""
     numbers = Table('dtb_test_tags', MetaData(), SQLColumn('id', Integer, primary_key=True), SQLColumn('i', Integer))
     numbers.create(session.connection())
     session.execute(numbers.insert(), [{'id': 1, 'i': 0}, {'id': 2, 'i': 8}])
@@ -3100,7 +3100,7 @@ def test_a_number_of_more_than_16383_digits_after_the_point_is_refused():
     ('value', 'past_the_limit'),
     [
         ('1e-9999999999999999999', True),
-        ('1E-9999999999999999999', True),  # PRD-F25 takes either `e`
+        ('1E-9999999999999999999', True),  # SPEC-F25.14: also with `E`
         ('-1.5e-9999999999999999999', True),
         ('0.5e-9999999999999999999', True),  # nonzero though it starts with a zero
         ('1e9999999999999999999', False),  # no Decimal holds it; told the reason of `1e400`
